@@ -1,0 +1,631 @@
+/**
+ * WebNique Portal - Complete Stylesheet
+ * Primary Brand Color: #0d539e
+ * 
+ * @package WebNique Portal
+ */
+
+/* ========================================
+   CSS VARIABLES
+   ======================================== */
+
+:root {
+  --wnq-primary: #0d539e;
+  --wnq-primary-dark: #0a4380;
+  --wnq-primary-light: #1066b8;
+  --wnq-primary-bg: rgba(13, 83, 158, 0.08);
+  --wnq-primary-border: rgba(13, 83, 158, 0.2);
+  
+  --wnq-white: #ffffff;
+  --wnq-gray-50: #f9fafb;
+  --wnq-gray-100: #f3f4f6;
+  --wnq-gray-200: #e5e7eb;
+  --wnq-gray-300: #d1d5db;
+  --wnq-gray-400: #9ca3af;
+  --wnq-gray-500: #6b7280;
+  --wnq-gray-600: #4b5563;
+  --wnq-gray-700: #374151;
+  --wnq-gray-800: #1f2937;
+  --wnq-gray-900: #111827;
+  
+  --wnq-success: #10b981;
+  --wnq-success-bg: rgba(16, 185, 129, 0.1);
+  --wnq-warning: #f59e0b;
+  --wnq-warning-bg: rgba(245, 158, 11, 0.1);
+  --wnq-danger: #ef4444;
+  --wnq-danger-bg: rgba(239, 68, 68, 0.1);
+  
+  --wnq-radius: 12px;
+  --wnq-radius-lg: 16px;
+  --wnq-radius-sm: 8px;
+  
+  --wnq-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --wnq-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+  --wnq-shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07), 0 2px 4px rgba(0, 0, 0, 0.06);
+  --wnq-shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05);
+  
+  --wnq-transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ========================================
+   RESET & BASE
+   ======================================== */
+
+#wnq-portal-root {
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#wnq-portal-root *,
+#wnq-portal-root *::before,
+#wnq-portal-root *::after {
+  box-sizing: inherit;
+}
+
+/* ========================================
+   MAIN CONTAINER
+   ======================================== */
+
+#wnq-portal-root > div {
+  min-height: 600px;
+  background: var(--wnq-gray-50);
+  padding: 24px;
+}
+
+/* ========================================
+   SHELL LAYOUT (Grid)
+   ======================================== */
+
+#wnq-portal-root .wnq-shell {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+@media (max-width: 968px) {
+  #wnq-portal-root .wnq-shell {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ========================================
+   SIDEBAR
+   ======================================== */
+
+#wnq-portal-root aside {
+  background: var(--wnq-white);
+  border-radius: var(--wnq-radius-lg);
+  border: 1px solid var(--wnq-gray-200);
+  box-shadow: var(--wnq-shadow);
+  position: sticky;
+  top: 24px;
+  align-self: start;
+  overflow: hidden;
+}
+
+@media (max-width: 968px) {
+  #wnq-portal-root aside {
+    position: relative;
+    top: 0;
+  }
+}
+
+/* Sidebar Header */
+#wnq-portal-root aside > div:first-child {
+  padding: 24px;
+  border-bottom: 1px solid var(--wnq-gray-100);
+  background: linear-gradient(135deg, var(--wnq-primary) 0%, var(--wnq-primary-dark) 100%);
+}
+
+#wnq-portal-root aside > div:first-child > div:first-child {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 8px;
+}
+
+#wnq-portal-root aside > div:first-child > div:last-child {
+  font-size: 24px;
+  font-weight: 900;
+  color: var(--wnq-white);
+  letter-spacing: -0.02em;
+}
+
+/* Navigation */
+#wnq-portal-root aside > div:nth-child(2) {
+  padding: 16px;
+}
+
+#wnq-portal-root aside button {
+  width: 100%;
+  text-align: left;
+  padding: 12px 16px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: var(--wnq-radius);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--wnq-gray-700);
+  cursor: pointer;
+  transition: var(--wnq-transition);
+  position: relative;
+  overflow: hidden;
+}
+
+#wnq-portal-root aside button::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--wnq-primary);
+  transform: scaleY(0);
+  transition: transform 0.2s ease;
+}
+
+#wnq-portal-root aside button:hover {
+  background: var(--wnq-gray-50);
+  color: var(--wnq-primary);
+}
+
+#wnq-portal-root aside button:focus {
+  outline: 2px solid var(--wnq-primary);
+  outline-offset: 2px;
+}
+
+/* Active navigation button */
+#wnq-portal-root aside button[style*="background: rgba(13,83,158,0.08)"],
+#wnq-portal-root aside button[style*="background: rgba(13, 83, 158, 0.08)"] {
+  background: var(--wnq-primary-bg) !important;
+  color: var(--wnq-primary) !important;
+  border-color: var(--wnq-primary-border) !important;
+  font-weight: 700;
+}
+
+#wnq-portal-root aside button[style*="background: rgba(13,83,158,0.08)"]::before,
+#wnq-portal-root aside button[style*="background: rgba(13, 83, 158, 0.08)"]::before {
+  transform: scaleY(1);
+}
+
+/* Sidebar Meta (Client info) */
+#wnq-portal-root aside > div:last-child {
+  padding: 16px;
+  border-top: 1px solid var(--wnq-gray-100);
+  background: var(--wnq-gray-50);
+}
+
+#wnq-portal-root aside > div:last-child span {
+  display: block;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  background: var(--wnq-white);
+  border: 1px solid var(--wnq-gray-200);
+  border-radius: var(--wnq-radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--wnq-gray-600);
+}
+
+#wnq-portal-root aside > div:last-child span b {
+  color: var(--wnq-gray-900);
+  font-weight: 700;
+}
+
+/* ========================================
+   CONTENT AREA
+   ======================================== */
+
+#wnq-portal-root > div > div > div:last-child {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 24px;
+}
+
+@media (max-width: 968px) {
+  #wnq-portal-root > div > div > div:last-child {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Main Content Card */
+#wnq-portal-root > div > div > div:last-child > div:first-child > div {
+  background: var(--wnq-white);
+  border: 1px solid var(--wnq-gray-200);
+  border-radius: var(--wnq-radius-lg);
+  padding: 32px;
+  min-height: 500px;
+  box-shadow: var(--wnq-shadow);
+}
+
+/* Side Content Card */
+#wnq-portal-root > div > div > div:last-child > div:last-child > div {
+  background: var(--wnq-white);
+  border: 1px solid var(--wnq-gray-200);
+  border-radius: var(--wnq-radius-lg);
+  padding: 24px;
+  box-shadow: var(--wnq-shadow);
+}
+
+/* ========================================
+   PILLS / BADGES
+   ======================================== */
+
+#wnq-portal-root span[style*="border-radius: 999px"] {
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  padding: 6px 14px !important;
+  border-radius: 20px !important;
+  transition: var(--wnq-transition);
+}
+
+/* Good pill */
+#wnq-portal-root span[style*="rgba(16,185,129"] {
+  background: var(--wnq-success-bg) !important;
+  border-color: var(--wnq-success) !important;
+  color: #065f46 !important;
+}
+
+/* Warning pill */
+#wnq-portal-root span[style*="rgba(245,158,11"] {
+  background: var(--wnq-warning-bg) !important;
+  border-color: var(--wnq-warning) !important;
+  color: #92400e !important;
+}
+
+/* Danger pill */
+#wnq-portal-root span[style*="rgba(239,68,68"] {
+  background: var(--wnq-danger-bg) !important;
+  border-color: var(--wnq-danger) !important;
+  color: #991b1b !important;
+}
+
+/* ========================================
+   BUTTONS
+   ======================================== */
+
+#wnq-portal-root button[type="button"] {
+  font-weight: 700;
+  padding: 12px 20px;
+  border-radius: var(--wnq-radius);
+  transition: var(--wnq-transition);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.5;
+  text-transform: none;
+}
+
+#wnq-portal-root button[type="button"]:not([disabled]):hover {
+  transform: translateY(-1px);
+  box-shadow: var(--wnq-shadow-md);
+}
+
+#wnq-portal-root button[type="button"]:not([disabled]):active {
+  transform: translateY(0);
+}
+
+#wnq-portal-root button[type="button"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Primary button */
+#wnq-portal-root button[style*="background: rgb(13, 83, 158)"],
+#wnq-portal-root button[style*="background: #0d539e"] {
+  background: linear-gradient(135deg, var(--wnq-primary) 0%, var(--wnq-primary-dark) 100%) !important;
+  box-shadow: 0 2px 4px rgba(13, 83, 158, 0.2);
+}
+
+#wnq-portal-root button[style*="background: rgb(13, 83, 158)"]:hover,
+#wnq-portal-root button[style*="background: #0d539e"]:hover {
+  box-shadow: 0 4px 8px rgba(13, 83, 158, 0.3) !important;
+}
+
+/* ========================================
+   TYPOGRAPHY
+   ======================================== */
+
+#wnq-portal-root h1,
+#wnq-portal-root h2,
+#wnq-portal-root h3,
+#wnq-portal-root h4,
+#wnq-portal-root h5,
+#wnq-portal-root h6 {
+  font-weight: 800;
+  color: var(--wnq-gray-900);
+  line-height: 1.2;
+  margin-bottom: 16px;
+}
+
+#wnq-portal-root h1 { font-size: 32px; }
+#wnq-portal-root h2 { font-size: 24px; }
+#wnq-portal-root h3 { font-size: 20px; }
+#wnq-portal-root h4 { font-size: 18px; }
+
+#wnq-portal-root p {
+  color: var(--wnq-gray-600);
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+
+/* ========================================
+   CARDS
+   ======================================== */
+
+.wnq-card {
+  background: var(--wnq-white);
+  border: 1px solid var(--wnq-gray-200);
+  border-radius: var(--wnq-radius-lg);
+  padding: 24px;
+  margin-bottom: 20px;
+  box-shadow: var(--wnq-shadow);
+  transition: var(--wnq-transition);
+}
+
+.wnq-card:hover {
+  box-shadow: var(--wnq-shadow-md);
+}
+
+.wnq-card-header {
+  padding-bottom: 16px;
+  margin-bottom: 20px;
+  border-bottom: 2px solid var(--wnq-gray-100);
+}
+
+.wnq-card-title {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--wnq-gray-900);
+  margin: 0;
+}
+
+.wnq-card-subtitle {
+  font-size: 14px;
+  color: var(--wnq-gray-500);
+  margin-top: 4px;
+}
+
+/* ========================================
+   ALERTS
+   ======================================== */
+
+.wnq-alert {
+  padding: 16px 20px;
+  border-radius: var(--wnq-radius);
+  border-left: 4px solid;
+  margin-bottom: 20px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.wnq-alert-info {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: #3b82f6;
+  color: #1e40af;
+}
+
+.wnq-alert-success {
+  background: var(--wnq-success-bg);
+  border-color: var(--wnq-success);
+  color: #065f46;
+}
+
+.wnq-alert-warning {
+  background: var(--wnq-warning-bg);
+  border-color: var(--wnq-warning);
+  color: #92400e;
+}
+
+.wnq-alert-danger {
+  background: var(--wnq-danger-bg);
+  border-color: var(--wnq-danger);
+  color: #991b1b;
+}
+
+/* ========================================
+   LOADING STATES
+   ======================================== */
+
+.wnq-spinner {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(13, 83, 158, 0.2);
+  border-top-color: var(--wnq-primary);
+  border-radius: 50%;
+  animation: wnq-spin 0.8s linear infinite;
+}
+
+@keyframes wnq-spin {
+  to { transform: rotate(360deg); }
+}
+
+.wnq-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--wnq-gray-200) 0%,
+    var(--wnq-gray-100) 50%,
+    var(--wnq-gray-200) 100%
+  );
+  background-size: 200% 100%;
+  animation: wnq-skeleton 1.5s ease-in-out infinite;
+  border-radius: var(--wnq-radius-sm);
+}
+
+@keyframes wnq-skeleton {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ========================================
+   TABLES
+   ======================================== */
+
+.wnq-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 20px 0;
+}
+
+.wnq-table thead th {
+  background: var(--wnq-gray-50);
+  padding: 12px 16px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--wnq-gray-600);
+  border-bottom: 2px solid var(--wnq-gray-200);
+}
+
+.wnq-table tbody td {
+  padding: 16px;
+  border-bottom: 1px solid var(--wnq-gray-100);
+  color: var(--wnq-gray-700);
+}
+
+.wnq-table tbody tr:hover {
+  background: var(--wnq-gray-50);
+}
+
+.wnq-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ========================================
+   FORMS
+   ======================================== */
+
+.wnq-input,
+.wnq-select,
+.wnq-textarea {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid var(--wnq-gray-300);
+  border-radius: var(--wnq-radius);
+  font-size: 14px;
+  color: var(--wnq-gray-900);
+  background: var(--wnq-white);
+  transition: var(--wnq-transition);
+}
+
+.wnq-input:focus,
+.wnq-select:focus,
+.wnq-textarea:focus {
+  outline: none;
+  border-color: var(--wnq-primary);
+  box-shadow: 0 0 0 3px rgba(13, 83, 158, 0.1);
+}
+
+.wnq-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--wnq-gray-700);
+  margin-bottom: 8px;
+}
+
+/* ========================================
+   UTILITY CLASSES
+   ======================================== */
+
+.wnq-mt-1 { margin-top: 8px; }
+.wnq-mt-2 { margin-top: 16px; }
+.wnq-mt-3 { margin-top: 24px; }
+.wnq-mt-4 { margin-top: 32px; }
+
+.wnq-mb-1 { margin-bottom: 8px; }
+.wnq-mb-2 { margin-bottom: 16px; }
+.wnq-mb-3 { margin-bottom: 24px; }
+.wnq-mb-4 { margin-bottom: 32px; }
+
+.wnq-p-1 { padding: 8px; }
+.wnq-p-2 { padding: 16px; }
+.wnq-p-3 { padding: 24px; }
+.wnq-p-4 { padding: 32px; }
+
+.wnq-text-center { text-align: center; }
+.wnq-text-right { text-align: right; }
+.wnq-text-left { text-align: left; }
+
+.wnq-flex { display: flex; }
+.wnq-flex-col { flex-direction: column; }
+.wnq-items-center { align-items: center; }
+.wnq-justify-between { justify-content: space-between; }
+.wnq-justify-center { justify-content: center; }
+.wnq-gap-1 { gap: 8px; }
+.wnq-gap-2 { gap: 16px; }
+.wnq-gap-3 { gap: 24px; }
+
+.wnq-hidden { display: none; }
+.wnq-visible { display: block; }
+
+/* ========================================
+   ANIMATIONS
+   ======================================== */
+
+@keyframes wnq-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.wnq-fade-in {
+  animation: wnq-fade-in 0.3s ease-out;
+}
+
+/* ========================================
+   SCROLLBAR STYLING
+   ======================================== */
+
+#wnq-portal-root ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+#wnq-portal-root ::-webkit-scrollbar-track {
+  background: var(--wnq-gray-100);
+  border-radius: 5px;
+}
+
+#wnq-portal-root ::-webkit-scrollbar-thumb {
+  background: var(--wnq-gray-300);
+  border-radius: 5px;
+  transition: var(--wnq-transition);
+}
+
+#wnq-portal-root ::-webkit-scrollbar-thumb:hover {
+  background: var(--wnq-primary);
+}
+
+/* ========================================
+   RESPONSIVE ADJUSTMENTS
+   ======================================== */
+
+@media (max-width: 768px) {
+  #wnq-portal-root > div {
+    padding: 16px;
+  }
+  
+  #wnq-portal-root .wnq-shell {
+    gap: 16px;
+  }
+  
+  #wnq-portal-root > div > div > div:last-child > div:first-child > div,
+  #wnq-portal-root > div > div > div:last-child > div:last-child > div {
+    padding: 20px;
+  }
+}
