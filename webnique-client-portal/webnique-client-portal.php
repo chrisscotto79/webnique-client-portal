@@ -119,6 +119,22 @@ add_action('plugins_loaded', function() {
     }
 }, 15);
 
+// SEO OS — Auto-create tables on admin if version changed or tables missing
+add_action('admin_init', function() {
+    $installed = get_option('wnq_seoos_db_version', '');
+    if ($installed === WNQ_PORTAL_VERSION) {
+        return;
+    }
+    $seoos = WNQ_PORTAL_PATH . 'includes/Core/SEOOSBootstrap.php';
+    if (file_exists($seoos)) {
+        require_once $seoos;
+        if (class_exists('WNQ\\Core\\SEOOSBootstrap')) {
+            \WNQ\Core\SEOOSBootstrap::createTables();
+            update_option('wnq_seoos_db_version', WNQ_PORTAL_VERSION);
+        }
+    }
+});
+
 // CLIENT HANDLERS
 add_action('admin_post_wnq_save_client', function() {
     $clients_admin = WNQ_PORTAL_PATH . 'admin/ClientsAdmin.php';
