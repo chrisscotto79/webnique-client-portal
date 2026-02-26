@@ -322,7 +322,7 @@ final class SEOHub
     {
         global $wpdb;
         return $wpdb->get_results(
-            "SELECT k.*, p.site_url as profile_url FROM {$wpdb->prefix}wnq_seo_agent_keys k ORDER BY k.created_at DESC",
+            "SELECT * FROM {$wpdb->prefix}wnq_seo_agent_keys ORDER BY created_at DESC",
             ARRAY_A
         ) ?: [];
     }
