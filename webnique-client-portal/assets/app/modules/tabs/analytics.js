@@ -68,14 +68,16 @@ async function loadAnalytics(main, side, state, shell, period) {
 
   try {
     // Make AJAX request to WordPress
-    const response = await fetch(window.wnqClientPortal.ajaxUrl, {
+    const portalCfg = window.WNQ_PORTAL || {};
+    const response = await fetch(portalCfg.ajaxUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({
-        action: "wnq_get_client_analytics",
-        nonce: window.wnqClientPortal.analyticsNonce,
+        action: "wnq_get_analytics_data",
+        nonce: portalCfg.nonce,
+        client_id: state?.clientId || "",
         date_range: period,
       }),
     });

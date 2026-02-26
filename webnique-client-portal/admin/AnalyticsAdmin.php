@@ -380,15 +380,32 @@ final class AnalyticsAdmin
 
     private static function renderClientsManager(): void
     {
-        $all_clients = AnalyticsConfig::getAllClients();
+        // Get analytics-configured clients
+        $analytics_clients = AnalyticsConfig::getAllClients();
+        $analytics_by_id   = [];
+        foreach ($analytics_clients as $ac) {
+            $analytics_by_id[$ac['client_id']] = $ac;
+        }
+
+        // Also fetch regular portal clients for cross-reference
+        global $wpdb;
+        $portal_clients = [];
+        $clients_table  = $wpdb->prefix . 'wnq_clients';
+        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $clients_table)) === $clients_table) {
+            $rows = $wpdb->get_results(
+                "SELECT client_id, name, email, website, company FROM {$clients_table} WHERE status != 'deleted' ORDER BY name ASC",
+                ARRAY_A
+            );
+            $portal_clients = $rows ?: [];
+        }
 
         $message = '';
         if (isset($_GET['added'])) {
-            $message = '<div class="notice notice-success is-dismissible"><p>Client added successfully.</p></div>';
+            $message = '<div class="notice notice-success is-dismissible"><p>Client analytics configured successfully.</p></div>';
         } elseif (isset($_GET['updated'])) {
-            $message = '<div class="notice notice-success is-dismissible"><p>Client updated successfully.</p></div>';
+            $message = '<div class="notice notice-success is-dismissible"><p>Client analytics updated successfully.</p></div>';
         } elseif (isset($_GET['deleted'])) {
-            $message = '<div class="notice notice-success is-dismissible"><p>Client deleted successfully.</p></div>';
+            $message = '<div class="notice notice-success is-dismissible"><p>Client analytics configuration removed.</p></div>';
         } elseif (isset($_GET['error'])) {
             $message = '<div class="notice notice-error is-dismissible"><p>Error: ' . esc_html(urldecode($_GET['error'])) . '</p></div>';
         }
@@ -398,16 +415,18 @@ final class AnalyticsAdmin
             <?php echo $message; ?>
 
             <div style="margin-bottom: 20px; display: flex; gap: 8px; align-items: center;">
-                <a href="<?php echo admin_url('admin.php?page=wnq-analytics&view=edit-client&action=add'); ?>" class="button button-primary">+ Add New Client</a>
+                <a href="<?php echo admin_url('admin.php?page=wnq-analytics&view=edit-client&action=add'); ?>" class="button button-primary">+ Add Analytics Client</a>
                 <a href="<?php echo admin_url('admin.php?page=wnq-analytics'); ?>" class="button">← Back to Dashboard</a>
                 <a href="<?php echo admin_url('admin.php?page=wnq-analytics&view=settings'); ?>" class="button">⚙️ Settings</a>
             </div>
 
-            <?php if (empty($all_clients)): ?>
+            <?php if (empty($analytics_clients) && empty($portal_clients)): ?>
                 <div class="notice notice-info">
-                    <p>No analytics clients configured yet. <a href="<?php echo admin_url('admin.php?page=wnq-analytics&view=edit-client&action=add'); ?>">Add your first client →</a></p>
+                    <p>No clients found. <a href="<?php echo admin_url('admin.php?page=wnq-clients'); ?>">Add clients first</a>, then configure analytics for them here.</p>
                 </div>
-            <?php else: ?>
+
+            <?php elseif (!empty($analytics_clients)): ?>
+                <h2 style="font-size:16px; margin-bottom:12px;">Configured Analytics Clients</h2>
                 <table class="wp-list-table widefat fixed striped">
                     <thead>
                         <tr>
@@ -421,12 +440,12 @@ final class AnalyticsAdmin
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($all_clients as $client): ?>
+                        <?php foreach ($analytics_clients as $client): ?>
                         <tr>
                             <td><strong><?php echo esc_html($client['client_name']); ?></strong></td>
                             <td><code style="font-size:12px;"><?php echo esc_html($client['client_id']); ?></code></td>
                             <td>
-                                <?php if ($client['website_url']): ?>
+                                <?php if (!empty($client['website_url'])): ?>
                                     <a href="<?php echo esc_url($client['website_url']); ?>" target="_blank" rel="noopener">
                                         <?php echo esc_html($client['website_url']); ?>
                                     </a>
@@ -452,8 +471,71 @@ final class AnalyticsAdmin
                     </tbody>
                 </table>
                 <p style="color:#666; font-size:13px; margin-top:12px;">
-                    <?php echo count($all_clients); ?> client<?php echo count($all_clients) !== 1 ? 's' : ''; ?> configured.
+                    <?php echo count($analytics_clients); ?> analytics client<?php echo count($analytics_clients) !== 1 ? 's' : ''; ?> configured.
                 </p>
+
+                <?php
+                // Show portal clients that don't have analytics configured yet
+                $unconfigured = array_values(array_filter($portal_clients, fn($c) => !isset($analytics_by_id[$c['client_id']])));
+                if (!empty($unconfigured)):
+                ?>
+                <h2 style="font-size:16px; margin:24px 0 12px;">Clients Without Analytics</h2>
+                <table class="wp-list-table widefat fixed striped">
+                    <thead>
+                        <tr>
+                            <th>Client Name</th>
+                            <th style="width:140px;">Client ID</th>
+                            <th>Website</th>
+                            <th style="width:180px;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($unconfigured as $client): ?>
+                        <tr>
+                            <td><strong><?php echo esc_html($client['name']); ?></strong></td>
+                            <td><code style="font-size:12px;"><?php echo esc_html($client['client_id']); ?></code></td>
+                            <td><?php echo esc_html($client['website'] ?: '—'); ?></td>
+                            <td>
+                                <a href="<?php echo admin_url('admin.php?page=wnq-analytics&view=edit-client&action=add&prefill_client_id=' . urlencode($client['client_id']) . '&prefill_name=' . urlencode($client['name'])); ?>" class="button button-small button-primary">Configure Analytics</a>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+                <?php endif; ?>
+
+            <?php elseif (!empty($portal_clients)): ?>
+                <div class="notice notice-warning">
+                    <p><strong>No analytics configured yet.</strong> You have <?php echo count($portal_clients); ?> portal client<?php echo count($portal_clients) !== 1 ? 's' : ''; ?> that can be connected to Google Analytics. <a href="<?php echo admin_url('admin.php?page=wnq-analytics&view=edit-client&action=add'); ?>">Configure analytics →</a></p>
+                </div>
+                <h2 style="font-size:16px; margin:20px 0 12px;">Available Clients</h2>
+                <table class="wp-list-table widefat fixed striped">
+                    <thead>
+                        <tr>
+                            <th>Client Name</th>
+                            <th style="width:140px;">Client ID</th>
+                            <th>Website</th>
+                            <th style="width:180px;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($portal_clients as $client): ?>
+                        <tr>
+                            <td><strong><?php echo esc_html($client['name']); ?></strong></td>
+                            <td><code style="font-size:12px;"><?php echo esc_html($client['client_id']); ?></code></td>
+                            <td><?php echo esc_html($client['website'] ?: '—'); ?></td>
+                            <td>
+                                <a href="<?php echo admin_url('admin.php?page=wnq-analytics&view=edit-client&action=add&prefill_client_id=' . urlencode($client['client_id']) . '&prefill_name=' . urlencode($client['name'])); ?>" class="button button-small button-primary">Configure Analytics</a>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+
+            <?php else: ?>
+                <div class="notice notice-info">
+                    <p>No analytics clients configured yet. <a href="<?php echo admin_url('admin.php?page=wnq-analytics&view=edit-client&action=add'); ?>">Add your first analytics client →</a></p>
+                </div>
             <?php endif; ?>
         </div>
         <?php
@@ -476,6 +558,10 @@ final class AnalyticsAdmin
                 return;
             }
         }
+
+        // Support pre-filling fields when linking from the clients list
+        $prefill_client_id = isset($_GET['prefill_client_id']) ? sanitize_text_field($_GET['prefill_client_id']) : '';
+        $prefill_name      = isset($_GET['prefill_name'])      ? sanitize_text_field($_GET['prefill_name'])      : '';
 
         $form_action = ($action === 'edit') ? 'wnq_update_analytics_client' : 'wnq_add_analytics_client';
         $page_title  = ($action === 'edit') ? '✏️ Edit Analytics Client' : '➕ Add Analytics Client';
@@ -518,7 +604,7 @@ final class AnalyticsAdmin
                         <th style="width:200px;"><label for="client_name">Client Name <span style="color:red;">*</span></label></th>
                         <td>
                             <input type="text" id="client_name" name="client_name" class="regular-text" required
-                                value="<?php echo esc_attr($client['client_name'] ?? ''); ?>"
+                                value="<?php echo esc_attr($client['client_name'] ?? $prefill_name); ?>"
                                 placeholder="e.g. Acme Corp">
                         </td>
                     </tr>
@@ -526,7 +612,7 @@ final class AnalyticsAdmin
                         <th><label for="client_id">Client ID <span style="color:red;">*</span></label></th>
                         <td>
                             <input type="text" id="client_id" name="client_id" class="regular-text" required
-                                value="<?php echo esc_attr($client['client_id'] ?? ''); ?>"
+                                value="<?php echo esc_attr($client['client_id'] ?? $prefill_client_id); ?>"
                                 placeholder="e.g. acme-corp"
                                 pattern="[a-z0-9\-]+"
                                 <?php echo ($action === 'edit') ? 'readonly style="background:#f5f5f5; color:#666;"' : ''; ?>>
@@ -757,12 +843,23 @@ final class AnalyticsAdmin
         try {
             check_ajax_referer('wnq_analytics_nonce', 'nonce');
 
-            if (!current_user_can('manage_options') && !current_user_can('wnq_manage_portal')) {
-                wp_send_json_error(['message' => 'Permission denied']);
-                return;
+            $is_admin  = current_user_can('manage_options') || current_user_can('wnq_manage_portal');
+            $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+
+            if (!$is_admin) {
+                if (!is_user_logged_in()) {
+                    wp_send_json_error(['message' => 'Authentication required']);
+                    return;
+                }
+                // Non-admin clients can only access their own analytics data
+                $user_client_id = trim((string) get_user_meta(get_current_user_id(), 'wnq_client_id', true));
+                if (empty($user_client_id)) {
+                    wp_send_json_error(['message' => 'No client account linked to this user']);
+                    return;
+                }
+                $client_id = $user_client_id; // Always use user's own client_id for security
             }
 
-            $client_id  = sanitize_text_field($_POST['client_id'] ?? '');
             $date_range = intval($_POST['date_range'] ?? 30);
 
             $config      = AnalyticsConfig::getClientConfig($client_id);
