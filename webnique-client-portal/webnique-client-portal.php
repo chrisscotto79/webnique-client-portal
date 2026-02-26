@@ -72,6 +72,15 @@ register_activation_hook(__FILE__, function() {
             \WNQ\Models\SEO::createTables();
         }
     }
+
+    // SEO OS Hub tables
+    $seoos_bootstrap = WNQ_PORTAL_PATH . 'includes/Core/SEOOSBootstrap.php';
+    if (file_exists($seoos_bootstrap)) {
+        require_once $seoos_bootstrap;
+        if (class_exists('WNQ\\Core\\SEOOSBootstrap')) {
+            \WNQ\Core\SEOOSBootstrap::createTables();
+        }
+    }
 });
 
 // DEACTIVATION
@@ -87,13 +96,28 @@ add_action('plugins_loaded', function() {
     if (!class_exists('WNQ\\Core\\Plugin')) {
         return;
     }
-    
+
     try {
         WNQ\Core\Plugin::init();
     } catch (Exception $e) {
         error_log('WebNique Portal Init Error: ' . $e->getMessage());
     }
 }, 10);
+
+// SEO OS — Initialize after portal is loaded
+add_action('plugins_loaded', function() {
+    $seoos = WNQ_PORTAL_PATH . 'includes/Core/SEOOSBootstrap.php';
+    if (file_exists($seoos)) {
+        require_once $seoos;
+        if (class_exists('WNQ\\Core\\SEOOSBootstrap')) {
+            try {
+                \WNQ\Core\SEOOSBootstrap::init();
+            } catch (Exception $e) {
+                error_log('WebNique SEO OS Init Error: ' . $e->getMessage());
+            }
+        }
+    }
+}, 15);
 
 // CLIENT HANDLERS
 add_action('admin_post_wnq_save_client', function() {

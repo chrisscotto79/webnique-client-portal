@@ -221,24 +221,45 @@ This plugin is private and maintained internally by WebNique.
 For development questions, roadmap changes, or feature requests, contact the WebNique development team.
 
 Changelog
+2.1.0 - SEO Operating System
+
+Complete AI-powered SEO OS integrated into hub:
+- 8 new database tables for SEO OS
+- SEO Hub admin menu (Dashboard, Clients, Keywords, Content Automation, Technical Audits, Reports, API Management, Settings)
+- WebNique SEO Agent client plugin (separate installable)
+- Groq/OpenAI/Together AI modular engine with free tier support
+- Nightly audit system via WP-Cron (missing H1, thin content, schema, alt text, declining ranks)
+- Monthly report auto-generation with AI executive summaries
+- REST API for client plugin: /wp-json/wnq/v1/agent/*
+- Keyword tracking with cluster grouping and position history
+- Content gap analysis engine
+- AI content job queue with manual approval workflow
+- Automation activity log for full traceability
+
+2.0.0
+
+Full client portal system with analytics, SEO tracking, tasks, billing
+
 0.1.0
 
 Initial plugin scaffolding
 
-Folder and file structure created
+SEO OS Architecture Notes
 
-No functional logic implemented yet
+Hub (web-nique.com):
+  All SEO intelligence, analysis, AI, automation, reporting runs here
 
-Final Notes
+Client Sites (WebNique SEO Agent plugin):
+  Data collection and relay only — no SEO logic on client sites
+  Authenticates via API key (X-WNQ-Api-Key header)
+  Syncs twice daily via WP-Cron
 
-This plugin is being built intentionally and methodically.
+AI Providers (free-tier first):
+  Groq: console.groq.com — 14,400 req/day free
+  Together AI: api.together.xyz — $25 free credit
+  OpenAI: platform.openai.com — paid
 
-Every feature will be added only after:
-
-Architecture is validated
-
-Security is confirmed
-
-Performance implications are understood
-
-There is no rush — the goal is a long-term platform, not a quick demo.
+Phase Roadmap:
+  Phase 1 (Complete) - Core automation: content gaps, meta tags, schema, audits, reports
+  Phase 2 (Planned)  - Advanced keyword clustering, GSC auto-sync, forecasting
+  Phase 3 (Planned)  - Predictive SEO, white-label client portal, email delivery
