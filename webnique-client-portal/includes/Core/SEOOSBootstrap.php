@@ -25,8 +25,11 @@ final class SEOOSBootstrap
 {
     public static function init(): void
     {
-        // Load all SEO OS classes
+        // Load all SEO OS classes (including Client model needed by every page)
         self::loadClasses();
+
+        // Set initial AI provider settings (first-run only, won't overwrite saved settings)
+        self::maybeInitAISettings();
 
         // Register admin UI
         if (is_admin()) {
@@ -52,22 +55,73 @@ final class SEOOSBootstrap
         $base = WNQ_PORTAL_PATH;
 
         $files = [
+            // Core models — Client must load BEFORE SEOHubAdmin which uses Client::getAll()
+            'includes/Models/Client.php',
+            'includes/Models/Task.php',
             'includes/Models/SEOHub.php',
+            // Services
             'includes/Services/AIEngine.php',
             'includes/Services/AutomationEngine.php',
             'includes/Services/AuditEngine.php',
             'includes/Services/ReportGenerator.php',
+            // Controllers & Core
             'includes/Controllers/SEOAgentController.php',
             'includes/Core/CronScheduler.php',
+            // Admin UI (must come last — depends on everything above)
             'admin/SEOHubAdmin.php',
         ];
 
         foreach ($files as $f) {
             $path = $base . $f;
-            if (file_exists($path)) {
+            if (file_exists($path) && !class_exists(self::classFromFile($f))) {
                 require_once $path;
             }
         }
+    }
+
+    /**
+     * Map file path → expected class name for the class_exists guard.
+     * Prevents double-loading if the main portal already required the file.
+     */
+    private static function classFromFile(string $file): string
+    {
+        $map = [
+            'includes/Models/Client.php'              => 'WNQ\\Models\\Client',
+            'includes/Models/Task.php'                => 'WNQ\\Models\\Task',
+            'includes/Models/SEOHub.php'              => 'WNQ\\Models\\SEOHub',
+            'includes/Services/AIEngine.php'          => 'WNQ\\Services\\AIEngine',
+            'includes/Services/AutomationEngine.php'  => 'WNQ\\Services\\AutomationEngine',
+            'includes/Services/AuditEngine.php'       => 'WNQ\\Services\\AuditEngine',
+            'includes/Services/ReportGenerator.php'   => 'WNQ\\Services\\ReportGenerator',
+            'includes/Controllers/SEOAgentController.php' => 'WNQ\\Controllers\\SEOAgentController',
+            'includes/Core/CronScheduler.php'         => 'WNQ\\Core\\CronScheduler',
+            'admin/SEOHubAdmin.php'                   => 'WNQ\\Admin\\SEOHubAdmin',
+        ];
+        return $map[$file] ?? '';
+    }
+
+    /**
+     * Set default AI provider settings on first run.
+     * Won't overwrite if admin has already saved settings.
+     */
+    private static function maybeInitAISettings(): void
+    {
+        if (get_option('wnq_ai_settings') !== false) {
+            return; // Already configured — respect existing settings
+        }
+
+        update_option('wnq_ai_settings', [
+            'provider'         => 'openai',
+            'openai_api_key'   => '',
+            'openai_model'     => 'gpt-4o-mini',
+            'groq_api_key'     => '',
+            'groq_model'       => 'llama-3.1-8b-instant',
+            'together_api_key' => '',
+            'together_model'   => 'mistralai/Mixtral-8x7B-Instruct-v0.1',
+            'cache_ttl'        => 86400,
+            'max_tokens'       => 2000,
+            'temperature'      => 0.7,
+        ]);
     }
 
     private static function registerFormHandlers(): void

@@ -241,16 +241,16 @@ PROMPT,
     public static function getSettings(): array
     {
         return get_option('wnq_ai_settings', [
-            'provider'      => 'groq',
-            'groq_api_key'  => '',
-            'groq_model'    => 'llama-3.1-8b-instant',
-            'openai_api_key'=> '',
-            'openai_model'  => 'gpt-3.5-turbo',
+            'provider'         => 'openai',
+            'openai_api_key'   => '',
+            'openai_model'     => 'gpt-4o-mini',
+            'groq_api_key'     => '',
+            'groq_model'       => 'llama-3.1-8b-instant',
             'together_api_key' => '',
             'together_model'   => 'mistralai/Mixtral-8x7B-Instruct-v0.1',
-            'cache_ttl'     => 86400,
-            'max_tokens'    => 2000,
-            'temperature'   => 0.7,
+            'cache_ttl'        => 86400,
+            'max_tokens'       => 2000,
+            'temperature'      => 0.7,
         ]);
     }
 
