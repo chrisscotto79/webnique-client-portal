@@ -831,7 +831,7 @@ final class SEOHubAdmin
         }
 
         // Cloudways/environment notice (shown on non-production domains)
-        $current_host = parse_url(site_url(), PHP_URL_HOST);
+        $current_host = parse_url(site_url(), PHP_URL_HOST) ?? '';
         if (str_contains($current_host, 'cloudwaysapps.com') || str_contains($current_host, 'staging') || str_contains($current_host, 'localhost')) {
             echo '<div style="background:#fffbeb;border-left:4px solid #d97706;padding:14px 20px;margin:0;">';
             echo '<strong>🔧 Testing Environment Detected:</strong> Hub is running at <code>' . esc_html(site_url()) . '</code>. ';
@@ -918,6 +918,7 @@ final class SEOHubAdmin
         echo '<button type="submit" class="wnq-btn wnq-btn-primary wnq-btn-lg">💾 Save AI Settings</button>';
         echo '<button type="button" class="wnq-btn wnq-btn-lg" onclick="wnqHubAjax(\'test_ai_connection\')">🧪 Test Connection</button>';
         echo '</div>';
+        echo '<div id="wnq-action-result" style="margin-top:12px;"></div>';
 
         echo '</form>';
         echo '</div>';
