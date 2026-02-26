@@ -125,6 +125,9 @@ final class SEOHubAdmin
   <div class="wnq-hub-section">
     <h2>Quick Actions</h2>
     <div class="wnq-hub-actions">
+      <button class="wnq-btn" onclick="wnqHubAjax('install_tables')" style="background:#1e3a5f;color:#fff;border-color:#1e3a5f;">
+        🗄️ Install / Repair Tables
+      </button>
       <button class="wnq-btn wnq-btn-primary" onclick="wnqHubAjax('run_nightly_audit')">
         🔍 Run Nightly Audit Now
       </button>
@@ -1053,6 +1056,11 @@ final class SEOHubAdmin
             case 'generate_all_reports':
                 $result = \WNQ\Services\ReportGenerator::generateAllMonthlyReports();
                 wp_send_json_success(['message' => "Reports: generated={$result['generated']}, skipped={$result['skipped']}, failed={$result['failed']}", 'data' => $result]);
+                break;
+
+            case 'install_tables':
+                SEOHub::createTables();
+                wp_send_json_success(['message' => 'All SEO OS database tables created / verified successfully.']);
                 break;
 
             case 'test_ai_connection':
