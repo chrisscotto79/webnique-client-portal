@@ -681,10 +681,12 @@ final class SEOHub
     {
         global $wpdb;
         $t = $wpdb->prefix . 'wnq_seo_audit_findings';
-        $cid = esc_sql($client_id);
 
         $rows = $wpdb->get_results(
-            "SELECT finding_type, severity, COUNT(*) as count FROM $t WHERE client_id='$cid' AND status='open' GROUP BY finding_type, severity",
+            $wpdb->prepare(
+                "SELECT finding_type, severity, COUNT(*) as count FROM {$t} WHERE client_id=%s AND status='open' GROUP BY finding_type, severity",
+                $client_id
+            ),
             ARRAY_A
         ) ?: [];
 

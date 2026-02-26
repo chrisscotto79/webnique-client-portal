@@ -268,7 +268,7 @@ final class SEOOSBootstrap
             wp_die('Missing required fields');
         }
 
-        $client  = \WNQ\Models\Client::getByClientId($client_id);
+        $client  = \WNQ\Models\Client::getByClientId($client_id) ?? [];
         $profile = \WNQ\Models\SEOHub::getProfile($client_id) ?? [];
 
         \WNQ\Models\SEOHub::createContentJob([
