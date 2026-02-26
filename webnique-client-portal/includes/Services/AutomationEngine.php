@@ -100,7 +100,7 @@ final class AutomationEngine
             return ['gaps_found' => $gap_count, 'jobs_created' => 0];
         }
 
-        $client = Client::getByClientId($client_id);
+        $client = Client::getByClientId($client_id) ?? [];
         $jobs_created = 0;
 
         foreach ($gap_kws as $kw) {
@@ -147,7 +147,7 @@ final class AutomationEngine
     public static function queueMetaTagJobs(string $client_id, int $limit = 5): array
     {
         $profile = SEOHub::getProfile($client_id) ?? [];
-        $client  = Client::getByClientId($client_id);
+        $client  = Client::getByClientId($client_id) ?? [];
 
         // Find pages with short/missing meta descriptions
         global $wpdb;
@@ -193,7 +193,7 @@ final class AutomationEngine
     public static function queueSchemaJobs(string $client_id, int $limit = 5): array
     {
         $profile = SEOHub::getProfile($client_id) ?? [];
-        $client  = Client::getByClientId($client_id);
+        $client  = Client::getByClientId($client_id) ?? [];
 
         $pages = SEOHub::getSiteData($client_id, ['has_issue' => 'no_schema', 'limit' => $limit]);
         $jobs_created = 0;
@@ -230,7 +230,7 @@ final class AutomationEngine
         $all_pages = SEOHub::getSiteData($client_id, ['limit' => 50]);
 
         $available = array_map(fn($p) => ($p['title'] ?? '') . ' - ' . $p['page_url'], $all_pages);
-        $client  = Client::getByClientId($client_id);
+        $client  = Client::getByClientId($client_id) ?? [];
         $jobs_created = 0;
 
         foreach ($pages_needing_links as $page) {

@@ -509,7 +509,6 @@ final class SEOHubAdmin
             $stats   = AutomationEngine::getStats($client_id);
             $jobs    = SEOHub::getContentJobs($client_id, ['limit' => 50]);
             $profile = SEOHub::getProfile($client_id) ?? [];
-            $client  = Client::getByClientId($client_id);
 
             // Stats
             echo '<div class="wnq-hub-stats-bar">';
@@ -685,7 +684,6 @@ final class SEOHubAdmin
 
         if ($client_id) {
             $reports = SEOHub::getReports($client_id);
-            $client  = Client::getByClientId($client_id);
 
             echo '<table class="wnq-hub-table"><thead><tr><th>Report</th><th>Period</th><th>Status</th><th>Generated</th><th>Actions</th></tr></thead><tbody>';
             if (empty($reports)) {
