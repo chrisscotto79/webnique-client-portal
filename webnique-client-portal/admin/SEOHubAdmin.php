@@ -719,9 +719,27 @@ final class SEOHubAdmin
 
         self::renderHeader('SEO OS — API Management');
 
+        // ── Hub URL callout (this is what client plugins must use) ──
+        $hub_url = site_url();
+        echo '<div style="background:#1e3a5f;color:white;padding:20px 24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap;">';
+        echo '<div style="flex:1;">';
+        echo '<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;opacity:.7;margin-bottom:4px;">Your Hub URL — enter this in every client plugin</div>';
+        echo '<code id="wnq-hub-url-value" style="font-size:18px;font-weight:700;background:rgba(255,255,255,.1);padding:8px 16px;border-radius:6px;letter-spacing:.5px;">' . esc_html($hub_url) . '</code>';
+        echo '</div>';
+        echo '<button type="button" onclick="navigator.clipboard.writeText(\'' . esc_js($hub_url) . '\').then(()=>{this.innerHTML=\'✓ Copied!\';setTimeout(()=>this.innerHTML=\'📋 Copy URL\',2000)})" style="background:white;color:#1e3a5f;border:none;padding:10px 18px;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px;">📋 Copy URL</button>';
+        echo '</div>';
+
         echo '<div class="wnq-hub-section">';
         echo '<h2>Agent API Keys</h2>';
-        echo '<p class="wnq-muted">Each client WordPress site needs an API key to communicate with this hub. Install the <strong>WebNique SEO Agent</strong> plugin on the client site and enter this key in the plugin settings.</p>';
+        echo '<p class="wnq-muted">Each client WordPress site needs an API key to communicate with this hub. Install the <strong>WebNique SEO Agent</strong> plugin on the client site and enter the Hub URL above plus the key generated here.</p>';
+
+        // Notices (generated/revoked)
+        if (!empty($_GET['generated'])) {
+            echo '<div class="wnq-hub-notice success" style="background:#dcfce7;color:#166534;border:1px solid #86efac;padding:10px 14px;border-radius:6px;margin-bottom:16px;">✅ API key generated successfully. Copy it from the table below and enter it in the client plugin.</div>';
+        }
+        if (!empty($_GET['revoked'])) {
+            echo '<div class="wnq-hub-notice" style="background:#fef9c3;color:#92400e;border:1px solid #fde68a;padding:10px 14px;border-radius:6px;margin-bottom:16px;">⚠ Key revoked. The client plugin using this key will no longer be able to sync.</div>';
+        }
 
         // Generate key form
         echo '<form method="post" action="' . admin_url('admin-post.php') . '" style="background:#f0f9ff;padding:20px;border-radius:8px;margin:16px 0;border:1px solid #bae6fd;">';
@@ -770,17 +788,23 @@ final class SEOHubAdmin
         echo '</div>';
 
         // Installation instructions
+        $hub_url = site_url();
         echo '<div class="wnq-hub-section">';
         echo '<h2>Plugin Installation Instructions</h2>';
-        echo '<ol style="line-height:2;">';
-        echo '<li>Download the <strong>WebNique SEO Agent</strong> plugin (included in this package as <code>webnique-seo-agent.zip</code>)</li>';
-        echo '<li>Install on the client WordPress site via <em>Plugins → Add New → Upload Plugin</em></li>';
-        echo '<li>Activate the plugin</li>';
-        echo '<li>Go to <em>Settings → WebNique SEO Agent</em></li>';
-        echo '<li>Enter the <strong>Hub URL</strong>: <code>' . esc_html(site_url()) . '</code></li>';
-        echo '<li>Enter the <strong>API Key</strong> generated above</li>';
-        echo '<li>Click <strong>Save & Test Connection</strong></li>';
-        echo '<li>Data will begin syncing to this hub automatically</li>';
+        echo '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:16px;margin-bottom:20px;">';
+        echo '<strong>⚡ Quick Reference:</strong><br>';
+        echo 'Hub URL to enter in every client plugin: <code style="background:#f3f4f6;padding:2px 8px;border-radius:4px;font-size:13px;">' . esc_html($hub_url) . '</code>';
+        echo '</div>';
+        echo '<ol style="line-height:2.2;">';
+        echo '<li>Zip the <code>webnique-seo-agent</code> folder from this repo into <code>webnique-seo-agent.zip</code></li>';
+        echo '<li>On the <strong>client\'s</strong> WordPress site go to <em>Plugins → Add New → Upload Plugin</em></li>';
+        echo '<li>Upload and activate <code>webnique-seo-agent.zip</code></li>';
+        echo '<li>Go to <em>Settings → WebNique SEO Agent</em> on the client site</li>';
+        echo '<li>Set <strong>Hub URL</strong> to: <code>' . esc_html($hub_url) . '</code></li>';
+        echo '<li>Set <strong>API Key</strong> to the key generated in the table above for that client</li>';
+        echo '<li>Click <strong>Save Settings</strong> then <strong>Test Connection</strong></li>';
+        echo '<li>Click <strong>Sync to Hub Now</strong> to push the first data batch</li>';
+        echo '<li>All future syncs happen automatically (twice daily by default)</li>';
         echo '</ol>';
         echo '</div>';
 
@@ -796,6 +820,24 @@ final class SEOHubAdmin
         $cron_status = CronScheduler::getCronStatus();
 
         self::renderHeader('SEO OS — AI & Automation Settings');
+
+        // Notices
+        if (!empty($_GET['saved'])) {
+            echo '<div style="background:#dcfce7;color:#166534;border:1px solid #86efac;padding:12px 20px;font-weight:600;">✅ Settings saved successfully.</div>';
+        }
+        if (!empty($_GET['reset'])) {
+            echo '<div style="background:#dcfce7;color:#166534;border:1px solid #86efac;padding:12px 20px;font-weight:600;">✅ Prompt templates reset to defaults.</div>';
+        }
+
+        // Cloudways/environment notice (shown on non-production domains)
+        $current_host = parse_url(site_url(), PHP_URL_HOST);
+        if (str_contains($current_host, 'cloudwaysapps.com') || str_contains($current_host, 'staging') || str_contains($current_host, 'localhost')) {
+            echo '<div style="background:#fffbeb;border-left:4px solid #d97706;padding:14px 20px;margin:0;">';
+            echo '<strong>🔧 Testing Environment Detected:</strong> Hub is running at <code>' . esc_html(site_url()) . '</code>. ';
+            echo 'When you move to production (web-nique.com), regenerate API keys and update the Hub URL in each client plugin.<br>';
+            echo '<small style="color:#92400e;">The <code>_load_textdomain_just_in_time</code> notice you may see in debug mode is from the <strong>Cloudways Breeze caching plugin</strong> — it is unrelated to the SEO OS and can be safely ignored.</small>';
+            echo '</div>';
+        }
 
         echo '<div class="wnq-hub-section">';
         echo '<form method="post" action="' . admin_url('admin-post.php') . '">';

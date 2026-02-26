@@ -246,8 +246,10 @@ Initial plugin scaffolding
 
 SEO OS Architecture Notes
 
-Hub (web-nique.com):
+Hub (current test URL: https://wordpress-1502434-5752021.cloudwaysapps.com/):
+  Production hub: web-nique.com (once DNS is pointed)
   All SEO intelligence, analysis, AI, automation, reporting runs here
+  Hub URL is always = site_url() of the WordPress install hosting this plugin
 
 Client Sites (WebNique SEO Agent plugin):
   Data collection and relay only — no SEO logic on client sites
