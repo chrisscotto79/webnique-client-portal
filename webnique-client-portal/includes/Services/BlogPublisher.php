@@ -133,7 +133,7 @@ final class BlogPublisher
                 'external_citation_instruction' => $ext_instruction,
             ],
             $client_id,
-            ['max_tokens' => 4000]
+            ['max_tokens' => 4096]
         );
 
         if (!$ai_result['success']) {

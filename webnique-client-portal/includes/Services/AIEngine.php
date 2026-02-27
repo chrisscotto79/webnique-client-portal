@@ -160,7 +160,7 @@ Return as a numbered list: Topic | Primary Keyword | Secondary Keywords | Conten
 PROMPT,
 
         'blog_post_full' => <<<'PROMPT'
-You are an expert local SEO copywriter. Write a complete, publish-ready blog post.
+You are an expert local SEO copywriter. Write a complete, publish-ready blog post of AT LEAST 2000 words.
 
 Business: {business_name}
 Services: {services}
@@ -169,39 +169,52 @@ Post Title (working title): {title}
 Category Type: {category_type}
 Focus Keyword: {focus_keyword}
 Tone: {tone}
-Target Word Count: 900-1200 words
+Target Word Count: 2000-2500 words
 
-Internal Link Candidates (use 2-4 of these naturally in the body):
+Internal Link Candidates (use 3-5 of these naturally in the body):
 {internal_links}
 
 {external_citation_instruction}
 
+H1 TITLE RULES (critical for SEO):
+- The focus keyword MUST appear at the very beginning of the H1
+- Include a power word (e.g. Proven, Essential, Ultimate, Expert, Trusted, Best, Complete, Effective)
+- Include a number where natural (e.g. "5 Reasons", "7 Signs", "10 Tips", "3 Steps")
+- Example pattern: "{focus_keyword}: 7 Expert Tips for [Location] Homeowners"
+- Keep under 65 characters
+
 STRICT FORMAT — return EXACTLY using these delimiters, nothing before ===H1===:
 
 ===H1===
-[One SEO-optimized H1 title that includes the focus keyword. No quotes.]
+[SEO-optimized H1 title following the rules above. No quotes.]
 
 ===META===
-[Meta description, 150-160 characters, includes focus keyword, ends with a subtle CTA. No quotes.]
+[Meta description, 150-160 characters, includes focus keyword near the start, ends with a subtle CTA. No quotes.]
 
 ===TOC===
 <ul>
   <li><a href="#section-1">First Section Title</a></li>
   <li><a href="#section-2">Second Section Title</a></li>
   <li><a href="#section-3">Third Section Title</a></li>
+  <li><a href="#section-4">Fourth Section Title</a></li>
+  <li><a href="#section-5">Fifth Section Title</a></li>
+  <li><a href="#section-6">Sixth Section Title</a></li>
 </ul>
 
 ===BODY===
-[Full HTML blog post body. Rules:
+[Full HTML blog post body — minimum 2000 words. Rules:
 - Do NOT include H1 (that is separate above)
-- Use <h2 id="section-N"> for main sections matching the TOC anchors
-- Use <h3> for subsections
+- Use 6 <h2 id="section-N"> sections matching the TOC anchors above
+- At least ONE <h2> must contain the focus keyword naturally
+- Use <h3> subsections inside each <h2> to add depth (aim for 2-3 <h3> per <h2>)
 - Wrap all paragraphs in <p> tags
-- Short paragraphs: 2-3 sentences max
-- Insert 2-4 internal links naturally: <a href="URL">anchor text</a>
-- Focus keyword appears in first 100 words and 2-3 times total (natural density)
-- End with a <p> CTA relevant to the services
-- No keyword stuffing, no filler phrases like "In conclusion" or "In today's world"]
+- Paragraphs: 2-4 sentences max — never write a wall of text
+- Focus keyword appears in the first 100 words
+- Focus keyword appears 8-12 times total throughout the post (natural 0.5-1% density for 2000 words)
+- Insert 3-5 internal links naturally: <a href="URL">anchor text</a>
+- End with a strong <h2 id="section-6">Conclusion</h2> section that includes the focus keyword and a clear CTA
+- No filler phrases like "In conclusion", "In today's world", "Look no further", or "At [Business]"
+- Write with specific, useful information — not generic advice]
 
 ===END===
 PROMPT,
