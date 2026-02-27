@@ -593,8 +593,10 @@ final class SEOHubAdmin
         echo '</select>';
         if ($client_id) {
             echo ' &nbsp;<button class="wnq-btn wnq-btn-primary" onclick="wnqHubAjax(\'run_client_audit\', \'' . esc_js($client_id) . '\')">🔍 Run Audit Now</button>';
+            echo ' &nbsp;<button class="wnq-btn" style="background:#059669;color:#fff;border-color:#059669;" onclick="wnqHubAjax(\'fix_seo_issues\', \'' . esc_js($client_id) . '\')">🔧 Auto-Fix SEO Issues</button>';
         }
         echo '</div>';
+        echo '<div id="wnq-action-result" style="margin-top:12px;"></div>';
 
         if ($client_id) {
             $findings = SEOHub::getAuditFindings($client_id, ['status' => 'open']);
@@ -1066,6 +1068,14 @@ final class SEOHubAdmin
                 if (!$entity_id) wp_send_json_error(['message' => 'No finding ID']);
                 SEOHub::resolveAuditFinding($entity_id);
                 wp_send_json_success(['message' => 'Finding resolved']);
+                break;
+
+            case 'fix_seo_issues':
+                if (!$client_id) wp_send_json_error(['message' => 'No client selected']);
+                $result = \WNQ\Services\SEOHealthFixer::runForClient($client_id);
+                $msg = "Auto-fix complete — Fixed: {$result['fixed']}, Failed: {$result['failed']}, Skipped: {$result['skipped']}";
+                if (!empty($result['error'])) $msg .= ' — ' . $result['error'];
+                wp_send_json_success(['message' => $msg, 'data' => $result]);
                 break;
 
             case 'generate_report':
