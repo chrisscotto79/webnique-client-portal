@@ -21,6 +21,7 @@ define('WNQA_SLUG', 'webnique-seo-agent');
 require_once WNQA_PATH . 'includes/DataCollector.php';
 require_once WNQA_PATH . 'includes/APISync.php';
 require_once WNQA_PATH . 'includes/LocalChecks.php';
+require_once WNQA_PATH . 'includes/BlogReceiver.php';
 require_once WNQA_PATH . 'admin/AgentSettings.php';
 
 register_activation_hook(__FILE__,   'wnqa_activate');
@@ -50,6 +51,9 @@ add_action('plugins_loaded', function () {
     if (is_admin()) {
         \WNQA\Admin\AgentSettings::register();
     }
+
+    // Register blog receiver REST endpoint (hub → agent publishing)
+    \WNQA\BlogReceiver::register();
 
     // Cron handlers
     add_action('wnqa_sync_to_hub', function () {

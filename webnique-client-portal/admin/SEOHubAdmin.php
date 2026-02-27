@@ -51,6 +51,7 @@ final class SEOHubAdmin
             ['Content Automation','wnq-seo-hub-content',     [self::class, 'renderContent']],
             ['Technical Audits',  'wnq-seo-hub-audits',      [self::class, 'renderAudits']],
             ['Reports',           'wnq-seo-hub-reports',     [self::class, 'renderReports']],
+            ['Blog Scheduler',    'wnq-seo-hub-blog',        ['WNQ\\Admin\\BlogSchedulerAdmin', 'renderPage']],
             ['API Management',    'wnq-seo-hub-api',         [self::class, 'renderAPI']],
             ['AI Settings',       'wnq-seo-hub-settings',    [self::class, 'renderSettings']],
         ];
@@ -1100,6 +1101,7 @@ final class SEOHubAdmin
             'wnq-seo-hub-content'  => 'Content',
             'wnq-seo-hub-audits'   => 'Audits',
             'wnq-seo-hub-reports'  => 'Reports',
+            'wnq-seo-hub-blog'     => 'Blog Scheduler',
             'wnq-seo-hub-api'      => 'API',
             'wnq-seo-hub-settings' => 'Settings',
         ];
