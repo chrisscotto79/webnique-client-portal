@@ -161,11 +161,15 @@ final class SEOHubAdmin
       <?php
         $health = $c['health'];
         $health_class = $health >= 80 ? 'good' : ($health >= 60 ? 'ok' : 'poor');
+        $hgrade = self::getGrade($health);
       ?>
       <div class="wnq-hub-client-card">
         <div class="wnq-hub-client-header">
           <strong><?php echo esc_html($c['company'] ?: $c['name']); ?></strong>
-          <span class="wnq-health-badge <?php echo $health_class; ?>"><?php echo $health; ?>%</span>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <span style="font-size:13px;font-weight:800;color:<?php echo $hgrade['color']; ?>;background:<?php echo $hgrade['bg']; ?>;padding:2px 8px;border-radius:99px;"><?php echo $hgrade['letter']; ?></span>
+            <span class="wnq-health-badge <?php echo $health_class; ?>"><?php echo $health; ?>%</span>
+          </div>
         </div>
         <div class="wnq-hub-client-meta">
           <span><?php echo (int)$c['stats']['total_pages']; ?> pages</span>
@@ -625,6 +629,87 @@ final class SEOHubAdmin
             echo '<div class="wnq-hub-stat"><span class="value">' . count($findings) . '</span><span class="label">Open Findings</span></div>';
             echo '</div>';
 
+            // ── Category scores ──────────────────────────────────────────────
+            $totalPages = max(1, (int)($stats['total_pages'] ?? 1));
+            $onPageScore = 100;
+            if (($stats['missing_h1']      ?? 0) > 0) $onPageScore -= min(30, (int)round(($stats['missing_h1']      / $totalPages) * 100));
+            if (($stats['no_schema']       ?? 0) > 0) $onPageScore -= min(20, (int)round(($stats['no_schema']       / $totalPages) * 50));
+            if (($stats['missing_alt']     ?? 0) > 0) $onPageScore -= min(15, (int)round(($stats['missing_alt']     / $totalPages) * 40));
+            if (($stats['thin_content']    ?? 0) > 0) $onPageScore -= min(20, (int)round(($stats['thin_content']    / $totalPages) * 50));
+            $onPageScore = max(0, $onPageScore);
+
+            $linksScore = 100;
+            if (($stats['no_internal_links'] ?? 0) > 0) $linksScore -= min(40, (int)round(($stats['no_internal_links'] / $totalPages) * 80));
+            $linksScore = max(0, $linksScore);
+
+            $perfPenalty = 0; $usabilityPenalty = 0;
+            foreach ($findings as $f) {
+                if (in_array($f['finding_type'], ['inline_styles', 'render_blocking'])) $perfPenalty      += 10;
+                if (in_array($f['finding_type'], ['missing_viewport', 'iframes']))      $usabilityPenalty += 10;
+            }
+            $perfScore      = max(0, 100 - $perfPenalty);
+            $usabilityScore = max(0, 100 - $usabilityPenalty);
+            $socialScore    = 50;
+            $catScores      = ['on_page_seo' => $onPageScore, 'links' => $linksScore, 'performance' => $perfScore, 'usability' => $usabilityScore, 'social' => $socialScore];
+            $overallScore   = (int)round(array_sum($catScores) / count($catScores));
+            $overallGrade   = self::getGrade($overallScore);
+
+            // ── Grade / Score Banner ─────────────────────────────────────────
+            echo '<div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-bottom:20px;padding:20px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;">';
+
+            // Big grade circle
+            echo '<div style="text-align:center;min-width:110px;padding:16px 20px;background:' . $overallGrade['bg'] . ';border-radius:12px;flex-shrink:0;">';
+            echo '<div style="font-size:60px;font-weight:900;color:' . $overallGrade['color'] . ';line-height:1;">' . $overallGrade['letter'] . '</div>';
+            echo '<div style="font-size:17px;font-weight:700;color:' . $overallGrade['color'] . ';margin-top:4px;">' . $overallScore . '/100</div>';
+            echo '<div style="font-size:11px;color:#6b7280;margin-top:2px;">' . $overallGrade['label'] . '</div>';
+            echo '</div>';
+
+            // Category score bars
+            echo '<div style="flex:1;min-width:200px;">';
+            echo '<div style="font-size:14px;font-weight:700;color:#1e3a5f;margin-bottom:12px;">Category Scores</div>';
+            foreach (['on_page_seo' => 'On-Page SEO', 'links' => 'Links', 'performance' => 'Performance', 'usability' => 'Usability', 'social' => 'Social'] as $key => $lbl) {
+                $s = $catScores[$key]; $g = self::getGrade($s);
+                echo '<div style="margin-bottom:9px;">';
+                echo '<div style="display:flex;justify-content:space-between;margin-bottom:3px;">';
+                echo '<span style="font-size:12px;font-weight:600;color:#374151;">' . $lbl . '</span>';
+                echo '<span style="font-size:11px;font-weight:700;color:' . $g['color'] . ';background:' . $g['bg'] . ';padding:1px 8px;border-radius:99px;">' . $g['letter'] . ' &nbsp;' . $s . '</span>';
+                echo '</div>';
+                echo '<div style="background:#f3f4f6;border-radius:99px;height:7px;overflow:hidden;">';
+                echo '<div style="height:100%;width:' . $s . '%;background:' . $g['color'] . ';border-radius:99px;"></div>';
+                echo '</div></div>';
+            }
+            echo '</div>';
+
+            // Radar chart
+            echo '<div style="text-align:center;flex-shrink:0;">';
+            echo '<div style="font-size:14px;font-weight:700;color:#1e3a5f;margin-bottom:8px;">Score Radar</div>';
+            echo self::renderRadarSVG($catScores);
+            echo '</div>';
+
+            echo '</div>';
+
+            // ── Suggestions ──────────────────────────────────────────────────
+            $suggestions = [];
+            if (($stats['missing_h1']      ?? 0) > 0) $suggestions[] = ['💡', 'Add H1 tags to ' . $stats['missing_h1']      . ' page(s) to improve search engine understanding.',     'High'];
+            if (($stats['no_schema']       ?? 0) > 0) $suggestions[] = ['💡', $stats['no_schema']       . ' page(s) lack Schema markup. Adding JSON-LD can boost rich results.', 'Medium'];
+            if (($stats['thin_content']    ?? 0) > 0) $suggestions[] = ['💡', $stats['thin_content']    . ' page(s) have thin content (<300 words). Expand to rank better.',       'Medium'];
+            if (($stats['missing_alt']     ?? 0) > 0) $suggestions[] = ['💡', $stats['missing_alt']     . ' image(s) missing alt attributes. Fix for accessibility and image SEO.', 'Low'];
+            if ($linksScore < 70)                      $suggestions[] = ['💡', 'Internal linking score is low. Build more links between pages to spread authority.',                'Medium'];
+            if (empty($suggestions))                   $suggestions[] = ['🎉', 'Great work! No critical on-page issues found. Keep monitoring regularly.',                          'None'];
+
+            $pColors = ['High' => '#ef4444', 'Medium' => '#f59e0b', 'Low' => '#6b7280', 'None' => '#059669'];
+            echo '<div style="margin-bottom:20px;padding:20px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;">';
+            echo '<div style="font-size:15px;font-weight:700;color:#1e3a5f;margin-bottom:12px;">💡 Suggestions</div>';
+            foreach ($suggestions as [$icon, $text, $priority]) {
+                echo '<div style="display:flex;gap:12px;align-items:flex-start;padding:10px 14px;margin-bottom:8px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;">';
+                echo '<span style="font-size:18px;line-height:1.4;">' . $icon . '</span>';
+                echo '<div style="flex:1;">';
+                echo '<p style="margin:0 0 3px;font-size:13px;color:#374151;">' . esc_html($text) . '</p>';
+                if ($priority !== 'None') echo '<span style="font-size:11px;font-weight:700;color:' . $pColors[$priority] . ';">' . $priority . ' priority</span>';
+                echo '</div></div>';
+            }
+            echo '</div>';
+
             // Issue summary
             $type_labels = [
                 'missing_h1'       => ['Missing H1', 'critical'],
@@ -704,14 +789,44 @@ final class SEOHubAdmin
         if ($client_id) {
             $reports = SEOHub::getReports($client_id);
 
-            echo '<table class="wnq-hub-table"><thead><tr><th>Report</th><th>Period</th><th>Status</th><th>Generated</th><th>Actions</th></tr></thead><tbody>';
+            // Archive header with summary
+            if (!empty($reports)) {
+                $scores_list = array_filter(array_map(function($r) {
+                    $d = is_string($r['report_data']) ? json_decode($r['report_data'], true) : [];
+                    return $d['site_health']['score'] ?? null;
+                }, $reports));
+                if (!empty($scores_list)) {
+                    $avg = (int)round(array_sum($scores_list) / count($scores_list));
+                    $ag  = self::getGrade($avg);
+                    echo '<div style="display:flex;gap:16px;align-items:center;padding:16px 20px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;margin-bottom:16px;flex-wrap:wrap;">';
+                    echo '<div style="text-align:center;padding:10px 16px;background:' . $ag['bg'] . ';border-radius:10px;">';
+                    echo '<div style="font-size:36px;font-weight:900;color:' . $ag['color'] . ';line-height:1;">' . $ag['letter'] . '</div>';
+                    echo '<div style="font-size:12px;color:#6b7280;margin-top:2px;">Avg Grade</div>';
+                    echo '</div>';
+                    echo '<div>';
+                    echo '<div style="font-size:16px;font-weight:700;color:#1e3a5f;">' . count($reports) . ' Reports in Archive</div>';
+                    echo '<div style="font-size:13px;color:#6b7280;margin-top:4px;">Average health score across all reports: <strong style="color:' . $ag['color'] . ';">' . $avg . '/100</strong></div>';
+                    echo '</div>';
+                    echo '</div>';
+                }
+            }
+
+            echo '<table class="wnq-hub-table"><thead><tr><th>Report</th><th>Period</th><th>Grade</th><th>Status</th><th>Generated</th><th>Actions</th></tr></thead><tbody>';
             if (empty($reports)) {
-                echo '<tr><td colspan="5" style="text-align:center;padding:40px;color:#6b7280;">No reports generated yet.</td></tr>';
+                echo '<tr><td colspan="6" style="text-align:center;padding:40px;color:#6b7280;">No reports generated yet. Click "Generate This Month\'s Report" above.</td></tr>';
             }
             foreach ($reports as $r) {
+                $rdata  = is_string($r['report_data']) ? json_decode($r['report_data'], true) : [];
+                $hscore = $rdata['site_health']['score'] ?? null;
                 echo '<tr>';
                 echo '<td><strong>' . esc_html($r['title']) . '</strong></td>';
                 echo '<td>' . esc_html($r['period_start']) . ' – ' . esc_html($r['period_end']) . '</td>';
+                if ($hscore !== null) {
+                    $g = self::getGrade((int)$hscore);
+                    echo '<td><span style="font-size:14px;font-weight:800;color:' . $g['color'] . ';background:' . $g['bg'] . ';padding:3px 10px;border-radius:99px;">' . $g['letter'] . '</span> <small style="color:#6b7280;">' . $hscore . '</small></td>';
+                } else {
+                    echo '<td style="color:#9ca3af;">—</td>';
+                }
                 echo '<td><span class="wnq-badge-green">' . esc_html($r['status']) . '</span></td>';
                 echo '<td>' . esc_html(substr($r['generated_at'], 0, 10)) . '</td>';
                 echo '<td>';
@@ -1141,6 +1256,74 @@ final class SEOHubAdmin
     }
 
     // ── Shared Helpers ─────────────────────────────────────────────────────
+
+    private static function getGrade(int $score): array
+    {
+        if ($score >= 90) return ['letter' => 'A+', 'color' => '#059669', 'bg' => '#d1fae5', 'label' => 'Excellent'];
+        if ($score >= 80) return ['letter' => 'A',  'color' => '#10b981', 'bg' => '#d1fae5', 'label' => 'Very Good'];
+        if ($score >= 70) return ['letter' => 'B',  'color' => '#3b82f6', 'bg' => '#dbeafe', 'label' => 'Good'];
+        if ($score >= 60) return ['letter' => 'C',  'color' => '#f59e0b', 'bg' => '#fef3c7', 'label' => 'Needs Work'];
+        if ($score >= 50) return ['letter' => 'D',  'color' => '#f97316', 'bg' => '#ffedd5', 'label' => 'Poor'];
+        return                    ['letter' => 'F',  'color' => '#ef4444', 'bg' => '#fee2e2', 'label' => 'Critical'];
+    }
+
+    private static function renderRadarSVG(array $scores): string
+    {
+        $cx = 130; $cy = 130; $r = 90; $n = 5;
+        $values = [
+            ($scores['on_page_seo'] ?? 0) / 100,
+            ($scores['links']       ?? 0) / 100,
+            ($scores['performance'] ?? 0) / 100,
+            ($scores['usability']   ?? 0) / 100,
+            ($scores['social']      ?? 0) / 100,
+        ];
+        $labels = ['On-Page SEO', 'Links', 'Performance', 'Usability', 'Social'];
+
+        $svg  = '<svg width="260" height="260" viewBox="0 0 260 260" xmlns="http://www.w3.org/2000/svg" style="overflow:visible">';
+
+        // Grid rings
+        foreach ([0.25, 0.5, 0.75, 1.0] as $frac) {
+            $pts = [];
+            for ($i = 0; $i < $n; $i++) {
+                $a    = (M_PI * 2 * $i / $n) - M_PI / 2;
+                $pts[] = round($cx + $r * $frac * cos($a), 2) . ',' . round($cy + $r * $frac * sin($a), 2);
+            }
+            $svg .= '<polygon points="' . implode(' ', $pts) . '" fill="none" stroke="#e5e7eb" stroke-width="1"/>';
+        }
+
+        // Spokes
+        for ($i = 0; $i < $n; $i++) {
+            $a    = (M_PI * 2 * $i / $n) - M_PI / 2;
+            $svg .= '<line x1="' . $cx . '" y1="' . $cy . '" x2="' . round($cx + $r * cos($a), 2) . '" y2="' . round($cy + $r * sin($a), 2) . '" stroke="#e5e7eb" stroke-width="1"/>';
+        }
+
+        // Data polygon
+        $pts = [];
+        for ($i = 0; $i < $n; $i++) {
+            $a     = (M_PI * 2 * $i / $n) - M_PI / 2;
+            $v     = $values[$i];
+            $pts[] = round($cx + $r * $v * cos($a), 2) . ',' . round($cy + $r * $v * sin($a), 2);
+        }
+        $svg .= '<polygon points="' . implode(' ', $pts) . '" fill="rgba(13,83,158,0.18)" stroke="#0d539e" stroke-width="2.5"/>';
+
+        // Dots
+        foreach ($pts as $pt) {
+            [$px, $py] = explode(',', $pt);
+            $svg .= '<circle cx="' . $px . '" cy="' . $py . '" r="5" fill="#0d539e"/>';
+        }
+
+        // Labels
+        for ($i = 0; $i < $n; $i++) {
+            $a      = (M_PI * 2 * $i / $n) - M_PI / 2;
+            $lx     = round($cx + ($r + 26) * cos($a), 2);
+            $ly     = round($cy + ($r + 26) * sin($a), 2);
+            $anchor = $lx < $cx - 5 ? 'end' : ($lx > $cx + 5 ? 'start' : 'middle');
+            $svg   .= '<text x="' . $lx . '" y="' . $ly . '" text-anchor="' . $anchor . '" dominant-baseline="middle" font-size="10" font-weight="600" fill="#374151">' . esc_html($labels[$i]) . '</text>';
+        }
+
+        $svg .= '</svg>';
+        return $svg;
+    }
 
     private static function checkCap(): void
     {
