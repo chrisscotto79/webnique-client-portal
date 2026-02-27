@@ -44,16 +44,31 @@ final class AgentSettings
         ]);
     }
 
-    public static function sanitizeConfig(array $data): array
+    public static function sanitizeConfig($data): array
     {
+        // WordPress may pass null/false if the option isn't in $_POST (first run,
+        // nonce failure, etc.). Guard here so PHP 8 doesn't throw a TypeError.
+        if (!is_array($data)) {
+            $data = [];
+        }
+
+        // extra_post_types is stored as array but submitted as a comma string —
+        // handle both so round-trips through the sanitize callback don't crash.
+        $extra_raw = $data['extra_post_types'] ?? '';
+        if (is_array($extra_raw)) {
+            $extra_types = array_map('sanitize_key', array_filter($extra_raw));
+        } else {
+            $extra_types = array_map('sanitize_key', array_filter(explode(',', (string)$extra_raw)));
+        }
+
         return [
-            'hub_url'             => esc_url_raw(trim($data['hub_url'] ?? '')),
-            'api_key'             => sanitize_text_field(trim($data['api_key'] ?? '')),
-            'sync_frequency'      => sanitize_text_field($data['sync_frequency'] ?? 'twicedaily'),
-            'batch_size'          => max(10, min(500, (int)($data['batch_size'] ?? 100))),
-            'thin_threshold'      => max(100, min(1000, (int)($data['thin_threshold'] ?? 300))),
-            'extra_post_types'    => array_map('sanitize_key', array_filter(explode(',', $data['extra_post_types'] ?? ''))),
-            'debug_mode'          => !empty($data['debug_mode']) ? 1 : 0,
+            'hub_url'          => esc_url_raw(trim($data['hub_url'] ?? '')),
+            'api_key'          => sanitize_text_field(trim($data['api_key'] ?? '')),
+            'sync_frequency'   => sanitize_text_field($data['sync_frequency'] ?? 'twicedaily'),
+            'batch_size'       => max(10, min(500, (int)($data['batch_size'] ?? 100))),
+            'thin_threshold'   => max(100, min(1000, (int)($data['thin_threshold'] ?? 300))),
+            'extra_post_types' => $extra_types,
+            'debug_mode'       => !empty($data['debug_mode']) ? 1 : 0,
         ];
     }
 
