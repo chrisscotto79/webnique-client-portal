@@ -412,8 +412,9 @@ final class BlogPublisher
             return ['success' => false, 'message' => $response->get_error_message()];
         }
 
-        $code = wp_remote_retrieve_response_code($response);
-        $body = json_decode(wp_remote_retrieve_body($response), true) ?? [];
+        $code     = wp_remote_retrieve_response_code($response);
+        $raw_body = wp_remote_retrieve_body($response);
+        $body     = json_decode($raw_body, true) ?? [];
 
         if ($code === 200 || $code === 201) {
             return [
@@ -423,7 +424,13 @@ final class BlogPublisher
             ];
         }
 
-        return ['success' => false, 'message' => $body['message'] ?? "HTTP $code"];
+        // BlogReceiver returns 'error' key; WordPress REST core uses 'message'
+        $error_msg = $body['message'] ?? $body['error'] ?? null;
+        if ($error_msg && !empty($body['context'])) {
+            $error_msg .= ' [' . $body['context'] . ']';
+        }
+        // Fallback: include truncated raw body so we can diagnose unexpected responses
+        return ['success' => false, 'message' => $error_msg ?? "HTTP $code — " . substr($raw_body, 0, 300)];
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
