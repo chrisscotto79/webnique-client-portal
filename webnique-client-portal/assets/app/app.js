@@ -12,6 +12,7 @@ import { mountShell } from "./modules/ui.js";
 
 // Import tab renderers
 import { renderDashboard } from "./modules/tabs/dashboard.js";
+import { renderAudit } from "./modules/tabs/audit.js";
 import { renderSubscription } from "./modules/tabs/subscription.js";
 import { renderAnalytics } from "./modules/tabs/analytics.js";
 import { renderRequests } from "./modules/tabs/requests.js";
@@ -245,6 +246,7 @@ import { renderSettings } from "./modules/tabs/settings.js";
   // Map tab keys to render functions
   const tabs = {
     dashboard: renderDashboard,
+    audit: renderAudit,
     subscription: renderSubscription,
     analytics: renderAnalytics,
     requests: renderRequests,
