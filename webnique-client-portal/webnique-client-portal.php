@@ -91,6 +91,35 @@ register_deactivation_hook(__FILE__, function() {
     flush_rewrite_rules();
 });
 
+// PORTAL PAGE — Always hide page title on pages using [wnq_portal]
+add_filter('the_title', function($title, $id = null) {
+    if (!in_the_loop() || !is_main_query()) {
+        return $title;
+    }
+    $post = $id ? get_post($id) : get_post();
+    if ($post && !empty($post->post_content) && has_shortcode($post->post_content, 'wnq_portal')) {
+        return '';
+    }
+    return $title;
+}, 10, 2);
+
+// PORTAL PAGE — Always disable comments on pages using [wnq_portal]
+add_filter('comments_open', function($open, $post_id = null) {
+    $post = $post_id ? get_post($post_id) : get_post();
+    if ($post && !empty($post->post_content) && has_shortcode($post->post_content, 'wnq_portal')) {
+        return false;
+    }
+    return $open;
+}, 10, 2);
+
+add_filter('pings_open', function($open, $post_id = null) {
+    $post = $post_id ? get_post($post_id) : get_post();
+    if ($post && !empty($post->post_content) && has_shortcode($post->post_content, 'wnq_portal')) {
+        return false;
+    }
+    return $open;
+}, 10, 2);
+
 // INITIALIZE
 add_action('plugins_loaded', function() {
     if (!class_exists('WNQ\\Core\\Plugin')) {
