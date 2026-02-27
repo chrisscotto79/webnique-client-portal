@@ -123,9 +123,9 @@ class DataCollector
 
         // Keyword presence analysis
         $kw_lower = strtolower(trim($focus_kw));
-        $kw_in_title = $kw_lower && str_contains(strtolower($title), $kw_lower);
-        $kw_in_meta  = $kw_lower && str_contains(strtolower($meta_desc), $kw_lower);
-        $kw_in_h1    = $kw_lower && str_contains(strtolower($h1), $kw_lower);
+        $kw_in_title = $kw_lower && strpos(strtolower($title), $kw_lower) !== false;
+        $kw_in_meta  = $kw_lower && strpos(strtolower($meta_desc), $kw_lower) !== false;
+        $kw_in_h1    = $kw_lower && strpos(strtolower($h1), $kw_lower) !== false;
 
         // Featured image
         $featured_img = '';
@@ -307,7 +307,7 @@ class DataCollector
         if (empty($types)) {
             // Infer from post type/category as a hint for the hub
             if ($post->post_type === 'product') $types[] = 'Product';
-            if (in_array($post->post_type, ['post', 'page']) && str_contains(strtolower($post->post_title), 'faq')) $types[] = 'FAQPage';
+            if (in_array($post->post_type, ['post', 'page']) && strpos(strtolower($post->post_title), 'faq') !== false) $types[] = 'FAQPage';
         }
 
         return array_values(array_unique($types));
