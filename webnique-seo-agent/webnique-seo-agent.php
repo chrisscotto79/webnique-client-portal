@@ -55,6 +55,18 @@ add_action('plugins_loaded', function () {
     // Register blog receiver REST endpoint (hub → agent publishing)
     \WNQA\BlogReceiver::register();
 
+    // Output BlogPosting JSON-LD schema on single posts (plugin-agnostic fallback)
+    add_action('wp_head', function () {
+        if (!is_single()) return;
+        $post_id = get_the_ID();
+        if (!$post_id) return;
+        $schema = get_post_meta($post_id, '_wnq_schema_json', true);
+        if (empty($schema)) return;
+        // Skip if Yoast or RankMath are active — they output their own schema
+        if (defined('WPSEO_VERSION') || class_exists('RankMath')) return;
+        echo '<script type="application/ld+json">' . $schema . '</script>' . "\n";
+    });
+
     // Cron handlers
     add_action('wnqa_sync_to_hub', function () {
         $sync = new \WNQA\APISync();
