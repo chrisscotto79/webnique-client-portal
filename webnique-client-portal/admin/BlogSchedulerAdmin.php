@@ -197,6 +197,42 @@ final class BlogSchedulerAdmin
             echo '<button type="submit" class="button button-small">Mark all read</button>';
             echo '</form>';
             echo '</div>';
+        }
+
+        // Publish Now JS — must live on the Queue tab where the button is rendered
+        ?>
+<script>
+jQuery(function($) {
+    $(document).on('click', '.wnq-publish-now', function() {
+        if (!confirm('Publish this post now?\n\nThe AI will generate the full post and push it live to the client site. This may take 30-60 seconds.')) return;
+        var id   = $(this).data('id');
+        var $btn = $(this);
+        $btn.prop('disabled', true).text('⏳ Publishing...');
+
+        $.post(WNQ_SEOHUB.ajaxUrl, {
+            action:      'wnq_blog_publish_now',
+            nonce:       WNQ_SEOHUB.nonce,
+            schedule_id: id
+        }, function(resp) {
+            if (resp.success) {
+                location.reload();
+            } else {
+                var msg = (resp.data && resp.data.message) ? resp.data.message : 'Unknown error';
+                alert('❌ Publish failed:\n\n' + msg);
+                $btn.prop('disabled', false).text('▶ Publish Now');
+            }
+        }).fail(function(xhr) {
+            var msg = 'AJAX request failed.';
+            try { msg = JSON.parse(xhr.responseText).message || msg; } catch(e) {}
+            alert('❌ ' + msg + '\n\nCheck your browser console for details.');
+            $btn.prop('disabled', false).text('▶ Publish Now');
+        });
+    });
+});
+</script>
+        <?php
+
+        if (!empty($notifications)) {
             echo '<div class="wnq-blog-notifications">';
             foreach ($notifications as $n) {
                 $unread_class = empty($n['is_read']) ? ' unread' : '';
@@ -333,25 +369,7 @@ jQuery(function($) {
         });
     });
 
-    // Publish Now
-    $(document).on('click', '.wnq-publish-now', function() {
-        if (!confirm('Publish this post now? The AI will generate content and push to the client site.')) return;
-        var id  = $(this).data('id');
-        var $btn = $(this);
-        $btn.prop('disabled', true).text('Publishing...');
-        $.post(WNQ_SEOHUB.ajaxUrl, {
-            action:      'wnq_blog_publish_now',
-            nonce:       WNQ_SEOHUB.nonce,
-            schedule_id: id
-        }, function(resp) {
-            if (resp.success) {
-                location.reload();
-            } else {
-                alert('❌ ' + (resp.data?.message || 'Failed'));
-                $btn.prop('disabled', false).text('▶ Publish Now');
-            }
-        });
-    });
+    // (Publish Now handler is registered on the Queue tab)
 });
 </script>
         <?php
