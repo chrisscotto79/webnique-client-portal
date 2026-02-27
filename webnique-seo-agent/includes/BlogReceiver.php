@@ -79,13 +79,13 @@ final class BlogReceiver
             $body = [];
         }
 
-        $title        = sanitize_text_field($body['title'] ?? '');
-        $post_content = wp_kses_post($body['post_content'] ?? '');
-        $meta_desc    = sanitize_text_field($body['meta_description'] ?? '');
+        $title         = sanitize_text_field($body['title'] ?? '');
+        $post_content  = wp_kses_post($body['post_content'] ?? '');
+        $meta_desc     = sanitize_text_field($body['meta_description'] ?? '');
         $elementor_raw = isset($body['elementor_data']) ? (string)$body['elementor_data'] : '';
-        $categories   = array_map('sanitize_text_field', (array)($body['categories'] ?? []));
-        $status       = ($body['status'] ?? 'publish') === 'draft' ? 'draft' : 'publish';
-        $focus_kw     = sanitize_text_field($body['focus_keyword'] ?? '');
+        $categories    = array_map('sanitize_text_field', (array)($body['categories'] ?? []));
+        $status        = ($body['status'] ?? 'publish') === 'draft' ? 'draft' : 'publish';
+        $focus_kw      = sanitize_text_field($body['focus_keyword'] ?? '');
 
         if (empty($title)) {
             return new \WP_REST_Response(['error' => 'title is required'], 400);
@@ -106,8 +106,13 @@ final class BlogReceiver
             }
         }
 
-        // Create the post — insert as draft first, set meta, then publish
-        // This avoids other plugins trying to process incomplete Elementor data on initial save
+        // Suspend save_post hooks for the draft insertion.
+        // Some plugins (e.g. Elementor) hook into save_post and call wp_die() when
+        // they encounter unexpected conditions during REST API requests, which sends
+        // an error response and kills the process before our try-catch can respond.
+        // We set all Elementor meta directly, so save_post processing is not needed.
+        self::suspendSavePostHooks($saved_hooks);
+
         $post_id = wp_insert_post([
             'post_title'    => $title,
             'post_content'  => $post_content,
@@ -116,20 +121,18 @@ final class BlogReceiver
             'post_category' => $cat_ids,
         ], true);
 
+        self::restoreSavePostHooks($saved_hooks);
+
         if (is_wp_error($post_id)) {
             return new \WP_REST_Response(['error' => $post_id->get_error_message()], 500);
         }
 
-        // Set Elementor data before publishing so it's ready when post goes live
+        // Set Elementor data — directly via update_post_meta (no save_post fired)
         if (!empty($elementor_raw)) {
             $elementor_arr = json_decode($elementor_raw, true);
             if (is_array($elementor_arr)) {
-                // Store raw JSON string — Elementor reads this directly
                 update_post_meta($post_id, '_elementor_data', wp_slash($elementor_raw));
                 update_post_meta($post_id, '_elementor_edit_mode', 'builder');
-                // Store page settings as JSON string (not PHP array) to avoid
-                // conflicts with Elementor's own serialization/hook handling
-                update_post_meta($post_id, '_elementor_page_settings', wp_json_encode(['hide_title' => 'yes']));
             }
         }
 
@@ -150,9 +153,11 @@ final class BlogReceiver
             update_post_meta($post_id, '_meta_description', $meta_desc);
         }
 
-        // Now publish (or leave as draft if requested)
+        // Publish — suspend hooks again to prevent plugin crashes on status transition
         if ($status === 'publish') {
+            self::suspendSavePostHooks($saved_hooks2);
             wp_update_post(['ID' => $post_id, 'post_status' => 'publish']);
+            self::restoreSavePostHooks($saved_hooks2);
         }
 
         $post_url = get_permalink($post_id);
@@ -162,5 +167,35 @@ final class BlogReceiver
             'post_id'  => $post_id,
             'post_url' => $post_url,
         ], 201);
+    }
+
+    /**
+     * Snapshot and remove all save_post / save_post_post hooks.
+     * Pass a variable by reference to hold the snapshot for later restoration.
+     */
+    private static function suspendSavePostHooks(&$snapshot)
+    {
+        global $wp_filter;
+        $snapshot = [
+            'save_post'      => isset($wp_filter['save_post'])      ? clone $wp_filter['save_post']      : null,
+            'save_post_post' => isset($wp_filter['save_post_post']) ? clone $wp_filter['save_post_post'] : null,
+        ];
+        remove_all_actions('save_post');
+        remove_all_actions('save_post_post');
+    }
+
+    /**
+     * Restore save_post / save_post_post hooks from a snapshot.
+     */
+    private static function restoreSavePostHooks(&$snapshot)
+    {
+        global $wp_filter;
+        if (!empty($snapshot['save_post'])) {
+            $wp_filter['save_post'] = $snapshot['save_post'];
+        }
+        if (!empty($snapshot['save_post_post'])) {
+            $wp_filter['save_post_post'] = $snapshot['save_post_post'];
+        }
+        $snapshot = null;
     }
 }

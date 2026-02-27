@@ -5,7 +5,7 @@
  * Version: 1.0.0
  * Author: WebNique
  * Requires at least: 6.0
- * Requires PHP: 8.0
+ * Requires PHP: 7.4
  * Text Domain: webnique-seo-agent
  */
 
