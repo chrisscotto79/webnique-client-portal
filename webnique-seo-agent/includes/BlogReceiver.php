@@ -99,7 +99,8 @@ final class BlogReceiver
             if ($term && !is_wp_error($term)) {
                 $cat_ids[] = (int)$term->term_id;
             } else {
-                $new_term = wp_create_term($cat_name, 'category');
+                // wp_insert_term() is always available (wp-includes); wp_create_term() is admin-only
+                $new_term = wp_insert_term($cat_name, 'category');
                 if (!is_wp_error($new_term) && !empty($new_term['term_id'])) {
                     $cat_ids[] = (int)$new_term['term_id'];
                 }
