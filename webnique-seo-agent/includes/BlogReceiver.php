@@ -47,7 +47,7 @@ final class BlogReceiver
 
     // ── Authentication ──────────────────────────────────────────────────────
 
-    public static function authenticate(\WP_REST_Request $request): bool|\WP_Error
+    public static function authenticate(\WP_REST_Request $request)
     {
         $config  = get_option('wnqa_config', []);
         $my_key  = $config['api_key'] ?? '';
