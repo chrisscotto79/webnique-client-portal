@@ -167,6 +167,9 @@ final class SEOHealthFixer
                 foreach ($page_findings as $f) {
                     SEOHub::resolveAuditFinding((int)$f['id']);
                 }
+                // Mirror the fix back into wnq_seo_site_data so the health score
+                // and next audit reflect the improvement without waiting for a re-sync.
+                self::updateSiteDataAfterFix($client_id, $page_url, $payload, $page_data['page_type'] ?? 'page');
                 $fixed++;
                 SEOHub::log('seo_auto_fix', [
                     'client_id'   => $client_id,
@@ -347,6 +350,71 @@ final class SEOHealthFixer
             if ($site && strpos($page_url, $site) === 0) return $key;
         }
         return $agent_keys[0] ?? null;
+    }
+
+    /**
+     * After a successful fix push, write the changed values back into
+     * wnq_seo_site_data on the hub side so that:
+     *  - getHealthScore() / getSiteStats() reflect the improvement immediately
+     *  - The next auditClient() run does NOT re-create findings for the same issues
+     *  - autoResolveFindings() joins also work correctly
+     */
+    private static function updateSiteDataAfterFix(
+        string $client_id,
+        string $page_url,
+        array  $payload,
+        string $page_type
+    ): void {
+        global $wpdb;
+        $table   = $wpdb->prefix . 'wnq_seo_site_data';
+        $updates = [];
+
+        // Meta description fixed → write new value; audit checks CHAR_LENGTH >= 80
+        if (!empty($payload['meta_description'])) {
+            $updates['meta_description'] = $payload['meta_description'];
+        }
+
+        // Schema added → mark has_schema = 1 and record the schema type
+        if (!empty($payload['schema_json'])) {
+            $updates['has_schema'] = 1;
+            $type = ($page_type === 'post') ? 'BlogPosting' : (($page_type === 'product') ? 'Product' : 'WebPage');
+            $updates['schema_types'] = wp_json_encode([$type]);
+        }
+
+        // H1 added → write new h1 text and set has_h1 = 1
+        if (!empty($payload['h1_title'])) {
+            $updates['h1']     = $payload['h1_title'];
+            $updates['has_h1'] = 1;
+        }
+
+        // Alt texts fixed → set images_missing_alt = 0
+        if (!empty($payload['fix_missing_alt'])) {
+            $updates['images_missing_alt'] = 0;
+        }
+
+        // Focus keyword stored so future audits can check keyword_in_title correctly
+        if (!empty($payload['focus_keyword'])) {
+            $updates['focus_keyword'] = $payload['focus_keyword'];
+            // Update keyword_in_title flag if we also changed the title
+            if (!empty($payload['seo_title'])) {
+                $updates['keyword_in_title'] = (strpos(
+                    strtolower($payload['seo_title']),
+                    strtolower($payload['focus_keyword'])
+                ) !== false) ? 1 : 0;
+            }
+        }
+
+        if (empty($updates)) {
+            return;
+        }
+
+        $updates['last_synced'] = current_time('mysql');
+
+        $wpdb->update(
+            $table,
+            $updates,
+            ['client_id' => $client_id, 'page_url' => $page_url]
+        );
     }
 
     private static function pushFix(array $agent, array $payload): array
