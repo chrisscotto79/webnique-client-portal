@@ -81,8 +81,27 @@ final class BlogPublisher
         $category    = $scheduled['category_type'] ?? 'Informational';
         $focus_kw    = $scheduled['focus_keyword'] ?? '';
 
-        // Load agent key (need site_url + api_key for pushing)
-        $agent = self::getActiveAgent($client_id);
+        // If no focus keyword set, auto-select the top tracked keyword for this client
+        if (empty($focus_kw)) {
+            global $wpdb;
+            $top_kw = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT keyword FROM {$wpdb->prefix}wnq_seo_keywords
+                     WHERE client_id = %s ORDER BY impressions DESC, clicks DESC LIMIT 1",
+                    $client_id
+                )
+            );
+            if ($top_kw) {
+                $focus_kw = $top_kw;
+                BlogScheduler::updatePost($schedule_id, ['focus_keyword' => $focus_kw]);
+            }
+        }
+
+        // Build keyword context from tracked clusters and top keywords
+        $keyword_context = self::buildKeywordContext($client_id, $profile);
+
+        // Load agent — use the site assigned to this post, fall back to first active site
+        $agent = self::getActiveAgent($client_id, (int)($scheduled['agent_key_id'] ?? 0));
         if (!$agent) {
             return self::fail($schedule_id, 'No active agent key found for client. Is the plugin installed and connected?');
         }
@@ -129,6 +148,7 @@ final class BlogPublisher
                 'category_type'              => $category,
                 'focus_keyword'              => $focus_kw,
                 'tone'                       => $tone,
+                'keyword_context'            => $keyword_context,
                 'internal_links'             => $links_prompt ?: 'No internal link candidates available.',
                 'external_citation_instruction' => $ext_instruction,
             ],
@@ -157,8 +177,8 @@ final class BlogPublisher
             'status'          => 'publishing',
         ]);
 
-        // Build Elementor JSON
-        $elementor_json = self::buildElementorJson($parsed);
+        // Build Elementor JSON — use per-site template if one is saved for this agent key
+        $elementor_json = self::buildElementorJson($parsed, (int)($scheduled['agent_key_id'] ?? 0));
 
         // Push to client site
         $push_result = self::pushToAgent($agent, [
@@ -269,9 +289,16 @@ final class BlogPublisher
      * Inject AI-generated content into the stored Elementor template.
      * Falls back to empty structure if no template is saved.
      */
-    private static function buildElementorJson(array $content): string
+    private static function buildElementorJson(array $content, int $agent_key_id = 0): string
     {
-        $template_json = get_option('wnq_blog_elementor_template', '');
+        // Try per-site template first, then fall back to the global template
+        $template_json = '';
+        if ($agent_key_id > 0) {
+            $template_json = get_option('wnq_blog_template_site_' . $agent_key_id, '');
+        }
+        if (empty($template_json)) {
+            $template_json = get_option('wnq_blog_elementor_template', '');
+        }
 
         if (empty($template_json)) {
             // No template stored — return minimal Elementor structure
@@ -436,11 +463,26 @@ final class BlogPublisher
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     /**
-     * Get the first active agent key record for a client.
+     * Get an agent key for a client.
+     * If $agent_key_id is provided, fetch that specific site.
+     * Otherwise fall back to the most-recently-connected active site.
      */
-    private static function getActiveAgent(string $client_id): ?array
+    private static function getActiveAgent(string $client_id, int $agent_key_id = 0): ?array
     {
         global $wpdb;
+
+        if ($agent_key_id > 0) {
+            $row = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT * FROM {$wpdb->prefix}wnq_seo_agent_keys
+                     WHERE id = %d AND client_id = %s AND status = 'active'",
+                    $agent_key_id, $client_id
+                ),
+                ARRAY_A
+            );
+            if ($row) return $row;
+        }
+
         return $wpdb->get_row(
             $wpdb->prepare(
                 "SELECT * FROM {$wpdb->prefix}wnq_seo_agent_keys
@@ -451,6 +493,44 @@ final class BlogPublisher
             ),
             ARRAY_A
         ) ?: null;
+    }
+
+    /**
+     * Build keyword context string for the AI prompt from tracked clusters + top keywords.
+     */
+    private static function buildKeywordContext(string $client_id, array $profile): string
+    {
+        global $wpdb;
+
+        $lines = [];
+
+        // Keyword clusters from SEO profile
+        $clusters = $profile['keyword_clusters'] ?? [];
+        if (!empty($clusters) && is_array($clusters)) {
+            $lines[] = 'Keyword Clusters (naturally weave in relevant terms):';
+            foreach (array_slice($clusters, 0, 4) as $cluster => $keywords) {
+                if (is_array($keywords) && !empty($keywords)) {
+                    $lines[] = '- ' . $cluster . ': ' . implode(', ', array_slice($keywords, 0, 6));
+                }
+            }
+        }
+
+        // Top tracked keywords by impressions
+        $top_kws = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT keyword FROM {$wpdb->prefix}wnq_seo_keywords
+                 WHERE client_id = %s
+                 ORDER BY impressions DESC, clicks DESC
+                 LIMIT 10",
+                $client_id
+            )
+        ) ?: [];
+
+        if (!empty($top_kws)) {
+            $lines[] = 'Top Tracked Keywords (use where natural): ' . implode(', ', $top_kws);
+        }
+
+        return !empty($lines) ? implode("\n", $lines) : 'No keyword data available.';
     }
 
     /**

@@ -91,6 +91,9 @@ final class BlogReceiver
             return new \WP_REST_Response(['error' => 'title is required'], 400);
         }
 
+        // SEO-friendly slug from focus keyword; fall back to title
+        $post_slug = sanitize_title(!empty($focus_kw) ? $focus_kw : $title);
+
         // Resolve category term IDs (create if they don't exist — never hardcode IDs)
         $cat_ids = [];
         foreach ($categories as $cat_name) {
@@ -116,7 +119,9 @@ final class BlogReceiver
 
         $post_id = wp_insert_post([
             'post_title'     => $title,
+            'post_name'      => $post_slug,
             'post_content'   => $post_content,
+            'post_excerpt'   => wp_strip_all_tags($meta_desc),
             'post_status'    => 'draft',
             'post_type'      => 'post',
             'post_category'  => $cat_ids,
@@ -149,15 +154,41 @@ final class BlogReceiver
                 if (!empty($focus_kw)) {
                     update_post_meta($post_id, '_yoast_wpseo_focuskw', $focus_kw);
                 }
+                // Yoast SEO title — put focus keyword first
+                if (!empty($focus_kw)) {
+                    update_post_meta($post_id, '_yoast_wpseo_title', $title . ' %%page%% %%sep%% %%sitename%%');
+                }
             }
             if (class_exists('RankMath')) {
                 update_post_meta($post_id, 'rank_math_description', $meta_desc);
                 if (!empty($focus_kw)) {
                     update_post_meta($post_id, 'rank_math_focus_keyword', $focus_kw);
                 }
+                // RankMath SEO title — explicit so keyword is at start
+                update_post_meta($post_id, 'rank_math_title', $title . ' %page% %sep% %sitename%');
+                // Article schema for RankMath
+                update_post_meta($post_id, 'rank_math_rich_snippet', 'article');
+                update_post_meta($post_id, 'rank_math_snippet_article_type', 'BlogPosting');
             }
             update_post_meta($post_id, '_meta_description', $meta_desc);
         }
+
+        // Inject BlogPosting JSON-LD schema (plugin-agnostic fallback)
+        // Stored in meta and output via wp_head if the theme/plugin doesn't cover it.
+        $schema = [
+            '@context'      => 'https://schema.org',
+            '@type'         => 'BlogPosting',
+            'headline'      => $title,
+            'description'   => $meta_desc,
+            'keywords'      => $focus_kw,
+            'datePublished' => gmdate('c'),
+            'dateModified'  => gmdate('c'),
+            'author'        => ['@type' => 'Organization', 'name' => get_bloginfo('name')],
+            'publisher'     => ['@type' => 'Organization', 'name' => get_bloginfo('name'),
+                                'logo'  => ['@type' => 'ImageObject', 'url' => get_site_icon_url()]],
+            'mainEntityOfPage' => ['@type' => 'WebPage', '@id' => get_home_url() . '/' . $post_slug . '/'],
+        ];
+        update_post_meta($post_id, '_wnq_schema_json', wp_json_encode($schema));
 
         // Publish — suspend hooks again to prevent plugin crashes on status transition
         if ($status === 'publish') {

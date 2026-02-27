@@ -442,6 +442,7 @@ final class SEOOSBootstrap
             'category_type'  => sanitize_text_field($_POST['category_type'] ?? 'Informational'),
             'focus_keyword'  => sanitize_text_field($_POST['focus_keyword'] ?? ''),
             'scheduled_date' => sanitize_text_field($_POST['scheduled_date'] ?? ''),
+            'agent_key_id'   => (int)($_POST['agent_key_id'] ?? 0),
         ]);
 
         wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue&client_id=' . urlencode($client_id) . '&notice=added'));
@@ -466,18 +467,27 @@ final class SEOOSBootstrap
         check_admin_referer('wnq_blog_save_template');
         self::requireCap();
 
-        $json = stripslashes($_POST['elementor_template'] ?? '');
-        // Basic validation: must be a JSON array or empty
+        $json         = stripslashes($_POST['elementor_template'] ?? '');
+        $agent_key_id = (int)($_POST['agent_key_id'] ?? 0);
+        $client_id    = sanitize_text_field($_POST['client_id'] ?? '');
+
+        // Basic validation: must be a valid JSON array or empty
         if (!empty($json)) {
             $decoded = json_decode($json, true);
             if (!is_array($decoded)) {
-                wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=settings&error=invalid_json'));
+                wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=settings&client_id=' . urlencode($client_id) . '&error=invalid_json'));
                 exit;
             }
         }
-        update_option('wnq_blog_elementor_template', $json);
 
-        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=settings&settings_saved=1'));
+        // Per-site template (agent_key_id set) or global fallback
+        if ($agent_key_id > 0) {
+            update_option('wnq_blog_template_site_' . $agent_key_id, $json);
+        } else {
+            update_option('wnq_blog_elementor_template', $json);
+        }
+
+        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=settings&client_id=' . urlencode($client_id) . '&settings_saved=1'));
         exit;
     }
 
@@ -522,9 +532,10 @@ final class SEOOSBootstrap
             wp_send_json_error(['message' => 'Access denied']);
         }
 
-        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
-        $posts_raw = stripslashes($_POST['posts'] ?? '[]');
-        $posts     = json_decode($posts_raw, true);
+        $client_id    = sanitize_text_field($_POST['client_id'] ?? '');
+        $agent_key_id = (int)($_POST['agent_key_id'] ?? 0);
+        $posts_raw    = stripslashes($_POST['posts'] ?? '[]');
+        $posts        = json_decode($posts_raw, true);
 
         if (empty($client_id) || !is_array($posts)) {
             wp_send_json_error(['message' => 'Invalid data']);
@@ -539,6 +550,7 @@ final class SEOOSBootstrap
                 'category_type'  => sanitize_text_field($p['category'] ?? 'Informational'),
                 'focus_keyword'  => sanitize_text_field($p['keyword'] ?? ''),
                 'scheduled_date' => sanitize_text_field($p['date'] ?? ''),
+                'agent_key_id'   => $agent_key_id,
             ]);
             $added++;
         }
@@ -550,13 +562,26 @@ final class SEOOSBootstrap
 
     private static function maybeCreateBlogTables(): void
     {
-        // Use a lightweight version flag so this only runs once per install
-        if (get_option('wnq_blog_schema_ver') === '1') {
-            return;
+        $current = get_option('wnq_blog_schema_ver', '0');
+
+        if ($current === '2') {
+            return; // already up to date
         }
+
         if (class_exists('WNQ\\Models\\BlogScheduler')) {
             \WNQ\Models\BlogScheduler::createTables();
-            update_option('wnq_blog_schema_ver', '1');
+
+            // v1 → v2: add agent_key_id to existing installations
+            if ($current === '1') {
+                global $wpdb;
+                $col = $wpdb->get_row("SHOW COLUMNS FROM {$wpdb->prefix}wnq_blog_schedule LIKE 'agent_key_id'");
+                if (!$col) {
+                    $wpdb->query("ALTER TABLE {$wpdb->prefix}wnq_blog_schedule ADD COLUMN agent_key_id bigint(20) DEFAULT NULL AFTER client_id");
+                    $wpdb->query("ALTER TABLE {$wpdb->prefix}wnq_blog_schedule ADD INDEX idx_agent_key_id (agent_key_id)");
+                }
+            }
+
+            update_option('wnq_blog_schema_ver', '2');
         }
     }
 

@@ -115,6 +115,7 @@ final class BlogSchedulerAdmin
         }
 
         // Add new post form
+        $agents = BlogScheduler::getClientAgents($client_id);
         echo '<div class="wnq-blog-card">';
         echo '<h3>➕ Add Post to Queue</h3>';
         echo '<form method="post" action="' . admin_url('admin-post.php') . '" class="wnq-blog-add-form">';
@@ -130,6 +131,15 @@ final class BlogSchedulerAdmin
         echo '</select>';
         echo '<input type="text" name="focus_keyword" placeholder="Focus keyword (optional)" style="min-width:200px;">';
         echo '<input type="date" name="scheduled_date" style="min-width:150px;">';
+        if (!empty($agents)) {
+            echo '<select name="agent_key_id" style="min-width:160px;">';
+            echo '<option value="">— Any Connected Site —</option>';
+            foreach ($agents as $a) {
+                $label = $a['site_name'] ?: parse_url($a['site_url'] ?? '', PHP_URL_HOST) ?: $a['site_url'];
+                echo '<option value="' . (int)$a['id'] . '">' . esc_html($label) . '</option>';
+            }
+            echo '</select>';
+        }
         echo '<button type="submit" class="button button-primary">Add</button>';
         echo '</div></form>';
         echo '</div>';
@@ -140,8 +150,14 @@ final class BlogSchedulerAdmin
         if (empty($posts)) {
             echo '<p style="color:#6b7280;">No posts in queue. Add titles above or use the Title Generator tab.</p>';
         } else {
+            // Build agent lookup map for the site column
+            $agent_map = [];
+            foreach ($agents as $a) {
+                $agent_map[(int)$a['id']] = $a['site_name'] ?: parse_url($a['site_url'] ?? '', PHP_URL_HOST) ?: $a['site_url'];
+            }
+
             echo '<table class="widefat striped wnq-blog-table">';
-            echo '<thead><tr><th>Title</th><th>Category</th><th>Keyword</th><th>Scheduled</th><th>Status</th><th>Actions</th></tr></thead>';
+            echo '<thead><tr><th>Title</th><th>Category</th><th>Keyword</th><th>Site</th><th>Scheduled</th><th>Status</th><th>Actions</th></tr></thead>';
             echo '<tbody>';
             foreach ($posts as $p) {
                 $status_class = match($p['status']) {
@@ -163,6 +179,8 @@ final class BlogSchedulerAdmin
                 echo '</td>';
                 echo '<td>' . esc_html($p['category_type']) . '</td>';
                 echo '<td>' . esc_html($p['focus_keyword'] ?? '—') . '</td>';
+                $site_label = !empty($p['agent_key_id']) ? ($agent_map[(int)$p['agent_key_id']] ?? '—') : '<span style="color:#9ca3af;">Any</span>';
+                echo '<td style="font-size:12px;">' . esc_html(strip_tags($site_label)) . (!empty($p['agent_key_id']) ? '' : ' <span style="color:#9ca3af;">(any)</span>') . '</td>';
                 echo '<td>' . esc_html($p['scheduled_date'] ?? '—') . '</td>';
                 echo '<td><span class="wnq-status-badge ' . $status_class . '">' . esc_html($p['status']) . '</span></td>';
                 echo '<td>';
@@ -266,12 +284,20 @@ jQuery(function($) {
         echo '<div class="wnq-blog-generator">';
 
         // Client + options form
+        $gen_agents = $client_id ? BlogScheduler::getClientAgents($client_id) : [];
         echo '<div class="wnq-blog-gen-options">';
         echo '<div class="wnq-blog-form-row" style="flex-wrap:wrap;">';
         echo '<select id="gen-client" style="min-width:200px;">';
         foreach ($clients as $c) {
             $selected = $c['client_id'] === $client_id ? ' selected' : '';
             echo '<option value="' . esc_attr($c['client_id']) . '"' . $selected . '>' . esc_html($c['company'] ?? $c['name'] ?? $c['client_id']) . '</option>';
+        }
+        echo '</select>';
+        echo '<select id="gen-agent" style="min-width:160px;">';
+        echo '<option value="">— Any Site —</option>';
+        foreach ($gen_agents as $a) {
+            $lbl = $a['site_name'] ?: parse_url($a['site_url'] ?? '', PHP_URL_HOST) ?: $a['site_url'];
+            echo '<option value="' . (int)$a['id'] . '">' . esc_html($lbl) . '</option>';
         }
         echo '</select>';
         echo '<select id="gen-count" style="min-width:120px;">';
@@ -360,10 +386,11 @@ jQuery(function($) {
         if (!selected.length) return alert('Select at least one title.');
 
         $.post(WNQ_SEOHUB.ajaxUrl, {
-            action:    'wnq_blog_add_batch',
-            nonce:     WNQ_SEOHUB.nonce,
-            client_id: $('#gen-client').val(),
-            posts:     JSON.stringify(selected)
+            action:       'wnq_blog_add_batch',
+            nonce:        WNQ_SEOHUB.nonce,
+            client_id:    $('#gen-client').val(),
+            agent_key_id: $('#gen-agent').val(),
+            posts:        JSON.stringify(selected)
         }, function(resp) {
             if (resp.success) {
                 alert('✅ ' + resp.data.added + ' post(s) added to queue!');
@@ -392,16 +419,42 @@ jQuery(function($) {
         $saved = sanitize_text_field($_GET['settings_saved'] ?? '');
         if ($saved === '1') echo '<div class="wnq-notice success">✅ Settings saved.</div>';
 
-        // Elementor template
+        // Per-site Elementor templates
+        $settings_agents = BlogScheduler::getClientAgents($client_id);
+        $widget_hint = '<p style="color:#6b7280;font-size:12px;"><strong>Widget IDs:</strong> Heading <code>5af58bd2</code> (H1) · Text Editor <code>5b794435</code> (body) · Text Editor <code>4861ee91</code> (TOC) · Image <code>1b605b78</code> (featured — add manually)</p>';
+
+        if (!empty($settings_agents)) {
+            foreach ($settings_agents as $a) {
+                $site_label   = $a['site_name'] ?: parse_url($a['site_url'] ?? '', PHP_URL_HOST) ?: $a['site_url'];
+                $site_tpl     = get_option('wnq_blog_template_site_' . (int)$a['id'], '');
+                echo '<div class="wnq-blog-card">';
+                echo '<h3>🎨 Elementor Template — <span style="color:#2563eb;">' . esc_html($site_label) . '</span></h3>';
+                echo '<p style="color:#6b7280;">Template for <strong>' . esc_html($a['site_url'] ?? '') . '</strong>. If empty the global fallback template is used.</p>';
+                echo $widget_hint;
+                echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
+                echo '<input type="hidden" name="action" value="wnq_blog_save_template">';
+                echo '<input type="hidden" name="agent_key_id" value="' . (int)$a['id'] . '">';
+                echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+                wp_nonce_field('wnq_blog_save_template');
+                echo '<textarea name="elementor_template" rows="8" style="width:100%;font-family:monospace;font-size:12px;border:1px solid #d1d5db;border-radius:6px;padding:8px;">' . esc_textarea($site_tpl) . '</textarea>';
+                echo '<p style="margin-top:8px;"><button type="submit" class="button button-primary">💾 Save Template for ' . esc_html($site_label) . '</button></p>';
+                echo '</form>';
+                echo '</div>';
+            }
+        }
+
+        // Global fallback template
         echo '<div class="wnq-blog-card">';
-        echo '<h3>🎨 Elementor Blog Template</h3>';
-        echo '<p style="color:#6b7280;">Paste the Elementor JSON for your blog post template. The system will inject AI-generated content into the correct widget IDs.</p>';
-        echo '<p style="color:#6b7280;font-size:12px;"><strong>Widget IDs:</strong> Heading <code>5af58bd2</code> (H1) · Text Editor <code>5b794435</code> (body) · Text Editor <code>4861ee91</code> (TOC) · Image <code>1b605b78</code> (featured — you add manually)</p>';
+        echo '<h3>🎨 Global Fallback Template</h3>';
+        echo '<p style="color:#6b7280;">Used when no per-site template is saved. Paste your default Elementor blog layout JSON here.</p>';
+        echo $widget_hint;
         echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
         echo '<input type="hidden" name="action" value="wnq_blog_save_template">';
+        echo '<input type="hidden" name="agent_key_id" value="0">';
+        echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
         wp_nonce_field('wnq_blog_save_template');
         echo '<textarea name="elementor_template" rows="10" style="width:100%;font-family:monospace;font-size:12px;border:1px solid #d1d5db;border-radius:6px;padding:8px;">' . esc_textarea($template_json) . '</textarea>';
-        echo '<p style="margin-top:8px;"><button type="submit" class="button button-primary">💾 Save Template</button></p>';
+        echo '<p style="margin-top:8px;"><button type="submit" class="button button-primary">💾 Save Global Fallback Template</button></p>';
         echo '</form>';
         echo '</div>';
 

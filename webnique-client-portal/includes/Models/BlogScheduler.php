@@ -33,6 +33,7 @@ final class BlogScheduler
         dbDelta("CREATE TABLE IF NOT EXISTS {$wpdb->prefix}wnq_blog_schedule (
             id               bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
             client_id        varchar(100) NOT NULL,
+            agent_key_id     bigint(20) DEFAULT NULL COMMENT 'FK to wnq_seo_agent_keys.id — target site',
             title            varchar(500) NOT NULL,
             category_type    varchar(50) DEFAULT 'Informational' COMMENT 'Services|Informational|Seasonal',
             focus_keyword    varchar(255) DEFAULT NULL,
@@ -53,6 +54,7 @@ final class BlogScheduler
             updated_at       datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             KEY client_id (client_id),
+            KEY agent_key_id (agent_key_id),
             KEY status (status),
             KEY scheduled_date (scheduled_date)
         ) $c;");
@@ -84,6 +86,7 @@ final class BlogScheduler
             $wpdb->prefix . 'wnq_blog_schedule',
             [
                 'client_id'      => $client_id,
+                'agent_key_id'   => !empty($data['agent_key_id']) ? (int)$data['agent_key_id'] : null,
                 'title'          => sanitize_text_field($data['title'] ?? ''),
                 'category_type'  => sanitize_text_field($data['category_type'] ?? 'Informational'),
                 'focus_keyword'  => sanitize_text_field($data['focus_keyword'] ?? ''),
@@ -92,6 +95,24 @@ final class BlogScheduler
             ]
         );
         return (int)$wpdb->insert_id;
+    }
+
+    /**
+     * Return all active agent sites for a client (from wnq_seo_agent_keys).
+     * Used to populate the site selector in the blog scheduler UI.
+     */
+    public static function getClientAgents(string $client_id): array
+    {
+        global $wpdb;
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, site_url, site_name FROM {$wpdb->prefix}wnq_seo_agent_keys
+                 WHERE client_id = %s AND status = 'active'
+                 ORDER BY created_at ASC",
+                $client_id
+            ),
+            ARRAY_A
+        ) ?: [];
     }
 
     public static function updatePost(int $id, array $data): void

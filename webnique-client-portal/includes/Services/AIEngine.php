@@ -171,6 +171,9 @@ Focus Keyword: {focus_keyword}
 Tone: {tone}
 Target Word Count: 2000-2500 words
 
+Client Keyword Data (weave relevant terms naturally into the content):
+{keyword_context}
+
 Internal Link Candidates (use 3-5 of these naturally in the body):
 {internal_links}
 
