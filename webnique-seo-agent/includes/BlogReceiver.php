@@ -115,11 +115,13 @@ final class BlogReceiver
         self::suspendSavePostHooks($saved_hooks);
 
         $post_id = wp_insert_post([
-            'post_title'    => $title,
-            'post_content'  => $post_content,
-            'post_status'   => 'draft',
-            'post_type'     => 'post',
-            'post_category' => $cat_ids,
+            'post_title'     => $title,
+            'post_content'   => $post_content,
+            'post_status'    => 'draft',
+            'post_type'      => 'post',
+            'post_category'  => $cat_ids,
+            'comment_status' => 'closed',
+            'ping_status'    => 'closed',
         ], true);
 
         self::restoreSavePostHooks($saved_hooks);
@@ -134,6 +136,9 @@ final class BlogReceiver
             if (is_array($elementor_arr)) {
                 update_post_meta($post_id, '_elementor_data', wp_slash($elementor_raw));
                 update_post_meta($post_id, '_elementor_edit_mode', 'builder');
+                // Store as a PHP array — WordPress serializes it and Elementor reads it correctly.
+                // hide_title removes the theme's default post title from the page.
+                update_post_meta($post_id, '_elementor_page_settings', ['hide_title' => 'yes']);
             }
         }
 
