@@ -300,10 +300,16 @@ final class BlogPublisher
             return $template_json; // Return as-is if JSON invalid
         }
 
-        // Walk and inject content by known widget IDs
-        $template = self::walkAndInject($template, $content);
+        // Handle Elementor export format: {"content":[...], "page_settings":{...}, ...}
+        // _elementor_data only stores the content array, not the outer wrapper.
+        $elements = isset($template['content']) && is_array($template['content'])
+            ? $template['content']
+            : $template;
 
-        return wp_json_encode($template);
+        // Walk and inject content by known widget IDs
+        $elements = self::walkAndInject($elements, $content);
+
+        return wp_json_encode($elements);
     }
 
     /**
