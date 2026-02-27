@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WebNique SEO Agent
  * Description: Lightweight data relay and execution endpoint for the WebNique SEO Operating System hub. Collects site data and syncs with web-nique.com.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: WebNique
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WNQA_VERSION', '1.0.0');
+define('WNQA_VERSION', '1.1.0');
 define('WNQA_PATH', plugin_dir_path(__FILE__));
 define('WNQA_URL', plugin_dir_url(__FILE__));
 define('WNQA_SLUG', 'webnique-seo-agent');
