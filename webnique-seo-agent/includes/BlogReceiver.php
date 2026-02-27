@@ -170,31 +170,39 @@ final class BlogReceiver
     }
 
     /**
-     * Snapshot and remove all save_post / save_post_post hooks.
-     * Pass a variable by reference to hold the snapshot for later restoration.
+     * Snapshot and unset hooks that 3rd-party plugins (e.g. Elementor) attach to.
+     * These plugins can call wp_die() inside save_post during REST API requests,
+     * which terminates the process before our try-catch can return a proper response.
+     * We set all Elementor meta directly, so none of these hooks are needed.
+     *
+     * Uses unset() rather than remove_all_actions() to avoid mutating the WP_Hook
+     * object — the original object is simply moved out of $wp_filter and restored.
+     *
+     * @param mixed $snapshot Populated by reference with the suspended hooks.
      */
     private static function suspendSavePostHooks(&$snapshot)
     {
         global $wp_filter;
-        $snapshot = [
-            'save_post'      => isset($wp_filter['save_post'])      ? clone $wp_filter['save_post']      : null,
-            'save_post_post' => isset($wp_filter['save_post_post']) ? clone $wp_filter['save_post_post'] : null,
-        ];
-        remove_all_actions('save_post');
-        remove_all_actions('save_post_post');
+        $snapshot = [];
+        $hooks = ['save_post', 'save_post_post', 'transition_post_status'];
+        foreach ($hooks as $hook) {
+            if (isset($wp_filter[$hook])) {
+                $snapshot[$hook] = $wp_filter[$hook];
+                unset($wp_filter[$hook]);
+            }
+        }
     }
 
     /**
-     * Restore save_post / save_post_post hooks from a snapshot.
+     * Restore hooks that were suspended by suspendSavePostHooks().
+     *
+     * @param mixed $snapshot The snapshot populated by suspendSavePostHooks().
      */
     private static function restoreSavePostHooks(&$snapshot)
     {
         global $wp_filter;
-        if (!empty($snapshot['save_post'])) {
-            $wp_filter['save_post'] = $snapshot['save_post'];
-        }
-        if (!empty($snapshot['save_post_post'])) {
-            $wp_filter['save_post_post'] = $snapshot['save_post_post'];
+        foreach ((array)$snapshot as $hook => $hook_obj) {
+            $wp_filter[$hook] = $hook_obj;
         }
         $snapshot = null;
     }
