@@ -22,6 +22,7 @@ require_once WNQA_PATH . 'includes/DataCollector.php';
 require_once WNQA_PATH . 'includes/APISync.php';
 require_once WNQA_PATH . 'includes/LocalChecks.php';
 require_once WNQA_PATH . 'includes/BlogReceiver.php';
+require_once WNQA_PATH . 'includes/SEOFixer.php';
 require_once WNQA_PATH . 'admin/AgentSettings.php';
 
 register_activation_hook(__FILE__,   'wnqa_activate');
@@ -54,6 +55,9 @@ add_action('plugins_loaded', function () {
 
     // Register blog receiver REST endpoint (hub → agent publishing)
     \WNQA\BlogReceiver::register();
+
+    // Register SEO fixer REST endpoint (hub → agent auto-fix SEO meta)
+    \WNQA\SEOFixer::register();
 
     // Output BlogPosting JSON-LD schema on single posts (plugin-agnostic fallback)
     add_action('wp_head', function () {

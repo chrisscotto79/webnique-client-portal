@@ -70,6 +70,7 @@ final class SEOOSBootstrap
             'includes/Services/AuditEngine.php',
             'includes/Services/ReportGenerator.php',
             'includes/Services/BlogPublisher.php',
+            'includes/Services/SEOHealthFixer.php',
             // Controllers & Core
             'includes/Controllers/SEOAgentController.php',
             'includes/Core/CronScheduler.php',
@@ -102,6 +103,7 @@ final class SEOOSBootstrap
             'includes/Services/AuditEngine.php'       => 'WNQ\\Services\\AuditEngine',
             'includes/Services/ReportGenerator.php'   => 'WNQ\\Services\\ReportGenerator',
             'includes/Services/BlogPublisher.php'     => 'WNQ\\Services\\BlogPublisher',
+            'includes/Services/SEOHealthFixer.php'   => 'WNQ\\Services\\SEOHealthFixer',
             'includes/Controllers/SEOAgentController.php' => 'WNQ\\Controllers\\SEOAgentController',
             'includes/Core/CronScheduler.php'         => 'WNQ\\Core\\CronScheduler',
             'admin/SEOHubAdmin.php'                   => 'WNQ\\Admin\\SEOHubAdmin',
