@@ -43,6 +43,113 @@
     }
   };
 
+  // ── Auto-Fix SEO: Pulsing Progress Bar ───────────────────────────────────
+
+  window.wnqAutoFixSEO = function (clientId) {
+    var $btn      = $('#wnq-fix-btn');
+    var $progress = $('#wnq-fix-progress');
+    var $bar      = $('#wnq-fix-bar');
+    var $pct      = $('#wnq-fix-pct');
+    var $status   = $('#wnq-fix-status');
+    var $counts   = $('#wnq-fix-counts');
+    var $result   = $('#wnq-action-result');
+
+    var totalPages   = 0;
+    var fixedTotal   = 0;
+    var failedTotal  = 0;
+    var skippedTotal = 0;
+    var batchNum     = 0;
+
+    $btn.prop('disabled', true).html('⏳ Fixing…');
+    $result.hide().removeClass('success error');
+    $progress.show();
+    $bar.css('width', '0%');
+    $pct.text('0%');
+    $status.text('Starting…');
+    $counts.text('');
+
+    // Step 1: get total fixable page count so the bar starts at the right scale
+    $.post(WNQ_SEOHUB.ajaxUrl, {
+      action:     'wnq_seohub_action',
+      hub_action: 'fix_seo_count',
+      client_id:  clientId,
+      nonce:      WNQ_SEOHUB.nonce
+    }).done(function (res) {
+      totalPages = (res.success && res.data && res.data.total) ? res.data.total : 0;
+      if (totalPages === 0) {
+        finish('No fixable SEO issues found — site is already clean!', true);
+        return;
+      }
+      $status.text('Found ' + totalPages + ' pages to fix. Processing…');
+      runNextBatch();
+    }).fail(function () {
+      // Can't get count — run anyway
+      runNextBatch();
+    });
+
+    function runNextBatch() {
+      batchNum++;
+      $status.text('Batch ' + batchNum + ': sending fixes to your site…');
+
+      $.post(WNQ_SEOHUB.ajaxUrl, {
+        action:     'wnq_seohub_action',
+        hub_action: 'fix_seo_batch',
+        client_id:  clientId,
+        nonce:      WNQ_SEOHUB.nonce
+      })
+      .done(function (res) {
+        if (!res.success) {
+          finish('Error: ' + (res.data ? res.data.message || JSON.stringify(res.data) : 'Unknown error'), false);
+          return;
+        }
+
+        var d = res.data;
+        fixedTotal   += (d.fixed   || 0);
+        failedTotal  += (d.failed  || 0);
+        skippedTotal += (d.skipped || 0);
+
+        var processed = fixedTotal + failedTotal + skippedTotal;
+
+        // Update progress bar
+        if (totalPages > 0) {
+          var pct = Math.min(100, Math.round((processed / totalPages) * 100));
+          $bar.css('width', pct + '%');
+          $pct.text(pct + '%');
+        }
+
+        $counts.text(
+          '✅ Fixed: ' + fixedTotal +
+          '  ❌ Failed: ' + failedTotal +
+          '  ⏭ Skipped: ' + skippedTotal +
+          '  ⏳ Remaining: ' + (d.remaining || 0)
+        );
+
+        if (d.done || (d.remaining === 0)) {
+          finish('Auto-fix complete! Fixed ' + fixedTotal + ' page' + (fixedTotal !== 1 ? 's' : '') + '.', true);
+        } else {
+          // Pulse — wait 800ms then run next batch
+          setTimeout(runNextBatch, 800);
+        }
+      })
+      .fail(function () {
+        finish('Network error during batch ' + batchNum + '. Check your connection.', false);
+      });
+    }
+
+    function finish(msg, success) {
+      $bar.css('width', '100%');
+      $pct.text('100%');
+      $status.html(success ? '✅ <strong>' + msg + '</strong>' : '❌ ' + msg);
+      $btn.prop('disabled', false).html('🔧 Auto-Fix SEO Issues');
+
+      // Also flash the standard result area
+      var $r = $('#wnq-action-result');
+      $r.removeClass('success error').addClass(success ? 'success' : 'error')
+        .html((success ? '✅ ' : '❌ ') + msg).show();
+      setTimeout(function () { $r.fadeOut(400, function () { $r.removeClass('success error').text(''); }); }, 8000);
+    }
+  };
+
   // ── View/Approve Job Modal ────────────────────────────────────────────────
 
   window.wnqViewJob = function (jobId, btn) {

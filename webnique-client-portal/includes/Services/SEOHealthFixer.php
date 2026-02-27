@@ -17,6 +17,10 @@
  * missing_meta and kw_not_in_title). Schema and alt/H1 fixes are generated
  * without AI, avoiding rate-limit issues on large sites.
  *
+ * Batch / pulse mode: runBatch() processes a small number of pages per call
+ * (default 5) and returns a `remaining` count so the UI can keep pulsing
+ * until done = true.
+ *
  * @package WebNique Portal
  */
 
@@ -34,107 +38,79 @@ final class SEOHealthFixer
     /** All finding types this fixer can handle automatically. */
     const FIXABLE_TYPES = ['missing_meta', 'kw_not_in_title', 'no_schema', 'missing_alt', 'missing_h1'];
 
-    /** Max pages to fix per client per run (increased — non-AI fixes are cheap). */
-    const MAX_PER_CLIENT = 50;
+    /** Pages processed per batch call (keeps AJAX responses fast). */
+    const BATCH_SIZE = 5;
 
     // ── Public API ───────────────────────────────────────────────────────────
 
     /**
-     * Run auto-fix for every active client that has an SEO profile and agent keys.
-     */
-    public static function runForAllClients(): array
-    {
-        $clients           = Client::getByStatus('active');
-        $clients_processed = 0;
-        $total_fixed       = 0;
-        $total_failed      = 0;
-
-        foreach ($clients as $c) {
-            if (!SEOHub::getProfile($c['client_id'])) continue;
-            $result        = self::runForClient($c['client_id']);
-            $total_fixed  += $result['fixed'];
-            $total_failed += $result['failed'];
-            $clients_processed++;
-        }
-
-        return [
-            'clients_processed' => $clients_processed,
-            'fixed'             => $total_fixed,
-            'failed'            => $total_failed,
-        ];
-    }
-
-    /**
-     * Run auto-fix for a single client.
+     * Process one small batch of fixable pages for a client.
      *
-     * @return array{fixed: int, failed: int, skipped: int, error?: string}
+     * Each call processes up to BATCH_SIZE pages, marks their findings resolved,
+     * and returns counts + remaining so the UI can show a live progress bar.
+     *
+     * The caller should keep calling until done === true.
+     *
+     * @return array{fixed:int, failed:int, skipped:int, remaining:int, done:bool, error?:string}
      */
-    public static function runForClient(string $client_id): array
+    public static function runBatch(string $client_id): array
     {
         $profile = SEOHub::getProfile($client_id);
         if (!$profile) {
-            return ['fixed' => 0, 'failed' => 0, 'skipped' => 0, 'error' => 'No SEO profile found'];
+            return ['fixed' => 0, 'failed' => 0, 'skipped' => 0, 'remaining' => 0, 'done' => true, 'error' => 'No SEO profile found'];
         }
 
-        // Build context strings used in AI + schema generation
         $client   = Client::getByClientId($client_id) ?? [];
         $biz_name = $client['company'] ?? $client['name'] ?? $client_id;
         $services = implode(', ', (array)($profile['primary_services'] ?? []));
         $location = implode(', ', (array)($profile['service_locations'] ?? []));
         $phone    = $profile['phone'] ?? '';
 
-        // Load all open fixable findings
-        $all_findings = SEOHub::getAuditFindings($client_id, ['status' => 'open']);
-        $fixable      = array_filter($all_findings, function ($f) {
-            return in_array($f['finding_type'], self::FIXABLE_TYPES, true);
-        });
-
-        if (empty($fixable)) {
-            return ['fixed' => 0, 'failed' => 0, 'skipped' => 0];
-        }
-
-        // Group findings by page URL — one push per page
-        $pages_by_url = [];
-        foreach ($fixable as $f) {
-            $url = $f['page_url'] ?? '';
-            if (!$url) continue;
-            $pages_by_url[$url][] = $f;
-        }
-
-        // Active agent keys for this client
+        // Active agent keys
         $agent_keys = array_values(array_filter(
             SEOHub::getAgentKeys($client_id),
             function ($k) { return ($k['status'] ?? '') === 'active'; }
         ));
 
         if (empty($agent_keys)) {
-            return [
-                'fixed'   => 0,
-                'failed'  => 0,
-                'skipped' => count($pages_by_url),
-                'error'   => 'No active agent sites configured',
-            ];
+            return ['fixed' => 0, 'failed' => 0, 'skipped' => 0, 'remaining' => 0, 'done' => true, 'error' => 'No active agent sites'];
         }
 
-        $fixed     = 0;
-        $failed    = 0;
-        $skipped   = 0;
-        $processed = 0;
+        // Load all open fixable findings in one query
+        $all_findings = SEOHub::getAuditFindings($client_id, ['status' => 'open']);
+        $fixable      = array_filter($all_findings, function ($f) {
+            return in_array($f['finding_type'], self::FIXABLE_TYPES, true) && !empty($f['page_url']);
+        });
 
-        foreach ($pages_by_url as $page_url => $page_findings) {
-            if ($processed >= self::MAX_PER_CLIENT) {
-                $skipped++;
-                continue;
-            }
+        // Group by page URL
+        $pages_by_url = [];
+        foreach ($fixable as $f) {
+            $pages_by_url[$f['page_url']][] = $f;
+        }
 
-            // Fetch cached page data from the hub DB
+        $total_fixable_pages = count($pages_by_url);
+
+        if ($total_fixable_pages === 0) {
+            return ['fixed' => 0, 'failed' => 0, 'skipped' => 0, 'remaining' => 0, 'done' => true];
+        }
+
+        // Take only BATCH_SIZE pages this call
+        $batch       = array_slice($pages_by_url, 0, self::BATCH_SIZE, true);
+        $fixed       = 0;
+        $failed      = 0;
+        $skipped     = 0;
+
+        foreach ($batch as $page_url => $page_findings) {
             $page_data = self::getPageData($client_id, $page_url);
             if (!$page_data || empty($page_data['post_id'])) {
+                // Resolve findings we can't fix so they don't block progress forever
+                foreach ($page_findings as $f) {
+                    SEOHub::resolveAuditFinding((int)$f['id']);
+                }
                 $skipped++;
                 continue;
             }
 
-            // Find the agent site that owns this page URL
             $agent = self::findAgentForUrl($page_url, $agent_keys);
             if (!$agent) {
                 $skipped++;
@@ -142,57 +118,50 @@ final class SEOHealthFixer
             }
 
             $finding_types = array_column($page_findings, 'finding_type');
+            $payload       = ['post_id' => (int)$page_data['post_id']];
 
-            // Build the fix payload — mix of AI-generated and programmatic fixes
-            $payload = ['post_id' => (int)$page_data['post_id']];
-
-            // ── AI-based fixes (one call covers both meta + title) ──────────
+            // AI fixes (one call covers both meta + title)
             $needs_ai = array_intersect($finding_types, ['missing_meta', 'kw_not_in_title']);
             if (!empty($needs_ai)) {
                 $ai = self::generateMetaFixes($page_data, $profile, $biz_name, $services, $location, $finding_types);
                 if ($ai['success']) {
-                    if (!empty($ai['seo_title']))       $payload['seo_title']       = $ai['seo_title'];
+                    if (!empty($ai['seo_title']))        $payload['seo_title']        = $ai['seo_title'];
                     if (!empty($ai['meta_description'])) $payload['meta_description'] = $ai['meta_description'];
                 }
             }
 
-            // ── Schema fix (programmatic — no AI call) ──────────────────────
+            // Schema fix (programmatic — no AI)
             if (in_array('no_schema', $finding_types, true)) {
                 $schema = self::buildSchema($page_data, $biz_name, $services, $location, $phone);
-                if ($schema) {
-                    $payload['schema_json'] = $schema;
-                }
+                if ($schema) $payload['schema_json'] = $schema;
             }
 
-            // ── H1 fix (send existing title — agent will un-hide it) ────────
+            // H1 fix — send existing title; agent un-hides it
             if (in_array('missing_h1', $finding_types, true)) {
-                $h1 = !empty($payload['seo_title'])
-                    ? $payload['seo_title']
-                    : ($page_data['title'] ?? '');
-                if (!empty($h1)) {
-                    $payload['h1_title'] = $h1;
-                }
+                $h1 = !empty($payload['seo_title']) ? $payload['seo_title'] : ($page_data['title'] ?? '');
+                if ($h1) $payload['h1_title'] = $h1;
             }
 
-            // ── Alt text fix (flag — agent finds + updates images) ──────────
-            if (in_array('missing_alt', $finding_types, true) && (int)$page_data['images_missing_alt'] > 0) {
+            // Alt text fix — agent scans and updates images
+            if (in_array('missing_alt', $finding_types, true) && (int)($page_data['images_missing_alt'] ?? 0) > 0) {
                 $payload['fix_missing_alt'] = true;
             }
 
-            // Always send focus keyword if we have one (helps SEO plugins)
+            // Focus keyword passthrough
             if (!empty($page_data['focus_keyword']) && !isset($payload['focus_keyword'])) {
                 $payload['focus_keyword'] = $page_data['focus_keyword'];
             }
 
-            // Nothing to do for this page
-            if (count($payload) <= 1) { // only post_id
+            // Skip if nothing to fix beyond post_id
+            if (count($payload) <= 1) {
+                foreach ($page_findings as $f) {
+                    SEOHub::resolveAuditFinding((int)$f['id']);
+                }
                 $skipped++;
                 continue;
             }
 
-            // Push all fixes to the client's WordPress site in one HTTP request
             $push = self::pushFix($agent, $payload);
-            $processed++;
 
             if ($push['success']) {
                 foreach ($page_findings as $f) {
@@ -209,27 +178,69 @@ final class SEOHealthFixer
             } else {
                 $failed++;
                 SEOHub::log('seo_auto_fix', [
-                    'client_id'   => $client_id,
+                    'client_id' => $client_id,
                     'entity_type' => 'audit_finding',
-                    'page_url'    => $page_url,
-                    'error'       => $push['message'],
+                    'page_url'  => $page_url,
+                    'error'     => $push['message'],
                 ], 'failed', 'auto');
             }
         }
 
+        // Remaining = total pages minus the batch we just processed
+        $remaining = max(0, $total_fixable_pages - count($batch));
+
         return [
-            'fixed'   => $fixed,
-            'failed'  => $failed,
-            'skipped' => $skipped,
+            'fixed'     => $fixed,
+            'failed'    => $failed,
+            'skipped'   => $skipped,
+            'remaining' => $remaining,
+            'done'      => ($remaining === 0),
+        ];
+    }
+
+    /**
+     * Count fixable pages for a client (used to initialise the progress bar).
+     */
+    public static function countFixablePages(string $client_id): int
+    {
+        $findings = SEOHub::getAuditFindings($client_id, ['status' => 'open']);
+        $urls = [];
+        foreach ($findings as $f) {
+            if (!empty($f['page_url']) && in_array($f['finding_type'], self::FIXABLE_TYPES, true)) {
+                $urls[$f['page_url']] = true;
+            }
+        }
+        return count($urls);
+    }
+
+    /**
+     * Run auto-fix for every active client (cron usage).
+     */
+    public static function runForAllClients(): array
+    {
+        $clients           = Client::getByStatus('active');
+        $clients_processed = 0;
+        $total_fixed       = 0;
+        $total_failed      = 0;
+
+        foreach ($clients as $c) {
+            if (!SEOHub::getProfile($c['client_id'])) continue;
+            // Run a single batch per client during cron
+            $result        = self::runBatch($c['client_id']);
+            $total_fixed  += $result['fixed'];
+            $total_failed += $result['failed'];
+            $clients_processed++;
+        }
+
+        return [
+            'clients_processed' => $clients_processed,
+            'fixed'             => $total_fixed,
+            'failed'            => $total_failed,
         ];
     }
 
     // ── Fix Generators ───────────────────────────────────────────────────────
 
-    /**
-     * AI: generate optimised SEO title and/or meta description via meta_tags prompt.
-     * One AI call covers both missing_meta and kw_not_in_title simultaneously.
-     */
     private static function generateMetaFixes(
         array  $page,
         array  $profile,
@@ -248,43 +259,23 @@ final class SEOHealthFixer
             'current_meta'  => !empty($page['meta_description']) ? $page['meta_description'] : 'None',
         ]);
 
-        if (!$result['success']) {
-            return ['success' => false];
-        }
+        if (!$result['success']) return ['success' => false];
 
         $content = $result['content'];
         $fixes   = ['success' => true];
 
-        if (
-            in_array('kw_not_in_title', $finding_types, true)
-            && preg_match('/^TITLE:\s*(.+)$/m', $content, $m)
-        ) {
+        if (in_array('kw_not_in_title', $finding_types, true) && preg_match('/^TITLE:\s*(.+)$/m', $content, $m)) {
             $fixes['seo_title'] = trim($m[1]);
         }
-
-        if (
-            in_array('missing_meta', $finding_types, true)
-            && preg_match('/^META:\s*(.+)$/m', $content, $m)
-        ) {
+        if (in_array('missing_meta', $finding_types, true) && preg_match('/^META:\s*(.+)$/m', $content, $m)) {
             $fixes['meta_description'] = trim($m[1]);
         }
 
         return $fixes;
     }
 
-    /**
-     * Programmatic schema builder — no AI call needed, based on page type.
-     *
-     * Returns a JSON string (without <script> wrapper) ready for
-     * _wnq_schema_json post meta.
-     */
-    private static function buildSchema(
-        array  $page,
-        string $biz_name,
-        string $services,
-        string $location,
-        string $phone
-    ): string {
+    private static function buildSchema(array $page, string $biz_name, string $services, string $location, string $phone): string
+    {
         $page_type = $page['page_type'] ?? 'page';
         $url       = $page['page_url'] ?? '';
         $title     = $page['title'] ?? $biz_name;
@@ -292,7 +283,6 @@ final class SEOHealthFixer
         $modified  = $page['last_modified'] ?? date('Y-m-d');
 
         if ($page_type === 'post') {
-            // BlogPosting schema for blog articles
             $schema = [
                 '@context'         => 'https://schema.org',
                 '@type'            => 'BlogPosting',
@@ -301,10 +291,7 @@ final class SEOHealthFixer
                 'url'              => $url,
                 'dateModified'     => substr($modified, 0, 10),
                 'author'           => ['@type' => 'Organization', 'name' => $biz_name],
-                'publisher'        => [
-                    '@type' => 'Organization',
-                    'name'  => $biz_name,
-                ],
+                'publisher'        => ['@type' => 'Organization', 'name' => $biz_name],
                 'mainEntityOfPage' => ['@type' => 'WebPage', '@id' => $url],
             ];
         } elseif ($page_type === 'product') {
@@ -317,26 +304,22 @@ final class SEOHealthFixer
                 'brand'       => ['@type' => 'Organization', 'name' => $biz_name],
             ];
         } else {
-            // WebPage + LocalBusiness for service / landing pages
-            $local = [
-                '@type' => 'LocalBusiness',
-                'name'  => $biz_name,
-            ];
-            if ($location) $local['address'] = $location;
-            if ($phone)    $local['telephone'] = $phone;
+            $local = ['@type' => 'LocalBusiness', 'name' => $biz_name];
+            if ($location) $local['address']     = $location;
+            if ($phone)    $local['telephone']   = $phone;
             if ($services) $local['description'] = $services;
 
             $schema = [
-                '@context'  => 'https://schema.org',
-                '@type'     => 'WebPage',
-                'name'      => $title,
-                'description'=> $desc,
-                'url'       => $url,
-                'publisher' => $local,
+                '@context'    => 'https://schema.org',
+                '@type'       => 'WebPage',
+                'name'        => $title,
+                'description' => $desc,
+                'url'         => $url,
+                'publisher'   => $local,
             ];
         }
 
-        $json = wp_json_encode($schema, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $json = wp_json_encode($schema, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         return $json ?: '';
     }
 
@@ -347,8 +330,7 @@ final class SEOHealthFixer
         global $wpdb;
         $row = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT * FROM {$wpdb->prefix}wnq_seo_site_data
-                 WHERE client_id = %s AND page_url = %s LIMIT 1",
+                "SELECT * FROM {$wpdb->prefix}wnq_seo_site_data WHERE client_id = %s AND page_url = %s LIMIT 1",
                 $client_id,
                 $page_url
             ),
@@ -357,35 +339,23 @@ final class SEOHealthFixer
         return $row ?: null;
     }
 
-    /**
-     * Find the agent key whose site_url prefix matches the page URL.
-     * Falls back to the first active agent key.
-     */
     private static function findAgentForUrl(string $page_url, array $agent_keys): ?array
     {
         foreach ($agent_keys as $key) {
             $site = rtrim($key['site_url'] ?? '', '/');
-            if ($site && strpos($page_url, $site) === 0) {
-                return $key;
-            }
+            if ($site && strpos($page_url, $site) === 0) return $key;
         }
         return $agent_keys[0] ?? null;
     }
 
-    /**
-     * POST the fix payload to the agent's /fix-seo REST endpoint.
-     */
     private static function pushFix(array $agent, array $payload): array
     {
         $endpoint = rtrim($agent['site_url'], '/') . '/wp-json/wnq-agent/v1/fix-seo';
 
         $response = wp_remote_post($endpoint, [
             'timeout' => 30,
-            'headers' => [
-                'Content-Type'  => 'application/json',
-                'X-WNQ-Api-Key' => $agent['api_key'],
-            ],
-            'body' => wp_json_encode($payload),
+            'headers' => ['Content-Type' => 'application/json', 'X-WNQ-Api-Key' => $agent['api_key']],
+            'body'    => wp_json_encode($payload),
         ]);
 
         if (is_wp_error($response)) {
