@@ -140,12 +140,19 @@ final class SEOFixer
         // so the WordPress page title (which themes output as <h1>) becomes visible.
         $h1_title = isset($body['h1_title']) ? sanitize_text_field($body['h1_title']) : '';
         if (!empty($h1_title)) {
-            // Update post_title if it differs (avoid unnecessary DB write)
+            // Use direct DB update — wp_update_post() fires save_post which can
+            // trigger Elementor's wp_die() inside a REST API request.
             if ($post->post_title !== $h1_title) {
-                wp_update_post(['ID' => $post_id, 'post_title' => $h1_title]);
+                global $wpdb;
+                $wpdb->update(
+                    $wpdb->posts,
+                    ['post_title' => $h1_title, 'post_name' => sanitize_title($h1_title)],
+                    ['ID' => $post_id]
+                );
+                clean_post_cache($post_id);
             }
 
-            // Remove Elementor's hide_title setting so the title renders as H1
+            // Remove Elementor's hide_title — update_post_meta does NOT fire save_post
             $page_settings = get_post_meta($post_id, '_elementor_page_settings', true);
             if (is_array($page_settings) && isset($page_settings['hide_title']) && $page_settings['hide_title'] === 'yes') {
                 unset($page_settings['hide_title']);

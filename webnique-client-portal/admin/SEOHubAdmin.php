@@ -63,7 +63,7 @@ final class SEOHubAdmin
 
     public static function enqueueAssets(string $hook): void
     {
-        if (!str_contains($hook, 'wnq-seo-hub')) return;
+        if (strpos($hook, 'wnq-seo-hub') === false) return;
 
         wp_enqueue_style('wnq-seohub', WNQ_PORTAL_URL . 'assets/admin/seohub.css', [], WNQ_PORTAL_VERSION);
         wp_enqueue_script('wnq-seohub', WNQ_PORTAL_URL . 'assets/admin/seohub.js', ['jquery'], WNQ_PORTAL_VERSION, true);
@@ -593,10 +593,23 @@ final class SEOHubAdmin
         echo '</select>';
         if ($client_id) {
             echo ' &nbsp;<button class="wnq-btn wnq-btn-primary" onclick="wnqHubAjax(\'run_client_audit\', \'' . esc_js($client_id) . '\')">🔍 Run Audit Now</button>';
-            echo ' &nbsp;<button class="wnq-btn" style="background:#059669;color:#fff;border-color:#059669;" onclick="wnqHubAjax(\'fix_seo_issues\', \'' . esc_js($client_id) . '\')">🔧 Auto-Fix SEO Issues</button>';
+            echo ' &nbsp;<button id="wnq-fix-btn" class="wnq-btn" style="background:#059669;color:#fff;border-color:#059669;" onclick="wnqAutoFixSEO(\'' . esc_js($client_id) . '\')">🔧 Auto-Fix SEO Issues</button>';
         }
         echo '</div>';
         echo '<div id="wnq-action-result" style="margin-top:12px;"></div>';
+
+        // Progress bar — hidden until auto-fix starts
+        echo '<div id="wnq-fix-progress" style="display:none;margin-top:16px;padding:16px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;">';
+        echo '  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">';
+        echo '    <strong style="color:#166534;">🔧 Auto-Fixing SEO Issues…</strong>';
+        echo '    <span id="wnq-fix-pct" style="font-weight:700;color:#166534;font-size:18px;">0%</span>';
+        echo '  </div>';
+        echo '  <div style="background:#dcfce7;border-radius:6px;height:14px;overflow:hidden;">';
+        echo '    <div id="wnq-fix-bar" style="background:linear-gradient(90deg,#059669,#34d399);height:100%;width:0%;transition:width 0.5s ease;border-radius:6px;"></div>';
+        echo '  </div>';
+        echo '  <div id="wnq-fix-status" style="margin-top:10px;font-size:13px;color:#15803d;"></div>';
+        echo '  <div id="wnq-fix-counts" style="margin-top:6px;font-size:12px;color:#6b7280;"></div>';
+        echo '</div>';
 
         if ($client_id) {
             $findings = SEOHub::getAuditFindings($client_id, ['status' => 'open']);
@@ -1071,11 +1084,26 @@ final class SEOHubAdmin
                 break;
 
             case 'fix_seo_issues':
+                // Legacy single-shot call — kept for backwards compat
                 if (!$client_id) wp_send_json_error(['message' => 'No client selected']);
-                $result = \WNQ\Services\SEOHealthFixer::runForClient($client_id);
-                $msg = "Auto-fix complete — Fixed: {$result['fixed']}, Failed: {$result['failed']}, Skipped: {$result['skipped']}";
+                $result = \WNQ\Services\SEOHealthFixer::runBatch($client_id);
+                $msg = "Batch complete — Fixed: {$result['fixed']}, Failed: {$result['failed']}, Remaining: {$result['remaining']}";
                 if (!empty($result['error'])) $msg .= ' — ' . $result['error'];
                 wp_send_json_success(['message' => $msg, 'data' => $result]);
+                break;
+
+            case 'fix_seo_batch':
+                // Pulse endpoint — called repeatedly by the JS progress bar
+                if (!$client_id) wp_send_json_error(['message' => 'No client selected']);
+                $result = \WNQ\Services\SEOHealthFixer::runBatch($client_id);
+                wp_send_json_success($result);
+                break;
+
+            case 'fix_seo_count':
+                // Returns total fixable page count for initialising the progress bar
+                if (!$client_id) wp_send_json_error(['message' => 'No client selected']);
+                $count = \WNQ\Services\SEOHealthFixer::countFixablePages($client_id);
+                wp_send_json_success(['total' => $count]);
                 break;
 
             case 'generate_report':
