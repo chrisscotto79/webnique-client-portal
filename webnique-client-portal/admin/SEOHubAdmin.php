@@ -854,27 +854,50 @@ final class SEOHubAdmin
         echo '<div class="wnq-hub-form-group">';
         echo '<label>AI Provider</label>';
         echo '<select name="provider">';
-        foreach (['groq' => 'Groq (Free Tier — Recommended)', 'openai' => 'OpenAI (GPT-3.5/4)', 'together' => 'Together AI (Free Tier)'] as $v => $l) {
+        foreach ([
+            'xai'     => 'xAI / Grok (Recommended)',
+            'groq'    => 'Groq (Free Tier)',
+            'openai'  => 'OpenAI (GPT-3.5/4)',
+            'together'=> 'Together AI (Free Tier)',
+        ] as $v => $l) {
             echo '<option value="' . $v . '" ' . selected($ai_settings['provider'] ?? 'groq', $v, false) . '>' . $l . '</option>';
         }
         echo '</select>';
-        echo '<p class="description">Get a free Groq API key at <a href="https://console.groq.com" target="_blank">console.groq.com</a></p>';
+        echo '</div>';
+
+        echo '<div class="wnq-hub-form-group">';
+        echo '<label>xAI API Key</label>';
+        echo '<input type="password" name="xai_api_key" value="' . esc_attr($ai_settings['xai_api_key'] ?? '') . '" placeholder="xai-...">';
+        echo '<p class="description">Get your key at <a href="https://console.x.ai" target="_blank">console.x.ai</a></p>';
+        echo '</div>';
+
+        echo '<div class="wnq-hub-form-group">';
+        echo '<label>xAI Model</label>';
+        echo '<select name="xai_model">';
+        foreach ([
+            'grok-3-mini-latest' => 'Grok 3 Mini (fast, cost-efficient)',
+            'grok-3-latest'      => 'Grok 3 (most capable)',
+            'grok-4-latest'      => 'Grok 4 (latest)',
+        ] as $v => $l) {
+            echo '<option value="' . $v . '" ' . selected($ai_settings['xai_model'] ?? 'grok-3-mini-latest', $v, false) . '>' . $l . '</option>';
+        }
+        echo '</select>';
         echo '</div>';
 
         echo '<div class="wnq-hub-form-group">';
         echo '<label>Groq API Key</label>';
         echo '<input type="password" name="groq_api_key" value="' . esc_attr($ai_settings['groq_api_key'] ?? '') . '" placeholder="gsk_...">';
-        echo '<p class="description">Free tier: 14,400 req/day, 6,000 tokens/min</p>';
+        echo '<p class="description">Free tier: 14,400 req/day · <a href="https://console.groq.com" target="_blank">console.groq.com</a></p>';
         echo '</div>';
 
         echo '<div class="wnq-hub-form-group">';
         echo '<label>Groq Model</label>';
         echo '<select name="groq_model">';
         foreach ([
-            'llama-3.1-8b-instant'  => 'Llama 3.1 8B Instant (fastest)',
+            'llama-3.1-8b-instant'    => 'Llama 3.1 8B Instant (fastest)',
             'llama-3.3-70b-versatile' => 'Llama 3.3 70B Versatile (best quality)',
-            'mixtral-8x7b-32768'    => 'Mixtral 8x7B (good balance)',
-            'gemma2-9b-it'          => 'Gemma 2 9B IT',
+            'mixtral-8x7b-32768'      => 'Mixtral 8x7B (good balance)',
+            'gemma2-9b-it'            => 'Gemma 2 9B IT',
         ] as $v => $l) {
             echo '<option value="' . $v . '" ' . selected($ai_settings['groq_model'] ?? 'llama-3.1-8b-instant', $v, false) . '>' . $l . '</option>';
         }

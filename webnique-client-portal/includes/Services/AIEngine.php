@@ -279,6 +279,7 @@ PROMPT,
             'groq'       => self::callGroq($api_key, $prompt, $settings),
             'openai'     => self::callOpenAI($api_key, $prompt, $settings),
             'together'   => self::callTogetherAI($api_key, $prompt, $settings),
+            'xai'        => self::callXAI($api_key, $prompt, $settings),
             default      => ['success' => false, 'error' => "Unknown provider: $provider", 'content' => ''],
         };
 
@@ -328,6 +329,8 @@ PROMPT,
             'groq_model'       => 'llama-3.1-8b-instant',
             'together_api_key' => '',
             'together_model'   => 'mistralai/Mixtral-8x7B-Instruct-v0.1',
+            'xai_api_key'      => '',
+            'xai_model'        => 'grok-3-mini-latest',
             'cache_ttl'        => 86400,
             'max_tokens'       => 2000,
             'temperature'      => 0.7,
@@ -338,7 +341,8 @@ PROMPT,
     {
         $current = self::getSettings();
         $allowed = ['provider', 'groq_api_key', 'groq_model', 'openai_api_key', 'openai_model',
-                    'together_api_key', 'together_model', 'cache_ttl', 'max_tokens', 'temperature'];
+                    'together_api_key', 'together_model', 'xai_api_key', 'xai_model',
+                    'cache_ttl', 'max_tokens', 'temperature'];
         foreach ($allowed as $k) {
             if (isset($data[$k])) {
                 $current[$k] = $data[$k];
@@ -402,6 +406,29 @@ PROMPT,
         $temp    = (float)($settings['temperature'] ?? 0.7);
 
         $response = wp_remote_post('https://api.together.xyz/v1/chat/completions', [
+            'timeout' => 60,
+            'headers' => [
+                'Authorization' => 'Bearer ' . $api_key,
+                'Content-Type'  => 'application/json',
+            ],
+            'body' => wp_json_encode([
+                'model'       => $model,
+                'messages'    => [['role' => 'user', 'content' => $prompt]],
+                'max_tokens'  => $max_tok,
+                'temperature' => $temp,
+            ]),
+        ]);
+
+        return self::parseOpenAIResponse($response, $model);
+    }
+
+    private static function callXAI(string $api_key, string $prompt, array $settings): array
+    {
+        $model   = $settings['xai_model'] ?? 'grok-3-mini-latest';
+        $max_tok = (int)($settings['max_tokens'] ?? 2000);
+        $temp    = (float)($settings['temperature'] ?? 0.7);
+
+        $response = wp_remote_post('https://api.x.ai/v1/chat/completions', [
             'timeout' => 60,
             'headers' => [
                 'Authorization' => 'Bearer ' . $api_key,

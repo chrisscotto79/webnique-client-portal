@@ -383,7 +383,8 @@ final class SEOOSBootstrap
         self::requireCap();
 
         $allowed = ['provider', 'groq_api_key', 'groq_model', 'openai_api_key', 'openai_model',
-                    'together_api_key', 'together_model', 'max_tokens', 'temperature', 'cache_ttl'];
+                    'together_api_key', 'together_model', 'xai_api_key', 'xai_model',
+                    'max_tokens', 'temperature', 'cache_ttl'];
 
         $data = [];
         foreach ($allowed as $k) {
