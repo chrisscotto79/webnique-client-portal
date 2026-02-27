@@ -53,8 +53,13 @@ final class BlogPublisher
             return ['success' => false, 'message' => 'Schedule entry not found'];
         }
 
-        if ($scheduled['status'] !== 'pending') {
-            return ['success' => false, 'message' => 'Post is not in pending status'];
+        if (!in_array($scheduled['status'], ['pending', 'failed'], true)) {
+            return ['success' => false, 'message' => 'Post must be in pending or failed status to process'];
+        }
+
+        // Reset failed posts before retrying
+        if ($scheduled['status'] === 'failed') {
+            BlogScheduler::updatePost($schedule_id, ['status' => 'pending', 'error_message' => null]);
         }
 
         // Mark as generating

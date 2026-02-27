@@ -9,17 +9,6 @@
  *
  * Auth: X-WNQ-Api-Key header must match the API key stored in wnqa_config.
  *
- * Payload:
- * {
- *   "title":            "SEO H1 title",
- *   "meta_description": "150-160 char meta",
- *   "post_content":     "Plain-text fallback body",
- *   "elementor_data":   "[{...}]",
- *   "categories":       ["Services"],
- *   "status":           "publish",
- *   "focus_keyword":    "keyword phrase"
- * }
- *
  * @package WebNique SEO Agent
  */
 
@@ -56,9 +45,10 @@ final class BlogReceiver
             return new \WP_Error('not_configured', 'Agent plugin is not configured.', ['status' => 503]);
         }
 
-        $sent_key = $request->get_header('X-WNQ-Api-Key')
-            ?? $request->get_param('api_key')
-            ?? '';
+        $sent_key = $request->get_header('X-WNQ-Api-Key');
+        if (empty($sent_key)) {
+            $sent_key = $request->get_param('api_key') ?? '';
+        }
 
         if (empty($sent_key) || !hash_equals($my_key, $sent_key)) {
             return new \WP_Error('invalid_api_key', 'Invalid API key.', ['status' => 403]);
@@ -69,19 +59,33 @@ final class BlogReceiver
 
     // ── Handler ─────────────────────────────────────────────────────────────
 
-    public static function handlePublish(\WP_REST_Request $request): \WP_REST_Response
+    public static function handlePublish(\WP_REST_Request $request)
     {
-        $body = $request->get_json_params() ?? [];
+        try {
+            return self::doPublish($request);
+        } catch (\Throwable $e) {
+            error_log('WNQ BlogReceiver error: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+            return new \WP_REST_Response([
+                'error'   => $e->getMessage(),
+                'context' => basename($e->getFile()) . ':' . $e->getLine(),
+            ], 500);
+        }
+    }
 
-        $title         = sanitize_text_field($body['title'] ?? '');
-        $post_content  = wp_kses_post($body['post_content'] ?? '');
-        $meta_desc     = sanitize_text_field($body['meta_description'] ?? '');
-        $elementor_raw = $body['elementor_data'] ?? '';
-        $categories    = array_map('sanitize_text_field', (array)($body['categories'] ?? []));
-        $status        = in_array($body['status'] ?? 'publish', ['publish', 'draft'], true)
-                         ? $body['status']
-                         : 'publish';
-        $focus_kw      = sanitize_text_field($body['focus_keyword'] ?? '');
+    private static function doPublish(\WP_REST_Request $request)
+    {
+        $body = $request->get_json_params();
+        if (!is_array($body)) {
+            $body = [];
+        }
+
+        $title        = sanitize_text_field($body['title'] ?? '');
+        $post_content = wp_kses_post($body['post_content'] ?? '');
+        $meta_desc    = sanitize_text_field($body['meta_description'] ?? '');
+        $elementor_raw = isset($body['elementor_data']) ? (string)$body['elementor_data'] : '';
+        $categories   = array_map('sanitize_text_field', (array)($body['categories'] ?? []));
+        $status       = ($body['status'] ?? 'publish') === 'draft' ? 'draft' : 'publish';
+        $focus_kw     = sanitize_text_field($body['focus_keyword'] ?? '');
 
         if (empty($title)) {
             return new \WP_REST_Response(['error' => 'title is required'], 400);
@@ -92,61 +96,63 @@ final class BlogReceiver
         foreach ($categories as $cat_name) {
             if (empty($cat_name)) continue;
             $term = get_term_by('name', $cat_name, 'category');
-            if ($term) {
+            if ($term && !is_wp_error($term)) {
                 $cat_ids[] = (int)$term->term_id;
             } else {
                 $new_term = wp_create_term($cat_name, 'category');
-                if (!is_wp_error($new_term)) {
+                if (!is_wp_error($new_term) && !empty($new_term['term_id'])) {
                     $cat_ids[] = (int)$new_term['term_id'];
                 }
             }
         }
 
-        // Create the WordPress post
+        // Create the post — insert as draft first, set meta, then publish
+        // This avoids other plugins trying to process incomplete Elementor data on initial save
         $post_id = wp_insert_post([
-            'post_title'   => $title,
-            'post_content' => $post_content,
-            'post_status'  => $status,
-            'post_type'    => 'post',
-            'post_category'=> $cat_ids,
+            'post_title'    => $title,
+            'post_content'  => $post_content,
+            'post_status'   => 'draft',
+            'post_type'     => 'post',
+            'post_category' => $cat_ids,
         ], true);
 
         if (is_wp_error($post_id)) {
             return new \WP_REST_Response(['error' => $post_id->get_error_message()], 500);
         }
 
-        // Set Elementor data
+        // Set Elementor data before publishing so it's ready when post goes live
         if (!empty($elementor_raw)) {
-            // Validate it's parseable JSON
             $elementor_arr = json_decode($elementor_raw, true);
             if (is_array($elementor_arr)) {
-                update_post_meta($post_id, '_elementor_data', $elementor_raw);
+                // Store raw JSON string — Elementor reads this directly
+                update_post_meta($post_id, '_elementor_data', wp_slash($elementor_raw));
                 update_post_meta($post_id, '_elementor_edit_mode', 'builder');
-                update_post_meta($post_id, '_elementor_template_type', 'wp-post');
-                update_post_meta($post_id, '_elementor_version', '3.0.0');
-                // Ensure page is hidden H1 (Elementor heading widget is the H1)
-                update_post_meta($post_id, '_elementor_page_settings', ['hide_title' => 'yes']);
+                // Store page settings as JSON string (not PHP array) to avoid
+                // conflicts with Elementor's own serialization/hook handling
+                update_post_meta($post_id, '_elementor_page_settings', wp_json_encode(['hide_title' => 'yes']));
             }
         }
 
-        // Set SEO meta (Yoast, RankMath, or generic)
+        // Set SEO meta
         if (!empty($meta_desc)) {
-            // Yoast SEO
             if (defined('WPSEO_VERSION')) {
                 update_post_meta($post_id, '_yoast_wpseo_metadesc', $meta_desc);
                 if (!empty($focus_kw)) {
                     update_post_meta($post_id, '_yoast_wpseo_focuskw', $focus_kw);
                 }
             }
-            // RankMath
             if (class_exists('RankMath')) {
                 update_post_meta($post_id, 'rank_math_description', $meta_desc);
                 if (!empty($focus_kw)) {
                     update_post_meta($post_id, 'rank_math_focus_keyword', $focus_kw);
                 }
             }
-            // Generic fallback
             update_post_meta($post_id, '_meta_description', $meta_desc);
+        }
+
+        // Now publish (or leave as draft if requested)
+        if ($status === 'publish') {
+            wp_update_post(['ID' => $post_id, 'post_status' => 'publish']);
         }
 
         $post_url = get_permalink($post_id);

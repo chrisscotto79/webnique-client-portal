@@ -170,6 +170,10 @@ final class BlogSchedulerAdmin
                     // Publish now button
                     echo '<button class="button button-small wnq-publish-now" data-id="' . (int)$p['id'] . '">▶ Publish Now</button> ';
                 }
+                if ($p['status'] === 'failed') {
+                    // Try Again button
+                    echo '<button class="button button-small wnq-publish-now" data-id="' . (int)$p['id'] . '" style="background:#fef2f2;border-color:#fca5a5;color:#991b1b;">↺ Try Again</button> ';
+                }
                 // Delete
                 echo '<form method="post" action="' . admin_url('admin-post.php') . '" style="display:inline;">';
                 echo '<input type="hidden" name="action" value="wnq_blog_delete_post">';
@@ -205,8 +209,9 @@ final class BlogSchedulerAdmin
 jQuery(function($) {
     $(document).on('click', '.wnq-publish-now', function() {
         if (!confirm('Publish this post now?\n\nThe AI will generate the full post and push it live to the client site. This may take 30-60 seconds.')) return;
-        var id   = $(this).data('id');
-        var $btn = $(this);
+        var id       = $(this).data('id');
+        var $btn     = $(this);
+        var origText = $btn.text();
         $btn.prop('disabled', true).text('⏳ Publishing...');
 
         $.post(WNQ_SEOHUB.ajaxUrl, {
@@ -219,13 +224,13 @@ jQuery(function($) {
             } else {
                 var msg = (resp.data && resp.data.message) ? resp.data.message : 'Unknown error';
                 alert('❌ Publish failed:\n\n' + msg);
-                $btn.prop('disabled', false).text('▶ Publish Now');
+                $btn.prop('disabled', false).text(origText);
             }
         }).fail(function(xhr) {
             var msg = 'AJAX request failed.';
             try { msg = JSON.parse(xhr.responseText).message || msg; } catch(e) {}
             alert('❌ ' + msg + '\n\nCheck your browser console for details.');
-            $btn.prop('disabled', false).text('▶ Publish Now');
+            $btn.prop('disabled', false).text(origText);
         });
     });
 });
