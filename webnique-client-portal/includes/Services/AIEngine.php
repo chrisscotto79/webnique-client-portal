@@ -158,16 +158,96 @@ Generate 5 specific blog post topics that:
 
 Return as a numbered list: Topic | Primary Keyword | Secondary Keywords | Content Type (blog/page/faq)
 PROMPT,
+
+        'blog_post_full' => <<<'PROMPT'
+You are an expert local SEO copywriter. Write a complete, publish-ready blog post.
+
+Business: {business_name}
+Services: {services}
+Location: {location}
+Post Title (working title): {title}
+Category Type: {category_type}
+Focus Keyword: {focus_keyword}
+Tone: {tone}
+Target Word Count: 900-1200 words
+
+Internal Link Candidates (use 2-4 of these naturally in the body):
+{internal_links}
+
+{external_citation_instruction}
+
+STRICT FORMAT — return EXACTLY using these delimiters, nothing before ===H1===:
+
+===H1===
+[One SEO-optimized H1 title that includes the focus keyword. No quotes.]
+
+===META===
+[Meta description, 150-160 characters, includes focus keyword, ends with a subtle CTA. No quotes.]
+
+===TOC===
+<ul>
+  <li><a href="#section-1">First Section Title</a></li>
+  <li><a href="#section-2">Second Section Title</a></li>
+  <li><a href="#section-3">Third Section Title</a></li>
+</ul>
+
+===BODY===
+[Full HTML blog post body. Rules:
+- Do NOT include H1 (that is separate above)
+- Use <h2 id="section-N"> for main sections matching the TOC anchors
+- Use <h3> for subsections
+- Wrap all paragraphs in <p> tags
+- Short paragraphs: 2-3 sentences max
+- Insert 2-4 internal links naturally: <a href="URL">anchor text</a>
+- Focus keyword appears in first 100 words and 2-3 times total (natural density)
+- End with a <p> CTA relevant to the services
+- No keyword stuffing, no filler phrases like "In conclusion" or "In today's world"]
+
+===END===
+PROMPT,
+
+        'blog_titles_batch' => <<<'PROMPT'
+You are an SEO content strategist specializing in local business content marketing.
+
+Business: {business_name}
+Services: {services}
+Location: {location}
+
+Existing blog titles to avoid duplicating topics:
+{existing_titles}
+
+Generate {count} blog post title ideas. Mix these three content types:
+- Services: Targets service-specific keywords ("Best roofing company in {location}", "Roof repair vs replacement")
+- Informational: How-to guides, FAQs, educational content ("How to know if your roof needs repair")
+- Seasonal: Time-sensitive local topics ("Preparing your roof for {location} winters")
+
+Rules:
+- Each title must target a distinct keyword angle
+- Include natural local modifiers where it makes sense (city/region from Location)
+- Use power words that drive clicks
+- Keep titles under 65 characters where possible
+
+Return ONLY a numbered list in this exact format (one per line, no extra text):
+1. [Title] | [Category: Services/Informational/Seasonal] | [Focus Keyword]
+2. [Title] | [Category] | [Focus Keyword]
+PROMPT,
     ];
 
     // ── Public API ──────────────────────────────────────────────────────────
 
     /**
-     * Run an AI generation job
+     * Run an AI generation job.
+     *
+     * @param array $options Override default settings for this call only.
+     *                       Supported keys: max_tokens, temperature.
+     *                       Useful for blog posts that need higher token limits.
      */
-    public static function generate(string $template_key, array $vars, string $client_id = ''): array
+    public static function generate(string $template_key, array $vars, string $client_id = '', array $options = []): array
     {
         $settings = self::getSettings();
+        // Apply per-call overrides (e.g. max_tokens for full blog posts)
+        $settings = array_merge($settings, $options);
+
         $provider = $settings['provider'] ?? 'groq';
         $api_key  = $settings[$provider . '_api_key'] ?? '';
 

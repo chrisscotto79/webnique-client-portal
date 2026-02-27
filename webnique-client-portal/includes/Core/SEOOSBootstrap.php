@@ -34,9 +34,13 @@ final class SEOOSBootstrap
         // Register admin UI
         if (is_admin()) {
             \WNQ\Admin\SEOHubAdmin::register();
+            \WNQ\Admin\BlogSchedulerAdmin::register();
             // Register get_job ajax handler
             add_action('wp_ajax_wnq_seohub_get_job', [self::class, 'ajaxGetJob']);
         }
+
+        // Create blog tables if not yet created (schema migration for existing installs)
+        self::maybeCreateBlogTables();
 
         // Register REST API routes for SEO Agent
         add_action('rest_api_init', function () {
@@ -59,16 +63,19 @@ final class SEOOSBootstrap
             'includes/Models/Client.php',
             'includes/Models/Task.php',
             'includes/Models/SEOHub.php',
+            'includes/Models/BlogScheduler.php',
             // Services
             'includes/Services/AIEngine.php',
             'includes/Services/AutomationEngine.php',
             'includes/Services/AuditEngine.php',
             'includes/Services/ReportGenerator.php',
+            'includes/Services/BlogPublisher.php',
             // Controllers & Core
             'includes/Controllers/SEOAgentController.php',
             'includes/Core/CronScheduler.php',
             // Admin UI (must come last — depends on everything above)
             'admin/SEOHubAdmin.php',
+            'admin/BlogSchedulerAdmin.php',
         ];
 
         foreach ($files as $f) {
@@ -89,13 +96,16 @@ final class SEOOSBootstrap
             'includes/Models/Client.php'              => 'WNQ\\Models\\Client',
             'includes/Models/Task.php'                => 'WNQ\\Models\\Task',
             'includes/Models/SEOHub.php'              => 'WNQ\\Models\\SEOHub',
+            'includes/Models/BlogScheduler.php'       => 'WNQ\\Models\\BlogScheduler',
             'includes/Services/AIEngine.php'          => 'WNQ\\Services\\AIEngine',
             'includes/Services/AutomationEngine.php'  => 'WNQ\\Services\\AutomationEngine',
             'includes/Services/AuditEngine.php'       => 'WNQ\\Services\\AuditEngine',
             'includes/Services/ReportGenerator.php'   => 'WNQ\\Services\\ReportGenerator',
+            'includes/Services/BlogPublisher.php'     => 'WNQ\\Services\\BlogPublisher',
             'includes/Controllers/SEOAgentController.php' => 'WNQ\\Controllers\\SEOAgentController',
             'includes/Core/CronScheduler.php'         => 'WNQ\\Core\\CronScheduler',
             'admin/SEOHubAdmin.php'                   => 'WNQ\\Admin\\SEOHubAdmin',
+            'admin/BlogSchedulerAdmin.php'            => 'WNQ\\Admin\\BlogSchedulerAdmin',
         ];
         return $map[$file] ?? '';
     }
@@ -152,6 +162,14 @@ final class SEOOSBootstrap
 
         // Reset prompt templates
         add_action('admin_post_wnq_reset_prompt_templates', [self::class, 'handleResetPromptTemplates']);
+
+        // Blog Scheduler handlers
+        add_action('admin_post_wnq_blog_add_post',         [self::class, 'handleBlogAddPost']);
+        add_action('admin_post_wnq_blog_delete_post',      [self::class, 'handleBlogDeletePost']);
+        add_action('admin_post_wnq_blog_save_template',    [self::class, 'handleBlogSaveTemplate']);
+        add_action('admin_post_wnq_blog_save_always_link', [self::class, 'handleBlogSaveAlwaysLink']);
+        add_action('admin_post_wnq_blog_mark_all_read',    [self::class, 'handleBlogMarkAllRead']);
+        add_action('wp_ajax_wnq_blog_add_batch',           [self::class, 'ajaxBlogAddBatch']);
     }
 
     // ── AJAX: Get Job Content ───────────────────────────────────────────────
@@ -407,6 +425,140 @@ final class SEOOSBootstrap
         exit;
     }
 
+    // ── Blog Scheduler Form Handlers ────────────────────────────────────────
+
+    public static function handleBlogAddPost(): void
+    {
+        check_admin_referer('wnq_blog_add_post');
+        self::requireCap();
+
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $title     = sanitize_text_field($_POST['title'] ?? '');
+        if (empty($client_id) || empty($title)) wp_die('Missing required fields');
+
+        \WNQ\Models\BlogScheduler::addPost($client_id, [
+            'title'          => $title,
+            'category_type'  => sanitize_text_field($_POST['category_type'] ?? 'Informational'),
+            'focus_keyword'  => sanitize_text_field($_POST['focus_keyword'] ?? ''),
+            'scheduled_date' => sanitize_text_field($_POST['scheduled_date'] ?? ''),
+        ]);
+
+        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue&client_id=' . urlencode($client_id) . '&notice=added'));
+        exit;
+    }
+
+    public static function handleBlogDeletePost(): void
+    {
+        $post_id   = (int)($_POST['post_id'] ?? 0);
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        check_admin_referer('wnq_blog_delete_' . $post_id);
+        self::requireCap();
+
+        if ($post_id) \WNQ\Models\BlogScheduler::deletePost($post_id);
+
+        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue&client_id=' . urlencode($client_id) . '&notice=deleted'));
+        exit;
+    }
+
+    public static function handleBlogSaveTemplate(): void
+    {
+        check_admin_referer('wnq_blog_save_template');
+        self::requireCap();
+
+        $json = stripslashes($_POST['elementor_template'] ?? '');
+        // Basic validation: must be a JSON array or empty
+        if (!empty($json)) {
+            $decoded = json_decode($json, true);
+            if (!is_array($decoded)) {
+                wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=settings&error=invalid_json'));
+                exit;
+            }
+        }
+        update_option('wnq_blog_elementor_template', $json);
+
+        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=settings&settings_saved=1'));
+        exit;
+    }
+
+    public static function handleBlogSaveAlwaysLink(): void
+    {
+        check_admin_referer('wnq_blog_save_always_link');
+        self::requireCap();
+
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        if (!$client_id) wp_die('Missing client_id');
+
+        $raw   = $_POST['always_link'] ?? [];
+        $links = [];
+        foreach ($raw as $entry) {
+            $url = esc_url_raw($entry['url'] ?? '');
+            if (empty($url)) continue;
+            $links[] = [
+                'url'      => $url,
+                'anchor'   => sanitize_text_field($entry['anchor'] ?? ''),
+                'keywords' => sanitize_text_field($entry['keywords'] ?? ''),
+            ];
+        }
+        \WNQ\Models\BlogScheduler::saveAlwaysLinkTo($client_id, $links);
+
+        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=settings&client_id=' . urlencode($client_id) . '&settings_saved=1'));
+        exit;
+    }
+
+    public static function handleBlogMarkAllRead(): void
+    {
+        check_admin_referer('wnq_blog_mark_all_read');
+        self::requireCap();
+        \WNQ\Models\BlogScheduler::markAllRead();
+        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue'));
+        exit;
+    }
+
+    public static function ajaxBlogAddBatch(): void
+    {
+        check_ajax_referer('wnq_seohub_nonce', 'nonce');
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Access denied']);
+        }
+
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $posts_raw = stripslashes($_POST['posts'] ?? '[]');
+        $posts     = json_decode($posts_raw, true);
+
+        if (empty($client_id) || !is_array($posts)) {
+            wp_send_json_error(['message' => 'Invalid data']);
+        }
+
+        $added = 0;
+        foreach ($posts as $p) {
+            $title = sanitize_text_field($p['title'] ?? '');
+            if (empty($title)) continue;
+            \WNQ\Models\BlogScheduler::addPost($client_id, [
+                'title'          => $title,
+                'category_type'  => sanitize_text_field($p['category'] ?? 'Informational'),
+                'focus_keyword'  => sanitize_text_field($p['keyword'] ?? ''),
+                'scheduled_date' => sanitize_text_field($p['date'] ?? ''),
+            ]);
+            $added++;
+        }
+
+        wp_send_json_success(['added' => $added]);
+    }
+
+    // ── Schema Migration (creates blog tables for existing installs) ─────────
+
+    private static function maybeCreateBlogTables(): void
+    {
+        // Use a lightweight version flag so this only runs once per install
+        if (get_option('wnq_blog_schema_ver') === '1') {
+            return;
+        }
+        if (class_exists('WNQ\\Models\\BlogScheduler')) {
+            \WNQ\Models\BlogScheduler::createTables();
+            update_option('wnq_blog_schema_ver', '1');
+        }
+    }
+
     // ── Table Creation (called on activation) ──────────────────────────────
 
     public static function createTables(): void
@@ -415,6 +567,12 @@ final class SEOOSBootstrap
             require_once WNQ_PORTAL_PATH . 'includes/Models/SEOHub.php';
             if (class_exists('WNQ\\Models\\SEOHub')) {
                 \WNQ\Models\SEOHub::createTables();
+            }
+        }
+        if (file_exists(WNQ_PORTAL_PATH . 'includes/Models/BlogScheduler.php')) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/BlogScheduler.php';
+            if (class_exists('WNQ\\Models\\BlogScheduler')) {
+                \WNQ\Models\BlogScheduler::createTables();
             }
         }
     }

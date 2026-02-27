@@ -19,6 +19,7 @@ if (!defined('ABSPATH')) {
 
 use WNQ\Services\AuditEngine;
 use WNQ\Services\AutomationEngine;
+use WNQ\Services\BlogPublisher;
 use WNQ\Services\ReportGenerator;
 
 final class CronScheduler
@@ -33,6 +34,7 @@ final class CronScheduler
         add_action('wnq_seo_nightly_automation',  [self::class, 'runNightlyAutomation']);
         add_action('wnq_seo_process_queue',       [self::class, 'processContentQueue']);
         add_action('wnq_seo_monthly_reports',     [self::class, 'generateMonthlyReports']);
+        add_action('wnq_blog_publisher',          [self::class, 'runBlogPublisher']);
 
         // Schedule jobs if not already scheduled
         self::scheduleJobs();
@@ -75,11 +77,17 @@ final class CronScheduler
             $next_month_1st = mktime(6, 0, 0, (int)date('n') + 1, 1, (int)date('Y'));
             wp_schedule_event($next_month_1st, 'monthly', 'wnq_seo_monthly_reports');
         }
+
+        // Blog publisher daily at 8am — processes posts due today
+        if (!wp_next_scheduled('wnq_blog_publisher')) {
+            $next_8am = strtotime('tomorrow 8:00am');
+            wp_schedule_event($next_8am, 'daily', 'wnq_blog_publisher');
+        }
     }
 
     public static function unscheduleAll(): void
     {
-        $hooks = ['wnq_seo_nightly_audit', 'wnq_seo_nightly_automation', 'wnq_seo_process_queue', 'wnq_seo_monthly_reports'];
+        $hooks = ['wnq_seo_nightly_audit', 'wnq_seo_nightly_automation', 'wnq_seo_process_queue', 'wnq_seo_monthly_reports', 'wnq_blog_publisher'];
         foreach ($hooks as $hook) {
             $timestamp = wp_next_scheduled($hook);
             if ($timestamp) {
@@ -114,6 +122,12 @@ final class CronScheduler
         ReportGenerator::generateAllMonthlyReports();
     }
 
+    public static function runBlogPublisher(): void
+    {
+        if (!self::canRun()) return;
+        BlogPublisher::processDuePosts();
+    }
+
     private static function canRun(): bool
     {
         // Only run if SEO OS is enabled
@@ -131,6 +145,7 @@ final class CronScheduler
             'wnq_seo_nightly_automation' => 'Nightly Automation (3am daily)',
             'wnq_seo_process_queue'      => 'AI Queue Processor (every 15 min)',
             'wnq_seo_monthly_reports'    => 'Monthly Report Generator',
+            'wnq_blog_publisher'         => 'Blog Auto-Publisher (8am daily)',
         ];
 
         $status = [];

@@ -1,0 +1,620 @@
+<?php
+/**
+ * Blog Scheduler Admin Page
+ *
+ * Tabs:
+ *   queue     — Title queue management (add/edit/delete posts)
+ *   generate  — AI batch title generator
+ *   settings  — Elementor template + "Always Link To" per-client list
+ *
+ * @package WebNique Portal
+ */
+
+namespace WNQ\Admin;
+
+use WNQ\Models\BlogScheduler;
+use WNQ\Models\SEOHub;
+use WNQ\Models\Client;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+final class BlogSchedulerAdmin
+{
+    // ── Registration ────────────────────────────────────────────────────────
+
+    public static function register(): void
+    {
+        add_action('wp_ajax_wnq_blog_generate_titles', [self::class, 'ajaxGenerateTitles']);
+        add_action('wp_ajax_wnq_blog_publish_now',     [self::class, 'ajaxPublishNow']);
+        add_action('wp_ajax_wnq_blog_mark_read',       [self::class, 'ajaxMarkNotifRead']);
+    }
+
+    // ── Page Router ─────────────────────────────────────────────────────────
+
+    public static function renderPage(): void
+    {
+        self::checkCap();
+        $tab = sanitize_key($_GET['tab'] ?? 'queue');
+
+        self::renderHeader('Blog Scheduler');
+        echo '<div class="wnq-blog-wrap">';
+        self::renderTabs($tab);
+
+        switch ($tab) {
+            case 'generate':
+                self::renderGenerateTab();
+                break;
+            case 'settings':
+                self::renderSettingsTab();
+                break;
+            default:
+                self::renderQueueTab();
+        }
+
+        echo '</div>'; // .wnq-blog-wrap
+        self::renderFooter();
+    }
+
+    // ── Tabs ────────────────────────────────────────────────────────────────
+
+    private static function renderTabs(string $current): void
+    {
+        $tabs = [
+            'queue'    => '📋 Post Queue',
+            'generate' => '✨ Title Generator',
+            'settings' => '⚙️ Settings',
+        ];
+        echo '<div class="wnq-blog-tabs">';
+        foreach ($tabs as $slug => $label) {
+            $active = $current === $slug ? ' active' : '';
+            $url    = admin_url('admin.php?page=wnq-seo-hub-blog&tab=' . $slug);
+            echo '<a href="' . esc_url($url) . '" class="wnq-blog-tab' . $active . '">' . $label . '</a>';
+        }
+        echo '</div>';
+    }
+
+    // ── Queue Tab ───────────────────────────────────────────────────────────
+
+    private static function renderQueueTab(): void
+    {
+        $clients    = Client::getByStatus('active');
+        $client_id  = sanitize_text_field($_GET['client_id'] ?? ($clients[0]['client_id'] ?? ''));
+        $posts      = $client_id ? BlogScheduler::getPostsByClient($client_id) : [];
+
+        // Status notice
+        $notice = sanitize_text_field($_GET['notice'] ?? '');
+        if ($notice === 'added')    echo '<div class="wnq-notice success">✅ Post added to queue.</div>';
+        if ($notice === 'deleted')  echo '<div class="wnq-notice success">✅ Post removed from queue.</div>';
+        if ($notice === 'failed')   echo '<div class="wnq-notice error">❌ Publish failed. Check error message.</div>';
+        if ($notice === 'published') echo '<div class="wnq-notice success">✅ Publishing triggered. Check the post queue for status.</div>';
+
+        // Client selector
+        echo '<div class="wnq-blog-client-bar">';
+        echo '<form method="get" style="display:inline-flex;gap:8px;align-items:center;">';
+        echo '<input type="hidden" name="page" value="wnq-seo-hub-blog">';
+        echo '<input type="hidden" name="tab" value="queue">';
+        echo '<select name="client_id" onchange="this.form.submit()" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;">';
+        foreach ($clients as $c) {
+            $selected = $c['client_id'] === $client_id ? ' selected' : '';
+            echo '<option value="' . esc_attr($c['client_id']) . '"' . $selected . '>' . esc_html($c['company'] ?? $c['name'] ?? $c['client_id']) . '</option>';
+        }
+        echo '</select></form>';
+
+        // Notification bell
+        $unread = BlogScheduler::getUnreadCount();
+        if ($unread > 0) {
+            echo '<a href="#notifications" class="wnq-notif-bell">🔔 ' . $unread . ' new</a>';
+        }
+        echo '</div>';
+
+        if (!$client_id) {
+            echo '<p>No clients found. Add a client first.</p>';
+            return;
+        }
+
+        // Add new post form
+        echo '<div class="wnq-blog-card">';
+        echo '<h3>➕ Add Post to Queue</h3>';
+        echo '<form method="post" action="' . admin_url('admin-post.php') . '" class="wnq-blog-add-form">';
+        echo '<input type="hidden" name="action" value="wnq_blog_add_post">';
+        echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+        wp_nonce_field('wnq_blog_add_post');
+        echo '<div class="wnq-blog-form-row">';
+        echo '<input type="text" name="title" placeholder="Blog post title or working title..." required style="flex:2;">';
+        echo '<select name="category_type" style="min-width:160px;">';
+        foreach (['Informational' => 'Informational', 'Services' => 'Services', 'Seasonal' => 'Seasonal'] as $v => $l) {
+            echo '<option value="' . $v . '">' . $l . '</option>';
+        }
+        echo '</select>';
+        echo '<input type="text" name="focus_keyword" placeholder="Focus keyword (optional)" style="min-width:200px;">';
+        echo '<input type="date" name="scheduled_date" style="min-width:150px;">';
+        echo '<button type="submit" class="button button-primary">Add</button>';
+        echo '</div></form>';
+        echo '</div>';
+
+        // Post queue table
+        echo '<div class="wnq-blog-card">';
+        echo '<h3>📋 Scheduled Posts (' . count($posts) . ')</h3>';
+        if (empty($posts)) {
+            echo '<p style="color:#6b7280;">No posts in queue. Add titles above or use the Title Generator tab.</p>';
+        } else {
+            echo '<table class="widefat striped wnq-blog-table">';
+            echo '<thead><tr><th>Title</th><th>Category</th><th>Keyword</th><th>Scheduled</th><th>Status</th><th>Actions</th></tr></thead>';
+            echo '<tbody>';
+            foreach ($posts as $p) {
+                $status_class = match($p['status']) {
+                    'published'  => 'status-ok',
+                    'failed'     => 'status-err',
+                    'generating',
+                    'publishing' => 'status-wait',
+                    default      => 'status-pend',
+                };
+                echo '<tr>';
+                echo '<td>';
+                echo esc_html($p['generated_title'] ?: $p['title']);
+                if (!empty($p['wp_post_url'])) {
+                    echo ' <a href="' . esc_url($p['wp_post_url']) . '" target="_blank" style="font-size:11px;">[view]</a>';
+                }
+                if (!empty($p['error_message'])) {
+                    echo '<br><small style="color:#dc2626;">' . esc_html(substr($p['error_message'], 0, 120)) . '</small>';
+                }
+                echo '</td>';
+                echo '<td>' . esc_html($p['category_type']) . '</td>';
+                echo '<td>' . esc_html($p['focus_keyword'] ?? '—') . '</td>';
+                echo '<td>' . esc_html($p['scheduled_date'] ?? '—') . '</td>';
+                echo '<td><span class="wnq-status-badge ' . $status_class . '">' . esc_html($p['status']) . '</span></td>';
+                echo '<td>';
+                if ($p['status'] === 'pending') {
+                    // Publish now button
+                    echo '<button class="button button-small wnq-publish-now" data-id="' . (int)$p['id'] . '">▶ Publish Now</button> ';
+                }
+                // Delete
+                echo '<form method="post" action="' . admin_url('admin-post.php') . '" style="display:inline;">';
+                echo '<input type="hidden" name="action" value="wnq_blog_delete_post">';
+                echo '<input type="hidden" name="post_id" value="' . (int)$p['id'] . '">';
+                echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+                wp_nonce_field('wnq_blog_delete_' . $p['id']);
+                echo '<button type="submit" class="button button-small" onclick="return confirm(\'Delete this post?\')">🗑</button>';
+                echo '</form>';
+                echo '</td>';
+                echo '</tr>';
+            }
+            echo '</tbody></table>';
+        }
+        echo '</div>';
+
+        // Notifications panel
+        $notifications = BlogScheduler::getNotifications(20);
+        if (!empty($notifications)) {
+            echo '<div class="wnq-blog-card" id="notifications">';
+            echo '<div style="display:flex;align-items:center;justify-content:space-between;">';
+            echo '<h3>🔔 Notifications</h3>';
+            echo '<form method="post" action="' . admin_url('admin-post.php') . '" style="margin:0;">';
+            echo '<input type="hidden" name="action" value="wnq_blog_mark_all_read">';
+            wp_nonce_field('wnq_blog_mark_all_read');
+            echo '<button type="submit" class="button button-small">Mark all read</button>';
+            echo '</form>';
+            echo '</div>';
+            echo '<div class="wnq-blog-notifications">';
+            foreach ($notifications as $n) {
+                $unread_class = empty($n['is_read']) ? ' unread' : '';
+                echo '<div class="wnq-blog-notif' . $unread_class . '">';
+                echo '<strong>' . esc_html($n['title']) . '</strong>';
+                if ($n['message']) echo '<p>' . esc_html($n['message']) . '</p>';
+                if ($n['url'])     echo '<a href="' . esc_url($n['url']) . '" target="_blank">View post →</a>';
+                echo '<span class="wnq-notif-time">' . esc_html($n['created_at']) . '</span>';
+                echo '</div>';
+            }
+            echo '</div></div>';
+        }
+    }
+
+    // ── Title Generator Tab ─────────────────────────────────────────────────
+
+    private static function renderGenerateTab(): void
+    {
+        $clients   = Client::getByStatus('active');
+        $client_id = sanitize_text_field($_GET['client_id'] ?? ($clients[0]['client_id'] ?? ''));
+
+        echo '<div class="wnq-blog-card">';
+        echo '<h3>✨ AI Batch Title Generator</h3>';
+        echo '<p style="color:#6b7280;">Generate a batch of title ideas. Select the ones you want, set dates, then add them to the queue.</p>';
+
+        echo '<div class="wnq-blog-generator">';
+
+        // Client + options form
+        echo '<div class="wnq-blog-gen-options">';
+        echo '<div class="wnq-blog-form-row" style="flex-wrap:wrap;">';
+        echo '<select id="gen-client" style="min-width:200px;">';
+        foreach ($clients as $c) {
+            $selected = $c['client_id'] === $client_id ? ' selected' : '';
+            echo '<option value="' . esc_attr($c['client_id']) . '"' . $selected . '>' . esc_html($c['company'] ?? $c['name'] ?? $c['client_id']) . '</option>';
+        }
+        echo '</select>';
+        echo '<select id="gen-count" style="min-width:120px;">';
+        foreach ([5, 10, 15] as $n) {
+            echo '<option value="' . $n . '">' . $n . ' titles</option>';
+        }
+        echo '</select>';
+        echo '<button type="button" id="wnq-gen-titles-btn" class="button button-primary">✨ Generate Titles</button>';
+        echo '</div>';
+        echo '<div id="wnq-gen-spinner" style="display:none;margin-top:8px;color:#6b7280;">Generating titles...</div>';
+        echo '</div>';
+
+        // Results area
+        echo '<div id="wnq-gen-results" style="display:none;margin-top:16px;">';
+        echo '<h4>Generated Titles — select ones you want to schedule:</h4>';
+        echo '<div id="wnq-gen-list"></div>';
+        echo '<div style="margin-top:12px;">';
+        echo '<button type="button" id="wnq-add-selected-btn" class="button button-primary">➕ Add Selected to Queue</button>';
+        echo '</div>';
+        echo '</div>';
+
+        echo '</div>'; // .wnq-blog-generator
+        echo '</div>'; // .wnq-blog-card
+
+        // Inline JS for title generator
+        ?>
+<script>
+jQuery(function($) {
+    $('#wnq-gen-titles-btn').on('click', function() {
+        var clientId = $('#gen-client').val();
+        var count    = $('#gen-count').val();
+        if (!clientId) return alert('Please select a client.');
+
+        $('#wnq-gen-spinner').show();
+        $('#wnq-gen-results').hide();
+        $(this).prop('disabled', true);
+
+        $.post(WNQ_SEOHUB.ajaxUrl, {
+            action:    'wnq_blog_generate_titles',
+            nonce:     WNQ_SEOHUB.nonce,
+            client_id: clientId,
+            count:     count
+        }, function(resp) {
+            $('#wnq-gen-spinner').hide();
+            $('#wnq-gen-titles-btn').prop('disabled', false);
+            if (!resp.success) {
+                alert('Error: ' + (resp.data?.message || 'Unknown error'));
+                return;
+            }
+            var titles = resp.data.titles || [];
+            var html = '';
+            titles.forEach(function(t, i) {
+                html += '<div class="wnq-gen-title-row">' +
+                    '<input type="checkbox" id="gt' + i + '" class="wnq-gen-cb" ' +
+                        'data-title="' + $('<div>').text(t.title).html() + '" ' +
+                        'data-category="' + $('<div>').text(t.category).html() + '" ' +
+                        'data-keyword="' + $('<div>').text(t.keyword).html() + '">' +
+                    '<label for="gt' + i + '">' +
+                        '<strong>' + $('<div>').text(t.title).html() + '</strong> ' +
+                        '<span class="wnq-gen-tag">' + $('<div>').text(t.category).html() + '</span>' +
+                        (t.keyword ? ' <span class="wnq-gen-kw">🔑 ' + $('<div>').text(t.keyword).html() + '</span>' : '') +
+                    '</label>' +
+                    '<input type="date" class="wnq-gen-date" placeholder="Schedule date">' +
+                    '</div>';
+            });
+            $('#wnq-gen-list').html(html || '<p>No titles generated. Check AI settings.</p>');
+            if (titles.length) $('#wnq-gen-results').show();
+        }).fail(function() {
+            $('#wnq-gen-spinner').hide();
+            $('#wnq-gen-titles-btn').prop('disabled', false);
+            alert('Request failed. Check AI settings.');
+        });
+    });
+
+    $('#wnq-add-selected-btn').on('click', function() {
+        var selected = [];
+        $('.wnq-gen-cb:checked').each(function() {
+            var $row = $(this).closest('.wnq-gen-title-row');
+            selected.push({
+                title:    $(this).data('title'),
+                category: $(this).data('category'),
+                keyword:  $(this).data('keyword'),
+                date:     $row.find('.wnq-gen-date').val()
+            });
+        });
+        if (!selected.length) return alert('Select at least one title.');
+
+        $.post(WNQ_SEOHUB.ajaxUrl, {
+            action:    'wnq_blog_add_batch',
+            nonce:     WNQ_SEOHUB.nonce,
+            client_id: $('#gen-client').val(),
+            posts:     JSON.stringify(selected)
+        }, function(resp) {
+            if (resp.success) {
+                alert('✅ ' + resp.data.added + ' post(s) added to queue!');
+                window.location = '<?php echo admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue'); ?>&client_id=' + $('#gen-client').val();
+            } else {
+                alert('Error: ' + (resp.data?.message || 'Unknown'));
+            }
+        });
+    });
+
+    // Publish Now
+    $(document).on('click', '.wnq-publish-now', function() {
+        if (!confirm('Publish this post now? The AI will generate content and push to the client site.')) return;
+        var id  = $(this).data('id');
+        var $btn = $(this);
+        $btn.prop('disabled', true).text('Publishing...');
+        $.post(WNQ_SEOHUB.ajaxUrl, {
+            action:      'wnq_blog_publish_now',
+            nonce:       WNQ_SEOHUB.nonce,
+            schedule_id: id
+        }, function(resp) {
+            if (resp.success) {
+                location.reload();
+            } else {
+                alert('❌ ' + (resp.data?.message || 'Failed'));
+                $btn.prop('disabled', false).text('▶ Publish Now');
+            }
+        });
+    });
+});
+</script>
+        <?php
+    }
+
+    // ── Settings Tab ────────────────────────────────────────────────────────
+
+    private static function renderSettingsTab(): void
+    {
+        $clients    = Client::getByStatus('active');
+        $client_id  = sanitize_text_field($_GET['client_id'] ?? ($clients[0]['client_id'] ?? ''));
+        $always_links = $client_id ? BlogScheduler::getAlwaysLinkTo($client_id) : [];
+        $template_json = get_option('wnq_blog_elementor_template', '');
+
+        $saved = sanitize_text_field($_GET['settings_saved'] ?? '');
+        if ($saved === '1') echo '<div class="wnq-notice success">✅ Settings saved.</div>';
+
+        // Elementor template
+        echo '<div class="wnq-blog-card">';
+        echo '<h3>🎨 Elementor Blog Template</h3>';
+        echo '<p style="color:#6b7280;">Paste the Elementor JSON for your blog post template. The system will inject AI-generated content into the correct widget IDs.</p>';
+        echo '<p style="color:#6b7280;font-size:12px;"><strong>Widget IDs:</strong> Heading <code>5af58bd2</code> (H1) · Text Editor <code>5b794435</code> (body) · Text Editor <code>4861ee91</code> (TOC) · Image <code>1b605b78</code> (featured — you add manually)</p>';
+        echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
+        echo '<input type="hidden" name="action" value="wnq_blog_save_template">';
+        wp_nonce_field('wnq_blog_save_template');
+        echo '<textarea name="elementor_template" rows="10" style="width:100%;font-family:monospace;font-size:12px;border:1px solid #d1d5db;border-radius:6px;padding:8px;">' . esc_textarea($template_json) . '</textarea>';
+        echo '<p style="margin-top:8px;"><button type="submit" class="button button-primary">💾 Save Template</button></p>';
+        echo '</form>';
+        echo '</div>';
+
+        // Always Link To
+        echo '<div class="wnq-blog-card">';
+        echo '<h3>🔗 Always Link To — ' . esc_html($client_id) . '</h3>';
+        echo '<p style="color:#6b7280;">These links take priority in every blog post for this client. Add pages you always want to reference (service pages, key landing pages).</p>';
+
+        echo '<div style="margin-bottom:12px;">';
+        echo '<form method="get">';
+        echo '<input type="hidden" name="page" value="wnq-seo-hub-blog">';
+        echo '<input type="hidden" name="tab" value="settings">';
+        echo '<select name="client_id" onchange="this.form.submit()">';
+        foreach ($clients as $c) {
+            $selected = $c['client_id'] === $client_id ? ' selected' : '';
+            echo '<option value="' . esc_attr($c['client_id']) . '"' . $selected . '>' . esc_html($c['company'] ?? $c['name'] ?? $c['client_id']) . '</option>';
+        }
+        echo '</select></form>';
+        echo '</div>';
+
+        echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
+        echo '<input type="hidden" name="action" value="wnq_blog_save_always_link">';
+        echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+        wp_nonce_field('wnq_blog_save_always_link');
+
+        echo '<table class="widefat" id="wnq-always-link-table" style="margin-bottom:12px;">';
+        echo '<thead><tr><th>URL</th><th>Anchor Text</th><th>Context Keywords (comma-sep)</th><th></th></tr></thead>';
+        echo '<tbody>';
+        foreach ($always_links as $i => $lnk) {
+            echo '<tr>';
+            echo '<td><input type="url" name="always_link[' . $i . '][url]" value="' . esc_url($lnk['url'] ?? '') . '" style="width:100%;" placeholder="https://..."></td>';
+            echo '<td><input type="text" name="always_link[' . $i . '][anchor]" value="' . esc_attr($lnk['anchor'] ?? '') . '" style="width:100%;"></td>';
+            echo '<td><input type="text" name="always_link[' . $i . '][keywords]" value="' . esc_attr($lnk['keywords'] ?? '') . '" style="width:100%;" placeholder="roofing, roof repair"></td>';
+            echo '<td><button type="button" class="button button-small wnq-remove-link">✕</button></td>';
+            echo '</tr>';
+        }
+        echo '</tbody>';
+        echo '</table>';
+        echo '<button type="button" class="button" id="wnq-add-link-row">+ Add Row</button> ';
+        echo '<button type="submit" class="button button-primary" style="margin-left:8px;">💾 Save Links</button>';
+        echo '</form>';
+        echo '</div>';
+
+        // Inline JS for table management
+        ?>
+<script>
+jQuery(function($) {
+    var rowIdx = <?php echo count($always_links); ?>;
+    $('#wnq-add-link-row').on('click', function() {
+        var i = rowIdx++;
+        $('#wnq-always-link-table tbody').append(
+            '<tr>' +
+            '<td><input type="url" name="always_link['+i+'][url]" style="width:100%;" placeholder="https://..."></td>' +
+            '<td><input type="text" name="always_link['+i+'][anchor]" style="width:100%;"></td>' +
+            '<td><input type="text" name="always_link['+i+'][keywords]" style="width:100%;" placeholder="roofing, roof repair"></td>' +
+            '<td><button type="button" class="button button-small wnq-remove-link">✕</button></td>' +
+            '</tr>'
+        );
+    });
+    $(document).on('click', '.wnq-remove-link', function() {
+        $(this).closest('tr').remove();
+    });
+});
+</script>
+        <?php
+    }
+
+    // ── AJAX Handlers ───────────────────────────────────────────────────────
+
+    public static function ajaxGenerateTitles(): void
+    {
+        check_ajax_referer('wnq_seohub_nonce', 'nonce');
+        self::checkCap();
+
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $count     = max(5, min(15, (int)($_POST['count'] ?? 10)));
+
+        if (!$client_id) {
+            wp_send_json_error(['message' => 'Missing client_id']);
+        }
+
+        $profile  = SEOHub::getProfile($client_id);
+        $client   = Client::getByClientId($client_id) ?? [];
+        $existing = self::getExistingTitles($client_id);
+
+        $biz      = $client['company'] ?? $client['name'] ?? $client_id;
+        $services = implode(', ', (array)($profile['primary_services'] ?? []));
+        $location = implode(', ', (array)($profile['service_locations'] ?? []));
+
+        $result = \WNQ\Services\AIEngine::generate('blog_titles_batch', [
+            'business_name'  => $biz,
+            'services'       => $services,
+            'location'       => $location,
+            'count'          => $count,
+            'existing_titles'=> $existing,
+        ]);
+
+        if (!$result['success']) {
+            wp_send_json_error(['message' => $result['error'] ?? 'AI generation failed']);
+        }
+
+        $titles = self::parseTitlesBatch($result['content']);
+        wp_send_json_success(['titles' => $titles]);
+    }
+
+    public static function ajaxPublishNow(): void
+    {
+        check_ajax_referer('wnq_seohub_nonce', 'nonce');
+        self::checkCap();
+
+        $schedule_id = (int)($_POST['schedule_id'] ?? 0);
+        if (!$schedule_id) {
+            wp_send_json_error(['message' => 'Invalid schedule_id']);
+        }
+
+        $result = \WNQ\Services\BlogPublisher::processPost($schedule_id);
+        if ($result['success']) {
+            wp_send_json_success($result);
+        } else {
+            wp_send_json_error(['message' => $result['message']]);
+        }
+    }
+
+    public static function ajaxMarkNotifRead(): void
+    {
+        check_ajax_referer('wnq_seohub_nonce', 'nonce');
+        self::checkCap();
+        $id = (int)($_POST['id'] ?? 0);
+        if ($id) BlogScheduler::markRead($id);
+        wp_send_json_success();
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+
+    private static function getExistingTitles(string $client_id): string
+    {
+        $posts = BlogScheduler::getPostsByClient($client_id, 30);
+        if (empty($posts)) return 'None yet.';
+        $titles = array_map(fn($p) => $p['generated_title'] ?: $p['title'], $posts);
+        return implode("\n", $titles);
+    }
+
+    /**
+     * Parse the blog_titles_batch AI response.
+     * Expected format: "1. Title | Category | Focus Keyword\n2. ..."
+     */
+    private static function parseTitlesBatch(string $raw): array
+    {
+        $lines   = explode("\n", $raw);
+        $results = [];
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if (!$line) continue;
+            // Strip leading number + period
+            $line = preg_replace('/^\d+\.\s*/', '', $line);
+            $parts = array_map('trim', explode('|', $line));
+            if (count($parts) >= 1 && strlen($parts[0]) > 5) {
+                $results[] = [
+                    'title'    => $parts[0],
+                    'category' => $parts[1] ?? 'Informational',
+                    'keyword'  => $parts[2] ?? '',
+                ];
+            }
+        }
+        return $results;
+    }
+
+    private static function checkCap(): void
+    {
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
+            wp_die('Access denied.');
+        }
+    }
+
+    // ── Header/Footer (reuse existing pattern) ──────────────────────────────
+
+    private static function renderHeader(string $title): void
+    {
+        echo '<div class="wrap wnq-hub-wrap">';
+        echo '<div class="wnq-hub-masthead">';
+        echo '<div class="wnq-hub-logo">🔭 WebNique<span>SEO OS</span></div>';
+        echo '<nav class="wnq-hub-nav">';
+        $nav_items = [
+            'wnq-seo-hub'          => 'Dashboard',
+            'wnq-seo-hub-clients'  => 'Clients',
+            'wnq-seo-hub-keywords' => 'Keywords',
+            'wnq-seo-hub-content'  => 'Content',
+            'wnq-seo-hub-audits'   => 'Audits',
+            'wnq-seo-hub-reports'  => 'Reports',
+            'wnq-seo-hub-blog'     => 'Blog Scheduler',
+            'wnq-seo-hub-api'      => 'API',
+            'wnq-seo-hub-settings' => 'Settings',
+        ];
+        $current = $_GET['page'] ?? 'wnq-seo-hub';
+        foreach ($nav_items as $slug => $label) {
+            $active = $current === $slug ? 'active' : '';
+            echo '<a href="' . admin_url('admin.php?page=' . $slug) . '" class="' . $active . '">' . $label . '</a>';
+        }
+        echo '</nav></div>';
+        echo '<h1 class="wnq-hub-page-title">' . esc_html($title) . '</h1>';
+
+        // Minimal inline styles for blog scheduler UI
+        echo '<style>
+        .wnq-blog-wrap { max-width: 1100px; }
+        .wnq-blog-tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 2px solid #e5e7eb; padding-bottom: 0; }
+        .wnq-blog-tab { padding: 8px 16px; text-decoration: none; color: #374151; border-radius: 6px 6px 0 0; font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+        .wnq-blog-tab.active { color: #2563eb; border-bottom-color: #2563eb; background: #eff6ff; }
+        .wnq-blog-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+        .wnq-blog-card h3 { margin: 0 0 12px; font-size: 15px; }
+        .wnq-blog-form-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        .wnq-blog-form-row input, .wnq-blog-form-row select { padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 6px; }
+        .wnq-blog-table th, .wnq-blog-table td { padding: 8px 10px; vertical-align: top; }
+        .wnq-status-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+        .status-ok   { background: #dcfce7; color: #166534; }
+        .status-err  { background: #fef2f2; color: #991b1b; }
+        .status-wait { background: #fef9c3; color: #854d0e; }
+        .status-pend { background: #f3f4f6; color: #374151; }
+        .wnq-blog-client-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+        .wnq-notif-bell { background: #fee2e2; color: #991b1b; border-radius: 12px; padding: 4px 12px; text-decoration: none; font-weight: 600; font-size: 13px; }
+        .wnq-blog-notifications { display: flex; flex-direction: column; gap: 8px; }
+        .wnq-blog-notif { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 14px; position: relative; }
+        .wnq-blog-notif.unread { background: #eff6ff; border-color: #bfdbfe; }
+        .wnq-blog-notif .wnq-notif-time { font-size: 11px; color: #9ca3af; display: block; margin-top: 4px; }
+        .wnq-notice { padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; }
+        .wnq-notice.success { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+        .wnq-notice.error   { background: #fef2f2; color: #991b1b; border: 1px solid #fca5a5; }
+        .wnq-gen-title-row { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 6px; }
+        .wnq-gen-title-row label { flex: 1; cursor: pointer; }
+        .wnq-gen-title-row input[type=date] { min-width: 140px; padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 4px; }
+        .wnq-gen-tag { background: #ede9fe; color: #5b21b6; border-radius: 10px; padding: 1px 8px; font-size: 11px; margin-left: 6px; }
+        .wnq-gen-kw { color: #6b7280; font-size: 12px; }
+        </style>';
+    }
+
+    private static function renderFooter(): void
+    {
+        echo '</div>'; // .wnq-hub-wrap
+    }
+}
