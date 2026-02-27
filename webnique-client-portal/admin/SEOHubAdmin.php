@@ -63,7 +63,7 @@ final class SEOHubAdmin
 
     public static function enqueueAssets(string $hook): void
     {
-        if (!str_contains($hook, 'wnq-seo-hub')) return;
+        if (strpos($hook, 'wnq-seo-hub') === false) return;
 
         wp_enqueue_style('wnq-seohub', WNQ_PORTAL_URL . 'assets/admin/seohub.css', [], WNQ_PORTAL_VERSION);
         wp_enqueue_script('wnq-seohub', WNQ_PORTAL_URL . 'assets/admin/seohub.js', ['jquery'], WNQ_PORTAL_VERSION, true);

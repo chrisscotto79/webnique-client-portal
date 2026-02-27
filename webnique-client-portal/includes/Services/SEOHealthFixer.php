@@ -186,8 +186,9 @@ final class SEOHealthFixer
             }
         }
 
-        // Remaining = total pages minus the batch we just processed
-        $remaining = max(0, $total_fixable_pages - count($batch));
+        // Re-query the true remaining count — arithmetic is unreliable because
+        // failed pages keep their findings open and reappear in the next batch.
+        $remaining = self::countFixablePages($client_id);
 
         return [
             'fixed'     => $fixed,
