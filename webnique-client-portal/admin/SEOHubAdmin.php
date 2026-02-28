@@ -1051,6 +1051,12 @@ final class SEOHubAdmin
         echo '</div>';
 
         echo '<div class="wnq-hub-form-group">';
+        echo '<label>Google PageSpeed Insights API Key</label>';
+        echo '<input type="password" name="psi_api_key" value="' . esc_attr($ai_settings['psi_api_key'] ?? '') . '" placeholder="AIza...">';
+        echo '<p class="description">Used by SEO Spider → Page Speed. <a href="https://developers.google.com/speed/docs/insights/v5/get-started" target="_blank">Get free key →</a></p>';
+        echo '</div>';
+
+        echo '<div class="wnq-hub-form-group">';
         echo '<label>Max Output Tokens</label>';
         echo '<input type="number" name="max_tokens" value="' . esc_attr($ai_settings['max_tokens'] ?? 2000) . '" min="500" max="8000">';
         echo '</div>';
@@ -1238,6 +1244,10 @@ final class SEOHubAdmin
 
             case 'install_tables':
                 SEOHub::createTables();
+                \WNQ\Services\CrawlEngine::createTables();
+                \WNQ\Services\PageSpeedEngine::createTables();
+                \WNQ\Services\CompetitorTracker::createTables();
+                \WNQ\Services\LocalSEOEngine::createTables();
                 wp_send_json_success(['message' => 'All SEO OS database tables created / verified successfully.']);
                 break;
 

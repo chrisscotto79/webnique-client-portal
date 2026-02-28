@@ -35,6 +35,7 @@ final class SEOOSBootstrap
         if (is_admin()) {
             \WNQ\Admin\SEOHubAdmin::register();
             \WNQ\Admin\BlogSchedulerAdmin::register();
+            \WNQ\Admin\SpiderAdmin::register();
             // Register get_job ajax handler
             add_action('wp_ajax_wnq_seohub_get_job', [self::class, 'ajaxGetJob']);
         }
@@ -71,12 +72,19 @@ final class SEOOSBootstrap
             'includes/Services/ReportGenerator.php',
             'includes/Services/BlogPublisher.php',
             'includes/Services/SEOHealthFixer.php',
+            // Spider & Analysis Services
+            'includes/Services/CrawlEngine.php',
+            'includes/Services/PageSpeedEngine.php',
+            'includes/Services/ContentAnalyzer.php',
+            'includes/Services/CompetitorTracker.php',
+            'includes/Services/LocalSEOEngine.php',
             // Controllers & Core
             'includes/Controllers/SEOAgentController.php',
             'includes/Core/CronScheduler.php',
             // Admin UI (must come last — depends on everything above)
             'admin/SEOHubAdmin.php',
             'admin/BlogSchedulerAdmin.php',
+            'admin/SpiderAdmin.php',
         ];
 
         foreach ($files as $f) {
@@ -105,9 +113,15 @@ final class SEOOSBootstrap
             'includes/Services/BlogPublisher.php'     => 'WNQ\\Services\\BlogPublisher',
             'includes/Services/SEOHealthFixer.php'   => 'WNQ\\Services\\SEOHealthFixer',
             'includes/Controllers/SEOAgentController.php' => 'WNQ\\Controllers\\SEOAgentController',
-            'includes/Core/CronScheduler.php'         => 'WNQ\\Core\\CronScheduler',
-            'admin/SEOHubAdmin.php'                   => 'WNQ\\Admin\\SEOHubAdmin',
-            'admin/BlogSchedulerAdmin.php'            => 'WNQ\\Admin\\BlogSchedulerAdmin',
+            'includes/Core/CronScheduler.php'             => 'WNQ\\Core\\CronScheduler',
+            'includes/Services/CrawlEngine.php'           => 'WNQ\\Services\\CrawlEngine',
+            'includes/Services/PageSpeedEngine.php'       => 'WNQ\\Services\\PageSpeedEngine',
+            'includes/Services/ContentAnalyzer.php'       => 'WNQ\\Services\\ContentAnalyzer',
+            'includes/Services/CompetitorTracker.php'     => 'WNQ\\Services\\CompetitorTracker',
+            'includes/Services/LocalSEOEngine.php'        => 'WNQ\\Services\\LocalSEOEngine',
+            'admin/SEOHubAdmin.php'                       => 'WNQ\\Admin\\SEOHubAdmin',
+            'admin/BlogSchedulerAdmin.php'                => 'WNQ\\Admin\\BlogSchedulerAdmin',
+            'admin/SpiderAdmin.php'                       => 'WNQ\\Admin\\SpiderAdmin',
         ];
         return $map[$file] ?? '';
     }
@@ -164,6 +178,16 @@ final class SEOOSBootstrap
 
         // Reset prompt templates
         add_action('admin_post_wnq_reset_prompt_templates', [self::class, 'handleResetPromptTemplates']);
+
+        // Competitors
+        add_action('admin_post_wnq_save_competitors',      [self::class, 'handleSaveCompetitors']);
+
+        // Local SEO
+        add_action('admin_post_wnq_save_local_location',   [self::class, 'handleSaveLocalLocation']);
+        add_action('admin_post_wnq_delete_local_location', [self::class, 'handleDeleteLocalLocation']);
+
+        // Spider sitemap export
+        add_action('admin_post_wnq_spider_sitemap',        [self::class, 'handleSpiderSitemap']);
 
         // Blog Scheduler handlers
         add_action('admin_post_wnq_blog_add_post',         [self::class, 'handleBlogAddPost']);
@@ -386,7 +410,7 @@ final class SEOOSBootstrap
 
         $allowed = ['provider', 'groq_api_key', 'groq_model', 'openai_api_key', 'openai_model',
                     'together_api_key', 'together_model', 'xai_api_key', 'xai_model',
-                    'max_tokens', 'temperature', 'cache_ttl'];
+                    'psi_api_key', 'max_tokens', 'temperature', 'cache_ttl'];
 
         $data = [];
         foreach ($allowed as $k) {
@@ -560,6 +584,59 @@ final class SEOOSBootstrap
         wp_send_json_success(['added' => $added]);
     }
 
+    // ── Competitor Handlers ──────────────────────────────────────────────────
+
+    public static function handleSaveCompetitors(): void
+    {
+        check_admin_referer('wnq_save_competitors');
+        self::requireCap();
+        $client_id   = sanitize_text_field($_POST['client_id'] ?? '');
+        $competitors = $_POST['competitors'] ?? [];
+        if (!$client_id) wp_die('Missing client_id');
+        \WNQ\Services\CompetitorTracker::saveCompetitors($client_id, $competitors);
+        wp_redirect(admin_url('admin.php?page=wnq-seo-spider&tab=competitors&client_id=' . urlencode($client_id) . '&saved=1'));
+        exit;
+    }
+
+    // ── Local SEO Handlers ───────────────────────────────────────────────────
+
+    public static function handleSaveLocalLocation(): void
+    {
+        check_admin_referer('wnq_save_local_location');
+        self::requireCap();
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        if (!$client_id) wp_die('Missing client_id');
+        \WNQ\Services\LocalSEOEngine::saveLocation($client_id, $_POST);
+        wp_redirect(admin_url('admin.php?page=wnq-seo-spider&tab=local&client_id=' . urlencode($client_id) . '&saved=1'));
+        exit;
+    }
+
+    public static function handleDeleteLocalLocation(): void
+    {
+        $location_id = (int)($_POST['location_id'] ?? 0);
+        check_admin_referer('wnq_delete_local_' . $location_id);
+        self::requireCap();
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        if ($location_id) \WNQ\Services\LocalSEOEngine::deleteLocation($location_id, $client_id);
+        wp_redirect(admin_url('admin.php?page=wnq-seo-spider&tab=local&client_id=' . urlencode($client_id) . '&deleted=1'));
+        exit;
+    }
+
+    // ── Spider Sitemap Export ────────────────────────────────────────────────
+
+    public static function handleSpiderSitemap(): void
+    {
+        check_admin_referer('wnq_spider_sitemap');
+        self::requireCap();
+        $session_id = (int)($_GET['session_id'] ?? 0);
+        if (!$session_id) wp_die('Invalid session ID');
+        $xml = \WNQ\Services\CrawlEngine::generateSitemap($session_id);
+        header('Content-Type: application/xml; charset=utf-8');
+        header('Content-Disposition: attachment; filename="sitemap-session-' . $session_id . '.xml"');
+        echo $xml;
+        exit;
+    }
+
     // ── Schema Migration (creates blog tables for existing installs) ─────────
 
     private static function maybeCreateBlogTables(): void
@@ -601,6 +678,23 @@ final class SEOOSBootstrap
             require_once WNQ_PORTAL_PATH . 'includes/Models/BlogScheduler.php';
             if (class_exists('WNQ\\Models\\BlogScheduler')) {
                 \WNQ\Models\BlogScheduler::createTables();
+            }
+        }
+
+        // Spider & Analysis tables
+        $service_tables = [
+            'includes/Services/CrawlEngine.php'       => 'WNQ\\Services\\CrawlEngine',
+            'includes/Services/PageSpeedEngine.php'   => 'WNQ\\Services\\PageSpeedEngine',
+            'includes/Services/CompetitorTracker.php' => 'WNQ\\Services\\CompetitorTracker',
+            'includes/Services/LocalSEOEngine.php'    => 'WNQ\\Services\\LocalSEOEngine',
+        ];
+        foreach ($service_tables as $file => $class) {
+            $path = WNQ_PORTAL_PATH . $file;
+            if (file_exists($path)) {
+                require_once $path;
+                if (class_exists($class)) {
+                    $class::createTables();
+                }
             }
         }
     }
