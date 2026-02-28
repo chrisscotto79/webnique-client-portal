@@ -128,6 +128,7 @@ final class SEOHub
             content_gap      tinyint(1) DEFAULT 0 COMMENT '1=no page targeting this kw',
             last_gsc_update  datetime DEFAULT NULL,
             position_history longtext DEFAULT NULL COMMENT 'JSON array of {date,position}',
+            intent           varchar(20) DEFAULT NULL COMMENT 'informational|transactional|commercial|navigational',
             notes            text DEFAULT NULL,
             created_at       datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at       datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -135,7 +136,8 @@ final class SEOHub
             KEY client_id (client_id),
             KEY cluster_name (cluster_name),
             KEY service_category (service_category),
-            KEY content_gap (content_gap)
+            KEY content_gap (content_gap),
+            KEY intent (intent)
         ) $c;");
 
         // --- Content Jobs (AI generation queue) ---
