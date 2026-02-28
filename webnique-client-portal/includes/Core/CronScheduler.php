@@ -20,6 +20,7 @@ if (!defined('ABSPATH')) {
 use WNQ\Services\AuditEngine;
 use WNQ\Services\AutomationEngine;
 use WNQ\Services\BlogPublisher;
+use WNQ\Services\CrawlEngine;
 use WNQ\Services\ReportGenerator;
 
 final class CronScheduler
@@ -35,6 +36,8 @@ final class CronScheduler
         add_action('wnq_seo_process_queue',       [self::class, 'processContentQueue']);
         add_action('wnq_seo_monthly_reports',     [self::class, 'generateMonthlyReports']);
         add_action('wnq_blog_publisher',          [self::class, 'runBlogPublisher']);
+        add_action('wnq_spider_auto_crawl',       [self::class, 'runSpiderCrawls']);
+        add_action('wnq_spider_run_batch',        [self::class, 'runCronBatch'], 10, 1);
 
         // Schedule jobs if not already scheduled
         self::scheduleJobs();
@@ -83,11 +86,16 @@ final class CronScheduler
             $next_8am = strtotime('tomorrow 8:00am');
             wp_schedule_event($next_8am, 'daily', 'wnq_blog_publisher');
         }
+
+        // Spider auto-crawl check — runs hourly, starts any due schedules
+        if (!wp_next_scheduled('wnq_spider_auto_crawl')) {
+            wp_schedule_event(time() + 300, 'hourly', 'wnq_spider_auto_crawl');
+        }
     }
 
     public static function unscheduleAll(): void
     {
-        $hooks = ['wnq_seo_nightly_audit', 'wnq_seo_nightly_automation', 'wnq_seo_process_queue', 'wnq_seo_monthly_reports', 'wnq_blog_publisher'];
+        $hooks = ['wnq_seo_nightly_audit', 'wnq_seo_nightly_automation', 'wnq_seo_process_queue', 'wnq_seo_monthly_reports', 'wnq_blog_publisher', 'wnq_spider_auto_crawl'];
         foreach ($hooks as $hook) {
             $timestamp = wp_next_scheduled($hook);
             if ($timestamp) {
@@ -128,6 +136,65 @@ final class CronScheduler
         BlogPublisher::processDuePosts();
     }
 
+    /**
+     * Hourly: start crawls for any clients whose schedule is due.
+     */
+    public static function runSpiderCrawls(): void
+    {
+        if (!self::canRun()) return;
+
+        global $wpdb;
+        $rows = $wpdb->get_results(
+            "SELECT option_name, option_value FROM {$wpdb->options}
+             WHERE option_name LIKE 'wnq_spider_sched_%'",
+            ARRAY_A
+        ) ?: [];
+
+        foreach ($rows as $row) {
+            $sched = maybe_unserialize($row['option_value']);
+            if (empty($sched['enabled']) || empty($sched['start_url'])) continue;
+            if (empty($sched['next_run']) || (int)$sched['next_run'] > time()) continue;
+
+            $client_id = substr($row['option_name'], strlen('wnq_spider_sched_'));
+
+            // Skip if a crawl is already running for this client
+            $sessions = CrawlEngine::getSessions($client_id, 1);
+            if (!empty($sessions) && $sessions[0]['status'] === 'running') continue;
+
+            $opts       = ['max_depth' => (int)($sched['max_depth'] ?? 3)];
+            $session_id = CrawlEngine::startCrawl($client_id, $sched['start_url'], $opts);
+
+            // Chain first cron batch in 5 seconds
+            wp_schedule_single_event(time() + 5, 'wnq_spider_run_batch', [$session_id]);
+
+            // Advance next_run by the chosen interval
+            $interval        = self::scheduleInterval($sched['frequency'] ?? 'weekly');
+            $sched['last_run'] = time();
+            $sched['next_run'] = time() + $interval;
+            update_option($row['option_name'], $sched, false);
+        }
+    }
+
+    /**
+     * Cron batch step: process one batch then re-schedule itself until done.
+     */
+    public static function runCronBatch(int $session_id): void
+    {
+        $result = CrawlEngine::crawlBatch($session_id);
+        if (empty($result['done'])) {
+            wp_schedule_single_event(time() + 3, 'wnq_spider_run_batch', [$session_id]);
+        }
+    }
+
+    private static function scheduleInterval(string $frequency): int
+    {
+        return match($frequency) {
+            'daily'   => DAY_IN_SECONDS,
+            'monthly' => 30 * DAY_IN_SECONDS,
+            default   => 7 * DAY_IN_SECONDS,   // weekly
+        };
+    }
+
     private static function canRun(): bool
     {
         // Only run if SEO OS is enabled
@@ -146,6 +213,7 @@ final class CronScheduler
             'wnq_seo_process_queue'      => 'AI Queue Processor (every 15 min)',
             'wnq_seo_monthly_reports'    => 'Monthly Report Generator',
             'wnq_blog_publisher'         => 'Blog Auto-Publisher (8am daily)',
+            'wnq_spider_auto_crawl'      => 'Spider Auto-Crawl Scheduler (hourly check)',
         ];
 
         $status = [];

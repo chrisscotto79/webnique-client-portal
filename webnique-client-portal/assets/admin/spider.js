@@ -180,6 +180,43 @@
         }, 'json');
     };
 
+    // ── Save Auto-Crawl Schedule ──────────────────────────────────────────
+    window.wnqSpiderSaveSchedule = function (clientId, fallbackUrl) {
+        const enabled  = $('#sched-enabled').is(':checked') ? 1 : 0;
+        const freq     = $('#sched-freq').val();
+        const depth    = $('#sched-depth').val();
+        const startUrl = $('#spider-start-url').val().trim() || fallbackUrl;
+        const $btn     = $('button[onclick*="wnqSpiderSaveSchedule"]');
+
+        $btn.prop('disabled', true).text('Saving…');
+
+        $.post(WNQ_SPIDER.ajaxUrl, {
+            action:        'wnq_spider',
+            nonce:         WNQ_SPIDER.nonce,
+            spider_action: 'save_schedule',
+            client_id:     clientId,
+            enabled:       enabled,
+            frequency:     freq,
+            max_depth:     depth,
+            start_url:     startUrl,
+        }, function (res) {
+            $btn.prop('disabled', false).text('💾 Save Schedule');
+            if (res.success) {
+                const next = res.data.enabled
+                    ? '⏰ Next run: <strong>' + res.data.next_run + '</strong>'
+                    : 'Schedule is disabled.';
+                $('#sched-next-run').html(next);
+                $btn.text('✅ Saved').css('color', '#059669');
+                setTimeout(() => $btn.text('💾 Save Schedule').css('color', ''), 2000);
+            } else {
+                alert('Error: ' + (res.data.message || 'Save failed.'));
+            }
+        }, 'json').fail(function () {
+            $btn.prop('disabled', false).text('💾 Save Schedule');
+            alert('Request failed. Please try again.');
+        });
+    };
+
     // ── Error helper ──────────────────────────────────────────────────────
     function wnqSpiderError(msg) {
         spiderRunning = false;
