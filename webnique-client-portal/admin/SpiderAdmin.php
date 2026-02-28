@@ -127,10 +127,10 @@ final class SpiderAdmin
     private static function renderSpider(string $client_id): void
     {
         $sessions    = CrawlEngine::getSessions($client_id, 10);
-        $agent_keys  = SEOHub::getAllAgentKeys();
-        $site_url    = '';
+        $agent_keys = SEOHub::getAgentKeys($client_id);
+        $site_url   = '';
         foreach ($agent_keys as $k) {
-            if ($k['client_id'] === $client_id && $k['status'] === 'active') {
+            if ($k['status'] === 'active') {
                 $site_url = $k['site_url'];
                 break;
             }
@@ -187,7 +187,12 @@ final class SpiderAdmin
                 echo '<td>' . ($s['issues_found'] > 0 ? '<span style="color:#dc2626;font-weight:700;">' . $s['issues_found'] . '</span>' : '0') . '</td>';
                 echo '<td style="font-size:12px;">' . esc_html(substr($s['started_at'], 0, 16)) . '</td>';
                 echo '<td style="white-space:nowrap;">';
-                echo '<a class="wnq-btn wnq-btn-sm" href="' . esc_url(add_query_arg(['tab' => 'spider', 'client_id' => $client_id, 'session_id' => $s['id']], admin_url('admin.php?page=wnq-seo-spider'))) . '">View Results</a> ';
+                if ($s['status'] === 'completed') {
+                    echo '<a class="wnq-btn wnq-btn-sm" href="' . esc_url(add_query_arg(['tab' => 'spider', 'client_id' => $client_id, 'session_id' => $s['id']], admin_url('admin.php?page=wnq-seo-spider'))) . '">View Results</a> ';
+                } else {
+                    // Running/stuck — offer Reset so user can restart the crawl
+                    echo '<button class="wnq-btn wnq-btn-sm" style="color:#d97706;" onclick="wnqSpiderResetAndResume(' . $s['id'] . ', \'' . esc_js($client_id) . '\')">↺ Reset &amp; Recrawl</button> ';
+                }
                 echo '<button class="wnq-btn wnq-btn-sm" style="color:#dc2626;" onclick="wnqSpiderDeleteSession(' . $s['id'] . ', \'' . esc_js($client_id) . '\')">Delete</button>';
                 echo '</td></tr>';
             }
@@ -706,6 +711,12 @@ final class SpiderAdmin
                 if (!$session_id) wp_send_json_error(['message' => 'No session ID']);
                 CrawlEngine::deleteSession($session_id);
                 wp_send_json_success(['message' => 'Session deleted']);
+                break;
+
+            case 'reset_session':
+                if (!$session_id) wp_send_json_error(['message' => 'No session ID']);
+                CrawlEngine::resetSession($session_id);
+                wp_send_json_success(['session_id' => $session_id, 'message' => 'Session reset — ready to resume']);
                 break;
 
             case 'analyze_psi':

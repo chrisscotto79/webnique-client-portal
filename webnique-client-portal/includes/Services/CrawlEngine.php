@@ -17,9 +17,9 @@ if (!defined('ABSPATH')) {
 
 final class CrawlEngine
 {
-    const BATCH_SIZE    = 8;
+    const BATCH_SIZE    = 3;   // 3×8s = max 24s per AJAX call, well within PHP timeout
     const MAX_DEPTH     = 5;
-    const CRAWL_TIMEOUT = 15; // seconds per request
+    const CRAWL_TIMEOUT = 8;  // seconds per request
     const MAX_URLS      = 2000;
 
     // ── Table Creation ─────────────────────────────────────────────────────
@@ -152,6 +152,32 @@ final class CrawlEngine
         $wpdb->delete("{$wpdb->prefix}wnq_crawl_queue",    ['session_id' => $session_id]);
     }
 
+    /**
+     * Reset a stuck "running" session — clears pages + queue and marks it
+     * running again so the JS can resume polling from scratch.
+     */
+    public static function resetSession(int $session_id): void
+    {
+        global $wpdb;
+        $session = self::getSession($session_id);
+        if (!$session) return;
+
+        $wpdb->delete("{$wpdb->prefix}wnq_crawl_pages", ['session_id' => $session_id]);
+        $wpdb->delete("{$wpdb->prefix}wnq_crawl_queue", ['session_id' => $session_id]);
+
+        // Re-seed queue with start URL
+        $wpdb->insert("{$wpdb->prefix}wnq_crawl_queue", [
+            'session_id' => $session_id, 'url' => $session['start_url'], 'depth' => 0,
+        ]);
+        // Use raw SQL so completed_at is set to actual NULL (wpdb->update skips null values)
+        $wpdb->query($wpdb->prepare(
+            "UPDATE {$wpdb->prefix}wnq_crawl_sessions
+             SET status=%s, urls_crawled=%d, urls_queued=%d, issues_found=%d, completed_at=NULL
+             WHERE id=%d",
+            'running', 0, 1, 0, $session_id
+        ));
+    }
+
     // ── Batch Crawler ──────────────────────────────────────────────────────
 
     public static function crawlBatch(int $session_id, int $batch_size = self::BATCH_SIZE): array
@@ -205,6 +231,11 @@ final class CrawlEngine
 
             // Crawl the page
             $page_data = self::crawlPage($url, (int)$item['depth'], $session_id, $session['client_id']);
+
+            // *** Extract discovered links BEFORE DB insert — _discovered_links is not a DB column ***
+            $discovered_links = $page_data['_discovered_links'] ?? [];
+            unset($page_data['_discovered_links']);
+
             $wpdb->insert("{$wpdb->prefix}wnq_crawl_pages", $page_data, null);
 
             if (!empty($page_data['issues'])) {
@@ -213,12 +244,12 @@ final class CrawlEngine
             }
 
             // Queue discovered internal links (if not already crawled/queued and within depth)
-            if (!empty($page_data['_discovered_links']) && (int)$item['depth'] < $max_depth) {
+            if (!empty($discovered_links) && (int)$item['depth'] < $max_depth) {
                 $total_queued = (int)$wpdb->get_var($wpdb->prepare(
                     "SELECT COUNT(*) FROM {$wpdb->prefix}wnq_crawl_queue WHERE session_id=%d", $session_id
                 ));
 
-                foreach ($page_data['_discovered_links'] as $link) {
+                foreach ($discovered_links as $link) {
                     $link_host = parse_url($link, PHP_URL_HOST) ?? '';
                     if ($link_host !== $base_domain) continue;
                     if (isset($crawled_set[$link])) continue;
@@ -238,7 +269,6 @@ final class CrawlEngine
                     }
                 }
             }
-            unset($page_data['_discovered_links']);
 
             $wpdb->update("{$wpdb->prefix}wnq_crawl_queue", ['status' => 'done'], ['id' => $item['id']]);
             $crawled++;
@@ -254,11 +284,13 @@ final class CrawlEngine
         ));
         $total_issues = (int)$session['issues_found'] + $new_issues;
 
-        $wpdb->update("{$wpdb->prefix}wnq_crawl_sessions", [
-            'urls_crawled' => $total_crawled,
-            'urls_queued'  => $queued_remaining,
-            'issues_found' => $total_issues,
-        ], ['id' => $session_id]);
+        $wpdb->update(
+            "{$wpdb->prefix}wnq_crawl_sessions",
+            ['urls_crawled' => $total_crawled, 'urls_queued' => $queued_remaining, 'issues_found' => $total_issues],
+            ['id' => $session_id],
+            ['%d', '%d', '%d'],
+            ['%d']
+        );
 
         return [
             'done'    => false,
@@ -273,46 +305,45 @@ final class CrawlEngine
 
     private static function crawlPage(string $url, int $depth, int $session_id, string $client_id): array
     {
-        $redirect_chain = [];
+        // Use redirection=>0 so we SEE the 3xx status code instead of silently following it
         $response = wp_remote_get($url, [
             'timeout'     => self::CRAWL_TIMEOUT,
-            'redirection' => 10,
+            'redirection' => 0,
             'user-agent'  => 'WebNique-SEO-Spider/1.0 (+https://web-nique.com/bot)',
             'headers'     => ['Accept' => 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8'],
         ]);
 
         $data = [
-            'session_id'       => $session_id,
-            'client_id'        => $client_id,
-            'url'              => $url,
-            'depth'            => $depth,
-            'status_code'      => 0,
-            'final_url'        => $url,
-            'redirect_count'   => 0,
-            'redirect_chain'   => null,
-            'page_title'       => null,
-            'meta_description' => null,
-            'h1'               => null,
-            'canonical_url'    => null,
-            'robots_meta'      => null,
-            'x_robots_tag'     => null,
-            'content_type'     => null,
-            'word_count'       => 0,
-            'content_hash'     => null,
-            'internal_links'   => 0,
-            'external_links'   => 0,
-            'images_count'     => 0,
+            'session_id'         => $session_id,
+            'client_id'          => $client_id,
+            'url'                => $url,
+            'depth'              => $depth,
+            'status_code'        => 0,
+            'final_url'          => null,
+            'redirect_count'     => 0,
+            'redirect_chain'     => null,
+            'page_title'         => null,
+            'meta_description'   => null,
+            'h1'                 => null,
+            'canonical_url'      => null,
+            'robots_meta'        => null,
+            'x_robots_tag'       => null,
+            'content_type'       => null,
+            'word_count'         => 0,
+            'content_hash'       => null,
+            'internal_links'     => 0,
+            'external_links'     => 0,
+            'images_count'       => 0,
             'images_missing_alt' => 0,
-            'has_schema'       => 0,
-            'is_indexable'     => 1,
-            'page_size_kb'     => 0,
-            'issues'           => null,
-            '_discovered_links' => [],
+            'has_schema'         => 0,
+            'is_indexable'       => 1,
+            'page_size_kb'       => 0,
+            'issues'             => null,
+            '_discovered_links'  => [],
         ];
 
         if (is_wp_error($response)) {
-            $data['status_code'] = 0;
-            $data['issues']      = wp_json_encode(['connection_error']);
+            $data['issues'] = wp_json_encode(['connection_error']);
             return $data;
         }
 
@@ -327,38 +358,52 @@ final class CrawlEngine
         $data['page_size_kb'] = (int)ceil(strlen($body) / 1024);
         if ($x_robots) $data['x_robots_tag'] = substr($x_robots, 0, 200);
 
-        // Track redirects
-        if (isset($response['http_response'])) {
-            // wp_remote_get follows redirects automatically; infer from final URL
-            $final_url = $headers['x-final-location'] ?? $url;
-            if ($final_url !== $url) {
-                $data['final_url']       = $final_url;
-                $data['redirect_count']  = 1;
-                $data['redirect_chain']  = wp_json_encode([$url, $final_url]);
-            }
-        }
-
         $issues = [];
 
-        // Non-200: broken link, server error, redirect
-        if ($status_code === 404) $issues[] = 'broken_link_404';
-        elseif ($status_code >= 400 && $status_code < 500) $issues[] = 'client_error_' . $status_code;
-        elseif ($status_code >= 500) $issues[] = 'server_error_' . $status_code;
-        elseif (in_array($status_code, [301, 302, 307, 308])) $issues[] = 'redirect_' . $status_code;
+        // ── Redirects (now visible because redirection=>0) ──────────────────
+        if ($status_code >= 300 && $status_code < 400) {
+            $location = trim($headers['location'] ?? '');
+            if ($location) {
+                // Make absolute if the Location is relative
+                $location = self::toAbsoluteUrl($location, self::baseUrl($url)) ?? $location;
+                $data['final_url']      = $location;
+                $data['redirect_count'] = 1;
+                $data['redirect_chain'] = wp_json_encode([$url, $location]);
+                // Queue the redirect target so the spider crawls it too
+                $data['_discovered_links'] = [$location];
+            }
+            $issues[] = 'redirect_' . $status_code;
+            $data['issues'] = wp_json_encode($issues);
+            return $data;
+        }
 
-        // Non-HTML: skip parsing
+        // ── Error status codes ───────────────────────────────────────────────
+        if ($status_code === 404)             $issues[] = 'broken_link_404';
+        elseif ($status_code >= 400 && $status_code < 500) $issues[] = 'client_error_' . $status_code;
+        elseif ($status_code >= 500)          $issues[] = 'server_error_' . $status_code;
+
+        // ── Non-HTML: store status but skip HTML analysis ────────────────────
         if (!str_contains($content_type, 'html')) {
             $data['issues'] = !empty($issues) ? wp_json_encode($issues) : null;
             return $data;
         }
 
-        // Parse HTML
+        // ── Parse HTML ───────────────────────────────────────────────────────
         if (!empty($body)) {
             $parsed = self::parseHTML($body, $url, $headers);
-            $data   = array_merge($data, $parsed['data']);
 
-            // Check indexability
-            $robots_lc = strtolower($parsed['data']['robots_meta'] ?? '');
+            // Merge parsed fields — preserve core identifiers after merge
+            foreach ($parsed['data'] as $k => $v) {
+                $data[$k] = $v;
+            }
+            $data['session_id']  = $session_id;
+            $data['client_id']   = $client_id;
+            $data['url']         = $url;
+            $data['depth']       = $depth;
+            $data['status_code'] = $status_code;
+
+            // Indexability checks (apply to all status codes)
+            $robots_lc  = strtolower($parsed['data']['robots_meta'] ?? '');
             $xrobots_lc = strtolower($x_robots ?? '');
             if (str_contains($robots_lc, 'noindex') || str_contains($xrobots_lc, 'noindex')) {
                 $data['is_indexable'] = 0;
@@ -368,23 +413,31 @@ final class CrawlEngine
                 $issues[] = 'nofollow_page';
             }
 
-            // SEO issue checks
-            if (empty($data['page_title']))       $issues[] = 'missing_title';
-            elseif (strlen($data['page_title']) < 20)  $issues[] = 'title_too_short';
-            elseif (strlen($data['page_title']) > 60)  $issues[] = 'title_too_long';
+            // ── SEO issue checks — only meaningful on live 200 pages ─────────
+            if ($status_code === 200) {
+                if (empty($data['page_title']))               $issues[] = 'missing_title';
+                elseif (strlen($data['page_title']) < 20)    $issues[] = 'title_too_short';
+                elseif (strlen($data['page_title']) > 60)    $issues[] = 'title_too_long';
 
-            if (empty($data['meta_description']))  $issues[] = 'missing_meta_description';
-            elseif (strlen($data['meta_description']) < 70)  $issues[] = 'meta_desc_too_short';
-            elseif (strlen($data['meta_description']) > 160) $issues[] = 'meta_desc_too_long';
+                if (empty($data['meta_description']))         $issues[] = 'missing_meta_description';
+                elseif (strlen($data['meta_description']) < 70)  $issues[] = 'meta_desc_too_short';
+                elseif (strlen($data['meta_description']) > 160) $issues[] = 'meta_desc_too_long';
 
-            if (empty($data['h1']))                $issues[] = 'missing_h1';
-            if ($data['word_count'] > 0 && $data['word_count'] < 300) $issues[] = 'thin_content';
-            if ($data['images_missing_alt'] > 0)   $issues[] = 'missing_alt_text';
-            if (!$data['has_schema'])              $issues[] = 'no_schema';
-            if ($data['internal_links'] === 0)     $issues[] = 'no_internal_links';
-            if (!empty($data['canonical_url']) && $data['canonical_url'] !== $url) $issues[] = 'canonical_points_elsewhere';
+                if (empty($data['h1']))                       $issues[] = 'missing_h1';
+                if ($data['word_count'] > 0 && $data['word_count'] < 300) $issues[] = 'thin_content';
+                if ($data['images_missing_alt'] > 0)         $issues[] = 'missing_alt_text';
+                if (!$data['has_schema'])                    $issues[] = 'no_schema';
+                if ($data['internal_links'] === 0)           $issues[] = 'no_internal_links';
 
-            $data['_discovered_links'] = $parsed['links'];
+                if (!empty($data['canonical_url'])) {
+                    $can  = rtrim($data['canonical_url'], '/');
+                    $self = rtrim($url, '/');
+                    if ($can !== $self) $issues[] = 'canonical_points_elsewhere';
+                }
+
+                // Only follow links from 200 pages
+                $data['_discovered_links'] = $parsed['links'];
+            }
         }
 
         $data['issues'] = !empty($issues) ? wp_json_encode(array_values(array_unique($issues))) : null;
@@ -457,8 +510,9 @@ final class CrawlEngine
                 strip_tags($doc->saveHTML($body_node))
             ));
         }
-        $result['data']['word_count']    = str_word_count($body_text);
-        $result['data']['content_hash']  = md5($body_text);
+        $result['data']['word_count']   = str_word_count($body_text);
+        // Use null for empty body so empty pages don't cluster as "duplicates"
+        $result['data']['content_hash'] = empty($body_text) ? null : md5($body_text);
 
         // Links
         $internal = 0; $external = 0;
