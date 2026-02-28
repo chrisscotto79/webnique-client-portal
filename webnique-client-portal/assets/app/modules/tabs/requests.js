@@ -1257,9 +1257,7 @@ function showNewRequestModal(instance, state, shell) {
   const cancelBtn = button(
     state,
     "Cancel",
-    () => {
-      document.body.removeChild(overlay);
-    },
+    () => closeModal(),
     "outline"
   );
   
@@ -1289,9 +1287,9 @@ function showNewRequestModal(instance, state, shell) {
           message,
           state.user?.name || state.userId || "Client"
         );
-        
+
         // Close modal
-        document.body.removeChild(overlay);
+        closeModal();
         
         // Threads will update via subscription
         
@@ -1314,24 +1312,26 @@ function showNewRequestModal(instance, state, shell) {
   modal.appendChild(btnRow);
   
   overlay.appendChild(modal);
-  
+
+  function closeModal() {
+    if (overlay.parentElement) {
+      document.body.removeChild(overlay);
+    }
+    document.removeEventListener("keydown", escapeHandler);
+  }
+
   // Close on overlay click
   overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) {
-      document.body.removeChild(overlay);
-    }
+    if (e.target === overlay) closeModal();
   });
-  
+
   // Close on Escape key
-  const escapeHandler = (e) => {
-    if (e.key === "Escape") {
-      document.body.removeChild(overlay);
-      document.removeEventListener("keydown", escapeHandler);
-    }
-  };
-  
+  function escapeHandler(e) {
+    if (e.key === "Escape") closeModal();
+  }
+
   document.addEventListener("keydown", escapeHandler);
-  
+
   document.body.appendChild(overlay);
   subjectInput.focus();
 }

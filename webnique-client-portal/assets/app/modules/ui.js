@@ -103,7 +103,7 @@ export function pill(text, tone = "neutral") {
       fontWeight: "600",
       whiteSpace: "nowrap",
     },
-    html: text,
+    text: text,
   });
 }
 

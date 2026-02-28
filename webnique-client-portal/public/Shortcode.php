@@ -98,7 +98,7 @@ final class Shortcode
      */
     private static function enqueueAssets(string $clientId): void
     {
-        $version = '2.0.1-' . time(); // Force fresh load
+        $version = defined('WNQ_PORTAL_VERSION') ? WNQ_PORTAL_VERSION : '2.0.0';
 
         // CSS
         wp_enqueue_style(
@@ -130,13 +130,22 @@ final class Shortcode
 
         // Portal config - CRITICAL: This is what JavaScript uses
         wp_localize_script('wnq-portal-app', 'WNQ_PORTAL', [
-            'restUrl'  => esc_url_raw(rest_url('wnq/v1')),
-            'nonce'    => wp_create_nonce('wp_rest'), // ✅ This nonce is accepted by AJAX handler
-            'clientId' => $clientId,
-            'isAdmin'  => current_user_can('wnq_manage_portal') || current_user_can('manage_options'),
-            'userId'   => get_current_user_id(),
-            'ajaxUrl'  => admin_url('admin-ajax.php'), // ✅ This is the correct AJAX URL
-            
+            'restUrl'          => esc_url_raw(rest_url('wnq/v1')),
+            'nonce'            => wp_create_nonce('wp_rest'),
+            'clientId'         => $clientId,
+            'isAdmin'          => current_user_can('wnq_manage_portal') || current_user_can('manage_options'),
+            'userId'           => get_current_user_id(),
+            'ajaxUrl'          => admin_url('admin-ajax.php'),
+            'lostpasswordUrl'  => wp_lostpassword_url(),
+
+            // Support contact — edit via Options API or a future settings page
+            'support' => [
+                'name'         => get_option('wnq_support_name', 'Christopher Scotto'),
+                'title'        => get_option('wnq_support_title', 'Head Developer'),
+                'phone'        => get_option('wnq_support_phone', '+14439948595'),
+                'phoneDisplay' => get_option('wnq_support_phone_display', '(443) 994-8595'),
+            ],
+
             // User data for Firebase messages
             'user' => [
                 'id'    => get_current_user_id(),
