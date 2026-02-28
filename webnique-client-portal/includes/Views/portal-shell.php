@@ -16,22 +16,10 @@ namespace {
     $clientId = isset($args['client_id']) ? esc_attr((string) $args['client_id']) : '';
     $mode     = isset($args['mode']) ? esc_attr((string) $args['mode']) : 'client';
 
-    // Temporary visible placeholder so you can confirm shortcode output.
-    $debugHtml = sprintf(
-      '<div style="padding:12px;border:1px dashed #999;border-radius:8px;font-family:system-ui;">
-        <strong>WebNique Portal Mounted</strong><br>
-        Mode: <code>%s</code><br>
-        Client ID: <code>%s</code>
-      </div>',
-      $mode,
-      $clientId !== '' ? $clientId : '(none)'
-    );
-
     return sprintf(
-      '<div id="wnq-portal-root" data-client-id="%s" data-mode="%s">%s</div>',
+      '<div id="wnq-portal-root" data-client-id="%s" data-mode="%s"></div>',
       $clientId,
-      $mode,
-      $debugHtml
+      $mode
     );
   }
 }

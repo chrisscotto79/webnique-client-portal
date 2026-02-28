@@ -264,13 +264,17 @@ function createActivity(threads) {
 }
 
 function createPlaceholder() {
+  const support = (window.WNQ_PORTAL || {}).support || {};
+  const phone = support.phone || '';
   const ph = el("div", { style: { background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", borderRadius: "16px", padding: "48px 40px", textAlign: "center", color: "#fff", marginBottom: "32px" } });
   ph.appendChild(el("div", { text: "📊", style: { fontSize: "64px", marginBottom: "20px" } }));
   ph.appendChild(el("h2", { text: "Analytics Not Configured", style: { fontSize: "28px", fontWeight: "900", marginBottom: "12px" } }));
   ph.appendChild(el("p", { text: "Contact support to enable analytics.", style: { fontSize: "16px", marginBottom: "24px", opacity: "0.9" } }));
-  const btn = el("a", { href: "tel:+14439948595", style: { display: "inline-block", padding: "14px 32px", background: "#fff", color: "#667eea", borderRadius: "8px", textDecoration: "none", fontWeight: "700" } });
-  btn.textContent = "📞 Call Support";
-  ph.appendChild(btn);
+  if (phone) {
+    const btn = el("a", { href: "tel:" + phone, style: { display: "inline-block", padding: "14px 32px", background: "#fff", color: "#667eea", borderRadius: "8px", textDecoration: "none", fontWeight: "700" } });
+    btn.textContent = "📞 Call Support";
+    ph.appendChild(btn);
+  }
   return ph;
 }
 
@@ -289,16 +293,30 @@ function renderSidebar(side, state) {
   });
   side.appendChild(acc);
   
+  const support = (window.WNQ_PORTAL || {}).support || {};
+  const supportName = support.name || 'Support';
+  const supportTitle = support.title || '';
+  const supportPhone = support.phone || '';
+  const supportPhoneDisplay = support.phoneDisplay || supportPhone;
+
   const sup = el("div", { style: { background: "#fef3c7", border: "2px solid #fde047", borderRadius: "16px", padding: "20px" } });
   sup.appendChild(el("div", { text: "🚨", style: { fontSize: "32px", marginBottom: "12px" } }));
   sup.appendChild(el("h3", { text: "Emergency Support", style: { fontSize: "16px", fontWeight: "800", color: "#78350f", marginBottom: "8px" } }));
   sup.appendChild(el("p", { text: "Need immediate assistance?", style: { fontSize: "13px", color: "#92400e", marginBottom: "12px" } }));
   const dev = el("div", { style: { background: "#fff", padding: "12px", borderRadius: "8px", marginBottom: "12px" } });
-  dev.innerHTML = '<div style="font-size:12px;color:#92400e;font-weight:600;margin-bottom:4px">Christopher Scotto</div><div style="font-size:11px;color:#a16207;margin-bottom:8px">Head Developer</div><a href="tel:+14439948595" style="font-size:16px;font-weight:700;color:#0d539e;text-decoration:none">📞 (443) 994-8595</a>';
+  if (supportName) dev.appendChild(el("div", { text: supportName, style: { fontSize: "12px", color: "#92400e", fontWeight: "600", marginBottom: "4px" } }));
+  if (supportTitle) dev.appendChild(el("div", { text: supportTitle, style: { fontSize: "11px", color: "#a16207", marginBottom: "8px" } }));
+  if (supportPhone) {
+    const tel = el("a", { href: "tel:" + supportPhone, style: { fontSize: "16px", fontWeight: "700", color: "#0d539e", textDecoration: "none" } });
+    tel.textContent = "📞 " + supportPhoneDisplay;
+    dev.appendChild(tel);
+  }
   sup.appendChild(dev);
-  const btn = el("a", { href: "tel:+14439948595", style: { display: "block", width: "100%", padding: "12px", background: "#f59e0b", color: "#fff", textAlign: "center", borderRadius: "8px", textDecoration: "none", fontWeight: "700" } });
-  btn.textContent = "📞 Call Now";
-  sup.appendChild(btn);
+  if (supportPhone) {
+    const btn = el("a", { href: "tel:" + supportPhone, style: { display: "block", width: "100%", padding: "12px", background: "#f59e0b", color: "#fff", textAlign: "center", borderRadius: "8px", textDecoration: "none", fontWeight: "700" } });
+    btn.textContent = "📞 Call Now";
+    sup.appendChild(btn);
+  }
   side.appendChild(sup);
 }
 

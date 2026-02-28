@@ -284,13 +284,14 @@ function createServicesIncluded(services) {
   const card = el("div", { class: "wnq-card" });
 
   if (!services || services.length === 0) {
-    // Default services if none provided
-    services = [
-      { name: "SEO Optimization", included: true },
-      { name: "Google Ads", included: false },
-      { name: "Monthly Reports", included: true },
-      { name: "Priority Support", included: false },
-    ];
+    card.appendChild(
+      el("p", {
+        text: "No services data available. Contact WebNique to review your plan.",
+        style: { color: "#6b7280", fontSize: "14px", padding: "16px 0" },
+      })
+    );
+    section.appendChild(card);
+    return section;
   }
 
   services.forEach((service, index) => {

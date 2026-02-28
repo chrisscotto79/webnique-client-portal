@@ -318,8 +318,7 @@ function createUserAccount(user, state) {
     state,
     "Reset Password",
     () => {
-      // Redirect to WordPress password reset
-      const resetUrl = `/wp-login.php?action=lostpassword`;
+      const resetUrl = (window.WNQ_PORTAL || {}).lostpasswordUrl || "/wp-login.php?action=lostpassword";
       window.open(resetUrl, "_blank");
     },
     "outline"
