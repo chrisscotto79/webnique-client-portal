@@ -46,7 +46,8 @@ final class SpiderAdmin
     public static function enqueueAssets(string $hook): void
     {
         if (strpos($hook, 'wnq-seo-spider') === false) return;
-        wp_enqueue_style('wnq-spider', WNQ_PORTAL_URL . 'assets/admin/spider.css', [], WNQ_PORTAL_VERSION);
+        wp_enqueue_style('wnq-seohub', WNQ_PORTAL_URL . 'assets/admin/seohub.css', [], WNQ_PORTAL_VERSION);
+        wp_enqueue_style('wnq-spider', WNQ_PORTAL_URL . 'assets/admin/spider.css', ['wnq-seohub'], WNQ_PORTAL_VERSION);
         wp_enqueue_script('wnq-spider', WNQ_PORTAL_URL . 'assets/admin/spider.js', ['jquery'], WNQ_PORTAL_VERSION, true);
         wp_localize_script('wnq-spider', 'WNQ_SPIDER', [
             'ajaxUrl' => admin_url('admin-ajax.php'),
