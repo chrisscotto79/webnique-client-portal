@@ -16,6 +16,7 @@ use WNQ\Services\PageSpeedEngine;
 use WNQ\Services\ContentAnalyzer;
 use WNQ\Services\CompetitorTracker;
 use WNQ\Services\LocalSEOEngine;
+use WNQ\Services\ServiceCoverageEngine;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -726,6 +727,106 @@ final class SpiderAdmin
                 echo '<tr><td>' . esc_html($city) . '</td><td>' . $count . '</td></tr>';
             }
             echo '</tbody></table>';
+        }
+
+        // ── Service × Location Coverage Map ────────────────────────────────
+        self::renderCoverageMap($client_id);
+    }
+
+    private static function renderCoverageMap(string $client_id): void
+    {
+        $data = ServiceCoverageEngine::getCoverageMatrix($client_id);
+
+        echo '<h3 style="font-size:15px;font-weight:700;color:#1e3a5f;margin:28px 0 10px;">🗺 Service × Location Coverage Map</h3>';
+
+        if (isset($data['error'])) {
+            echo '<div style="padding:14px;background:#f3f4f6;border-radius:8px;color:#6b7280;font-size:13px;">⚠ ' . esc_html($data['error']) . '</div>';
+            return;
+        }
+
+        if (!$data['session_id']) {
+            echo '<div style="padding:14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;color:#92400e;font-size:13px;">No completed crawl yet. Run the spider first so we can check which pages exist.</div>';
+            // Still show gaps even without crawl data — all will be missing
+        }
+
+        // Summary bar
+        $pct = $data['total'] > 0 ? round(($data['covered'] / $data['total']) * 100) : 0;
+        $bar_color = $pct >= 80 ? '#059669' : ($pct >= 50 ? '#d97706' : '#dc2626');
+        echo '<div style="margin-bottom:20px;">';
+        echo '<div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:13px;">';
+        echo '<span><strong>' . $data['covered'] . ' of ' . $data['total'] . '</strong> combinations covered</span>';
+        echo '<span style="font-weight:700;color:' . $bar_color . ';">' . $pct . '%</span>';
+        echo '</div>';
+        echo '<div style="background:#e5e7eb;border-radius:99px;height:8px;"><div style="width:' . $pct . '%;background:' . $bar_color . ';height:100%;border-radius:99px;"></div></div>';
+        echo '</div>';
+
+        // Coverage matrix table
+        $locations = $data['locations'];
+        echo '<div style="overflow-x:auto;margin-bottom:24px;">';
+        echo '<table class="wnq-hub-table" style="min-width:600px;">';
+        echo '<thead><tr><th style="min-width:140px;">Service</th>';
+        foreach ($locations as $loc) {
+            echo '<th style="text-align:center;font-size:11px;">' . esc_html($loc) . '</th>';
+        }
+        echo '</tr></thead><tbody>';
+
+        foreach ($data['services'] as $service) {
+            echo '<tr>';
+            echo '<td style="font-weight:600;font-size:13px;">' . esc_html($service) . '</td>';
+            foreach ($locations as $loc) {
+                $cell = $data['matrix'][$service][$loc] ?? ['status' => 0, 'url' => null];
+                $status = $cell['status'];
+                if ($status === 3) {
+                    $icon = '<a href="' . esc_url($cell['url']) . '" target="_blank" title="' . esc_attr($cell['title']) . '" style="text-decoration:none;font-size:16px;">✅</a>';
+                } elseif ($status === 2) {
+                    $icon = '<a href="' . esc_url($cell['url']) . '" target="_blank" title="Covered in title/H1: ' . esc_attr($cell['title']) . '" style="text-decoration:none;font-size:16px;">🟡</a>';
+                } elseif ($status === 1) {
+                    $icon = '<span title="Partial match: ' . esc_attr($cell['title'] ?? '') . '" style="font-size:16px;cursor:default;">⚠️</span>';
+                } else {
+                    $icon = '<span style="font-size:16px;cursor:default;">❌</span>';
+                }
+                echo '<td style="text-align:center;padding:8px 6px;">' . $icon . '</td>';
+            }
+            echo '</tr>';
+        }
+        echo '</tbody></table>';
+        echo '<p style="font-size:11px;color:#9ca3af;margin-top:6px;">✅ URL match &nbsp;|&nbsp; 🟡 Title/H1 match &nbsp;|&nbsp; ⚠️ Partial &nbsp;|&nbsp; ❌ Missing</p>';
+        echo '</div>';
+
+        // Gap recommendations
+        if (!empty($data['gaps'])) {
+            $missing = array_filter($data['gaps'], fn($g) => $g['status'] === 0);
+            $partial = array_filter($data['gaps'], fn($g) => $g['status'] === 1);
+
+            if (!empty($missing)) {
+                echo '<h4 style="font-size:13px;font-weight:700;color:#dc2626;margin:0 0 10px;">Pages to Build (' . count($missing) . ')</h4>';
+                echo '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;margin-bottom:20px;">';
+                foreach ($missing as $gap) {
+                    echo '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px;">';
+                    echo '<div style="font-weight:700;font-size:13px;color:#991b1b;margin-bottom:4px;">' . esc_html($gap['suggested_title']) . '</div>';
+                    echo '<div style="font-family:monospace;font-size:11px;color:#6b7280;background:#fff;padding:3px 8px;border-radius:4px;display:inline-block;">' . esc_html($gap['suggested_slug']) . '</div>';
+                    echo '</div>';
+                }
+                echo '</div>';
+            }
+
+            if (!empty($partial)) {
+                echo '<h4 style="font-size:13px;font-weight:700;color:#d97706;margin:0 0 10px;">Pages to Optimise (' . count($partial) . ')</h4>';
+                echo '<p style="font-size:12px;color:#6b7280;margin-bottom:10px;">These pages partially mention the service or location — update URL slug, title, and H1 to target both.</p>';
+                echo '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;">';
+                foreach ($partial as $gap) {
+                    echo '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px;">';
+                    echo '<div style="font-weight:700;font-size:13px;color:#92400e;margin-bottom:4px;">' . esc_html($gap['service']) . ' → ' . esc_html($gap['location']) . '</div>';
+                    if ($gap['url']) {
+                        echo '<a href="' . esc_url($gap['url']) . '" target="_blank" style="font-size:11px;color:#0d539e;">' . esc_html($gap['url']) . '</a><br>';
+                    }
+                    echo '<div style="font-family:monospace;font-size:11px;color:#6b7280;background:#fff;padding:3px 8px;border-radius:4px;display:inline-block;margin-top:4px;">Target slug: ' . esc_html($gap['suggested_slug']) . '</div>';
+                    echo '</div>';
+                }
+                echo '</div>';
+            }
+        } else {
+            echo '<div style="padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;color:#166534;font-size:13px;">🎉 Full coverage — every service × location combination has a dedicated page.</div>';
         }
     }
 
