@@ -152,6 +152,32 @@ final class CrawlEngine
         $wpdb->delete("{$wpdb->prefix}wnq_crawl_queue",    ['session_id' => $session_id]);
     }
 
+    /**
+     * Reset a stuck "running" session — clears pages + queue and marks it
+     * running again so the JS can resume polling from scratch.
+     */
+    public static function resetSession(int $session_id): void
+    {
+        global $wpdb;
+        $session = self::getSession($session_id);
+        if (!$session) return;
+
+        $wpdb->delete("{$wpdb->prefix}wnq_crawl_pages", ['session_id' => $session_id]);
+        $wpdb->delete("{$wpdb->prefix}wnq_crawl_queue", ['session_id' => $session_id]);
+
+        // Re-seed queue with start URL
+        $wpdb->insert("{$wpdb->prefix}wnq_crawl_queue", [
+            'session_id' => $session_id, 'url' => $session['start_url'], 'depth' => 0,
+        ]);
+        $wpdb->update("{$wpdb->prefix}wnq_crawl_sessions", [
+            'status'       => 'running',
+            'urls_crawled' => 0,
+            'urls_queued'  => 1,
+            'issues_found' => 0,
+            'completed_at' => null,
+        ], ['id' => $session_id]);
+    }
+
     // ── Batch Crawler ──────────────────────────────────────────────────────
 
     public static function crawlBatch(int $session_id, int $batch_size = self::BATCH_SIZE): array
@@ -205,6 +231,11 @@ final class CrawlEngine
 
             // Crawl the page
             $page_data = self::crawlPage($url, (int)$item['depth'], $session_id, $session['client_id']);
+
+            // *** Extract discovered links BEFORE DB insert — _discovered_links is not a DB column ***
+            $discovered_links = $page_data['_discovered_links'] ?? [];
+            unset($page_data['_discovered_links']);
+
             $wpdb->insert("{$wpdb->prefix}wnq_crawl_pages", $page_data, null);
 
             if (!empty($page_data['issues'])) {
@@ -213,12 +244,12 @@ final class CrawlEngine
             }
 
             // Queue discovered internal links (if not already crawled/queued and within depth)
-            if (!empty($page_data['_discovered_links']) && (int)$item['depth'] < $max_depth) {
+            if (!empty($discovered_links) && (int)$item['depth'] < $max_depth) {
                 $total_queued = (int)$wpdb->get_var($wpdb->prepare(
                     "SELECT COUNT(*) FROM {$wpdb->prefix}wnq_crawl_queue WHERE session_id=%d", $session_id
                 ));
 
-                foreach ($page_data['_discovered_links'] as $link) {
+                foreach ($discovered_links as $link) {
                     $link_host = parse_url($link, PHP_URL_HOST) ?? '';
                     if ($link_host !== $base_domain) continue;
                     if (isset($crawled_set[$link])) continue;
@@ -238,7 +269,6 @@ final class CrawlEngine
                     }
                 }
             }
-            unset($page_data['_discovered_links']);
 
             $wpdb->update("{$wpdb->prefix}wnq_crawl_queue", ['status' => 'done'], ['id' => $item['id']]);
             $crawled++;

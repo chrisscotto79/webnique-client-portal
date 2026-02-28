@@ -90,6 +90,30 @@
         });
     }
 
+    // ── Reset & Resume a Stuck Session ───────────────────────────────────
+    window.wnqSpiderResetAndResume = function (sessionId, clientId) {
+        if (!confirm('Reset this session and restart the crawl from the beginning?')) return;
+
+        $.post(WNQ_SPIDER.ajaxUrl, {
+            action:        'wnq_spider',
+            nonce:         WNQ_SPIDER.nonce,
+            spider_action: 'reset_session',
+            client_id:     clientId,
+            session_id:    sessionId,
+        }, function (res) {
+            if (res.success) {
+                // Show progress UI and begin polling
+                spiderSessionId = sessionId;
+                spiderRunning   = true;
+                $('#spider-progress').show();
+                $('#spider-status-text').text('Restarting crawl…');
+                $('#spider-bar').css('width', '5%');
+                $('#spider-start-btn').prop('disabled', true);
+                wnqSpiderPoll(clientId);
+            }
+        });
+    };
+
     // ── Delete Session ────────────────────────────────────────────────────
     window.wnqSpiderDeleteSession = function (sessionId, clientId) {
         if (!confirm('Delete this crawl session and all its data?')) return;
