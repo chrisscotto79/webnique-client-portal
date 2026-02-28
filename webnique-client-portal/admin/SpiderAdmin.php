@@ -149,6 +149,56 @@ final class SpiderAdmin
             return;
         }
 
+        // ── Auto-Crawl Schedule ────────────────────────────────────────────
+        $sched        = get_option('wnq_spider_sched_' . $client_id, []);
+        $sched_on     = !empty($sched['enabled']);
+        $sched_freq   = $sched['frequency'] ?? 'weekly';
+        $sched_depth  = (int)($sched['max_depth'] ?? 3);
+        $sched_url    = $sched['start_url'] ?? $site_url;
+        $sched_next   = !empty($sched['next_run']) && $sched['next_run'] > time()
+                        ? human_time_diff($sched['next_run']) . ' from now (' . date('D M j, g:ia', $sched['next_run']) . ')'
+                        : ($sched_on ? 'Due — will run on next page load' : 'Not scheduled');
+        $sched_last   = !empty($sched['last_run']) ? date('M j, Y g:ia', $sched['last_run']) : 'Never';
+
+        echo '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:18px 20px;margin-bottom:16px;">';
+        echo '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">';
+        echo '<h3 style="margin:0;color:#14532d;font-size:14px;">📅 Scheduled Auto-Crawl</h3>';
+        echo '<span style="font-size:12px;color:#6b7280;">Last run: ' . esc_html($sched_last) . '</span>';
+        echo '</div>';
+        echo '<div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;">';
+
+        // Enable toggle
+        echo '<div><label style="display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:4px;">Auto-Crawl</label>';
+        echo '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">';
+        echo '<input type="checkbox" id="sched-enabled" ' . ($sched_on ? 'checked' : '') . ' style="width:16px;height:16px;">';
+        echo '<span style="font-size:13px;color:#374151;">Enabled</span></label></div>';
+
+        // Frequency
+        echo '<div><label style="display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:4px;">Frequency</label>';
+        echo '<select id="sched-freq" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">';
+        foreach (['weekly' => 'Weekly', 'monthly' => 'Monthly', 'daily' => 'Daily'] as $v => $l) {
+            echo '<option value="' . $v . '" ' . selected($v, $sched_freq, false) . '>' . $l . '</option>';
+        }
+        echo '</select></div>';
+
+        // Max depth
+        echo '<div><label style="display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:4px;">Max Depth</label>';
+        echo '<select id="sched-depth" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">';
+        foreach ([2 => '2 levels', 3 => '3 levels', 4 => '4 levels', 5 => '5 levels'] as $v => $l) {
+            echo '<option value="' . $v . '" ' . selected($v, $sched_depth, false) . '>' . $l . '</option>';
+        }
+        echo '</select></div>';
+
+        // Save button
+        echo '<button class="wnq-btn wnq-btn-secondary" onclick="wnqSpiderSaveSchedule(\'' . esc_js($client_id) . '\',\'' . esc_js($sched_url) . '\')" style="white-space:nowrap;">💾 Save Schedule</button>';
+        echo '</div>';
+
+        // Next run info
+        echo '<div style="margin-top:10px;font-size:12px;color:#6b7280;" id="sched-next-run">';
+        echo $sched_on ? '⏰ Next run: <strong>' . esc_html($sched_next) . '</strong>' : 'Schedule is disabled.';
+        echo '</div>';
+        echo '</div>';
+
         // Start Crawl Form
         echo '<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:20px;margin-bottom:20px;">';
         echo '<h3 style="margin:0 0 14px;color:#1e3a5f;">🕷️ Start New Crawl</h3>';
@@ -730,6 +780,34 @@ final class SpiderAdmin
                 if (!$client_id) wp_send_json_error(['message' => 'No client ID']);
                 $count = ContentAnalyzer::classifyClientKeywords($client_id);
                 wp_send_json_success(['message' => "$count keywords classified. Reload to see results."]);
+                break;
+
+            case 'save_schedule':
+                if (!$client_id) wp_send_json_error(['message' => 'No client ID']);
+                $enabled   = !empty($_POST['enabled']);
+                $frequency = sanitize_key($_POST['frequency'] ?? 'weekly');
+                $max_depth = max(1, min(5, (int)($_POST['max_depth'] ?? 3)));
+                $start_url = esc_url_raw($_POST['start_url'] ?? '');
+                if ($enabled && !$start_url) wp_send_json_error(['message' => 'Start URL required to enable schedule']);
+
+                $intervals  = ['daily' => DAY_IN_SECONDS, 'weekly' => 7 * DAY_IN_SECONDS, 'monthly' => 30 * DAY_IN_SECONDS];
+                $interval   = $intervals[$frequency] ?? 7 * DAY_IN_SECONDS;
+                $existing   = get_option('wnq_spider_sched_' . $client_id, []);
+
+                $sched = [
+                    'enabled'   => (int)$enabled,
+                    'frequency' => $frequency,
+                    'max_depth' => $max_depth,
+                    'start_url' => $start_url,
+                    'next_run'  => $enabled ? time() + $interval : 0,
+                    'last_run'  => $existing['last_run'] ?? 0,
+                ];
+                update_option('wnq_spider_sched_' . $client_id, $sched, false);
+
+                $next_human = $enabled
+                    ? human_time_diff(time() + $interval) . ' from now (' . date('D M j, g:ia', time() + $interval) . ')'
+                    : 'Disabled';
+                wp_send_json_success(['message' => 'Schedule saved.', 'next_run' => $next_human, 'enabled' => $enabled]);
                 break;
 
             default:
