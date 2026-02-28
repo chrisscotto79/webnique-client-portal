@@ -358,7 +358,7 @@ PROMPT,
         $current = self::getSettings();
         $allowed = ['provider', 'groq_api_key', 'groq_model', 'openai_api_key', 'openai_model',
                     'together_api_key', 'together_model', 'xai_api_key', 'xai_model',
-                    'cache_ttl', 'max_tokens', 'temperature'];
+                    'psi_api_key', 'cache_ttl', 'max_tokens', 'temperature'];
         foreach ($allowed as $k) {
             if (isset($data[$k])) {
                 $current[$k] = $data[$k];
