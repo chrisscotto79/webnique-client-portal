@@ -402,11 +402,11 @@ export function mountShell(root, state, { onTabChange }) {
   });
 
   sideMeta.appendChild(
-    pill(`Client: <b>${escapeHtml(state.clientId || "(none)")}</b>`)
+    pill(`Client: ${escapeHtml(state.clientId || "(none)")}`)
   );
   sideMeta.appendChild(el("div", { style: { height: "8px" } }));
   sideMeta.appendChild(
-    pill(`Mode: <b>${escapeHtml(state.mode || "(none)")}</b>`)
+    pill(`Mode: ${escapeHtml(state.mode || "(none)")}`)
   );
   
   sidebar.appendChild(sideMeta);
@@ -524,11 +524,11 @@ export function mountShell(root, state, { onTabChange }) {
     updateClientInfo: (clientId, mode) => {
       sideMeta.innerHTML = "";
       sideMeta.appendChild(
-        pill(`Client: <b>${escapeHtml(clientId || "(none)")}</b>`)
+        pill(`Client: ${escapeHtml(clientId || "(none)")}`)
       );
       sideMeta.appendChild(el("div", { style: { height: "8px" } }));
       sideMeta.appendChild(
-        pill(`Mode: <b>${escapeHtml(mode || "(none)")}</b>`)
+        pill(`Mode: ${escapeHtml(mode || "(none)")}`)
       );
     },
   };

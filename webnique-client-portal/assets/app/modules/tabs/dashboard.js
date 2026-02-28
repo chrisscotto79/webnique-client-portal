@@ -285,7 +285,7 @@ function renderSidebar(side, state) {
   acc.appendChild(el("div", { text: "ACCOUNT STATUS", style: { fontSize: "11px", fontWeight: "700", opacity: "0.8", marginBottom: "12px" } }));
   acc.appendChild(el("div", { text: "Active", style: { fontSize: "28px", fontWeight: "900", marginBottom: "16px" } }));
   
-  [{ label: "Client", value: state.clientId || "N/A" }, { label: "Plan", value: "Standard" }].forEach(d => {
+  [{ label: "Client", value: state.clientId || "N/A" }, { label: "Plan", value: state.client?.tier || "—" }].forEach(d => {
     const row = el("div", { style: { display: "flex", justifyContent: "space-between", padding: "10px 0", borderTop: "1px solid rgba(255,255,255,0.1)", fontSize: "14px" } });
     row.appendChild(el("span", { text: d.label, style: { opacity: "0.8" } }));
     row.appendChild(el("span", { text: d.value, style: { fontWeight: "600" } }));
