@@ -176,10 +176,10 @@ final class PageSpeedEngine
 
         // Get top pages (homepage + highest-traffic pages from site data)
         $profile = \WNQ\Models\SEOHub::getProfile($client_id);
-        $keys    = \WNQ\Models\SEOHub::getAllAgentKeys();
+        $keys     = \WNQ\Models\SEOHub::getAgentKeys($client_id);
         $site_url = '';
         foreach ($keys as $k) {
-            if ($k['client_id'] === $client_id && $k['status'] === 'active') {
+            if ($k['status'] === 'active') {
                 $site_url = $k['site_url'];
                 break;
             }

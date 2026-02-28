@@ -127,10 +127,10 @@ final class SpiderAdmin
     private static function renderSpider(string $client_id): void
     {
         $sessions    = CrawlEngine::getSessions($client_id, 10);
-        $agent_keys  = SEOHub::getAllAgentKeys();
-        $site_url    = '';
+        $agent_keys = SEOHub::getAgentKeys($client_id);
+        $site_url   = '';
         foreach ($agent_keys as $k) {
-            if ($k['client_id'] === $client_id && $k['status'] === 'active') {
+            if ($k['status'] === 'active') {
                 $site_url = $k['site_url'];
                 break;
             }
