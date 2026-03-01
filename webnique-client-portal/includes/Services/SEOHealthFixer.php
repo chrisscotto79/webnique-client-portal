@@ -136,9 +136,10 @@ final class SEOHealthFixer
                 if ($schema) $payload['schema_json'] = $schema;
             }
 
-            // H1 fix — send existing title; agent un-hides it
+            // H1 fix — always use the original crawled page title so the visible
+            // heading on the page is never changed by the auto-fixer.
             if (in_array('missing_h1', $finding_types, true)) {
-                $h1 = !empty($payload['seo_title']) ? $payload['seo_title'] : ($page_data['title'] ?? '');
+                $h1 = $page_data['title'] ?? '';
                 if ($h1) $payload['h1_title'] = $h1;
             }
 
