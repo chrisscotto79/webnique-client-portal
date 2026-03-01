@@ -75,9 +75,9 @@ final class CronScheduler
             wp_schedule_event(time() + 60, 'every_fifteen_minutes', 'wnq_seo_process_queue');
         }
 
-        // Monthly reports on 1st of month at 6am
+        // Monthly reports on 1st of next month at 6am
         if (!wp_next_scheduled('wnq_seo_monthly_reports')) {
-            $next_month_1st = mktime(6, 0, 0, (int)date('n') + 1, 1, (int)date('Y'));
+            $next_month_1st = strtotime('first day of next month 6:00am');
             wp_schedule_event($next_month_1st, 'monthly', 'wnq_seo_monthly_reports');
         }
 
@@ -144,9 +144,12 @@ final class CronScheduler
         if (!self::canRun()) return;
 
         global $wpdb;
+        $like_prefix = $wpdb->esc_like('wnq_spider_sched_');
         $rows = $wpdb->get_results(
-            "SELECT option_name, option_value FROM {$wpdb->options}
-             WHERE option_name LIKE 'wnq_spider_sched_%'",
+            $wpdb->prepare(
+                "SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE %s",
+                $like_prefix . '%'
+            ),
             ARRAY_A
         ) ?: [];
 

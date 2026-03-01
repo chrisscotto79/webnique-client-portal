@@ -314,33 +314,23 @@ add_action('admin_post_wnq_init_monthly_tasks', function() {
 
 // AJAX ANALYTICS HANDLERS - FOR CLIENT PORTAL
 add_action('wp_ajax_wnq_get_analytics_data', function() {
-    error_log('[WNQ] wp_ajax handler called - user logged in: ' . is_user_logged_in());
-    error_log('[WNQ] User ID: ' . get_current_user_id());
-    
-    // ✅ NO PERMISSION CHECK - Any logged-in user can view their analytics
-    
     // Verify nonce - accept EITHER wp_rest OR wnq_analytics_nonce
     $nonce = $_POST['nonce'] ?? '';
     $valid_nonce = false;
-    
+
     if (wp_verify_nonce($nonce, 'wp_rest')) {
         $valid_nonce = true;
-        error_log('[WNQ] wp_rest nonce valid, converting to wnq_analytics_nonce');
+        // Re-mint as wnq_analytics_nonce so the inner handler's check_ajax_referer passes
         $_POST['nonce'] = wp_create_nonce('wnq_analytics_nonce');
     } elseif (wp_verify_nonce($nonce, 'wnq_analytics_nonce')) {
         $valid_nonce = true;
-        error_log('[WNQ] wnq_analytics_nonce valid');
     }
-    
+
     if (!$valid_nonce) {
-        error_log('[WNQ] Invalid nonce provided');
         wp_send_json_error(['message' => 'Invalid security token']);
         return;
     }
-    
-    error_log('[WNQ] Analytics AJAX called for client: ' . ($_POST['client_id'] ?? 'unknown'));
-    
-    // Load analytics handler
+
     $analytics_admin = WNQ_PORTAL_PATH . 'admin/AnalyticsAdmin.php';
     if (file_exists($analytics_admin)) {
         require_once WNQ_PORTAL_PATH . 'includes/Models/AnalyticsConfig.php';
@@ -348,37 +338,28 @@ add_action('wp_ajax_wnq_get_analytics_data', function() {
         require_once WNQ_PORTAL_PATH . 'includes/API/GoogleSearchConsole.php';
         require_once WNQ_PORTAL_PATH . 'includes/API/AnalyticsCache.php';
         require_once $analytics_admin;
-        
         \WNQ\Admin\AnalyticsAdmin::ajaxGetAnalyticsData();
     } else {
-        error_log('[WNQ] Analytics handler not found');
         wp_send_json_error(['message' => 'Analytics handler not found']);
     }
 });
 
 add_action('wp_ajax_nopriv_wnq_get_analytics_data', function() {
-    error_log('[WNQ] wp_ajax_nopriv called - user not logged in, treating as portal request');
-    
     $nonce = $_POST['nonce'] ?? '';
     $valid_nonce = false;
-    
+
     if (wp_verify_nonce($nonce, 'wp_rest')) {
         $valid_nonce = true;
-        error_log('[WNQ] nopriv: wp_rest nonce valid, converting');
         $_POST['nonce'] = wp_create_nonce('wnq_analytics_nonce');
     } elseif (wp_verify_nonce($nonce, 'wnq_analytics_nonce')) {
         $valid_nonce = true;
-        error_log('[WNQ] nopriv: wnq_analytics_nonce valid');
     }
-    
+
     if (!$valid_nonce) {
-        error_log('[WNQ] nopriv: Invalid nonce provided');
         wp_send_json_error(['message' => 'Invalid security token']);
         return;
     }
-    
-    error_log('[WNQ] nopriv: Loading analytics handler for client: ' . ($_POST['client_id'] ?? 'unknown'));
-    
+
     $analytics_admin = WNQ_PORTAL_PATH . 'admin/AnalyticsAdmin.php';
     if (file_exists($analytics_admin)) {
         require_once WNQ_PORTAL_PATH . 'includes/Models/AnalyticsConfig.php';
@@ -386,10 +367,8 @@ add_action('wp_ajax_nopriv_wnq_get_analytics_data', function() {
         require_once WNQ_PORTAL_PATH . 'includes/API/GoogleSearchConsole.php';
         require_once WNQ_PORTAL_PATH . 'includes/API/AnalyticsCache.php';
         require_once $analytics_admin;
-        
         \WNQ\Admin\AnalyticsAdmin::ajaxGetAnalyticsData();
     } else {
-        error_log('[WNQ] nopriv: Analytics handler not found');
         wp_send_json_error(['message' => 'Analytics handler not found']);
     }
 });
@@ -573,11 +552,6 @@ add_action('admin_menu', function() {
     add_submenu_page('wnq-portal', 'SEO Tracking', 'SEO Tracking', $capability, 'wnq-seo', 'wnq_render_seo_page');
     add_submenu_page('wnq-portal', 'Web Requests', 'Web Requests', $capability, 'wnq-web-requests', 'wnq_render_requests_page');
 }, 10);
-add_action('init', function() {
-    error_log('===== WNQ PLUGIN LOADED =====');
-    error_log('Plugin path: ' . WNQ_PORTAL_PATH);
-    error_log('AJAX handlers registered: ' . (has_action('wp_ajax_wnq_get_analytics_data') ? 'YES' : 'NO'));
-});
 
 
 // RENDER FUNCTIONS

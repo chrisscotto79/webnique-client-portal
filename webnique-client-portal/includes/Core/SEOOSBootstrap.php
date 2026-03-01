@@ -78,6 +78,7 @@ final class SEOOSBootstrap
             'includes/Services/ContentAnalyzer.php',
             'includes/Services/CompetitorTracker.php',
             'includes/Services/LocalSEOEngine.php',
+            'includes/Services/ServiceCoverageEngine.php',
             // Controllers & Core
             'includes/Controllers/SEOAgentController.php',
             'includes/Core/CronScheduler.php',
@@ -118,8 +119,9 @@ final class SEOOSBootstrap
             'includes/Services/PageSpeedEngine.php'       => 'WNQ\\Services\\PageSpeedEngine',
             'includes/Services/ContentAnalyzer.php'       => 'WNQ\\Services\\ContentAnalyzer',
             'includes/Services/CompetitorTracker.php'     => 'WNQ\\Services\\CompetitorTracker',
-            'includes/Services/LocalSEOEngine.php'        => 'WNQ\\Services\\LocalSEOEngine',
-            'admin/SEOHubAdmin.php'                       => 'WNQ\\Admin\\SEOHubAdmin',
+            'includes/Services/LocalSEOEngine.php'            => 'WNQ\\Services\\LocalSEOEngine',
+            'includes/Services/ServiceCoverageEngine.php'     => 'WNQ\\Services\\ServiceCoverageEngine',
+            'admin/SEOHubAdmin.php'                           => 'WNQ\\Admin\\SEOHubAdmin',
             'admin/BlogSchedulerAdmin.php'                => 'WNQ\\Admin\\BlogSchedulerAdmin',
             'admin/SpiderAdmin.php'                       => 'WNQ\\Admin\\SpiderAdmin',
         ];
