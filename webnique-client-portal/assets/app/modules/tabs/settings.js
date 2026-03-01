@@ -103,13 +103,13 @@ async function loadSettingsData(state) {
 
     return {
       success: true,
-      client: result.data || {},
+      client: result.client || {},
       user: {
         email: state.user?.email || "N/A",
         name: state.user?.name || "N/A",
       },
-      notifications: result.data?.notification_settings || {},
-      users: result.data?.linked_users || [],
+      notifications: result.client?.notification_settings || {},
+      users: result.client?.linked_users || [],
     };
   } catch (error) {
     console.error("[Settings] Load error:", error);

@@ -323,11 +323,11 @@ import { renderSettings } from "./modules/tabs/settings.js";
           console.log("[WNQ Portal] Client document loaded");
           
           // Update state with client data
-          if (client.data) {
+          if (client.client) {
             state.client = {
-              name: client.data.name || "—",
-              domain: client.data.domain || "—",
-              tier: client.data.tier || "—",
+              name: client.client.name || "—",
+              domain: client.client.domain || "—",
+              tier: client.client.tier || "—",
             };
           }
         } else {
