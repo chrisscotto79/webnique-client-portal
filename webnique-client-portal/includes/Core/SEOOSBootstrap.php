@@ -36,12 +36,16 @@ final class SEOOSBootstrap
             \WNQ\Admin\SEOHubAdmin::register();
             \WNQ\Admin\BlogSchedulerAdmin::register();
             \WNQ\Admin\SpiderAdmin::register();
+            \WNQ\Admin\LeadFinderAdmin::register();
             // Register get_job ajax handler
             add_action('wp_ajax_wnq_seohub_get_job', [self::class, 'ajaxGetJob']);
         }
 
         // Create blog tables if not yet created (schema migration for existing installs)
         self::maybeCreateBlogTables();
+
+        // Create lead finder table if not yet created
+        \WNQ\Models\Lead::createTable();
 
         // Register REST API routes for SEO Agent
         add_action('rest_api_init', function () {
@@ -79,6 +83,12 @@ final class SEOOSBootstrap
             'includes/Services/CompetitorTracker.php',
             'includes/Services/LocalSEOEngine.php',
             'includes/Services/ServiceCoverageEngine.php',
+            // Lead Finder
+            'includes/Models/Lead.php',
+            'includes/Services/PlacesAPIClient.php',
+            'includes/Services/LeadSEOScorer.php',
+            'includes/Services/LeadEmailExtractor.php',
+            'includes/Services/LeadFinderEngine.php',
             // Controllers & Core
             'includes/Controllers/SEOAgentController.php',
             'includes/Core/CronScheduler.php',
@@ -86,6 +96,7 @@ final class SEOOSBootstrap
             'admin/SEOHubAdmin.php',
             'admin/BlogSchedulerAdmin.php',
             'admin/SpiderAdmin.php',
+            'admin/LeadFinderAdmin.php',
         ];
 
         foreach ($files as $f) {
@@ -121,9 +132,16 @@ final class SEOOSBootstrap
             'includes/Services/CompetitorTracker.php'     => 'WNQ\\Services\\CompetitorTracker',
             'includes/Services/LocalSEOEngine.php'            => 'WNQ\\Services\\LocalSEOEngine',
             'includes/Services/ServiceCoverageEngine.php'     => 'WNQ\\Services\\ServiceCoverageEngine',
+            // Lead Finder
+            'includes/Models/Lead.php'                        => 'WNQ\\Models\\Lead',
+            'includes/Services/PlacesAPIClient.php'           => 'WNQ\\Services\\PlacesAPIClient',
+            'includes/Services/LeadSEOScorer.php'             => 'WNQ\\Services\\LeadSEOScorer',
+            'includes/Services/LeadEmailExtractor.php'        => 'WNQ\\Services\\LeadEmailExtractor',
+            'includes/Services/LeadFinderEngine.php'          => 'WNQ\\Services\\LeadFinderEngine',
             'admin/SEOHubAdmin.php'                           => 'WNQ\\Admin\\SEOHubAdmin',
-            'admin/BlogSchedulerAdmin.php'                => 'WNQ\\Admin\\BlogSchedulerAdmin',
-            'admin/SpiderAdmin.php'                       => 'WNQ\\Admin\\SpiderAdmin',
+            'admin/BlogSchedulerAdmin.php'                    => 'WNQ\\Admin\\BlogSchedulerAdmin',
+            'admin/SpiderAdmin.php'                           => 'WNQ\\Admin\\SpiderAdmin',
+            'admin/LeadFinderAdmin.php'                       => 'WNQ\\Admin\\LeadFinderAdmin',
         ];
         return $map[$file] ?? '';
     }
