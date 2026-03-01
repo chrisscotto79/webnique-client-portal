@@ -185,6 +185,7 @@ H1 TITLE RULES (critical for SEO):
 - Include a number where natural (e.g. "5 Reasons", "7 Signs", "10 Tips", "3 Steps")
 - Example pattern: "{focus_keyword}: 7 Expert Tips for [Location] Homeowners"
 - Keep under 65 characters
+- Write ONLY the plain title text — absolutely NO SEO plugin tokens such as %page%, %sep%, %sitename%, %title%, or any other %variable% patterns
 
 STRICT FORMAT — return EXACTLY using these delimiters, nothing before ===H1===:
 
