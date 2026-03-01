@@ -21,6 +21,7 @@ use WNQ\Services\AuditEngine;
 use WNQ\Services\AutomationEngine;
 use WNQ\Services\BlogPublisher;
 use WNQ\Services\CrawlEngine;
+use WNQ\Services\LeadFinderEngine;
 use WNQ\Services\ReportGenerator;
 
 final class CronScheduler
@@ -38,6 +39,7 @@ final class CronScheduler
         add_action('wnq_blog_publisher',          [self::class, 'runBlogPublisher']);
         add_action('wnq_spider_auto_crawl',       [self::class, 'runSpiderCrawls']);
         add_action('wnq_spider_run_batch',        [self::class, 'runCronBatch'], 10, 1);
+        add_action('wnq_lead_finder_daily',       [self::class, 'runLeadFinder']);
 
         // Schedule jobs if not already scheduled
         self::scheduleJobs();
@@ -75,9 +77,9 @@ final class CronScheduler
             wp_schedule_event(time() + 60, 'every_fifteen_minutes', 'wnq_seo_process_queue');
         }
 
-        // Monthly reports on 1st of month at 6am
+        // Monthly reports on 1st of next month at 6am
         if (!wp_next_scheduled('wnq_seo_monthly_reports')) {
-            $next_month_1st = mktime(6, 0, 0, (int)date('n') + 1, 1, (int)date('Y'));
+            $next_month_1st = strtotime('first day of next month 6:00am');
             wp_schedule_event($next_month_1st, 'monthly', 'wnq_seo_monthly_reports');
         }
 
@@ -91,11 +93,17 @@ final class CronScheduler
         if (!wp_next_scheduled('wnq_spider_auto_crawl')) {
             wp_schedule_event(time() + 300, 'hourly', 'wnq_spider_auto_crawl');
         }
+
+        // Lead Finder — daily at 9am (runs only if enabled in settings)
+        if (!wp_next_scheduled('wnq_lead_finder_daily')) {
+            $next_9am = strtotime('tomorrow 9:00am');
+            wp_schedule_event($next_9am, 'daily', 'wnq_lead_finder_daily');
+        }
     }
 
     public static function unscheduleAll(): void
     {
-        $hooks = ['wnq_seo_nightly_audit', 'wnq_seo_nightly_automation', 'wnq_seo_process_queue', 'wnq_seo_monthly_reports', 'wnq_blog_publisher', 'wnq_spider_auto_crawl'];
+        $hooks = ['wnq_seo_nightly_audit', 'wnq_seo_nightly_automation', 'wnq_seo_process_queue', 'wnq_seo_monthly_reports', 'wnq_blog_publisher', 'wnq_spider_auto_crawl', 'wnq_lead_finder_daily'];
         foreach ($hooks as $hook) {
             $timestamp = wp_next_scheduled($hook);
             if ($timestamp) {
@@ -136,6 +144,12 @@ final class CronScheduler
         BlogPublisher::processDuePosts();
     }
 
+    public static function runLeadFinder(): void
+    {
+        if (!self::canRun()) return;
+        LeadFinderEngine::runDailyCron();
+    }
+
     /**
      * Hourly: start crawls for any clients whose schedule is due.
      */
@@ -144,9 +158,12 @@ final class CronScheduler
         if (!self::canRun()) return;
 
         global $wpdb;
+        $like_prefix = $wpdb->esc_like('wnq_spider_sched_');
         $rows = $wpdb->get_results(
-            "SELECT option_name, option_value FROM {$wpdb->options}
-             WHERE option_name LIKE 'wnq_spider_sched_%'",
+            $wpdb->prepare(
+                "SELECT option_name, option_value FROM {$wpdb->options} WHERE option_name LIKE %s",
+                $like_prefix . '%'
+            ),
             ARRAY_A
         ) ?: [];
 
@@ -214,6 +231,7 @@ final class CronScheduler
             'wnq_seo_monthly_reports'    => 'Monthly Report Generator',
             'wnq_blog_publisher'         => 'Blog Auto-Publisher (8am daily)',
             'wnq_spider_auto_crawl'      => 'Spider Auto-Crawl Scheduler (hourly check)',
+            'wnq_lead_finder_daily'      => 'Lead Finder (9am daily)',
         ];
 
         $status = [];

@@ -166,6 +166,10 @@ final class BlogPublisher
             return self::fail($schedule_id, 'Failed to parse AI response. Raw output: ' . substr($ai_result['content'], 0, 300));
         }
 
+        // Sanitize the H1 so SEO plugin template tokens (%page%, %sep%, %sitename%,
+        // etc.) can never end up as the WordPress post title.
+        $parsed['h1'] = self::sanitizeTitle($parsed['h1']);
+
         // Store generated content
         BlogScheduler::updatePost($schedule_id, [
             'generated_title' => $parsed['h1'],
@@ -189,6 +193,7 @@ final class BlogPublisher
             'categories'       => [$category],
             'status'           => 'publish',
             'focus_keyword'    => $focus_kw,
+            'hide_title'       => true,  // always hide the WordPress post title; H1 comes from Elementor
         ]);
 
         if (!$push_result['success']) {
@@ -531,6 +536,24 @@ final class BlogPublisher
         }
 
         return !empty($lines) ? implode("\n", $lines) : 'No keyword data available.';
+    }
+
+    /**
+     * Strip SEO plugin template tokens from a title before it is stored or
+     * pushed as a WordPress post title.
+     *
+     * Yoast/RankMath append patterns like %page%, %sep%, %sitename% to their
+     * internal title templates. If those strings ever make it into the post
+     * title field (e.g. via AI hallucination or agent round-tripping) this
+     * removes them so the saved title is always clean human-readable text.
+     */
+    private static function sanitizeTitle(string $title): string
+    {
+        // Remove %token% patterns (Yoast / RankMath template variables)
+        $title = preg_replace('/%[a-z_]+%/i', '', $title);
+        // Remove trailing separators that Yoast inserts between title parts
+        $title = preg_replace('/\s*[\|\-\–\—]+\s*$/', '', $title);
+        return trim($title);
     }
 
     /**
