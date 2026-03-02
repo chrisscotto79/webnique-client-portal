@@ -911,7 +911,9 @@ final class LeadFinderAdmin
      */
     public static function ajaxQueueSearch(): void
     {
-        check_ajax_referer('wnq_lead_queue_search', 'nonce');
+        if (!check_ajax_referer('wnq_lead_queue_search', 'nonce', false)) {
+            wp_send_json_error(['message' => 'Security check failed — refresh the page and try again.']);
+        }
         if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
             wp_send_json_error(['message' => 'Access denied']);
         }
@@ -934,7 +936,9 @@ final class LeadFinderAdmin
      */
     public static function ajaxProcessNext(): void
     {
-        check_ajax_referer('wnq_lead_queue_search', 'nonce');
+        if (!check_ajax_referer('wnq_lead_queue_search', 'nonce', false)) {
+            wp_send_json_error(['message' => 'Security check failed — refresh the page and try again.']);
+        }
         if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
             wp_send_json_error(['message' => 'Access denied']);
         }

@@ -218,34 +218,17 @@ final class LeadEnrichmentService
     {
         $empty = ['first' => '', 'last' => ''];
 
-        // 1. Try schema markup on homepage
-        if ($homepage_html) {
-            $result = self::ownerFromSchema($homepage_html);
-            if ($result['first']) return $result;
-
-            $result = self::ownerFromHtmlText($homepage_html);
-            if ($result['first']) return $result;
+        // Homepage only — extra page fetches (/about, /contact) add 4–8s per lead
+        // for marginal gain; JSON-LD schema on homepage is the reliable signal.
+        if (!$homepage_html) {
+            return $empty;
         }
 
-        // 2. Fetch About page
-        $about_html = self::fetchHtml(rtrim($base_url, '/') . '/about');
-        if ($about_html) {
-            $result = self::ownerFromSchema($about_html);
-            if ($result['first']) return $result;
+        $result = self::ownerFromSchema($homepage_html);
+        if ($result['first']) return $result;
 
-            $result = self::ownerFromHtmlText($about_html);
-            if ($result['first']) return $result;
-        }
-
-        // 3. Fetch Contact page
-        $contact_html = self::fetchHtml(rtrim($base_url, '/') . '/contact');
-        if ($contact_html) {
-            $result = self::ownerFromSchema($contact_html);
-            if ($result['first']) return $result;
-
-            $result = self::ownerFromHtmlText($contact_html);
-            if ($result['first']) return $result;
-        }
+        $result = self::ownerFromHtmlText($homepage_html);
+        if ($result['first']) return $result;
 
         return $empty;
     }

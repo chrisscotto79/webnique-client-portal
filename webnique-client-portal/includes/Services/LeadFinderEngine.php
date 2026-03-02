@@ -136,8 +136,20 @@ final class LeadFinderEngine
             return ['ok' => true, 'done' => true, 'progress' => $total, 'total' => $total, 'stats' => $stats];
         }
 
-        // Process one candidate — wrap in try/catch so one broken site can never
-        // freeze or crash the entire queue.
+        // *** CRITICAL: Advance the transient index BEFORE processing ***
+        // If the browser AbortController fires (45s) and the JS skips this
+        // candidate, the next AJAX call will pick up the NEXT candidate instead
+        // of retrying this one forever. Without this, a single slow site causes
+        // 5 consecutive "timeouts" on the SAME candidate → loop stops at 0/N.
+        $done = ($next + 1 >= $total);
+        $queue['next_index'] = $next + 1;
+        if ($done) {
+            delete_transient('wnq_lead_queue_' . $batch_id);
+        } else {
+            set_transient('wnq_lead_queue_' . $batch_id, $queue, self::QUEUE_TTL);
+        }
+
+        // Process the candidate (isolated — queue is already advanced)
         try {
             $outcome = self::processSingleCandidate(
                 $places[$next],
@@ -146,19 +158,17 @@ final class LeadFinderEngine
                 $filter_params
             );
         } catch (\Throwable $e) {
-            $outcome = 'low_seo'; // count as filtered, don't block the queue
+            $outcome = 'low_seo'; // count as filtered, never block the queue
         }
         $stats = self::updateStats($stats, $outcome);
 
-        // Advance queue
-        $queue['next_index'] = $next + 1;
-        $queue['stats']      = $stats;
-        $done = ($next + 1 >= $total);
-
-        if ($done) {
-            delete_transient('wnq_lead_queue_' . $batch_id);
-        } else {
-            set_transient('wnq_lead_queue_' . $batch_id, $queue, self::QUEUE_TTL);
+        // Write final stats back to transient (best-effort — may already be gone)
+        if (!$done) {
+            $q = get_transient('wnq_lead_queue_' . $batch_id);
+            if ($q) {
+                $q['stats'] = $stats;
+                set_transient('wnq_lead_queue_' . $batch_id, $q, self::QUEUE_TTL);
+            }
         }
 
         return [
