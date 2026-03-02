@@ -34,6 +34,7 @@ final class LeadFinderAdmin
         add_action('wp_ajax_wnq_lead_update_status',   [self::class, 'ajaxUpdateStatus']);
         add_action('wp_ajax_wnq_lead_update_notes',    [self::class, 'ajaxUpdateNotes']);
         add_action('wp_ajax_wnq_lead_delete',          [self::class, 'ajaxDelete']);
+        add_action('wp_ajax_wnq_lead_bulk_action',     [self::class, 'ajaxBulkAction']);
         add_action('wp_ajax_wnq_lead_test_api',        [self::class, 'ajaxTestApi']);
         add_action('wp_ajax_wnq_lead_run_migration',   [self::class, 'ajaxRunMigration']);
         add_action('admin_post_wnq_lead_export_csv',    [self::class, 'handleExportCsv']);
@@ -143,6 +144,26 @@ final class LeadFinderAdmin
         .wnq-migration-banner .wnq-mi-icon { font-size:22px;flex-shrink:0; }
         .wnq-migration-banner .wnq-mi-text { flex:1;font-size:13px;color:#92400e; }
         .wnq-migration-banner .wnq-mi-text strong { display:block;margin-bottom:2px;font-size:14px; }
+        /* Bulk actions */
+        .wnq-bulk-bar { display:none;align-items:center;gap:10px;background:#1e293b;color:#fff;padding:9px 14px;border-radius:8px;margin-bottom:10px;font-size:12px; }
+        .wnq-bulk-bar.show { display:flex; }
+        .wnq-bulk-count { font-weight:600;flex:1; }
+        .wnq-bulk-bar select { padding:4px 8px;border-radius:5px;border:none;font-size:12px; }
+        table.wnq-tbl tr.wnq-selected td { background:#eff6ff; }
+        table.wnq-tbl th:first-child,table.wnq-tbl td:first-child { width:32px;padding-right:0; }
+        /* Priority badges */
+        .wnq-prio { display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700; }
+        .prio-hot  { background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5; }
+        .prio-warm { background:#fff7ed;color:#c2410c;border:1px solid #fed7aa; }
+        .prio-mild { background:#fefce8;color:#a16207;border:1px solid #fde68a; }
+        .prio-cold { background:#f0f9ff;color:#0369a1;border:1px solid #bae6fd; }
+        /* Copy button */
+        .wnq-copy { background:none;border:none;cursor:pointer;color:#9ca3af;font-size:10px;padding:0 2px;line-height:1;vertical-align:middle; }
+        .wnq-copy:hover { color:#2563eb; }
+        /* Search history chips */
+        .wnq-hist-wrap { display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px; }
+        .wnq-hist-chip { padding:3px 10px;border-radius:12px;background:#f3f4f6;border:1px solid #d1d5db;font-size:11px;cursor:pointer;color:#374151; }
+        .wnq-hist-chip:hover { background:#e5e7eb; }
         </style>
 
         <div class="wnq-lf-header">
@@ -156,7 +177,7 @@ final class LeadFinderAdmin
             <div class="wnq-mi-text">
                 <strong>Database Update Required</strong>
                 Your <code>wp_wnq_leads</code> table is missing columns added in a recent update
-                (owner name, state/zip, social media fields). Click the button to apply the update instantly.
+                (state/zip, social media fields, export tracking). Click the button to apply the update instantly.
             </div>
             <button class="wnq-btn wnq-btn-primary" id="wnq-run-migration">Fix Database</button>
         </div>
@@ -256,6 +277,8 @@ final class LeadFinderAdmin
                 Franchises and duplicates are automatically filtered.
             </p>
 
+            <div id="lf-history" class="wnq-hist-wrap" style="display:none;" aria-label="Recent searches"></div>
+
             <div class="wnq-mode-toggle">
                 <button class="active" id="mode-single" onclick="wnqSetMode('single')">Single Search</button>
                 <button id="mode-bulk"  onclick="wnqSetMode('bulk')">Bulk Mode</button>
@@ -328,6 +351,7 @@ final class LeadFinderAdmin
                 <div class="wnq-live-stats">
                     <span>Found: <b id="ls-found">0</b></span>
                     <span>Saved: <b id="ls-saved" style="color:#16a34a;">0</b></span>
+                    <span>Low Reviews: <b id="ls-lowrev">0</b></span>
                     <span>Franchise skip: <b id="ls-franchise">0</b></span>
                     <span>Duplicate: <b id="ls-duplicate">0</b></span>
                     <span>No website: <b id="ls-noweb">0</b></span>
@@ -343,6 +367,62 @@ final class LeadFinderAdmin
             let _stopped   = false;
             let _mode      = 'single';
             let _totSaved  = 0;
+
+            // ── Search history (localStorage, last 10) ────────────────────
+            function saveToHistory(keyword, city) {
+                let hist = JSON.parse(localStorage.getItem('wnq_lf_history') || '[]');
+                hist = hist.filter(function(h) { return !(h.kw === keyword && h.city === city); });
+                hist.unshift({ kw: keyword, city: city, t: Date.now() });
+                hist = hist.slice(0, 10);
+                localStorage.setItem('wnq_lf_history', JSON.stringify(hist));
+                renderHistory();
+            }
+
+            window.wnqUseHistory = function(kw, city) {
+                document.getElementById('lf-keyword').value = kw;
+                document.getElementById('lf-city').value    = city;
+                localStorage.setItem('wnq_lf_keyword', kw);
+                localStorage.setItem('wnq_lf_city',    city);
+                wnqSetMode('single');
+            };
+
+            function renderHistory() {
+                const wrap = document.getElementById('lf-history');
+                if (!wrap) return;
+                const hist = JSON.parse(localStorage.getItem('wnq_lf_history') || '[]');
+                if (!hist.length) { wrap.style.display = 'none'; return; }
+                wrap.innerHTML = '<span style="font-size:10px;color:#9ca3af;align-self:center;">Recent:</span>'
+                    + hist.map(function(h) {
+                        return '<button class="wnq-hist-chip" onclick="wnqUseHistory(\''
+                            + h.kw.replace(/'/g,"\\'") + '\',\''
+                            + h.city.replace(/'/g,"\\'") + '\')">'
+                            + h.kw + ' | ' + h.city + '</button>';
+                    }).join('');
+                wrap.style.display = 'flex';
+                wrap.style.alignItems = 'center';
+                wrap.style.gap = '5px';
+            }
+
+            // ── Restore search form from localStorage ─────────────────────
+            (function restoreForm() {
+                const kw   = localStorage.getItem('wnq_lf_keyword');
+                const city = localStorage.getItem('wnq_lf_city');
+                const bulk = localStorage.getItem('wnq_lf_bulk');
+                if (kw)   document.getElementById('lf-keyword').value    = kw;
+                if (city) document.getElementById('lf-city').value       = city;
+                if (bulk) document.getElementById('lf-bulk-lines').value = bulk;
+                renderHistory();
+            })();
+
+            document.getElementById('lf-keyword').addEventListener('input', function() {
+                localStorage.setItem('wnq_lf_keyword', this.value);
+            });
+            document.getElementById('lf-city').addEventListener('input', function() {
+                localStorage.setItem('wnq_lf_city', this.value);
+            });
+            document.getElementById('lf-bulk-lines').addEventListener('input', function() {
+                localStorage.setItem('wnq_lf_bulk', this.value);
+            });
 
             window.wnqSetMode = function(m) {
                 _mode = m;
@@ -385,16 +465,17 @@ final class LeadFinderAdmin
                 wnqResetStats();
 
                 // Cumulative stats across all combos (each batch resets its own stats)
-                let _cumStats = { saved: 0, franchise: 0, duplicate: 0, no_website: 0, low_seo: 0 };
+                let _cumStats = { saved: 0, franchise: 0, duplicate: 0, no_website: 0, low_seo: 0, low_reviews: 0 };
                 let _lastBatchStats = null;
 
                 function absorbLastBatch() {
                     if (!_lastBatchStats) return;
-                    _cumStats.saved      += _lastBatchStats.saved;
-                    _cumStats.franchise  += _lastBatchStats.franchise;
-                    _cumStats.duplicate  += _lastBatchStats.duplicate;
-                    _cumStats.no_website += _lastBatchStats.no_website;
-                    _cumStats.low_seo    += _lastBatchStats.low_seo;
+                    _cumStats.saved        += _lastBatchStats.saved;
+                    _cumStats.franchise    += _lastBatchStats.franchise;
+                    _cumStats.duplicate    += _lastBatchStats.duplicate;
+                    _cumStats.no_website   += _lastBatchStats.no_website;
+                    _cumStats.low_seo      += _lastBatchStats.low_seo;
+                    _cumStats.low_reviews  += (_lastBatchStats.low_reviews || 0);
                     _lastBatchStats = null;
                 }
 
@@ -522,6 +603,10 @@ final class LeadFinderAdmin
 
                         // Fold this combo's final stats into the cumulative totals
                         absorbLastBatch();
+                        // Save completed search to history (single-mode only; bulk records each combo)
+                        if (_mode === 'single' || combos.length > 1) {
+                            saveToHistory(keyword, city);
+                        }
                     }
 
                     // ── All combos done ──
@@ -553,7 +638,7 @@ final class LeadFinderAdmin
             // ── Helpers ──────────────────────────────────────────────────────
 
             function wnqResetStats() {
-                ['ls-found','ls-saved','ls-franchise','ls-duplicate','ls-noweb','ls-lowseo'].forEach(id => {
+                ['ls-found','ls-saved','ls-lowrev','ls-franchise','ls-duplicate','ls-noweb','ls-lowseo'].forEach(id => {
                     document.getElementById(id).textContent = '0';
                 });
                 wnqSetProgress(0, 1);
@@ -561,11 +646,12 @@ final class LeadFinderAdmin
 
             function wnqUpdateLiveStats(s, cumStats) {
                 // Show cumulative from finished combos + current batch-in-progress
-                document.getElementById('ls-saved').textContent     = cumStats.saved      + s.saved;
-                document.getElementById('ls-franchise').textContent = cumStats.franchise   + s.franchise;
-                document.getElementById('ls-duplicate').textContent = cumStats.duplicate   + s.duplicate;
-                document.getElementById('ls-noweb').textContent     = cumStats.no_website  + s.no_website;
-                document.getElementById('ls-lowseo').textContent    = cumStats.low_seo     + s.low_seo;
+                document.getElementById('ls-saved').textContent     = cumStats.saved                    + s.saved;
+                document.getElementById('ls-lowrev').textContent    = (cumStats.low_reviews || 0)       + (s.low_reviews || 0);
+                document.getElementById('ls-franchise').textContent = cumStats.franchise                + s.franchise;
+                document.getElementById('ls-duplicate').textContent = cumStats.duplicate                + s.duplicate;
+                document.getElementById('ls-noweb').textContent     = cumStats.no_website               + s.no_website;
+                document.getElementById('ls-lowseo').textContent    = cumStats.low_seo                  + s.low_seo;
             }
 
             function wnqSetProgress(current, total) {
@@ -632,10 +718,12 @@ final class LeadFinderAdmin
 
         $export_params = array_merge(
             ['action' => 'wnq_lead_export_csv'],
-            $f_industry ? ['industry' => $f_industry] : [],
-            $f_city     ? ['city'     => $f_city]     : [],
-            $f_state    ? ['state'    => $f_state]     : [],
-            $f_status   ? ['status'   => $f_status]   : []
+            $f_industry     ? ['industry'     => $f_industry] : [],
+            $f_city         ? ['city'         => $f_city]     : [],
+            $f_state        ? ['state'        => $f_state]    : [],
+            $f_status       ? ['status'       => $f_status]   : [],
+            $f_email        ? ['has_email'    => '1']         : [],
+            $f_not_exported ? ['not_exported' => '1']         : []
         );
         $export_url = wp_nonce_url(
             admin_url('admin-post.php?' . http_build_query($export_params)),
@@ -674,6 +762,20 @@ final class LeadFinderAdmin
             </a>
         </form>
 
+        <div class="wnq-bulk-bar" id="wnq-bulk-bar">
+            <span class="wnq-bulk-count"><span id="wnq-bulk-cnt">0</span> selected</span>
+            <select id="wnq-bulk-status">
+                <option value="">— Set Status —</option>
+                <option value="new">New</option>
+                <option value="contacted">Contacted</option>
+                <option value="qualified">Qualified</option>
+                <option value="closed">Closed</option>
+            </select>
+            <button class="wnq-btn wnq-btn-primary wnq-btn-sm" onclick="wnqBulkApply()">Apply</button>
+            <button class="wnq-btn wnq-btn-danger wnq-btn-sm" onclick="wnqBulkDelete()">Delete Selected</button>
+            <button class="wnq-btn wnq-btn-secondary wnq-btn-sm" onclick="wnqBulkClear()">Clear</button>
+        </div>
+
         <div class="wnq-card" style="padding:0;overflow:hidden;">
             <?php if (empty($leads)): ?>
                 <div style="padding:40px;text-align:center;color:#6b7280;">
@@ -685,6 +787,8 @@ final class LeadFinderAdmin
             <table class="wnq-tbl">
                 <thead>
                     <tr>
+                        <th><input type="checkbox" id="wnq-sel-all" title="Select all on this page"></th>
+                        <th>Priority</th>
                         <th>Company</th>
                         <th>Industry</th>
                         <th>Website</th>
@@ -708,8 +812,18 @@ final class LeadFinderAdmin
                     $st_cls  = 'st-' . esc_attr($lead['status'] ?: 'new');
                     $issues  = (array)$lead['seo_issues'];
                     $location = trim($lead['city'] . ($lead['state'] ? ', ' . $lead['state'] : ''));
+                    // Priority: higher SEO issues + has email + established reviews = hotter lead
+                    $prio_score = ($score * 2)
+                                + (!empty($lead['email']) ? 4 : 0)
+                                + min((int)($lead['review_count'] / 20), 2);
+                    if ($prio_score >= 12)      { $prio_label = 'Hot';  $prio_cls = 'prio-hot'; }
+                    elseif ($prio_score >= 8)   { $prio_label = 'Warm'; $prio_cls = 'prio-warm'; }
+                    elseif ($prio_score >= 4)   { $prio_label = 'Mild'; $prio_cls = 'prio-mild'; }
+                    else                        { $prio_label = 'Cold'; $prio_cls = 'prio-cold'; }
                 ?>
                     <tr id="lr-<?php echo (int)$lead['id']; ?>">
+                        <td style="padding-top:10px;"><input type="checkbox" class="wnq-sel" value="<?php echo (int)$lead['id']; ?>"></td>
+                        <td><span class="wnq-prio <?php echo $prio_cls; ?>" title="SEO issues: <?php echo $score; ?>/7 | Email: <?php echo !empty($lead['email']) ? 'yes' : 'no'; ?>"><?php echo $prio_label; ?></span></td>
                         <td>
                             <strong><?php echo esc_html($lead['business_name']); ?></strong>
                             <?php if (!empty($lead['exported_at'])): ?>
@@ -729,11 +843,16 @@ final class LeadFinderAdmin
                         <td style="white-space:nowrap;">
                             <?php if ($lead['phone']): ?>
                                 <a href="tel:<?php echo esc_attr(preg_replace('/\D/', '', $lead['phone'])); ?>" style="color:#374151;font-size:11px;"><?php echo esc_html($lead['phone']); ?></a>
+                                <button class="wnq-copy" onclick="wnqCopy('<?php echo esc_js($lead['phone']); ?>',this)" title="Copy phone">⎘</button>
                             <?php else: ?><span style="color:#9ca3af">—</span><?php endif; ?>
                         </td>
                         <td>
                             <?php if ($lead['email']): ?>
                                 <a href="mailto:<?php echo esc_attr($lead['email']); ?>" style="font-size:11px;color:#2563eb;"><?php echo esc_html($lead['email']); ?></a>
+                                <?php if (!empty($lead['email_source']) && $lead['email_source'] !== $lead['website']): ?>
+                                    <span style="font-size:9px;color:#9ca3af;display:block;">from /<?php echo esc_html(trim(parse_url($lead['email_source'], PHP_URL_PATH) ?: '', '/')); ?></span>
+                                <?php endif; ?>
+                                <button class="wnq-copy" onclick="wnqCopy('<?php echo esc_js($lead['email']); ?>',this)" title="Copy email">⎘</button>
                             <?php else: ?><span style="color:#9ca3af">—</span><?php endif; ?>
                         </td>
                         <td style="white-space:nowrap;">
@@ -838,6 +957,91 @@ final class LeadFinderAdmin
                     const row = document.getElementById('lr-' + id);
                     if (row) row.remove();
                 });
+            };
+
+            // ── Copy to clipboard ────────────────────────────────────────────
+            window.wnqCopy = function(text, btn) {
+                navigator.clipboard.writeText(text).then(function() {
+                    const orig = btn.textContent;
+                    btn.textContent = '✓';
+                    btn.style.color = '#16a34a';
+                    setTimeout(function() { btn.textContent = orig; btn.style.color = ''; }, 1500);
+                });
+            };
+
+            // ── Bulk selection ────────────────────────────────────────────────
+            const selAll   = document.getElementById('wnq-sel-all');
+            const bulkBar  = document.getElementById('wnq-bulk-bar');
+            const bulkCnt  = document.getElementById('wnq-bulk-cnt');
+
+            function updateBulkBar() {
+                const checked = document.querySelectorAll('.wnq-sel:checked');
+                bulkCnt.textContent = checked.length;
+                bulkBar.classList.toggle('show', checked.length > 0);
+                document.querySelectorAll('.wnq-sel').forEach(cb => {
+                    cb.closest('tr').classList.toggle('wnq-selected', cb.checked);
+                });
+            }
+
+            selAll && selAll.addEventListener('change', function() {
+                document.querySelectorAll('.wnq-sel').forEach(cb => { cb.checked = this.checked; });
+                updateBulkBar();
+            });
+
+            document.querySelectorAll('.wnq-sel').forEach(cb => {
+                cb.addEventListener('change', function() {
+                    if (!this.checked && selAll) selAll.checked = false;
+                    updateBulkBar();
+                });
+            });
+
+            window.wnqBulkClear = function() {
+                document.querySelectorAll('.wnq-sel').forEach(cb => { cb.checked = false; });
+                if (selAll) selAll.checked = false;
+                updateBulkBar();
+            };
+
+            window.wnqBulkApply = function() {
+                const status = document.getElementById('wnq-bulk-status').value;
+                if (!status) { alert('Select a status to apply.'); return; }
+                const ids = [...document.querySelectorAll('.wnq-sel:checked')].map(cb => cb.value);
+                if (!ids.length) return;
+                const fd = new FormData();
+                fd.append('action',      'wnq_lead_bulk_action');
+                fd.append('nonce',       nonce);
+                fd.append('bulk_action', status);
+                ids.forEach(id => fd.append('ids[]', id));
+                fetch(ajaxurl, { method:'POST', body: fd })
+                    .then(r => r.json())
+                    .then(d => {
+                        if (!d.success) { alert('Error: ' + (d.data?.message || 'Unknown')); return; }
+                        document.querySelectorAll('.wnq-sel:checked').forEach(cb => {
+                            const sel = cb.closest('tr').querySelector('.wnq-status-sel');
+                            if (sel) sel.value = status;
+                        });
+                        wnqBulkClear();
+                    });
+            };
+
+            window.wnqBulkDelete = function() {
+                const ids = [...document.querySelectorAll('.wnq-sel:checked')].map(cb => cb.value);
+                if (!ids.length) return;
+                if (!confirm('Delete ' + ids.length + ' lead(s)? This cannot be undone.')) return;
+                const fd = new FormData();
+                fd.append('action',      'wnq_lead_bulk_action');
+                fd.append('nonce',       nonce);
+                fd.append('bulk_action', 'delete');
+                ids.forEach(id => fd.append('ids[]', id));
+                fetch(ajaxurl, { method:'POST', body: fd })
+                    .then(r => r.json())
+                    .then(d => {
+                        if (!d.success) { alert('Error: ' + (d.data?.message || 'Unknown')); return; }
+                        document.querySelectorAll('.wnq-sel:checked').forEach(cb => {
+                            const row = cb.closest('tr');
+                            if (row) row.remove();
+                        });
+                        wnqBulkClear();
+                    });
             };
         })();
         </script>
@@ -1065,6 +1269,32 @@ final class LeadFinderAdmin
         wp_send_json(['ok' => true]);
     }
 
+    public static function ajaxBulkAction(): void
+    {
+        check_ajax_referer('wnq_lead_actions', 'nonce');
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Access denied'], 403);
+        }
+
+        $bulk_action = sanitize_key($_POST['bulk_action'] ?? '');
+        $ids         = array_map('intval', (array)($_POST['ids'] ?? []));
+        $ids         = array_filter($ids); // drop zeros
+
+        if (empty($ids)) {
+            wp_send_json_error(['message' => 'No leads selected']);
+        }
+
+        if ($bulk_action === 'delete') {
+            Lead::bulkDelete($ids);
+            wp_send_json_success(['deleted' => count($ids)]);
+        } elseif (in_array($bulk_action, ['new', 'contacted', 'qualified', 'closed'], true)) {
+            Lead::bulkUpdateStatus($ids, $bulk_action);
+            wp_send_json_success(['updated' => count($ids), 'status' => $bulk_action]);
+        } else {
+            wp_send_json_error(['message' => 'Invalid action']);
+        }
+    }
+
     // ── admin_post Handlers ──────────────────────────────────────────────────
 
     public static function handleExportCsv(): void
@@ -1075,11 +1305,13 @@ final class LeadFinderAdmin
         }
 
         Lead::exportCsv(array_filter([
-            'industry' => sanitize_text_field($_GET['industry'] ?? ''),
-            'city'     => sanitize_text_field($_GET['city']     ?? ''),
-            'state'    => sanitize_text_field($_GET['state']    ?? ''),
-            'status'   => sanitize_key($_GET['status']          ?? ''),
-        ]));
+            'industry'     => sanitize_text_field($_GET['industry']     ?? ''),
+            'city'         => sanitize_text_field($_GET['city']         ?? ''),
+            'state'        => sanitize_text_field($_GET['state']        ?? ''),
+            'status'       => sanitize_key($_GET['status']              ?? ''),
+            'has_email'    => !empty($_GET['has_email'])    ? true : null,
+            'not_exported' => !empty($_GET['not_exported']) ? true : null,
+        ], fn($v) => $v !== null && $v !== ''));
     }
 
     public static function handleSaveSettings(): void
