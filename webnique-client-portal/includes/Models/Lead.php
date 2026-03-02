@@ -185,6 +185,52 @@ final class Lead
     }
 
     /**
+     * Update the status of multiple leads in a single query.
+     * Also stamps contacted_at for status='contacted'.
+     *
+     * @param int[]  $ids
+     * @param string $status  One of: new | contacted | qualified | closed
+     */
+    public static function bulkUpdateStatus(array $ids, string $status): void
+    {
+        global $wpdb;
+        if (empty($ids)) return;
+        if (!in_array($status, ['new', 'contacted', 'qualified', 'closed'], true)) return;
+
+        $ids = array_map('intval', $ids);
+        $in  = implode(',', $ids);
+
+        if ($status === 'contacted') {
+            $now = current_time('mysql');
+            $wpdb->query(
+                "UPDATE {$wpdb->prefix}wnq_leads
+                 SET status = '{$status}', contacted_at = '{$now}'
+                 WHERE id IN ({$in})"
+            );
+        } else {
+            $wpdb->query(
+                "UPDATE {$wpdb->prefix}wnq_leads
+                 SET status = '{$status}'
+                 WHERE id IN ({$in})"
+            );
+        }
+    }
+
+    /**
+     * Delete multiple leads in a single query.
+     *
+     * @param int[] $ids
+     */
+    public static function bulkDelete(array $ids): void
+    {
+        global $wpdb;
+        if (empty($ids)) return;
+        $ids = array_map('intval', $ids);
+        $in  = implode(',', $ids);
+        $wpdb->query("DELETE FROM {$wpdb->prefix}wnq_leads WHERE id IN ({$in})");
+    }
+
+    /**
      * Stamp a batch of lead IDs as exported (sets exported_at to now).
      * Only stamps leads that haven't been exported yet so the first-export date is preserved.
      *

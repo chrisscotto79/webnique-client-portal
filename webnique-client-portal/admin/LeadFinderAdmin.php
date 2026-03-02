@@ -34,6 +34,7 @@ final class LeadFinderAdmin
         add_action('wp_ajax_wnq_lead_update_status',   [self::class, 'ajaxUpdateStatus']);
         add_action('wp_ajax_wnq_lead_update_notes',    [self::class, 'ajaxUpdateNotes']);
         add_action('wp_ajax_wnq_lead_delete',          [self::class, 'ajaxDelete']);
+        add_action('wp_ajax_wnq_lead_bulk_action',     [self::class, 'ajaxBulkAction']);
         add_action('wp_ajax_wnq_lead_test_api',        [self::class, 'ajaxTestApi']);
         add_action('wp_ajax_wnq_lead_run_migration',   [self::class, 'ajaxRunMigration']);
         add_action('admin_post_wnq_lead_export_csv',    [self::class, 'handleExportCsv']);
@@ -143,6 +144,13 @@ final class LeadFinderAdmin
         .wnq-migration-banner .wnq-mi-icon { font-size:22px;flex-shrink:0; }
         .wnq-migration-banner .wnq-mi-text { flex:1;font-size:13px;color:#92400e; }
         .wnq-migration-banner .wnq-mi-text strong { display:block;margin-bottom:2px;font-size:14px; }
+        /* Bulk actions */
+        .wnq-bulk-bar { display:none;align-items:center;gap:10px;background:#1e293b;color:#fff;padding:9px 14px;border-radius:8px;margin-bottom:10px;font-size:12px; }
+        .wnq-bulk-bar.show { display:flex; }
+        .wnq-bulk-count { font-weight:600;flex:1; }
+        .wnq-bulk-bar select { padding:4px 8px;border-radius:5px;border:none;font-size:12px; }
+        table.wnq-tbl tr.wnq-selected td { background:#eff6ff; }
+        table.wnq-tbl th:first-child,table.wnq-tbl td:first-child { width:32px;padding-right:0; }
         </style>
 
         <div class="wnq-lf-header">
@@ -156,7 +164,7 @@ final class LeadFinderAdmin
             <div class="wnq-mi-text">
                 <strong>Database Update Required</strong>
                 Your <code>wp_wnq_leads</code> table is missing columns added in a recent update
-                (owner name, state/zip, social media fields). Click the button to apply the update instantly.
+                (state/zip, social media fields, export tracking). Click the button to apply the update instantly.
             </div>
             <button class="wnq-btn wnq-btn-primary" id="wnq-run-migration">Fix Database</button>
         </div>
@@ -328,6 +336,7 @@ final class LeadFinderAdmin
                 <div class="wnq-live-stats">
                     <span>Found: <b id="ls-found">0</b></span>
                     <span>Saved: <b id="ls-saved" style="color:#16a34a;">0</b></span>
+                    <span>Low Reviews: <b id="ls-lowrev">0</b></span>
                     <span>Franchise skip: <b id="ls-franchise">0</b></span>
                     <span>Duplicate: <b id="ls-duplicate">0</b></span>
                     <span>No website: <b id="ls-noweb">0</b></span>
@@ -343,6 +352,26 @@ final class LeadFinderAdmin
             let _stopped   = false;
             let _mode      = 'single';
             let _totSaved  = 0;
+
+            // ── Restore search form from localStorage ─────────────────────
+            (function restoreForm() {
+                const kw   = localStorage.getItem('wnq_lf_keyword');
+                const city = localStorage.getItem('wnq_lf_city');
+                const bulk = localStorage.getItem('wnq_lf_bulk');
+                if (kw)   document.getElementById('lf-keyword').value    = kw;
+                if (city) document.getElementById('lf-city').value       = city;
+                if (bulk) document.getElementById('lf-bulk-lines').value = bulk;
+            })();
+
+            document.getElementById('lf-keyword').addEventListener('input', function() {
+                localStorage.setItem('wnq_lf_keyword', this.value);
+            });
+            document.getElementById('lf-city').addEventListener('input', function() {
+                localStorage.setItem('wnq_lf_city', this.value);
+            });
+            document.getElementById('lf-bulk-lines').addEventListener('input', function() {
+                localStorage.setItem('wnq_lf_bulk', this.value);
+            });
 
             window.wnqSetMode = function(m) {
                 _mode = m;
@@ -385,16 +414,17 @@ final class LeadFinderAdmin
                 wnqResetStats();
 
                 // Cumulative stats across all combos (each batch resets its own stats)
-                let _cumStats = { saved: 0, franchise: 0, duplicate: 0, no_website: 0, low_seo: 0 };
+                let _cumStats = { saved: 0, franchise: 0, duplicate: 0, no_website: 0, low_seo: 0, low_reviews: 0 };
                 let _lastBatchStats = null;
 
                 function absorbLastBatch() {
                     if (!_lastBatchStats) return;
-                    _cumStats.saved      += _lastBatchStats.saved;
-                    _cumStats.franchise  += _lastBatchStats.franchise;
-                    _cumStats.duplicate  += _lastBatchStats.duplicate;
-                    _cumStats.no_website += _lastBatchStats.no_website;
-                    _cumStats.low_seo    += _lastBatchStats.low_seo;
+                    _cumStats.saved        += _lastBatchStats.saved;
+                    _cumStats.franchise    += _lastBatchStats.franchise;
+                    _cumStats.duplicate    += _lastBatchStats.duplicate;
+                    _cumStats.no_website   += _lastBatchStats.no_website;
+                    _cumStats.low_seo      += _lastBatchStats.low_seo;
+                    _cumStats.low_reviews  += (_lastBatchStats.low_reviews || 0);
                     _lastBatchStats = null;
                 }
 
@@ -553,7 +583,7 @@ final class LeadFinderAdmin
             // ── Helpers ──────────────────────────────────────────────────────
 
             function wnqResetStats() {
-                ['ls-found','ls-saved','ls-franchise','ls-duplicate','ls-noweb','ls-lowseo'].forEach(id => {
+                ['ls-found','ls-saved','ls-lowrev','ls-franchise','ls-duplicate','ls-noweb','ls-lowseo'].forEach(id => {
                     document.getElementById(id).textContent = '0';
                 });
                 wnqSetProgress(0, 1);
@@ -561,11 +591,12 @@ final class LeadFinderAdmin
 
             function wnqUpdateLiveStats(s, cumStats) {
                 // Show cumulative from finished combos + current batch-in-progress
-                document.getElementById('ls-saved').textContent     = cumStats.saved      + s.saved;
-                document.getElementById('ls-franchise').textContent = cumStats.franchise   + s.franchise;
-                document.getElementById('ls-duplicate').textContent = cumStats.duplicate   + s.duplicate;
-                document.getElementById('ls-noweb').textContent     = cumStats.no_website  + s.no_website;
-                document.getElementById('ls-lowseo').textContent    = cumStats.low_seo     + s.low_seo;
+                document.getElementById('ls-saved').textContent     = cumStats.saved                    + s.saved;
+                document.getElementById('ls-lowrev').textContent    = (cumStats.low_reviews || 0)       + (s.low_reviews || 0);
+                document.getElementById('ls-franchise').textContent = cumStats.franchise                + s.franchise;
+                document.getElementById('ls-duplicate').textContent = cumStats.duplicate                + s.duplicate;
+                document.getElementById('ls-noweb').textContent     = cumStats.no_website               + s.no_website;
+                document.getElementById('ls-lowseo').textContent    = cumStats.low_seo                  + s.low_seo;
             }
 
             function wnqSetProgress(current, total) {
@@ -674,6 +705,20 @@ final class LeadFinderAdmin
             </a>
         </form>
 
+        <div class="wnq-bulk-bar" id="wnq-bulk-bar">
+            <span class="wnq-bulk-count"><span id="wnq-bulk-cnt">0</span> selected</span>
+            <select id="wnq-bulk-status">
+                <option value="">— Set Status —</option>
+                <option value="new">New</option>
+                <option value="contacted">Contacted</option>
+                <option value="qualified">Qualified</option>
+                <option value="closed">Closed</option>
+            </select>
+            <button class="wnq-btn wnq-btn-primary wnq-btn-sm" onclick="wnqBulkApply()">Apply</button>
+            <button class="wnq-btn wnq-btn-danger wnq-btn-sm" onclick="wnqBulkDelete()">Delete Selected</button>
+            <button class="wnq-btn wnq-btn-secondary wnq-btn-sm" onclick="wnqBulkClear()">Clear</button>
+        </div>
+
         <div class="wnq-card" style="padding:0;overflow:hidden;">
             <?php if (empty($leads)): ?>
                 <div style="padding:40px;text-align:center;color:#6b7280;">
@@ -685,6 +730,7 @@ final class LeadFinderAdmin
             <table class="wnq-tbl">
                 <thead>
                     <tr>
+                        <th><input type="checkbox" id="wnq-sel-all" title="Select all on this page"></th>
                         <th>Company</th>
                         <th>Industry</th>
                         <th>Website</th>
@@ -710,6 +756,7 @@ final class LeadFinderAdmin
                     $location = trim($lead['city'] . ($lead['state'] ? ', ' . $lead['state'] : ''));
                 ?>
                     <tr id="lr-<?php echo (int)$lead['id']; ?>">
+                        <td style="padding-top:10px;"><input type="checkbox" class="wnq-sel" value="<?php echo (int)$lead['id']; ?>"></td>
                         <td>
                             <strong><?php echo esc_html($lead['business_name']); ?></strong>
                             <?php if (!empty($lead['exported_at'])): ?>
@@ -838,6 +885,81 @@ final class LeadFinderAdmin
                     const row = document.getElementById('lr-' + id);
                     if (row) row.remove();
                 });
+            };
+
+            // ── Bulk selection ────────────────────────────────────────────────
+            const selAll   = document.getElementById('wnq-sel-all');
+            const bulkBar  = document.getElementById('wnq-bulk-bar');
+            const bulkCnt  = document.getElementById('wnq-bulk-cnt');
+
+            function updateBulkBar() {
+                const checked = document.querySelectorAll('.wnq-sel:checked');
+                bulkCnt.textContent = checked.length;
+                bulkBar.classList.toggle('show', checked.length > 0);
+                document.querySelectorAll('.wnq-sel').forEach(cb => {
+                    cb.closest('tr').classList.toggle('wnq-selected', cb.checked);
+                });
+            }
+
+            selAll && selAll.addEventListener('change', function() {
+                document.querySelectorAll('.wnq-sel').forEach(cb => { cb.checked = this.checked; });
+                updateBulkBar();
+            });
+
+            document.querySelectorAll('.wnq-sel').forEach(cb => {
+                cb.addEventListener('change', function() {
+                    if (!this.checked && selAll) selAll.checked = false;
+                    updateBulkBar();
+                });
+            });
+
+            window.wnqBulkClear = function() {
+                document.querySelectorAll('.wnq-sel').forEach(cb => { cb.checked = false; });
+                if (selAll) selAll.checked = false;
+                updateBulkBar();
+            };
+
+            window.wnqBulkApply = function() {
+                const status = document.getElementById('wnq-bulk-status').value;
+                if (!status) { alert('Select a status to apply.'); return; }
+                const ids = [...document.querySelectorAll('.wnq-sel:checked')].map(cb => cb.value);
+                if (!ids.length) return;
+                const fd = new FormData();
+                fd.append('action',      'wnq_lead_bulk_action');
+                fd.append('nonce',       nonce);
+                fd.append('bulk_action', status);
+                ids.forEach(id => fd.append('ids[]', id));
+                fetch(ajaxurl, { method:'POST', body: fd })
+                    .then(r => r.json())
+                    .then(d => {
+                        if (!d.success) { alert('Error: ' + (d.data?.message || 'Unknown')); return; }
+                        document.querySelectorAll('.wnq-sel:checked').forEach(cb => {
+                            const sel = cb.closest('tr').querySelector('.wnq-status-sel');
+                            if (sel) sel.value = status;
+                        });
+                        wnqBulkClear();
+                    });
+            };
+
+            window.wnqBulkDelete = function() {
+                const ids = [...document.querySelectorAll('.wnq-sel:checked')].map(cb => cb.value);
+                if (!ids.length) return;
+                if (!confirm('Delete ' + ids.length + ' lead(s)? This cannot be undone.')) return;
+                const fd = new FormData();
+                fd.append('action',      'wnq_lead_bulk_action');
+                fd.append('nonce',       nonce);
+                fd.append('bulk_action', 'delete');
+                ids.forEach(id => fd.append('ids[]', id));
+                fetch(ajaxurl, { method:'POST', body: fd })
+                    .then(r => r.json())
+                    .then(d => {
+                        if (!d.success) { alert('Error: ' + (d.data?.message || 'Unknown')); return; }
+                        document.querySelectorAll('.wnq-sel:checked').forEach(cb => {
+                            const row = cb.closest('tr');
+                            if (row) row.remove();
+                        });
+                        wnqBulkClear();
+                    });
             };
         })();
         </script>
@@ -1063,6 +1185,32 @@ final class LeadFinderAdmin
         }
         Lead::runMigration();
         wp_send_json(['ok' => true]);
+    }
+
+    public static function ajaxBulkAction(): void
+    {
+        check_ajax_referer('wnq_lead_actions', 'nonce');
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Access denied'], 403);
+        }
+
+        $bulk_action = sanitize_key($_POST['bulk_action'] ?? '');
+        $ids         = array_map('intval', (array)($_POST['ids'] ?? []));
+        $ids         = array_filter($ids); // drop zeros
+
+        if (empty($ids)) {
+            wp_send_json_error(['message' => 'No leads selected']);
+        }
+
+        if ($bulk_action === 'delete') {
+            Lead::bulkDelete($ids);
+            wp_send_json_success(['deleted' => count($ids)]);
+        } elseif (in_array($bulk_action, ['new', 'contacted', 'qualified', 'closed'], true)) {
+            Lead::bulkUpdateStatus($ids, $bulk_action);
+            wp_send_json_success(['updated' => count($ids), 'status' => $bulk_action]);
+        } else {
+            wp_send_json_error(['message' => 'Invalid action']);
+        }
     }
 
     // ── admin_post Handlers ──────────────────────────────────────────────────

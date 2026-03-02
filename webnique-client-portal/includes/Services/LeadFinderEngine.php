@@ -399,23 +399,25 @@ final class LeadFinderEngine
     private static function emptyStats(int $found = 0): array
     {
         return [
-            'found'     => $found,
-            'franchise' => 0,
-            'filtered'  => 0,   // passed reviews/rating — tracked as total - low_reviews
-            'duplicate' => 0,
-            'no_website'=> 0,
-            'low_seo'   => 0,
-            'saved'     => 0,
+            'found'        => $found,
+            'franchise'    => 0,
+            'low_reviews'  => 0,
+            'filtered'     => 0,  // passed reviews/rating — tracked as total - low_reviews
+            'duplicate'    => 0,
+            'no_website'   => 0,
+            'low_seo'      => 0,
+            'saved'        => 0,
         ];
     }
 
     private static function updateStats(array $stats, string $outcome): array
     {
-        if ($outcome === 'franchise')  { $stats['franchise']++;  }
-        if ($outcome === 'duplicate')  { $stats['duplicate']++;  }
-        if ($outcome === 'no_website') { $stats['no_website']++; }
-        if ($outcome === 'low_seo')    { $stats['low_seo']++;    }
-        if ($outcome === 'saved')      { $stats['saved']++;      }
+        if ($outcome === 'franchise')   { $stats['franchise']++;   }
+        if ($outcome === 'low_reviews') { $stats['low_reviews']++; }
+        if ($outcome === 'duplicate')   { $stats['duplicate']++;   }
+        if ($outcome === 'no_website')  { $stats['no_website']++;  }
+        if ($outcome === 'low_seo')     { $stats['low_seo']++;     }
+        if ($outcome === 'saved')       { $stats['saved']++;       }
 
         // 'filtered' = candidates that passed reviews/rating and dedup (had a website attempt)
         if (in_array($outcome, ['no_website', 'low_seo', 'saved'], true)) {
