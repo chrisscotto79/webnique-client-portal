@@ -35,6 +35,7 @@ final class LeadFinderAdmin
         add_action('wp_ajax_wnq_lead_update_notes',    [self::class, 'ajaxUpdateNotes']);
         add_action('wp_ajax_wnq_lead_delete',          [self::class, 'ajaxDelete']);
         add_action('wp_ajax_wnq_lead_test_api',        [self::class, 'ajaxTestApi']);
+        add_action('wp_ajax_wnq_lead_run_migration',   [self::class, 'ajaxRunMigration']);
         add_action('admin_post_wnq_lead_export_csv',    [self::class, 'handleExportCsv']);
         add_action('admin_post_wnq_lead_save_settings', [self::class, 'handleSaveSettings']);
     }
@@ -136,12 +137,57 @@ final class LeadFinderAdmin
         .wnq-paginate a.cur { background:#2563eb;color:#fff;border-color:#2563eb; }
         .wnq-notes-edit { width:140px;padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;font-size:11px; }
         .wnq-status-sel { font-size:11px;padding:3px 6px;border-radius:5px;border:1px solid #d1d5db; }
+        .wnq-migration-banner { display:flex;align-items:center;gap:14px;background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:14px 18px;margin-bottom:18px; }
+        .wnq-migration-banner .wnq-mi-icon { font-size:22px;flex-shrink:0; }
+        .wnq-migration-banner .wnq-mi-text { flex:1;font-size:13px;color:#92400e; }
+        .wnq-migration-banner .wnq-mi-text strong { display:block;margin-bottom:2px;font-size:14px; }
         </style>
 
         <div class="wnq-lf-header">
             <h1>Lead Finder</h1>
             <span class="wnq-lf-badge">Outbound Sales</span>
         </div>
+
+        <?php if (Lead::tableNeedsMigration()): ?>
+        <div class="wnq-migration-banner" id="wnq-migration-banner">
+            <div class="wnq-mi-icon">⚠️</div>
+            <div class="wnq-mi-text">
+                <strong>Database Update Required</strong>
+                Your <code>wp_wnq_leads</code> table is missing columns added in a recent update
+                (owner name, state/zip, social media fields). Click the button to apply the update instantly.
+            </div>
+            <button class="wnq-btn wnq-btn-primary" id="wnq-run-migration">Fix Database</button>
+        </div>
+        <script>
+        document.getElementById('wnq-run-migration').addEventListener('click', function() {
+            var btn = this;
+            btn.disabled = true;
+            btn.textContent = 'Updating…';
+            fetch(ajaxurl, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: new URLSearchParams({
+                    action: 'wnq_lead_run_migration',
+                    nonce: '<?php echo esc_js(wp_create_nonce('wnq_lead_migration')); ?>'
+                })
+            })
+            .then(r => r.json())
+            .then(function(d) {
+                if (d.ok) {
+                    document.getElementById('wnq-migration-banner').style.display = 'none';
+                    location.reload();
+                } else {
+                    btn.textContent = 'Error – ' + (d.error || 'unknown');
+                    btn.disabled = false;
+                }
+            })
+            .catch(function() {
+                btn.textContent = 'Network error — try again';
+                btn.disabled = false;
+            });
+        });
+        </script>
+        <?php endif; ?>
 
         <div class="wnq-lf-stats">
             <?php foreach ([
@@ -940,6 +986,16 @@ final class LeadFinderAdmin
         $result['ok']
             ? wp_send_json_success(['message' => $result['message']])
             : wp_send_json_error(['message'   => $result['message']]);
+    }
+
+    public static function ajaxRunMigration(): void
+    {
+        check_ajax_referer('wnq_lead_migration', 'nonce');
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
+            wp_send_json(['ok' => false, 'error' => 'Access denied']);
+        }
+        Lead::runMigration();
+        wp_send_json(['ok' => true]);
     }
 
     // ── admin_post Handlers ──────────────────────────────────────────────────
