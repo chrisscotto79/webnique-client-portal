@@ -162,6 +162,12 @@ final class LeadFinderEngine
             );
         } catch (\Throwable $e) {
             $outcome = 'low_seo'; // count as filtered, never block the queue
+            error_log(sprintf(
+                'WNQ Lead Finder: candidate %d/%d threw %s: %s (in %s:%d)',
+                $next + 1, $total,
+                get_class($e), $e->getMessage(),
+                $e->getFile(), $e->getLine()
+            ));
         }
         $stats = self::updateStats($stats, $outcome);
 
@@ -334,7 +340,7 @@ final class LeadFinderEngine
         $owner      = LeadEnrichmentService::extractOwnerName($website, $homepage_html);
         $social     = LeadEnrichmentService::extractSocialMedia($website, $homepage_html);
 
-        Lead::insert([
+        $insert_id = Lead::insert([
             'place_id'         => $place_id,
             'business_name'    => $business_name,
             'industry'         => $keyword,
@@ -360,6 +366,14 @@ final class LeadFinderEngine
             'seo_issues'       => $seo['issues'],
             'status'           => 'new',
         ]);
+
+        if (!$insert_id) {
+            // DB insert failed — log the MySQL error so it's visible in WP debug log.
+            // Most likely cause: schema migration hasn't been run yet (missing columns).
+            global $wpdb;
+            error_log('WNQ Lead Finder: DB insert failed for "' . $business_name . '" — ' . $wpdb->last_error);
+            return 'low_seo'; // count as filtered so stats don't mislead
+        }
 
         return 'saved';
     }
