@@ -151,6 +151,19 @@ final class LeadFinderAdmin
         .wnq-bulk-bar select { padding:4px 8px;border-radius:5px;border:none;font-size:12px; }
         table.wnq-tbl tr.wnq-selected td { background:#eff6ff; }
         table.wnq-tbl th:first-child,table.wnq-tbl td:first-child { width:32px;padding-right:0; }
+        /* Priority badges */
+        .wnq-prio { display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700; }
+        .prio-hot  { background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5; }
+        .prio-warm { background:#fff7ed;color:#c2410c;border:1px solid #fed7aa; }
+        .prio-mild { background:#fefce8;color:#a16207;border:1px solid #fde68a; }
+        .prio-cold { background:#f0f9ff;color:#0369a1;border:1px solid #bae6fd; }
+        /* Copy button */
+        .wnq-copy { background:none;border:none;cursor:pointer;color:#9ca3af;font-size:10px;padding:0 2px;line-height:1;vertical-align:middle; }
+        .wnq-copy:hover { color:#2563eb; }
+        /* Search history chips */
+        .wnq-hist-wrap { display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px; }
+        .wnq-hist-chip { padding:3px 10px;border-radius:12px;background:#f3f4f6;border:1px solid #d1d5db;font-size:11px;cursor:pointer;color:#374151; }
+        .wnq-hist-chip:hover { background:#e5e7eb; }
         </style>
 
         <div class="wnq-lf-header">
@@ -264,6 +277,8 @@ final class LeadFinderAdmin
                 Franchises and duplicates are automatically filtered.
             </p>
 
+            <div id="lf-history" class="wnq-hist-wrap" style="display:none;" aria-label="Recent searches"></div>
+
             <div class="wnq-mode-toggle">
                 <button class="active" id="mode-single" onclick="wnqSetMode('single')">Single Search</button>
                 <button id="mode-bulk"  onclick="wnqSetMode('bulk')">Bulk Mode</button>
@@ -353,6 +368,41 @@ final class LeadFinderAdmin
             let _mode      = 'single';
             let _totSaved  = 0;
 
+            // ── Search history (localStorage, last 10) ────────────────────
+            function saveToHistory(keyword, city) {
+                let hist = JSON.parse(localStorage.getItem('wnq_lf_history') || '[]');
+                hist = hist.filter(function(h) { return !(h.kw === keyword && h.city === city); });
+                hist.unshift({ kw: keyword, city: city, t: Date.now() });
+                hist = hist.slice(0, 10);
+                localStorage.setItem('wnq_lf_history', JSON.stringify(hist));
+                renderHistory();
+            }
+
+            window.wnqUseHistory = function(kw, city) {
+                document.getElementById('lf-keyword').value = kw;
+                document.getElementById('lf-city').value    = city;
+                localStorage.setItem('wnq_lf_keyword', kw);
+                localStorage.setItem('wnq_lf_city',    city);
+                wnqSetMode('single');
+            };
+
+            function renderHistory() {
+                const wrap = document.getElementById('lf-history');
+                if (!wrap) return;
+                const hist = JSON.parse(localStorage.getItem('wnq_lf_history') || '[]');
+                if (!hist.length) { wrap.style.display = 'none'; return; }
+                wrap.innerHTML = '<span style="font-size:10px;color:#9ca3af;align-self:center;">Recent:</span>'
+                    + hist.map(function(h) {
+                        return '<button class="wnq-hist-chip" onclick="wnqUseHistory(\''
+                            + h.kw.replace(/'/g,"\\'") + '\',\''
+                            + h.city.replace(/'/g,"\\'") + '\')">'
+                            + h.kw + ' | ' + h.city + '</button>';
+                    }).join('');
+                wrap.style.display = 'flex';
+                wrap.style.alignItems = 'center';
+                wrap.style.gap = '5px';
+            }
+
             // ── Restore search form from localStorage ─────────────────────
             (function restoreForm() {
                 const kw   = localStorage.getItem('wnq_lf_keyword');
@@ -361,6 +411,7 @@ final class LeadFinderAdmin
                 if (kw)   document.getElementById('lf-keyword').value    = kw;
                 if (city) document.getElementById('lf-city').value       = city;
                 if (bulk) document.getElementById('lf-bulk-lines').value = bulk;
+                renderHistory();
             })();
 
             document.getElementById('lf-keyword').addEventListener('input', function() {
@@ -552,6 +603,10 @@ final class LeadFinderAdmin
 
                         // Fold this combo's final stats into the cumulative totals
                         absorbLastBatch();
+                        // Save completed search to history (single-mode only; bulk records each combo)
+                        if (_mode === 'single' || combos.length > 1) {
+                            saveToHistory(keyword, city);
+                        }
                     }
 
                     // ── All combos done ──
@@ -663,10 +718,12 @@ final class LeadFinderAdmin
 
         $export_params = array_merge(
             ['action' => 'wnq_lead_export_csv'],
-            $f_industry ? ['industry' => $f_industry] : [],
-            $f_city     ? ['city'     => $f_city]     : [],
-            $f_state    ? ['state'    => $f_state]     : [],
-            $f_status   ? ['status'   => $f_status]   : []
+            $f_industry     ? ['industry'     => $f_industry] : [],
+            $f_city         ? ['city'         => $f_city]     : [],
+            $f_state        ? ['state'        => $f_state]    : [],
+            $f_status       ? ['status'       => $f_status]   : [],
+            $f_email        ? ['has_email'    => '1']         : [],
+            $f_not_exported ? ['not_exported' => '1']         : []
         );
         $export_url = wp_nonce_url(
             admin_url('admin-post.php?' . http_build_query($export_params)),
@@ -731,6 +788,7 @@ final class LeadFinderAdmin
                 <thead>
                     <tr>
                         <th><input type="checkbox" id="wnq-sel-all" title="Select all on this page"></th>
+                        <th>Priority</th>
                         <th>Company</th>
                         <th>Industry</th>
                         <th>Website</th>
@@ -754,9 +812,18 @@ final class LeadFinderAdmin
                     $st_cls  = 'st-' . esc_attr($lead['status'] ?: 'new');
                     $issues  = (array)$lead['seo_issues'];
                     $location = trim($lead['city'] . ($lead['state'] ? ', ' . $lead['state'] : ''));
+                    // Priority: higher SEO issues + has email + established reviews = hotter lead
+                    $prio_score = ($score * 2)
+                                + (!empty($lead['email']) ? 4 : 0)
+                                + min((int)($lead['review_count'] / 20), 2);
+                    if ($prio_score >= 12)      { $prio_label = 'Hot';  $prio_cls = 'prio-hot'; }
+                    elseif ($prio_score >= 8)   { $prio_label = 'Warm'; $prio_cls = 'prio-warm'; }
+                    elseif ($prio_score >= 4)   { $prio_label = 'Mild'; $prio_cls = 'prio-mild'; }
+                    else                        { $prio_label = 'Cold'; $prio_cls = 'prio-cold'; }
                 ?>
                     <tr id="lr-<?php echo (int)$lead['id']; ?>">
                         <td style="padding-top:10px;"><input type="checkbox" class="wnq-sel" value="<?php echo (int)$lead['id']; ?>"></td>
+                        <td><span class="wnq-prio <?php echo $prio_cls; ?>" title="SEO issues: <?php echo $score; ?>/7 | Email: <?php echo !empty($lead['email']) ? 'yes' : 'no'; ?>"><?php echo $prio_label; ?></span></td>
                         <td>
                             <strong><?php echo esc_html($lead['business_name']); ?></strong>
                             <?php if (!empty($lead['exported_at'])): ?>
@@ -776,11 +843,16 @@ final class LeadFinderAdmin
                         <td style="white-space:nowrap;">
                             <?php if ($lead['phone']): ?>
                                 <a href="tel:<?php echo esc_attr(preg_replace('/\D/', '', $lead['phone'])); ?>" style="color:#374151;font-size:11px;"><?php echo esc_html($lead['phone']); ?></a>
+                                <button class="wnq-copy" onclick="wnqCopy('<?php echo esc_js($lead['phone']); ?>',this)" title="Copy phone">⎘</button>
                             <?php else: ?><span style="color:#9ca3af">—</span><?php endif; ?>
                         </td>
                         <td>
                             <?php if ($lead['email']): ?>
                                 <a href="mailto:<?php echo esc_attr($lead['email']); ?>" style="font-size:11px;color:#2563eb;"><?php echo esc_html($lead['email']); ?></a>
+                                <?php if (!empty($lead['email_source']) && $lead['email_source'] !== $lead['website']): ?>
+                                    <span style="font-size:9px;color:#9ca3af;display:block;">from /<?php echo esc_html(trim(parse_url($lead['email_source'], PHP_URL_PATH) ?: '', '/')); ?></span>
+                                <?php endif; ?>
+                                <button class="wnq-copy" onclick="wnqCopy('<?php echo esc_js($lead['email']); ?>',this)" title="Copy email">⎘</button>
                             <?php else: ?><span style="color:#9ca3af">—</span><?php endif; ?>
                         </td>
                         <td style="white-space:nowrap;">
@@ -884,6 +956,16 @@ final class LeadFinderAdmin
                 fetch(ajaxurl, { method:'POST', body: fd }).then(() => {
                     const row = document.getElementById('lr-' + id);
                     if (row) row.remove();
+                });
+            };
+
+            // ── Copy to clipboard ────────────────────────────────────────────
+            window.wnqCopy = function(text, btn) {
+                navigator.clipboard.writeText(text).then(function() {
+                    const orig = btn.textContent;
+                    btn.textContent = '✓';
+                    btn.style.color = '#16a34a';
+                    setTimeout(function() { btn.textContent = orig; btn.style.color = ''; }, 1500);
                 });
             };
 
@@ -1223,11 +1305,13 @@ final class LeadFinderAdmin
         }
 
         Lead::exportCsv(array_filter([
-            'industry' => sanitize_text_field($_GET['industry'] ?? ''),
-            'city'     => sanitize_text_field($_GET['city']     ?? ''),
-            'state'    => sanitize_text_field($_GET['state']    ?? ''),
-            'status'   => sanitize_key($_GET['status']          ?? ''),
-        ]));
+            'industry'     => sanitize_text_field($_GET['industry']     ?? ''),
+            'city'         => sanitize_text_field($_GET['city']         ?? ''),
+            'state'        => sanitize_text_field($_GET['state']        ?? ''),
+            'status'       => sanitize_key($_GET['status']              ?? ''),
+            'has_email'    => !empty($_GET['has_email'])    ? true : null,
+            'not_exported' => !empty($_GET['not_exported']) ? true : null,
+        ], fn($v) => $v !== null && $v !== ''));
     }
 
     public static function handleSaveSettings(): void
