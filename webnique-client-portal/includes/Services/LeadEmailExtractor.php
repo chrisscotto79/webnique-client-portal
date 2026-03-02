@@ -65,10 +65,11 @@ final class LeadEmailExtractor
     private static function fetchEmailsFromUrl(string $url): array
     {
         $response = wp_remote_get($url, [
-            'timeout'    => 8,
-            'user-agent' => 'Mozilla/5.0 (compatible; WebNique/1.0; +https://webnique.com)',
-            'sslverify'  => false,
-            'redirection'=> 3,
+            'timeout'             => 4,
+            'user-agent'          => 'Mozilla/5.0 (compatible; WebNique/1.0; +https://webnique.com)',
+            'sslverify'           => false,
+            'redirection'         => 2,
+            'limit_response_size' => 256000,
         ]);
 
         if (is_wp_error($response)) return [];

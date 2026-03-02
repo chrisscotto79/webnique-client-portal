@@ -432,11 +432,16 @@ final class LeadFinderAdmin
 
                         // Phase 2: process one candidate at a time
                         let comboProgress = 0;
+                        let consecutiveErrors = 0;
                         while (comboProgress < total && !_stopped) {
                             wnqSetProgressLabel(`Combo ${i+1}/${combos.length}: "${keyword}" in "${city}" — ${comboProgress}/${total} candidates…`);
 
-                            let procResp;
+                            let procResp = null;
                             try {
+                                // 45-second hard browser timeout per candidate
+                                // (5 HTTP calls × 5s each + PHP overhead)
+                                const ctrl = new AbortController();
+                                const tid  = setTimeout(() => ctrl.abort(), 45000);
                                 const fd2 = new FormData();
                                 fd2.append('action',      'wnq_lead_process_next');
                                 fd2.append('nonce',       '<?php echo esc_js($nonce); ?>');
@@ -444,20 +449,34 @@ final class LeadFinderAdmin
                                 fd2.append('min_reviews', minReviews);
                                 fd2.append('min_rating',  minRating);
                                 fd2.append('min_seo',     minSeo);
-                                const r2 = await fetch(ajaxurl, { method:'POST', body: fd2 });
+                                const r2 = await fetch(ajaxurl, { method:'POST', body: fd2, signal: ctrl.signal });
+                                clearTimeout(tid);
                                 procResp = await r2.json();
                             } catch(e) {
-                                wnqShowError(`Network error during processing: ${e.message}`);
-                                _stopped = true;
-                                break;
+                                // Timeout or network hiccup — skip this candidate, keep going
+                                consecutiveErrors++;
+                                comboProgress++;
+                                wnqSetProgress(comboProgress, total);
+                                if (consecutiveErrors >= 5) {
+                                    wnqShowError(`5 consecutive timeouts — stopping "${keyword} | ${city}". Try again.`);
+                                    _stopped = true;
+                                }
+                                continue;
                             }
 
-                            if (!procResp.success) {
-                                wnqShowError(procResp.data?.message || 'Processing error');
-                                _stopped = true;
-                                break;
+                            if (!procResp || !procResp.success) {
+                                // Server returned an error for this candidate — skip, don't stop
+                                consecutiveErrors++;
+                                comboProgress++;
+                                wnqSetProgress(comboProgress, total);
+                                if (consecutiveErrors >= 5) {
+                                    wnqShowError(`5 consecutive server errors — stopping "${keyword} | ${city}". Try again.`);
+                                    _stopped = true;
+                                }
+                                continue;
                             }
 
+                            consecutiveErrors = 0;
                             const d = procResp.data;
                             comboProgress    = d.progress;
                             _lastBatchStats  = d.stats;
