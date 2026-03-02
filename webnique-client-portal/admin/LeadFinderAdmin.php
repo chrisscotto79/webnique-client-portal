@@ -198,11 +198,11 @@ final class LeadFinderAdmin
                 ['num' => $stats['contacted'],  'lbl' => 'Contacted'],
                 ['num' => $stats['qualified'],  'lbl' => 'Qualified'],
                 ['num' => $stats['closed'],     'lbl' => 'Closed'],
-                ['num' => $stats['with_email'], 'lbl' => 'Have Email'],
-                ['num' => $stats['with_owner'], 'lbl' => 'Have Owner'],
+                ['num' => $stats['with_email'],   'lbl' => 'Have Email'],
+                ['num' => $stats['not_exported'], 'lbl' => 'Not Exported', 'hi' => true],
             ] as $s): ?>
-                <div class="wnq-stat">
-                    <div class="num"><?php echo esc_html($s['num']); ?></div>
+                <div class="wnq-stat" <?php if (!empty($s['hi'])): ?>style="border-color:#2563eb;"<?php endif; ?>>
+                    <div class="num" <?php if (!empty($s['hi'])): ?>style="color:#2563eb;"<?php endif; ?>><?php echo esc_html($s['num']); ?></div>
                     <div class="lbl"><?php echo esc_html($s['lbl']); ?></div>
                 </div>
             <?php endforeach; ?>
@@ -252,7 +252,7 @@ final class LeadFinderAdmin
         <div class="wnq-card">
             <h3>Discover New Prospects</h3>
             <p style="color:#6b7280;margin:-6px 0 14px;font-size:12px;">
-                Phase 1 queries Google Places (returns in seconds). Phase 2 crawls each site for SEO issues, owner name, email &amp; social media — processed one at a time with live progress so it never times out.
+                Phase 1 queries Google Places (returns in seconds). Phase 2 crawls each site for SEO issues, email &amp; social media — processed one at a time with live progress so it never times out.
                 Franchises and duplicates are automatically filtered.
             </p>
 
@@ -601,8 +601,8 @@ final class LeadFinderAdmin
         $f_state    = sanitize_text_field($_GET['state']    ?? '');
         $f_status   = sanitize_key($_GET['status']          ?? '');
         $f_min_seo  = isset($_GET['min_seo']) ? max(0, (int)$_GET['min_seo']) : null;
-        $f_email    = !empty($_GET['has_email']);
-        $f_owner    = !empty($_GET['has_owner']);
+        $f_email        = !empty($_GET['has_email']);
+        $f_not_exported = !empty($_GET['not_exported']);
         $page       = max(1, (int)($_GET['paged'] ?? 1));
         $per_page   = 50;
 
@@ -612,8 +612,8 @@ final class LeadFinderAdmin
             'state'         => $f_state,
             'status'        => $f_status,
             'min_seo_score' => $f_min_seo,
-            'has_email'     => $f_email  ?: null,
-            'has_owner'     => $f_owner  ?: null,
+            'has_email'     => $f_email        ?: null,
+            'not_exported'  => $f_not_exported ?: null,
         ], fn($v) => $v !== null && $v !== '');
 
         $total = Lead::count($filter_args);
@@ -665,7 +665,7 @@ final class LeadFinderAdmin
                 <input type="checkbox" name="has_email" value="1" <?php checked($f_email); ?>> Email
             </label>
             <label style="font-size:12px;display:flex;align-items:center;gap:4px;white-space:nowrap;">
-                <input type="checkbox" name="has_owner" value="1" <?php checked($f_owner); ?>> Owner
+                <input type="checkbox" name="not_exported" value="1" <?php checked($f_not_exported); ?>> Not Exported
             </label>
             <button type="submit" class="wnq-btn wnq-btn-secondary wnq-btn-sm">Filter</button>
             <a href="<?php echo esc_url($base_url); ?>" class="wnq-btn wnq-btn-secondary wnq-btn-sm">Reset</a>
@@ -687,7 +687,6 @@ final class LeadFinderAdmin
                     <tr>
                         <th>Company</th>
                         <th>Industry</th>
-                        <th>Owner</th>
                         <th>Website</th>
                         <th>Address</th>
                         <th>Location</th>
@@ -708,13 +707,16 @@ final class LeadFinderAdmin
                     $seo_cls = $score >= 5 ? 'seo-high' : ($score >= 3 ? 'seo-med' : 'seo-low');
                     $st_cls  = 'st-' . esc_attr($lead['status'] ?: 'new');
                     $issues  = (array)$lead['seo_issues'];
-                    $owner   = trim($lead['owner_first'] . ' ' . $lead['owner_last']);
                     $location = trim($lead['city'] . ($lead['state'] ? ', ' . $lead['state'] : ''));
                 ?>
                     <tr id="lr-<?php echo (int)$lead['id']; ?>">
-                        <td><strong><?php echo esc_html($lead['business_name']); ?></strong></td>
+                        <td>
+                            <strong><?php echo esc_html($lead['business_name']); ?></strong>
+                            <?php if (!empty($lead['exported_at'])): ?>
+                                <br><span style="font-size:9px;color:#6b7280;font-weight:400;">Exported <?php echo esc_html(date('M j', strtotime($lead['exported_at']))); ?></span>
+                            <?php endif; ?>
+                        </td>
                         <td><?php echo esc_html($lead['industry']); ?></td>
-                        <td><?php echo $owner ? esc_html($owner) : '<span style="color:#9ca3af">—</span>'; ?></td>
                         <td>
                             <?php if ($lead['website']): ?>
                                 <a href="<?php echo esc_url($lead['website']); ?>" target="_blank" rel="noopener" style="color:#2563eb;font-size:11px;">

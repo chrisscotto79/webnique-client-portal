@@ -335,17 +335,16 @@ final class LeadFinderEngine
 
         if (!$seo['ok'] || $seo['score'] < $min_seo) return 'low_seo';
 
-        // 10–12. Enrichment (email, owner, social all reuse $homepage_html)
+        // 10–11. Enrichment (email + social reuse $homepage_html)
         $email_data = LeadEmailExtractor::extractEmail($website, $homepage_html);
-        $owner      = LeadEnrichmentService::extractOwnerName($website, $homepage_html);
         $social     = LeadEnrichmentService::extractSocialMedia($website, $homepage_html);
 
         $insert_id = Lead::insert([
             'place_id'         => $place_id,
             'business_name'    => $business_name,
             'industry'         => $keyword,
-            'owner_first'      => sanitize_text_field($owner['first']),
-            'owner_last'       => sanitize_text_field($owner['last']),
+            'owner_first'      => '',
+            'owner_last'       => '',
             'website'          => esc_url_raw($website),
             'address'          => sanitize_text_field($addr['street']),
             'city'             => sanitize_text_field($lead_city),
