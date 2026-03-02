@@ -24,25 +24,36 @@ final class Lead
         $table   = $wpdb->prefix . 'wnq_leads';
         $charset = $wpdb->get_charset_collate();
 
+        // dbDelta() handles both CREATE and ALTER (adding missing columns)
         $sql = "CREATE TABLE IF NOT EXISTS {$table} (
-            id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-            place_id      VARCHAR(255)    NOT NULL DEFAULT '',
-            business_name VARCHAR(255)    NOT NULL DEFAULT '',
-            industry      VARCHAR(150)    NOT NULL DEFAULT '',
-            city          VARCHAR(150)    NOT NULL DEFAULT '',
-            address       VARCHAR(500)    NOT NULL DEFAULT '',
-            phone         VARCHAR(50)     NOT NULL DEFAULT '',
-            website       VARCHAR(500)    NOT NULL DEFAULT '',
-            rating        DECIMAL(3,1)    NOT NULL DEFAULT 0,
-            review_count  INT UNSIGNED    NOT NULL DEFAULT 0,
-            seo_score     TINYINT UNSIGNED NOT NULL DEFAULT 0,
-            seo_issues    TEXT,
-            email         VARCHAR(255)    NOT NULL DEFAULT '',
-            email_source  VARCHAR(500)    NOT NULL DEFAULT '',
-            status        VARCHAR(20)     NOT NULL DEFAULT 'new',
-            notes         TEXT,
-            scraped_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            contacted_at  DATETIME        DEFAULT NULL,
+            id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            place_id         VARCHAR(255)     NOT NULL DEFAULT '',
+            business_name    VARCHAR(255)     NOT NULL DEFAULT '',
+            industry         VARCHAR(150)     NOT NULL DEFAULT '',
+            owner_first      VARCHAR(100)     NOT NULL DEFAULT '',
+            owner_last       VARCHAR(100)     NOT NULL DEFAULT '',
+            website          VARCHAR(500)     NOT NULL DEFAULT '',
+            address          VARCHAR(500)     NOT NULL DEFAULT '',
+            city             VARCHAR(150)     NOT NULL DEFAULT '',
+            state            VARCHAR(50)      NOT NULL DEFAULT '',
+            zip              VARCHAR(20)      NOT NULL DEFAULT '',
+            phone            VARCHAR(50)      NOT NULL DEFAULT '',
+            email            VARCHAR(255)     NOT NULL DEFAULT '',
+            email_source     VARCHAR(500)     NOT NULL DEFAULT '',
+            rating           DECIMAL(3,1)     NOT NULL DEFAULT 0,
+            review_count     INT UNSIGNED     NOT NULL DEFAULT 0,
+            social_facebook  VARCHAR(500)     NOT NULL DEFAULT '',
+            social_instagram VARCHAR(500)     NOT NULL DEFAULT '',
+            social_linkedin  VARCHAR(500)     NOT NULL DEFAULT '',
+            social_twitter   VARCHAR(500)     NOT NULL DEFAULT '',
+            social_youtube   VARCHAR(500)     NOT NULL DEFAULT '',
+            social_tiktok    VARCHAR(500)     NOT NULL DEFAULT '',
+            seo_score        TINYINT UNSIGNED NOT NULL DEFAULT 0,
+            seo_issues       TEXT,
+            status           VARCHAR(20)      NOT NULL DEFAULT 'new',
+            notes            TEXT,
+            scraped_at       DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            contacted_at     DATETIME         DEFAULT NULL,
             PRIMARY KEY  (id),
             UNIQUE KEY   place_id (place_id),
             KEY          industry_city (industry(50), city(50)),
@@ -62,22 +73,32 @@ final class Lead
         $wpdb->insert(
             $wpdb->prefix . 'wnq_leads',
             [
-                'place_id'      => $data['place_id']      ?? '',
-                'business_name' => $data['business_name'] ?? '',
-                'industry'      => $data['industry']      ?? '',
-                'city'          => $data['city']          ?? '',
-                'address'       => $data['address']       ?? '',
-                'phone'         => $data['phone']         ?? '',
-                'website'       => $data['website']       ?? '',
-                'rating'        => (float)($data['rating']       ?? 0),
-                'review_count'  => (int)($data['review_count']   ?? 0),
-                'seo_score'     => (int)($data['seo_score']      ?? 0),
-                'seo_issues'    => wp_json_encode($data['seo_issues'] ?? []),
-                'email'         => $data['email']         ?? '',
-                'email_source'  => $data['email_source']  ?? '',
-                'status'        => $data['status']        ?? 'new',
-                'notes'         => $data['notes']         ?? '',
-                'scraped_at'    => current_time('mysql'),
+                'place_id'         => $data['place_id']         ?? '',
+                'business_name'    => $data['business_name']    ?? '',
+                'industry'         => $data['industry']         ?? '',
+                'owner_first'      => $data['owner_first']      ?? '',
+                'owner_last'       => $data['owner_last']       ?? '',
+                'website'          => $data['website']          ?? '',
+                'address'          => $data['address']          ?? '',
+                'city'             => $data['city']             ?? '',
+                'state'            => $data['state']            ?? '',
+                'zip'              => $data['zip']              ?? '',
+                'phone'            => $data['phone']            ?? '',
+                'email'            => $data['email']            ?? '',
+                'email_source'     => $data['email_source']     ?? '',
+                'rating'           => (float)($data['rating']        ?? 0),
+                'review_count'     => (int)($data['review_count']    ?? 0),
+                'social_facebook'  => $data['social_facebook']  ?? '',
+                'social_instagram' => $data['social_instagram'] ?? '',
+                'social_linkedin'  => $data['social_linkedin']  ?? '',
+                'social_twitter'   => $data['social_twitter']   ?? '',
+                'social_youtube'   => $data['social_youtube']   ?? '',
+                'social_tiktok'    => $data['social_tiktok']    ?? '',
+                'seo_score'        => (int)($data['seo_score']  ?? 0),
+                'seo_issues'       => wp_json_encode($data['seo_issues'] ?? []),
+                'status'           => $data['status']           ?? 'new',
+                'notes'            => $data['notes']            ?? '',
+                'scraped_at'       => current_time('mysql'),
             ]
         );
         return (int)$wpdb->insert_id;
@@ -94,6 +115,12 @@ final class Lead
             $data['notes'] = $notes;
         }
         $wpdb->update($wpdb->prefix . 'wnq_leads', $data, ['id' => $id]);
+    }
+
+    public static function updateNotes(int $id, string $notes): void
+    {
+        global $wpdb;
+        $wpdb->update($wpdb->prefix . 'wnq_leads', ['notes' => $notes], ['id' => $id]);
     }
 
     public static function updateEmail(int $id, string $email, string $source): void
@@ -129,6 +156,21 @@ final class Lead
         return $row;
     }
 
+    /**
+     * Secondary dedup: check if a business with the same name in the same city already exists.
+     */
+    public static function existsByNameAndCity(string $business_name, string $city): bool
+    {
+        global $wpdb;
+        return (bool)$wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT id FROM {$wpdb->prefix}wnq_leads WHERE business_name = %s AND city = %s LIMIT 1",
+                $business_name,
+                $city
+            )
+        );
+    }
+
     public static function getAll(array $args = []): array
     {
         global $wpdb;
@@ -144,6 +186,10 @@ final class Lead
             $where[]  = 'city = %s';
             $params[] = $args['city'];
         }
+        if (!empty($args['state'])) {
+            $where[]  = 'state = %s';
+            $params[] = $args['state'];
+        }
         if (!empty($args['status'])) {
             $where[]  = 'status = %s';
             $params[] = $args['status'];
@@ -155,8 +201,11 @@ final class Lead
         if (!empty($args['has_email'])) {
             $where[] = "email != ''";
         }
+        if (!empty($args['has_owner'])) {
+            $where[] = "owner_first != ''";
+        }
 
-        $allowed_orderby = ['id', 'review_count', 'seo_score', 'rating', 'business_name', 'scraped_at'];
+        $allowed_orderby = ['id', 'review_count', 'seo_score', 'rating', 'business_name', 'scraped_at', 'city', 'state'];
         $orderby = in_array($args['orderby'] ?? '', $allowed_orderby, true) ? $args['orderby'] : 'scraped_at';
         $order   = ($args['order'] ?? 'DESC') === 'ASC' ? 'ASC' : 'DESC';
         $limit   = max(1, (int)($args['limit']  ?? 50));
@@ -189,8 +238,11 @@ final class Lead
 
         if (!empty($args['industry'])) { $where[] = 'industry = %s'; $params[] = $args['industry']; }
         if (!empty($args['city']))     { $where[] = 'city = %s';     $params[] = $args['city']; }
+        if (!empty($args['state']))    { $where[] = 'state = %s';    $params[] = $args['state']; }
         if (!empty($args['status']))   { $where[] = 'status = %s';   $params[] = $args['status']; }
         if (isset($args['min_seo_score'])) { $where[] = 'seo_score >= %d'; $params[] = (int)$args['min_seo_score']; }
+        if (!empty($args['has_email'])) { $where[] = "email != ''"; }
+        if (!empty($args['has_owner'])) { $where[] = "owner_first != ''"; }
 
         $where_sql = implode(' AND ', $where);
         $sql = "SELECT COUNT(*) FROM {$table} WHERE {$where_sql}";
@@ -209,48 +261,105 @@ final class Lead
             'qualified'  => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE status='qualified'"),
             'closed'     => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE status='closed'"),
             'with_email' => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE email != ''"),
+            'with_owner' => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE owner_first != ''"),
         ];
     }
 
     public static function getDistinctValues(string $column): array
     {
         global $wpdb;
-        if (!in_array($column, ['industry', 'city', 'status'], true)) return [];
+        if (!in_array($column, ['industry', 'city', 'state', 'status'], true)) return [];
         $table = $wpdb->prefix . 'wnq_leads';
         return $wpdb->get_col(
             "SELECT DISTINCT {$column} FROM {$table} WHERE {$column} != '' ORDER BY {$column} ASC"
         ) ?: [];
     }
 
-    // ── CSV Export ──────────────────────────────────────────────────────────
+    // ── GHL-Compatible CSV Export ───────────────────────────────────────────
 
+    /**
+     * Export leads as a CSV formatted for Go High Level contact import.
+     * Column order matches standard GHL CSV import template.
+     */
     public static function exportCsv(array $args = []): void
     {
         $rows = self::getAll(array_merge($args, ['limit' => 9999, 'offset' => 0]));
 
         header('Content-Type: text/csv; charset=utf-8');
-        header('Content-Disposition: attachment; filename="wnq-leads-' . date('Y-m-d') . '.csv"');
+        header('Content-Disposition: attachment; filename="wnq-leads-ghl-' . date('Y-m-d') . '.csv"');
         header('Pragma: no-cache');
 
         $out = fopen('php://output', 'w');
-        fputcsv($out, ['ID', 'Business', 'Industry', 'City', 'Address', 'Phone', 'Website', 'Rating', 'Reviews', 'SEO Score', 'SEO Issues', 'Email', 'Status', 'Notes', 'Scraped At']);
+
+        // GHL-compatible headers
+        fputcsv($out, [
+            'First Name',
+            'Last Name',
+            'Company Name',
+            'Email',
+            'Phone',
+            'Website',
+            'Address',
+            'City',
+            'State',
+            'Postal Code',
+            'Tags',
+            'Source',
+            'Notes',
+            'Facebook',
+            'Instagram',
+            'LinkedIn',
+            'Twitter',
+            'YouTube',
+            'TikTok',
+            'Industry',
+            'Stars',
+            'Review Count',
+            'SEO Score',
+            'SEO Issues',
+            'Status',
+            'Scraped Date',
+        ]);
 
         foreach ($rows as $row) {
-            fputcsv($out, [
-                $row['id'],
-                $row['business_name'],
+            $issues_str = implode(' | ', array_map(
+                fn($i) => \WNQ\Services\LeadSEOScorer::issueLabel($i),
+                (array)$row['seo_issues']
+            ));
+
+            $tags = array_filter([
                 $row['industry'],
-                $row['city'],
-                $row['address'],
+                'seo-score-' . $row['seo_score'],
+                $row['state'] ? 'state-' . strtolower($row['state']) : '',
+                'webnique-lead',
+            ]);
+
+            fputcsv($out, [
+                $row['owner_first'],
+                $row['owner_last'],
+                $row['business_name'],
+                $row['email'],
                 $row['phone'],
                 $row['website'],
+                $row['address'],
+                $row['city'],
+                $row['state'],
+                $row['zip'],
+                implode(', ', $tags),
+                'WebNique Lead Finder',
+                $row['notes'],
+                $row['social_facebook'],
+                $row['social_instagram'],
+                $row['social_linkedin'],
+                $row['social_twitter'],
+                $row['social_youtube'],
+                $row['social_tiktok'],
+                $row['industry'],
                 $row['rating'],
                 $row['review_count'],
                 $row['seo_score'],
-                implode(', ', (array)$row['seo_issues']),
-                $row['email'],
+                $issues_str,
                 $row['status'],
-                $row['notes'],
                 $row['scraped_at'],
             ]);
         }

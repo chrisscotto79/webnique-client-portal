@@ -26,6 +26,19 @@ if (!defined('ABSPATH')) {
 final class LeadSEOScorer
 {
     /**
+     * Score already-fetched HTML — avoids a duplicate HTTP request when the
+     * engine has already retrieved the homepage for other enrichment steps.
+     *
+     * @param  string $html Raw HTML string
+     * @return array{score: int, issues: string[], ok: bool}
+     */
+    public static function scoreWebsiteFromHtml(string $html): array
+    {
+        if (!$html) return ['score' => 0, 'issues' => [], 'ok' => false];
+        return self::analyzeHtml($html);
+    }
+
+    /**
      * Fetch and score a website's SEO quality.
      *
      * @param  string $url Full URL including scheme
