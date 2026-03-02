@@ -89,7 +89,7 @@ final class PlacesAPIClient
 
         $response = wp_remote_get(
             self::DETAILS_URL . '?' . http_build_query($params),
-            ['timeout' => 15, 'sslverify' => true]
+            ['timeout' => 8, 'sslverify' => true]
         );
 
         if (is_wp_error($response)) return [];

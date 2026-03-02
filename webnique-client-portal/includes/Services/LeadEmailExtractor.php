@@ -45,9 +45,12 @@ final class LeadEmailExtractor
             }
         }
 
+        // Only try /contact as the one fallback page.
+        // Additional pages (/contact-us, /about, /about-us) rarely add anything
+        // and each burns a 4s timeout, pushing us past PHP's execution limit.
         $paths = $homepage_html
-            ? ['/contact', '/contact-us', '/about', '/about-us']
-            : ['', '/contact', '/contact-us', '/about', '/about-us'];
+            ? ['/contact']
+            : ['', '/contact'];
 
         foreach ($paths as $path) {
             $emails = self::fetchEmailsFromUrl($base_url . $path);

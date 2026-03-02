@@ -95,8 +95,10 @@ final class LeadFinderAdmin
         .wnq-btn-secondary:hover { background:#e5e7eb; }
         .wnq-btn-danger { background:#dc2626;color:#fff; }
         .wnq-btn-sm { padding:4px 10px;font-size:11px; }
-        .wnq-progress { display:none;align-items:center;gap:10px;padding:14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;margin-top:14px;color:#1d4ed8;font-weight:500; }
+        .wnq-progress { display:none;flex-direction:column;gap:6px;padding:14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;margin-top:14px;color:#1d4ed8;font-weight:500; }
         .wnq-progress.show { display:flex; }
+        .wnq-progress-row { display:flex;align-items:center;gap:10px; }
+        .wnq-sub-status { font-size:11px;color:#3b82f6;font-weight:400;margin-top:0; }
         .wnq-spinner { width:18px;height:18px;border:3px solid #bfdbfe;border-top-color:#2563eb;border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0; }
         @keyframes spin { to { transform:rotate(360deg); } }
         .wnq-result { padding:14px;border-radius:8px;margin-top:14px; }
@@ -321,6 +323,7 @@ final class LeadFinderAdmin
                     <span id="lf-progress-label">Starting…</span>
                     <span id="lf-progress-pct">0%</span>
                 </div>
+                <div id="lf-sub-status" style="font-size:11px;color:#6b7280;margin-bottom:6px;min-height:15px;"></div>
                 <div class="wnq-progressbar-wrap"><div class="wnq-progressbar" id="lf-bar"></div></div>
                 <div class="wnq-live-stats">
                     <span>Found: <b id="ls-found">0</b></span>
@@ -435,13 +438,14 @@ final class LeadFinderAdmin
                         let consecutiveErrors = 0;
                         while (comboProgress < total && !_stopped) {
                             wnqSetProgressLabel(`Combo ${i+1}/${combos.length}: "${keyword}" in "${city}" — ${comboProgress}/${total} candidates…`);
+                            wnqSetSubStatus(`Processing candidate ${comboProgress + 1} of ${total}… (crawling website)`);
 
                             let procResp = null;
                             try {
-                                // 45-second hard browser timeout per candidate
-                                // (5 HTTP calls × 5s each + PHP overhead)
+                                // 60-second hard browser timeout per candidate
+                                // HTTP calls now max at 8+5+4 = 17s so 60s is very safe
                                 const ctrl = new AbortController();
-                                const tid  = setTimeout(() => ctrl.abort(), 45000);
+                                const tid  = setTimeout(() => ctrl.abort(), 60000);
                                 const fd2 = new FormData();
                                 fd2.append('action',      'wnq_lead_process_next');
                                 fd2.append('nonce',       '<?php echo esc_js($nonce); ?>');
@@ -451,9 +455,23 @@ final class LeadFinderAdmin
                                 fd2.append('min_seo',     minSeo);
                                 const r2 = await fetch(ajaxurl, { method:'POST', body: fd2, signal: ctrl.signal });
                                 clearTimeout(tid);
-                                procResp = await r2.json();
+                                // Read the raw text first so we can show it if JSON parse fails
+                                const rawText = await r2.text();
+                                try {
+                                    procResp = JSON.parse(rawText);
+                                } catch(je) {
+                                    // PHP returned non-JSON (fatal / timeout). Show raw snippet.
+                                    const preview = rawText.replace(/<[^>]+>/g,'').trim().substring(0, 120);
+                                    wnqShowError(`Candidate ${comboProgress+1} PHP error: ${preview || '(empty response)'}`);
+                                    consecutiveErrors++;
+                                    comboProgress++;
+                                    wnqSetProgress(comboProgress, total);
+                                    if (consecutiveErrors >= 5) { _stopped = true; }
+                                    continue;
+                                }
                             } catch(e) {
-                                // Timeout or network hiccup — skip this candidate, keep going
+                                // AbortController fired or network error — skip candidate, keep going
+                                wnqSetSubStatus(`Candidate ${comboProgress+1} timed out — skipping.`);
                                 consecutiveErrors++;
                                 comboProgress++;
                                 wnqSetProgress(comboProgress, total);
@@ -465,12 +483,13 @@ final class LeadFinderAdmin
                             }
 
                             if (!procResp || !procResp.success) {
-                                // Server returned an error for this candidate — skip, don't stop
+                                const errMsg = procResp?.data?.message || 'Unknown server error';
+                                wnqSetSubStatus(`Candidate ${comboProgress+1}: ${errMsg}`);
                                 consecutiveErrors++;
                                 comboProgress++;
                                 wnqSetProgress(comboProgress, total);
                                 if (consecutiveErrors >= 5) {
-                                    wnqShowError(`5 consecutive server errors — stopping "${keyword} | ${city}". Try again.`);
+                                    wnqShowError(`5 consecutive server errors — stopping. Last: ${errMsg}`);
                                     _stopped = true;
                                 }
                                 continue;
@@ -480,6 +499,7 @@ final class LeadFinderAdmin
                             const d = procResp.data;
                             comboProgress    = d.progress;
                             _lastBatchStats  = d.stats;
+                            wnqSetSubStatus(`Candidate ${comboProgress} done.`);
 
                             // Display = cumulative from finished combos + current batch
                             wnqUpdateLiveStats(d.stats);
@@ -499,6 +519,7 @@ final class LeadFinderAdmin
 
                     if (!_stopped) {
                         wnqSetProgressLabel('Complete');
+                        wnqSetSubStatus('');
                         wnqSetProgress(1, 1);
                         document.getElementById('lf-result').innerHTML =
                             `<div class="wnq-result wnq-result-ok">
@@ -543,6 +564,10 @@ final class LeadFinderAdmin
 
             function wnqSetProgressLabel(msg) {
                 document.getElementById('lf-progress-label').textContent = msg;
+            }
+
+            function wnqSetSubStatus(msg) {
+                document.getElementById('lf-sub-status').textContent = msg;
             }
 
             function wnqShowError(msg) {

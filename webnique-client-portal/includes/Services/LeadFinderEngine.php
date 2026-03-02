@@ -115,8 +115,11 @@ final class LeadFinderEngine
      */
     public static function processNextCandidate(string $batch_id, array $filter_params): array
     {
-        // Give each candidate up to 30 seconds (5 HTTP calls × 5s each + overhead)
-        @set_time_limit(30);
+        // Do NOT call set_time_limit — the ceiling here is the server's configured
+        // max_execution_time. Our HTTP calls are capped at 8+5+4 = 17s worst case,
+        // which fits comfortably inside any reasonable PHP time limit (30s+).
+        // Calling set_time_limit(30) was reducing the available time on hosts
+        // that allow longer execution, causing PHP to die mid-request.
 
         $queue = get_transient('wnq_lead_queue_' . $batch_id);
         if (!$queue) {
