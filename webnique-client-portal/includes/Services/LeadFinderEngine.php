@@ -115,8 +115,8 @@ final class LeadFinderEngine
      */
     public static function processNextCandidate(string $batch_id, array $filter_params): array
     {
-        // Give this call up to 90 seconds — generous but bounded
-        @set_time_limit(90);
+        // Give each candidate up to 30 seconds (5 HTTP calls × 5s each + overhead)
+        @set_time_limit(30);
 
         $queue = get_transient('wnq_lead_queue_' . $batch_id);
         if (!$queue) {
@@ -136,13 +136,18 @@ final class LeadFinderEngine
             return ['ok' => true, 'done' => true, 'progress' => $total, 'total' => $total, 'stats' => $stats];
         }
 
-        // Process one candidate
-        $outcome = self::processSingleCandidate(
-            $places[$next],
-            $keyword,
-            $city,
-            $filter_params
-        );
+        // Process one candidate — wrap in try/catch so one broken site can never
+        // freeze or crash the entire queue.
+        try {
+            $outcome = self::processSingleCandidate(
+                $places[$next],
+                $keyword,
+                $city,
+                $filter_params
+            );
+        } catch (\Throwable $e) {
+            $outcome = 'low_seo'; // count as filtered, don't block the queue
+        }
         $stats = self::updateStats($stats, $outcome);
 
         // Advance queue
@@ -351,10 +356,11 @@ final class LeadFinderEngine
     private static function fetchHtml(string $url): string
     {
         $response = wp_remote_get($url, [
-            'timeout'    => 12,
-            'user-agent' => 'Mozilla/5.0 (compatible; WebNique/1.0; +https://webnique.com)',
-            'sslverify'  => false,
-            'redirection'=> 5,
+            'timeout'             => 5,
+            'user-agent'          => 'Mozilla/5.0 (compatible; WebNique/1.0; +https://webnique.com)',
+            'sslverify'           => false,
+            'redirection'         => 3,
+            'limit_response_size' => 512000, // 500 KB — enough for HTML head + visible text
         ]);
 
         if (is_wp_error($response)) return '';
