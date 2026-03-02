@@ -514,7 +514,7 @@ final class LeadFinderAdmin
                             wnqSetSubStatus(`Candidate ${comboProgress} done.`);
 
                             // Display = cumulative from finished combos + current batch
-                            wnqUpdateLiveStats(d.stats);
+                            wnqUpdateLiveStats(d.stats, _cumStats);
                             wnqSetProgress(d.progress, d.total);
 
                             if (d.done) break;
@@ -559,13 +559,13 @@ final class LeadFinderAdmin
                 wnqSetProgress(0, 1);
             }
 
-            function wnqUpdateLiveStats(s) {
+            function wnqUpdateLiveStats(s, cumStats) {
                 // Show cumulative from finished combos + current batch-in-progress
-                document.getElementById('ls-saved').textContent     = _cumStats.saved      + s.saved;
-                document.getElementById('ls-franchise').textContent = _cumStats.franchise   + s.franchise;
-                document.getElementById('ls-duplicate').textContent = _cumStats.duplicate   + s.duplicate;
-                document.getElementById('ls-noweb').textContent     = _cumStats.no_website  + s.no_website;
-                document.getElementById('ls-lowseo').textContent    = _cumStats.low_seo     + s.low_seo;
+                document.getElementById('ls-saved').textContent     = cumStats.saved      + s.saved;
+                document.getElementById('ls-franchise').textContent = cumStats.franchise   + s.franchise;
+                document.getElementById('ls-duplicate').textContent = cumStats.duplicate   + s.duplicate;
+                document.getElementById('ls-noweb').textContent     = cumStats.no_website  + s.no_website;
+                document.getElementById('ls-lowseo').textContent    = cumStats.low_seo     + s.low_seo;
             }
 
             function wnqSetProgress(current, total) {
