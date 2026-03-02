@@ -399,6 +399,7 @@ final class LeadFinderAdmin
                 }
 
                 (async function runAllCombos() {
+                  try {
                     for (let i = 0; i < combos.length && !_stopped; i++) {
                         const { keyword, city } = combos[i];
                         wnqSetProgressLabel(`Combo ${i+1}/${combos.length}: queuing "${keyword}" in "${city}"…`);
@@ -496,16 +497,23 @@ final class LeadFinderAdmin
                             }
 
                             consecutiveErrors = 0;
-                            const d = procResp.data;
-                            comboProgress    = d.progress;
-                            _lastBatchStats  = d.stats;
+                            // Defensive defaults — if PHP output a notice before
+                            // the JSON, some fields may be missing; never let that
+                            // crash the loop silently.
+                            const d        = procResp.data  || {};
+                            const dStats   = d.stats        || {saved:0,franchise:0,filtered:0,duplicate:0,no_website:0,low_seo:0,found:0};
+                            const dProgress = (typeof d.progress === 'number') ? d.progress : (comboProgress + 1);
+                            const dTotal    = (typeof d.total    === 'number') ? d.total    : total;
+                            const dDone     = !!d.done;
+
+                            comboProgress   = dProgress;
+                            _lastBatchStats = dStats;
                             wnqSetSubStatus(`Candidate ${comboProgress} done.`);
 
-                            // Display = cumulative from finished combos + current batch
-                            wnqUpdateLiveStats(d.stats);
-                            wnqSetProgress(d.progress, d.total);
+                            try { wnqUpdateLiveStats(dStats); } catch(e) { /* DOM not ready */ }
+                            try { wnqSetProgress(dProgress, dTotal); } catch(e) { /* DOM not ready */ }
 
-                            if (d.done) break;
+                            if (dDone) break;
                         }
 
                         // Fold this combo's final stats into the cumulative totals
@@ -535,6 +543,18 @@ final class LeadFinderAdmin
                                 <p>${saved} lead${saved !== 1 ? 's' : ''} saved so far. You can run another search to continue.</p>
                             </div>`;
                     }
+                  } catch(fatalErr) {
+                    // Surface any uncaught JS error so it's visible instead of
+                    // leaving the UI frozen with no indication of what went wrong.
+                    document.getElementById('lf-start-btn').disabled = false;
+                    document.getElementById('lf-stop-btn').style.display = 'none';
+                    wnqSetProgressLabel('Error — see below');
+                    document.getElementById('lf-result').innerHTML +=
+                        `<div class="wnq-result wnq-result-err">
+                            <strong>Unexpected JavaScript error</strong>
+                            <p>${fatalErr.message || fatalErr}</p>
+                        </div>`;
+                  }
                 })();
             };
 
