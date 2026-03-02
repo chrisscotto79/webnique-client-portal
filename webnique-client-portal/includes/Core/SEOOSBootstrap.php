@@ -88,6 +88,7 @@ final class SEOOSBootstrap
             'includes/Services/PlacesAPIClient.php',
             'includes/Services/LeadSEOScorer.php',
             'includes/Services/LeadEmailExtractor.php',
+            'includes/Services/LeadEnrichmentService.php',
             'includes/Services/LeadFinderEngine.php',
             // Controllers & Core
             'includes/Controllers/SEOAgentController.php',
@@ -137,6 +138,7 @@ final class SEOOSBootstrap
             'includes/Services/PlacesAPIClient.php'           => 'WNQ\\Services\\PlacesAPIClient',
             'includes/Services/LeadSEOScorer.php'             => 'WNQ\\Services\\LeadSEOScorer',
             'includes/Services/LeadEmailExtractor.php'        => 'WNQ\\Services\\LeadEmailExtractor',
+            'includes/Services/LeadEnrichmentService.php'     => 'WNQ\\Services\\LeadEnrichmentService',
             'includes/Services/LeadFinderEngine.php'          => 'WNQ\\Services\\LeadFinderEngine',
             'admin/SEOHubAdmin.php'                           => 'WNQ\\Admin\\SEOHubAdmin',
             'admin/BlogSchedulerAdmin.php'                    => 'WNQ\\Admin\\BlogSchedulerAdmin',

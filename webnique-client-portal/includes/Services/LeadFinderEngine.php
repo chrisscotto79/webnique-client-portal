@@ -2,15 +2,32 @@
 /**
  * Lead Finder Engine
  *
- * Orchestrates the full prospect-discovery pipeline:
- *   1. Query Google Places Text Search (up to 60 results per run)
- *   2. Filter by review count + rating
- *   3. Fetch Place Details (website + phone) for qualifying candidates
- *   4. Score website SEO via LeadSEOScorer
- *   5. Extract email via LeadEmailExtractor
- *   6. Save qualified leads to wp_wnq_leads
+ * Orchestrates the full prospect-discovery pipeline in two phases
+ * designed for reliable bulk operation:
  *
- * Also exposes runDailyCron() for the WP-Cron daily job.
+ * Phase 1 – queueSearch()
+ *   Queries Google Places Text Search (up to 60 results per keyword+city),
+ *   stores the raw candidates in a WordPress transient, and returns
+ *   immediately so the browser AJAX call never times out.
+ *
+ * Phase 2 – processNextCandidate()
+ *   Called once per candidate by the browser (looped via JS).
+ *   Each call processes exactly one Place result:
+ *     1. Franchise detection by name
+ *     2. Review count + rating filter
+ *     3. Duplicate check (place_id + name+city)
+ *     4. Place Details API call → website + phone
+ *     5. Homepage fetch (HTML reused by all enrichers)
+ *     6. Franchise detection by website content
+ *     7. SEO scoring
+ *     8. Email extraction
+ *     9. Owner name extraction
+ *    10. Social media extraction
+ *    11. Address parsing
+ *    12. DB insert
+ *
+ * runSearch() (used by daily WP-Cron) runs the full pipeline in one
+ * blocking call — acceptable for background jobs with no user-facing timeout.
  *
  * @package WebNique Portal
  */
@@ -25,48 +42,39 @@ use WNQ\Models\Lead;
 
 final class LeadFinderEngine
 {
+    private const QUEUE_TTL = DAY_IN_SECONDS; // transient lifetime
+
+    // ── Phase 1: Queue ───────────────────────────────────────────────────────
+
     /**
-     * Run a single industry + city search and save qualified leads.
+     * Run a Google Places search and store the raw candidates in a transient.
+     * Returns immediately with a batch_id — no web-crawling happens here.
      *
-     * @param array{
-     *   keyword:      string,
-     *   city:         string,
-     *   min_reviews?: int,
-     *   min_rating?:  float,
-     *   min_seo_score?: int,
-     *   max_results?: int
-     * } $params
-     * @return array{ok: bool, error?: string, stats?: array}
+     * @param array{keyword: string, city: string, max_results?: int} $params
+     * @return array{ok: bool, batch_id?: string, total?: int, error?: string}
      */
-    public static function runSearch(array $params): array
+    public static function queueSearch(array $params): array
     {
-        $keyword    = sanitize_text_field($params['keyword']       ?? '');
-        $city       = sanitize_text_field($params['city']          ?? '');
-        $min_reviews= max(0, (int)($params['min_reviews']          ?? 20));
-        $min_rating = max(0.0, (float)($params['min_rating']       ?? 3.5));
-        $min_seo    = max(0, (int)($params['min_seo_score']        ?? 2));
-        $max_results= min(60, max(1, (int)($params['max_results']  ?? 60)));
+        $keyword     = sanitize_text_field($params['keyword']      ?? '');
+        $city        = sanitize_text_field($params['city']         ?? '');
+        $max_results = min(60, max(1, (int)($params['max_results'] ?? 60)));
 
         if (!$keyword || !$city) {
             return ['ok' => false, 'error' => 'Keyword and city are required'];
         }
 
-        $query      = $keyword . ' in ' . $city;
         $all_places = [];
         $page_token = '';
         $pages      = 0;
 
-        // Google Places returns max 20 per page; up to 3 pages = 60 results
         do {
-            // API requires a brief pause between paginated requests
             if ($pages > 0) {
-                sleep(2);
+                sleep(2); // Google requires a pause between paginated requests
             }
 
-            $data = PlacesAPIClient::textSearch($query, $page_token);
+            $data = PlacesAPIClient::textSearch($keyword . ' in ' . $city, $page_token);
 
             if (!empty($data['error'])) {
-                // If we got some results already, continue with what we have
                 if (empty($all_places)) {
                     return ['ok' => false, 'error' => $data['error']];
                 }
@@ -79,81 +87,89 @@ final class LeadFinderEngine
 
         } while ($page_token && count($all_places) < $max_results && $pages < 3);
 
-        $stats = [
-            'found'            => count($all_places),
-            'filtered'         => 0,
-            'qualified'        => 0,
-            'saved'            => 0,
-            'skipped_existing' => 0,
-            'no_website'       => 0,
-            'low_seo_score'    => 0,
-        ];
-
-        foreach ($all_places as $place) {
-            // Basic filters: reviews, rating, not permanently closed
-            if ((int)($place['user_ratings_total'] ?? 0) < $min_reviews) continue;
-            if ((float)($place['rating'] ?? 0) < $min_rating) continue;
-            if (($place['business_status'] ?? '') === 'PERMANENTLY_CLOSED') continue;
-
-            $stats['filtered']++;
-
-            $place_id = $place['place_id'] ?? '';
-            if (!$place_id) continue;
-
-            // Skip if already in our database
-            if (Lead::findByPlaceId($place_id)) {
-                $stats['skipped_existing']++;
-                continue;
-            }
-
-            // Fetch website + phone (costs one API call per candidate)
-            $details = PlacesAPIClient::getDetails($place_id);
-            $website = $details['website'] ?? '';
-            $phone   = $details['formatted_phone_number'] ?? '';
-
-            if (!$website) {
-                $stats['no_website']++;
-                continue;
-            }
-
-            // Score website SEO
-            $seo = LeadSEOScorer::scoreWebsite($website);
-            if (!$seo['ok'] || $seo['score'] < $min_seo) {
-                $stats['low_seo_score']++;
-                continue;
-            }
-
-            $stats['qualified']++;
-
-            // Extract email (best-effort; empty string if none found)
-            $email_data = LeadEmailExtractor::extractEmail($website);
-
-            Lead::insert([
-                'place_id'      => $place_id,
-                'business_name' => sanitize_text_field($place['name'] ?? ''),
-                'industry'      => $keyword,
-                'city'          => $city,
-                'address'       => sanitize_text_field($place['formatted_address'] ?? ''),
-                'phone'         => sanitize_text_field($phone),
-                'website'       => esc_url_raw($website),
-                'rating'        => (float)($place['rating'] ?? 0),
-                'review_count'  => (int)($place['user_ratings_total'] ?? 0),
-                'seo_score'     => (int)$seo['score'],
-                'seo_issues'    => $seo['issues'],
-                'email'         => sanitize_email($email_data['email']),
-                'email_source'  => esc_url_raw($email_data['source']),
-                'status'        => 'new',
-            ]);
-
-            $stats['saved']++;
+        if (empty($all_places)) {
+            return ['ok' => true, 'batch_id' => '', 'total' => 0];
         }
 
-        return ['ok' => true, 'stats' => $stats];
+        $batch_id = wp_generate_uuid4();
+        set_transient('wnq_lead_queue_' . $batch_id, [
+            'keyword'    => $keyword,
+            'city'       => $city,
+            'places'     => $all_places,
+            'next_index' => 0,
+            'stats'      => self::emptyStats(count($all_places)),
+        ], self::QUEUE_TTL);
+
+        return ['ok' => true, 'batch_id' => $batch_id, 'total' => count($all_places)];
     }
 
+    // ── Phase 2: Process one candidate ──────────────────────────────────────
+
     /**
-     * Daily cron handler.
-     * Rotates through configured industries + cities (one combination per day).
+     * Process the next unprocessed candidate from a queued batch.
+     * One AJAX call per candidate → no PHP timeout risk.
+     *
+     * @param string $batch_id     Returned by queueSearch()
+     * @param array  $filter_params min_reviews, min_rating, min_seo_score
+     * @return array{ok: bool, done: bool, progress: int, total: int, stats: array, error?: string}
+     */
+    public static function processNextCandidate(string $batch_id, array $filter_params): array
+    {
+        // Give this call up to 90 seconds — generous but bounded
+        @set_time_limit(90);
+
+        $queue = get_transient('wnq_lead_queue_' . $batch_id);
+        if (!$queue) {
+            return ['ok' => false, 'done' => true, 'error' => 'Batch not found or expired'];
+        }
+
+        $places     = $queue['places'];
+        $next       = (int)$queue['next_index'];
+        $total      = count($places);
+        $stats      = $queue['stats'];
+        $keyword    = $queue['keyword'];
+        $city       = $queue['city'];
+
+        // All candidates processed
+        if ($next >= $total) {
+            delete_transient('wnq_lead_queue_' . $batch_id);
+            return ['ok' => true, 'done' => true, 'progress' => $total, 'total' => $total, 'stats' => $stats];
+        }
+
+        // Process one candidate
+        $outcome = self::processSingleCandidate(
+            $places[$next],
+            $keyword,
+            $city,
+            $filter_params
+        );
+        $stats = self::updateStats($stats, $outcome);
+
+        // Advance queue
+        $queue['next_index'] = $next + 1;
+        $queue['stats']      = $stats;
+        $done = ($next + 1 >= $total);
+
+        if ($done) {
+            delete_transient('wnq_lead_queue_' . $batch_id);
+        } else {
+            set_transient('wnq_lead_queue_' . $batch_id, $queue, self::QUEUE_TTL);
+        }
+
+        return [
+            'ok'       => true,
+            'done'     => $done,
+            'progress' => $next + 1,
+            'total'    => $total,
+            'stats'    => $stats,
+        ];
+    }
+
+    // ── Daily Cron (blocking — runs in background) ───────────────────────────
+
+    /**
+     * Full blocking pipeline for WP-Cron.
+     * No user-facing timeout risk since it runs in the background.
      */
     public static function runDailyCron(): void
     {
@@ -169,18 +185,211 @@ final class LeadFinderEngine
 
         if (empty($industries) || empty($cities)) return;
 
-        // Rotate by day-of-year so each industry+city combination is covered over time
-        $day       = (int)date('z'); // 0–365
-        $industry  = $industries[$day % count($industries)];
-        $city      = $cities[$day % count($cities)];
+        $day      = (int)date('z');
+        $keyword  = $industries[$day % count($industries)];
+        $city     = $cities[$day % count($cities)];
 
         self::runSearch([
-            'keyword'       => $industry,
+            'keyword'       => $keyword,
             'city'          => $city,
             'min_reviews'   => (int)($settings['min_reviews']   ?? 20),
             'min_rating'    => (float)($settings['min_rating']  ?? 3.5),
             'min_seo_score' => (int)($settings['min_seo_score'] ?? 2),
             'max_results'   => 60,
         ]);
+    }
+
+    /**
+     * Blocking single-request search — kept for cron and internal use.
+     */
+    public static function runSearch(array $params): array
+    {
+        $keyword     = sanitize_text_field($params['keyword']        ?? '');
+        $city        = sanitize_text_field($params['city']           ?? '');
+        $min_reviews = max(0, (int)($params['min_reviews']           ?? 20));
+        $min_rating  = max(0.0, (float)($params['min_rating']        ?? 3.5));
+        $min_seo     = max(0, (int)($params['min_seo_score']         ?? 2));
+        $max_results = min(60, max(1, (int)($params['max_results']   ?? 60)));
+
+        if (!$keyword || !$city) {
+            return ['ok' => false, 'error' => 'Keyword and city are required'];
+        }
+
+        $all_places = [];
+        $page_token = '';
+        $pages      = 0;
+
+        do {
+            if ($pages > 0) sleep(2);
+            $data = PlacesAPIClient::textSearch($keyword . ' in ' . $city, $page_token);
+            if (!empty($data['error'])) {
+                if (empty($all_places)) return ['ok' => false, 'error' => $data['error']];
+                break;
+            }
+            $all_places = array_merge($all_places, $data['results'] ?? []);
+            $page_token = $data['next_page_token'] ?? '';
+            $pages++;
+        } while ($page_token && count($all_places) < $max_results && $pages < 3);
+
+        $stats = self::emptyStats(count($all_places));
+
+        foreach ($all_places as $place) {
+            $outcome = self::processSingleCandidate(
+                $place,
+                $keyword,
+                $city,
+                ['min_reviews' => $min_reviews, 'min_rating' => $min_rating, 'min_seo_score' => $min_seo]
+            );
+            $stats = self::updateStats($stats, $outcome);
+        }
+
+        return ['ok' => true, 'stats' => $stats];
+    }
+
+    // ── Core Processing Logic ────────────────────────────────────────────────
+
+    /**
+     * Process a single Google Places result through the full qualification
+     * and enrichment pipeline.
+     *
+     * @return string One of: franchise | low_reviews | duplicate | no_website | low_seo | saved
+     */
+    private static function processSingleCandidate(
+        array $place,
+        string $keyword,
+        string $city,
+        array $filter_params
+    ): string {
+        $min_reviews = max(0, (int)($filter_params['min_reviews']   ?? 20));
+        $min_rating  = max(0.0, (float)($filter_params['min_rating']  ?? 3.5));
+        $min_seo     = max(0, (int)($filter_params['min_seo_score'] ?? 2));
+
+        $business_name = sanitize_text_field($place['name'] ?? '');
+
+        // 1. Franchise check by name (free — no API call)
+        if (LeadEnrichmentService::isFranchise($business_name)) {
+            return 'franchise';
+        }
+
+        // 2. Reviews, rating, status filters
+        if ((int)($place['user_ratings_total'] ?? 0) < $min_reviews) return 'low_reviews';
+        if ((float)($place['rating'] ?? 0) < $min_rating)            return 'low_reviews';
+        if (($place['business_status'] ?? '') === 'PERMANENTLY_CLOSED') return 'low_reviews';
+
+        $place_id = $place['place_id'] ?? '';
+        if (!$place_id) return 'low_reviews';
+
+        // 3. Dedup by place_id
+        if (Lead::findByPlaceId($place_id)) return 'duplicate';
+
+        // 4. Address parsing (needed for city dedup)
+        $addr      = LeadEnrichmentService::parseAddress($place['formatted_address'] ?? '');
+        $lead_city = $addr['city'] ?: $city;
+
+        // 5. Dedup by name + city
+        if (Lead::existsByNameAndCity($business_name, $lead_city)) return 'duplicate';
+
+        // 6. Place Details API → website + phone
+        $details = PlacesAPIClient::getDetails($place_id);
+        $website = $details['website'] ?? '';
+        $phone   = $details['formatted_phone_number'] ?? '';
+
+        if (!$website) return 'no_website';
+
+        // 7. Fetch homepage HTML (shared by all enrichers — one HTTP request total)
+        $homepage_html = self::fetchHtml($website);
+
+        // 8. Franchise check against website content
+        if ($homepage_html && LeadEnrichmentService::isFranchise($business_name, $homepage_html)) {
+            return 'franchise';
+        }
+
+        // 9. SEO scoring
+        $seo = $homepage_html
+            ? LeadSEOScorer::scoreWebsiteFromHtml($homepage_html)
+            : LeadSEOScorer::scoreWebsite($website);
+
+        if (!$seo['ok'] || $seo['score'] < $min_seo) return 'low_seo';
+
+        // 10–12. Enrichment (email, owner, social all reuse $homepage_html)
+        $email_data = LeadEmailExtractor::extractEmail($website, $homepage_html);
+        $owner      = LeadEnrichmentService::extractOwnerName($website, $homepage_html);
+        $social     = LeadEnrichmentService::extractSocialMedia($website, $homepage_html);
+
+        Lead::insert([
+            'place_id'         => $place_id,
+            'business_name'    => $business_name,
+            'industry'         => $keyword,
+            'owner_first'      => sanitize_text_field($owner['first']),
+            'owner_last'       => sanitize_text_field($owner['last']),
+            'website'          => esc_url_raw($website),
+            'address'          => sanitize_text_field($addr['street']),
+            'city'             => sanitize_text_field($lead_city),
+            'state'            => sanitize_text_field($addr['state']),
+            'zip'              => sanitize_text_field($addr['zip']),
+            'phone'            => sanitize_text_field($phone),
+            'email'            => sanitize_email($email_data['email']),
+            'email_source'     => $email_data['source'] ? esc_url_raw($email_data['source']) : '',
+            'rating'           => (float)($place['rating'] ?? 0),
+            'review_count'     => (int)($place['user_ratings_total'] ?? 0),
+            'social_facebook'  => $social['facebook']  ? esc_url_raw($social['facebook'])  : '',
+            'social_instagram' => $social['instagram'] ? esc_url_raw($social['instagram']) : '',
+            'social_linkedin'  => $social['linkedin']  ? esc_url_raw($social['linkedin'])  : '',
+            'social_twitter'   => $social['twitter']   ? esc_url_raw($social['twitter'])   : '',
+            'social_youtube'   => $social['youtube']   ? esc_url_raw($social['youtube'])   : '',
+            'social_tiktok'    => $social['tiktok']    ? esc_url_raw($social['tiktok'])    : '',
+            'seo_score'        => (int)$seo['score'],
+            'seo_issues'       => $seo['issues'],
+            'status'           => 'new',
+        ]);
+
+        return 'saved';
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private static function fetchHtml(string $url): string
+    {
+        $response = wp_remote_get($url, [
+            'timeout'    => 12,
+            'user-agent' => 'Mozilla/5.0 (compatible; WebNique/1.0; +https://webnique.com)',
+            'sslverify'  => false,
+            'redirection'=> 5,
+        ]);
+
+        if (is_wp_error($response)) return '';
+        $code = (int)wp_remote_retrieve_response_code($response);
+        if ($code < 200 || $code >= 400) return '';
+
+        return wp_remote_retrieve_body($response);
+    }
+
+    private static function emptyStats(int $found = 0): array
+    {
+        return [
+            'found'     => $found,
+            'franchise' => 0,
+            'filtered'  => 0,   // passed reviews/rating — tracked as total - low_reviews
+            'duplicate' => 0,
+            'no_website'=> 0,
+            'low_seo'   => 0,
+            'saved'     => 0,
+        ];
+    }
+
+    private static function updateStats(array $stats, string $outcome): array
+    {
+        if ($outcome === 'franchise')  { $stats['franchise']++;  }
+        if ($outcome === 'duplicate')  { $stats['duplicate']++;  }
+        if ($outcome === 'no_website') { $stats['no_website']++; }
+        if ($outcome === 'low_seo')    { $stats['low_seo']++;    }
+        if ($outcome === 'saved')      { $stats['saved']++;      }
+
+        // 'filtered' = candidates that passed reviews/rating and dedup (had a website attempt)
+        if (in_array($outcome, ['no_website', 'low_seo', 'saved'], true)) {
+            $stats['filtered']++;
+        }
+
+        return $stats;
     }
 }

@@ -29,14 +29,25 @@ final class LeadEmailExtractor
     /**
      * Find the best email address on a business website.
      *
-     * @param  string $base_url Root URL of the website (scheme + domain)
+     * @param  string $base_url      Root URL of the website (scheme + domain)
+     * @param  string $homepage_html Already-fetched homepage HTML to avoid refetch
      * @return array{email: string, source: string, all_found: string[]}
      */
-    public static function extractEmail(string $base_url): array
+    public static function extractEmail(string $base_url, string $homepage_html = ''): array
     {
         $base_url = rtrim($base_url, '/');
 
-        $paths = ['', '/contact', '/contact-us', '/about', '/about-us'];
+        // Use pre-fetched homepage HTML first
+        if ($homepage_html) {
+            $emails = self::extractEmailsFromHtml($homepage_html);
+            if (!empty($emails)) {
+                return ['email' => self::pickBest($emails), 'source' => $base_url, 'all_found' => $emails];
+            }
+        }
+
+        $paths = $homepage_html
+            ? ['/contact', '/contact-us', '/about', '/about-us']
+            : ['', '/contact', '/contact-us', '/about', '/about-us'];
 
         foreach ($paths as $path) {
             $emails = self::fetchEmailsFromUrl($base_url . $path);
@@ -65,7 +76,12 @@ final class LeadEmailExtractor
         $code = (int)wp_remote_retrieve_response_code($response);
         if ($code < 200 || $code >= 400) return [];
 
-        $html   = wp_remote_retrieve_body($response);
+        $html = wp_remote_retrieve_body($response);
+        return self::extractEmailsFromHtml($html);
+    }
+
+    private static function extractEmailsFromHtml(string $html): array
+    {
         $emails = [];
 
         // 1. Extract from mailto: links first (most reliable)
