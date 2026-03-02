@@ -404,16 +404,28 @@ final class LeadFinderAdmin
                         wnqSetProgressLabel(`Combo ${i+1}/${combos.length}: queuing "${keyword}" in "${city}"…`);
 
                         // Phase 1: queue the search (Places API only — fast)
+                        // 90s hard timeout: worst case is 3 pages × 8s + 2 sleeps × 2s = 28s,
+                        // but give generous headroom for slow Google API responses.
                         let queueResp;
                         try {
+                            const qCtrl = new AbortController();
+                            const qTid  = setTimeout(() => qCtrl.abort(), 90000);
                             const fd = new FormData();
                             fd.append('action',      'wnq_lead_queue_search');
                             fd.append('nonce',       '<?php echo esc_js($nonce); ?>');
                             fd.append('keyword',     keyword);
                             fd.append('city',        city);
                             fd.append('max_results', maxResults);
-                            const r = await fetch(ajaxurl, { method:'POST', body: fd });
-                            queueResp = await r.json();
+                            const r = await fetch(ajaxurl, { method:'POST', body: fd, signal: qCtrl.signal });
+                            clearTimeout(qTid);
+                            const rawQ = await r.text();
+                            try {
+                                queueResp = JSON.parse(rawQ);
+                            } catch(je) {
+                                const preview = rawQ.replace(/<[^>]+>/g,'').trim().substring(0, 120);
+                                wnqShowError(`Phase 1 PHP error for "${keyword} | ${city}": ${preview || '(empty response)'}`);
+                                break;
+                            }
                         } catch(e) {
                             wnqShowError(`Network error queuing "${keyword} | ${city}": ${e.message}`);
                             break;
@@ -936,6 +948,10 @@ final class LeadFinderAdmin
      */
     public static function ajaxQueueSearch(): void
     {
+        // Phase 1 fetches up to 3 Pages API pages (8s each) + 2×2s sleeps = ~28s worst-case.
+        // Many shared hosts cap PHP at 30s — bump to 120s so pagination never gets killed.
+        @set_time_limit(120);
+
         if (!check_ajax_referer('wnq_lead_queue_search', 'nonce', false)) {
             wp_send_json_error(['message' => 'Security check failed — refresh the page and try again.']);
         }
@@ -957,7 +973,8 @@ final class LeadFinderAdmin
     /**
      * Phase 2 — Process next candidate: web-crawls exactly one Place result
      * from the queued batch. Called in a loop by the browser until done=true.
-     * Each call is self-contained with its own 90-second PHP time limit.
+     * Worst-case HTTP budget: 8s (Details) + 5s (homepage) + 4s (email) = 17s,
+     * comfortably inside any host's configured max_execution_time (30s+).
      */
     public static function ajaxProcessNext(): void
     {
