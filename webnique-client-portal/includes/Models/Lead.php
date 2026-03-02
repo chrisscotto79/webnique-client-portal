@@ -65,6 +65,48 @@ final class Lead
         dbDelta($sql);
     }
 
+    // ── Migration ───────────────────────────────────────────────────────────
+
+    /**
+     * Returns true if the table is missing columns added in v2 of the schema.
+     */
+    public static function tableNeedsMigration(): bool
+    {
+        global $wpdb;
+        $cols = $wpdb->get_col("DESCRIBE {$wpdb->prefix}wnq_leads", 0);
+        if (empty($cols)) return false; // table doesn't exist yet
+        return !in_array('owner_first', $cols, true);
+    }
+
+    /**
+     * ALTER TABLE to add any v2 columns that are missing on the existing table.
+     */
+    public static function runMigration(): void
+    {
+        global $wpdb;
+        $table    = $wpdb->prefix . 'wnq_leads';
+        $existing = $wpdb->get_col("DESCRIBE {$table}", 0);
+
+        $columns = [
+            'owner_first'      => "VARCHAR(100) NOT NULL DEFAULT '' AFTER industry",
+            'owner_last'       => "VARCHAR(100) NOT NULL DEFAULT '' AFTER owner_first",
+            'state'            => "VARCHAR(50)  NOT NULL DEFAULT '' AFTER city",
+            'zip'              => "VARCHAR(20)  NOT NULL DEFAULT '' AFTER state",
+            'social_facebook'  => "VARCHAR(500) NOT NULL DEFAULT '' AFTER review_count",
+            'social_instagram' => "VARCHAR(500) NOT NULL DEFAULT '' AFTER social_facebook",
+            'social_linkedin'  => "VARCHAR(500) NOT NULL DEFAULT '' AFTER social_instagram",
+            'social_twitter'   => "VARCHAR(500) NOT NULL DEFAULT '' AFTER social_linkedin",
+            'social_youtube'   => "VARCHAR(500) NOT NULL DEFAULT '' AFTER social_twitter",
+            'social_tiktok'    => "VARCHAR(500) NOT NULL DEFAULT '' AFTER social_youtube",
+        ];
+
+        foreach ($columns as $col => $definition) {
+            if (!in_array($col, $existing, true)) {
+                $wpdb->query("ALTER TABLE {$table} ADD COLUMN {$col} {$definition}");
+            }
+        }
+    }
+
     // ── Write Operations ────────────────────────────────────────────────────
 
     public static function insert(array $data): int
@@ -202,7 +244,11 @@ final class Lead
             $where[] = "email != ''";
         }
         if (!empty($args['has_owner'])) {
-            $where[] = "owner_first != ''";
+            // Guard: only add filter if column exists (old installs may not have it)
+            $cols_check = $wpdb->get_col("DESCRIBE {$table}", 0);
+            if (in_array('owner_first', $cols_check, true)) {
+                $where[] = "owner_first != ''";
+            }
         }
 
         $allowed_orderby = ['id', 'review_count', 'seo_score', 'rating', 'business_name', 'scraped_at', 'city', 'state'];
@@ -242,7 +288,12 @@ final class Lead
         if (!empty($args['status']))   { $where[] = 'status = %s';   $params[] = $args['status']; }
         if (isset($args['min_seo_score'])) { $where[] = 'seo_score >= %d'; $params[] = (int)$args['min_seo_score']; }
         if (!empty($args['has_email'])) { $where[] = "email != ''"; }
-        if (!empty($args['has_owner'])) { $where[] = "owner_first != ''"; }
+        if (!empty($args['has_owner'])) {
+            $cols_check = $wpdb->get_col("DESCRIBE {$table}", 0);
+            if (in_array('owner_first', $cols_check, true)) {
+                $where[] = "owner_first != ''";
+            }
+        }
 
         $where_sql = implode(' AND ', $where);
         $sql = "SELECT COUNT(*) FROM {$table} WHERE {$where_sql}";
@@ -253,7 +304,10 @@ final class Lead
     public static function getStats(): array
     {
         global $wpdb;
-        $t = $wpdb->prefix . 'wnq_leads';
+        $t    = $wpdb->prefix . 'wnq_leads';
+        $cols = $wpdb->get_col("DESCRIBE {$t}", 0);
+        $has_owner = in_array('owner_first', $cols, true);
+
         return [
             'total'      => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t}"),
             'new'        => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE status='new'"),
@@ -261,7 +315,9 @@ final class Lead
             'qualified'  => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE status='qualified'"),
             'closed'     => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE status='closed'"),
             'with_email' => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE email != ''"),
-            'with_owner' => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE owner_first != ''"),
+            'with_owner' => $has_owner
+                ? (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE owner_first != ''")
+                : 0,
         ];
     }
 
