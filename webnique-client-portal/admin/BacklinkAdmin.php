@@ -150,6 +150,11 @@ final class BacklinkAdmin
         /* Verify badge */
         .wnq-verify-ok  { color:#16a34a;font-size:10px;font-weight:700; }
         .wnq-verify-bad { color:#dc2626;font-size:10px;font-weight:700; }
+        /* Outreach send */
+        .wnq-sent-badge { color:#16a34a;font-size:10px;font-weight:700; }
+        .wnq-contact-inp { padding:4px 8px;border:1px solid #d1d5db;border-radius:5px;font-size:11px;width:160px; }
+        .wnq-bl-btn-send { background:#0ea5e9;color:#fff; }
+        .wnq-bl-btn-send:hover { background:#0284c7; }
         </style>
 
         <div class="wnq-bl-header">
@@ -357,6 +362,30 @@ final class BacklinkAdmin
             window.blCopyEmail = function(idx) {
                 const box = document.querySelector('#opp-email-' + idx + ' .wnq-email-box');
                 if (box) navigator.clipboard.writeText(box.textContent);
+            };
+
+            // Save contact email on blur
+            document.querySelectorAll('.bl-contact-email').forEach(function(inp) {
+                let orig = inp.value;
+                inp.addEventListener('blur', function() {
+                    if (this.value === orig) return;
+                    orig = this.value;
+                    blAjax({ sub_action: 'save_contact_email', link_id: this.dataset.id, contact_email: this.value }, function() {});
+                });
+            });
+
+            // Send outreach email via wp_mail
+            window.blSendEmail = function(id, btn) {
+                const inp = document.querySelector('.bl-contact-email[data-id="' + id + '"]');
+                const to  = inp ? inp.value.trim() : '';
+                if (!to) { alert('Enter a recipient email address first.'); return; }
+                if (!confirm('Send outreach email to ' + to + '?')) return;
+                btn.textContent = 'Sending\u2026';
+                blAjax({ sub_action: 'send_email', link_id: id, contact_email: to }, function() {
+                    btn.textContent = 'Resend';
+                    const badge = document.getElementById('bl-sent-' + id);
+                    if (badge) { badge.textContent = '\u2713 Sent'; badge.style.display = ''; }
+                }, btn);
             };
 
             // Verify all links
@@ -615,7 +644,19 @@ final class BacklinkAdmin
                             </button>
                             <div id="bl-email-<?php echo (int)$row['id']; ?>" style="display:<?php echo $row['outreach_email'] ? '' : 'none'; ?>;margin-top:6px;">
                                 <div class="wnq-email-box"><?php echo esc_html($row['outreach_email'] ?? ''); ?></div>
-                                <button class="wnq-bl-btn wnq-bl-btn-secondary wnq-bl-btn-sm" style="margin-top:4px;" onclick="navigator.clipboard.writeText(document.querySelector('#bl-email-<?php echo (int)$row['id']; ?> .wnq-email-box').textContent)">Copy</button>
+                                <div style="display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap;">
+                                    <button class="wnq-bl-btn wnq-bl-btn-secondary wnq-bl-btn-sm" onclick="navigator.clipboard.writeText(document.querySelector('#bl-email-<?php echo (int)$row['id']; ?> .wnq-email-box').textContent)">Copy</button>
+                                    <input type="email" class="bl-contact-email wnq-contact-inp" data-id="<?php echo (int)$row['id']; ?>"
+                                           value="<?php echo esc_attr($row['contact_email'] ?? ''); ?>" placeholder="Recipient email…">
+                                    <button class="wnq-bl-btn wnq-bl-btn-send wnq-bl-btn-sm" onclick="blSendEmail(<?php echo (int)$row['id']; ?>, this)">
+                                        <?php echo $row['outreach_sent_at'] ? 'Resend' : 'Send'; ?>
+                                    </button>
+                                    <?php if ($row['outreach_sent_at']): ?>
+                                        <span class="wnq-sent-badge" id="bl-sent-<?php echo (int)$row['id']; ?>">&#10003; Sent <?php echo esc_html(date('M j', strtotime($row['outreach_sent_at']))); ?></span>
+                                    <?php else: ?>
+                                        <span class="wnq-sent-badge" id="bl-sent-<?php echo (int)$row['id']; ?>" style="display:none;"></span>
+                                    <?php endif; ?>
+                                </div>
                             </div>
                         </td>
                         <td>
@@ -659,7 +700,7 @@ final class BacklinkAdmin
             <div style="overflow-x:auto;">
             <table class="wnq-bl-tbl">
                 <thead><tr>
-                    <th>Site</th><th>Type</th><th>DA</th><th>Status</th><th>Submitted</th><th>Last Verified</th><th>Notes</th><th></th>
+                    <th>Site</th><th>Type</th><th>DA</th><th>Status</th><th>Submitted</th><th>Last Verified</th><th>Outreach</th><th>Notes</th><th></th>
                 </tr></thead>
                 <tbody>
                 <?php foreach ($links as $row):
@@ -694,6 +735,26 @@ final class BacklinkAdmin
                                 <?php endif; ?>
                             <?php else: ?>
                                 <span style="color:#9ca3af;">—</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <?php if ($row['outreach_email']): ?>
+                                <div style="display:flex;flex-direction:column;gap:4px;">
+                                    <input type="email" class="bl-contact-email wnq-contact-inp" data-id="<?php echo (int)$row['id']; ?>"
+                                           value="<?php echo esc_attr($row['contact_email'] ?? ''); ?>" placeholder="Recipient email…">
+                                    <div style="display:flex;align-items:center;gap:5px;">
+                                        <button class="wnq-bl-btn wnq-bl-btn-send wnq-bl-btn-sm" onclick="blSendEmail(<?php echo (int)$row['id']; ?>, this)">
+                                            <?php echo $row['outreach_sent_at'] ? 'Resend' : 'Send'; ?>
+                                        </button>
+                                        <?php if ($row['outreach_sent_at']): ?>
+                                            <span class="wnq-sent-badge" id="bl-sent-<?php echo (int)$row['id']; ?>">&#10003; <?php echo esc_html(date('M j', strtotime($row['outreach_sent_at']))); ?></span>
+                                        <?php else: ?>
+                                            <span class="wnq-sent-badge" id="bl-sent-<?php echo (int)$row['id']; ?>" style="display:none;"></span>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                            <?php else: ?>
+                                <span style="color:#9ca3af;font-size:10px;">—</span>
                             <?php endif; ?>
                         </td>
                         <td>
@@ -824,6 +885,41 @@ final class BacklinkAdmin
                 }
 
                 wp_send_json_success(['opportunities' => is_array($opps) ? $opps : []]);
+
+            case 'save_contact_email':
+                $contact_email = sanitize_email($_POST['contact_email'] ?? '');
+                BacklinkManager::update($link_id, ['contact_email' => $contact_email]);
+                wp_send_json_success();
+
+            case 'send_email':
+                if (!$client_id) { wp_send_json_error(['message' => 'No client']); }
+                $row = BacklinkManager::getById($link_id);
+                if (!$row) { wp_send_json_error(['message' => 'Link not found']); }
+                if (empty($row['outreach_email'])) {
+                    wp_send_json_error(['message' => 'No email draft — generate one first.']);
+                }
+                $to = sanitize_email($_POST['contact_email'] ?? '');
+                if (!$to || !is_email($to)) {
+                    wp_send_json_error(['message' => 'Enter a valid recipient email address.']);
+                }
+                // Persist contact email if new
+                if (($row['contact_email'] ?? '') !== $to) {
+                    BacklinkManager::update($link_id, ['contact_email' => $to]);
+                }
+                $sender_client = Client::getByClientId($client_id);
+                $from_name     = $sender_client['company'] ?? get_bloginfo('name') ?: 'WebNique';
+                $headers       = [
+                    'Content-Type: text/plain; charset=UTF-8',
+                    'From: ' . $from_name . ' <chris@web-nique.com>',
+                    'Reply-To: chris@web-nique.com',
+                ];
+                $subject = 'Link Building Opportunity — ' . $from_name;
+                $sent    = wp_mail($to, $subject, $row['outreach_email'], $headers);
+                if (!$sent) {
+                    wp_send_json_error(['message' => 'Email failed to send. Check WordPress mail settings.']);
+                }
+                BacklinkManager::update($link_id, ['outreach_sent_at' => current_time('mysql')]);
+                wp_send_json_success(['sent' => true]);
 
             case 'verify_all':
                 if (!$client_id) { wp_send_json_error(['message' => 'No client']); }

@@ -45,8 +45,10 @@ final class BacklinkManager
             status          varchar(30) DEFAULT 'pending'
                             COMMENT 'pending|submitted|live|rejected|lost',
             notes           text DEFAULT NULL,
-            outreach_email  longtext DEFAULT NULL
-                            COMMENT 'AI-generated outreach email body',
+            outreach_email   longtext DEFAULT NULL
+                             COMMENT 'AI-generated outreach email body',
+            contact_email    varchar(255) DEFAULT NULL
+                             COMMENT 'Recipient email for outreach send',
             outreach_sent_at datetime DEFAULT NULL,
             submitted_at    datetime DEFAULT NULL,
             verified_at     datetime DEFAULT NULL,

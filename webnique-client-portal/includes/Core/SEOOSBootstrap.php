@@ -54,6 +54,9 @@ final class SEOOSBootstrap
         // Create backlink manager table if not yet created
         \WNQ\Models\BacklinkManager::createTable();
 
+        // Migrate backlink table for existing installs (adds contact_email etc.)
+        self::maybeMigrateBacklinkSchema();
+
         // Register REST API routes for SEO Agent
         add_action('rest_api_init', function () {
             \WNQ\Controllers\SEOAgentController::registerRoutes();
@@ -741,6 +744,33 @@ final class SEOOSBootstrap
         }
 
         update_option('wnq_seohub_schema_ver', '1');
+    }
+
+    private static function maybeMigrateBacklinkSchema(): void
+    {
+        global $wpdb;
+
+        if (get_option('wnq_backlink_schema_ver', '0') === '1') {
+            return;
+        }
+
+        $t = $wpdb->prefix . 'wnq_backlinks';
+
+        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $t)) !== $t) {
+            update_option('wnq_backlink_schema_ver', '1');
+            return;
+        }
+
+        if (!$wpdb->get_row("SHOW COLUMNS FROM `{$t}` LIKE 'contact_email'")) {
+            $wpdb->query(
+                "ALTER TABLE `{$t}`
+                 ADD COLUMN `contact_email` varchar(255) DEFAULT NULL
+                            COMMENT 'Recipient email for outreach send'
+                            AFTER `outreach_email`"
+            );
+        }
+
+        update_option('wnq_backlink_schema_ver', '1');
     }
 
     // ── Table Creation (called on activation) ──────────────────────────────
