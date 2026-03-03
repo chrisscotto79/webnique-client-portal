@@ -37,6 +37,7 @@ final class SEOOSBootstrap
             \WNQ\Admin\BlogSchedulerAdmin::register();
             \WNQ\Admin\SpiderAdmin::register();
             \WNQ\Admin\LeadFinderAdmin::register();
+            \WNQ\Admin\BacklinkAdmin::register();
             // Register get_job ajax handler
             add_action('wp_ajax_wnq_seohub_get_job', [self::class, 'ajaxGetJob']);
         }
@@ -49,6 +50,9 @@ final class SEOOSBootstrap
 
         // Create lead finder table if not yet created
         \WNQ\Models\Lead::createTable();
+
+        // Create backlink manager table if not yet created
+        \WNQ\Models\BacklinkManager::createTable();
 
         // Register REST API routes for SEO Agent
         add_action('rest_api_init', function () {
@@ -93,6 +97,9 @@ final class SEOOSBootstrap
             'includes/Services/LeadEmailExtractor.php',
             'includes/Services/LeadEnrichmentService.php',
             'includes/Services/LeadFinderEngine.php',
+            // Backlink Manager
+            'includes/Models/BacklinkManager.php',
+            'includes/Services/BacklinkVerifier.php',
             // Controllers & Core
             'includes/Controllers/SEOAgentController.php',
             'includes/Core/CronScheduler.php',
@@ -101,6 +108,7 @@ final class SEOOSBootstrap
             'admin/BlogSchedulerAdmin.php',
             'admin/SpiderAdmin.php',
             'admin/LeadFinderAdmin.php',
+            'admin/BacklinkAdmin.php',
         ];
 
         foreach ($files as $f) {
