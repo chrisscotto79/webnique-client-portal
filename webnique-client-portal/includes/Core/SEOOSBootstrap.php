@@ -44,6 +44,9 @@ final class SEOOSBootstrap
         // Create blog tables if not yet created (schema migration for existing installs)
         self::maybeCreateBlogTables();
 
+        // Migrate SEOHub tables for existing installs (adds period_start/period_end etc.)
+        self::maybeMigrateSEOHubSchema();
+
         // Create lead finder table if not yet created
         \WNQ\Models\Lead::createTable();
 
@@ -684,6 +687,52 @@ final class SEOOSBootstrap
 
             update_option('wnq_blog_schema_ver', '2');
         }
+    }
+
+    // ── SEOHub Schema Migration (runs on every init, skipped after v1) ────────
+    //
+    // Problem: SEOHub::createTables() is only called on plugin activation.
+    // When new columns were added to wp_wnq_seo_reports (period_start,
+    // period_end) existing installs never received them because dbDelta() wasn't
+    // re-run.  This method fixes that with an explicit ALTER TABLE, same pattern
+    // used by maybeCreateBlogTables() above.
+
+    private static function maybeMigrateSEOHubSchema(): void
+    {
+        global $wpdb;
+
+        // Cheap option-based gate — once at '1' we skip the SHOW COLUMNS query.
+        if (get_option('wnq_seohub_schema_ver', '0') === '1') {
+            return;
+        }
+
+        $t = $wpdb->prefix . 'wnq_seo_reports';
+
+        // Guard: table may not exist at all on a fresh install (createTables handles that).
+        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $t)) !== $t) {
+            update_option('wnq_seohub_schema_ver', '1');
+            return;
+        }
+
+        // Add period_start if missing (period_end always comes with it).
+        if (!$wpdb->get_row("SHOW COLUMNS FROM `{$t}` LIKE 'period_start'")) {
+            $wpdb->query(
+                "ALTER TABLE `{$t}`
+                 ADD COLUMN `period_start` date NOT NULL DEFAULT '2024-01-01' AFTER `report_type`,
+                 ADD COLUMN `period_end`   date NOT NULL DEFAULT '2024-01-31' AFTER `period_start`,
+                 ADD INDEX  `period_start` (`period_start`)"
+            );
+        }
+
+        // Add exported_at if missing (added in a later release).
+        if (!$wpdb->get_row("SHOW COLUMNS FROM `{$t}` LIKE 'exported_at'")) {
+            $wpdb->query(
+                "ALTER TABLE `{$t}`
+                 ADD COLUMN `exported_at` datetime DEFAULT NULL AFTER `generated_at`"
+            );
+        }
+
+        update_option('wnq_seohub_schema_ver', '1');
     }
 
     // ── Table Creation (called on activation) ──────────────────────────────
