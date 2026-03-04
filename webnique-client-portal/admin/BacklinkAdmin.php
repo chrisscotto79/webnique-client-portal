@@ -453,90 +453,169 @@ final class BacklinkAdmin
                 });
             });
 
-            // ── Run Outreach Campaign ────────────────────────────────────────
+            // ── Run Outreach Campaign (3-phase: generate → select → run) ────
             const runCampaignBtn = document.getElementById('bl-run-campaign');
             runCampaignBtn && runCampaignBtn.addEventListener('click', function() {
-                const overlay = document.getElementById('bl-campaign-overlay');
-                const log     = document.getElementById('bl-campaign-log');
-                const bar     = document.getElementById('bl-campaign-bar');
-                const status  = document.getElementById('bl-campaign-status');
+                const overlay     = document.getElementById('bl-campaign-overlay');
+                const phaseGen    = document.getElementById('bl-camp-phase-gen');
+                const phaseSelect = document.getElementById('bl-camp-phase-select');
+                const phaseRun    = document.getElementById('bl-camp-phase-run');
+                const oppList     = document.getElementById('bl-camp-opp-list');
+                const runBtn      = document.getElementById('bl-camp-run-btn');
+                const selectAll   = document.getElementById('bl-camp-select-all');
+                const title       = document.getElementById('bl-camp-title');
 
-                overlay.style.display = 'block';
-                log.innerHTML         = '';
-                bar.style.width       = '0%';
-                status.textContent    = 'Starting campaign…';
-                runCampaignBtn.disabled     = true;
-                runCampaignBtn.textContent  = 'Running…';
+                // Reset to phase 1
+                overlay.style.display  = 'block';
+                phaseGen.style.display    = '';
+                phaseSelect.style.display = 'none';
+                phaseRun.style.display    = 'none';
+                title.textContent         = '🚀 Outreach Campaign';
+                runCampaignBtn.disabled   = true;
 
-                blAjax({ sub_action: 'campaign_start' }, function(d) {
-                    const ids   = d.ids   || [];
-                    const total = d.total || 0;
+                // ── Phase 1: Generate opportunities ──────────────────────────
+                blAjax({ sub_action: 'generate_opps' }, function(d) {
+                    const opps = d.opportunities || [];
 
-                    if (!total) {
-                        status.textContent      = 'No pending opportunities to process. Add some on this tab first.';
-                        bar.style.width         = '100%';
+                    if (!opps.length) {
+                        phaseGen.innerHTML = '<p style="color:#dc2626;padding:10px;font-size:13px;">No opportunities returned — check your AI settings.</p>';
                         runCampaignBtn.disabled = false;
-                        runCampaignBtn.textContent = '🚀 Run Outreach Campaign';
                         return;
                     }
 
-                    status.textContent = 'Found ' + total + ' opportunit' + (total === 1 ? 'y' : 'ies') + ' to process…';
-                    let done = 0;
+                    // ── Phase 2: Show checkboxes ──────────────────────────────
+                    oppList.innerHTML = '';
+                    opps.forEach(function(opp, i) {
+                        const row = document.createElement('label');
+                        row.style.cssText = 'display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-bottom:1px solid #f3f4f6;cursor:pointer;';
+                        row.innerHTML =
+                            '<input type="checkbox" class="bl-camp-cb" data-idx="' + i + '" style="margin-top:3px;flex-shrink:0;" checked>' +
+                            '<div style="font-size:12px;line-height:1.5;">' +
+                                '<span class="wnq-opp-type">' + esc(opp.type) + '</span>&nbsp;' +
+                                '<strong>' + esc(opp.description) + '</strong>' +
+                                '<div style="color:#6b7280;margin-top:2px;">' + esc(opp.value) + '</div>' +
+                                '<div style="font-family:monospace;font-size:10px;color:#7c3aed;margin-top:3px;">🔍 ' + esc(opp.search_query) + '</div>' +
+                            '</div>';
+                        oppList.appendChild(row);
+                    });
 
-                    function processNext() {
-                        if (done >= ids.length) {
-                            const sentCount = log.querySelectorAll('[data-ok="1"]').length;
-                            status.textContent      = '✅ Campaign complete! ' + sentCount + ' email' + (sentCount === 1 ? '' : 's') + ' sent out of ' + total + ' opportunities.';
-                            bar.style.width         = '100%';
-                            runCampaignBtn.disabled = false;
-                            runCampaignBtn.textContent = '🚀 Run Outreach Campaign';
-                            return;
-                        }
+                    function updateCount() {
+                        const n = oppList.querySelectorAll('.bl-camp-cb:checked').length;
+                        runBtn.textContent = 'Save & Run Outreach (' + n + ')';
+                        runBtn.disabled    = n === 0;
+                    }
+                    oppList.querySelectorAll('.bl-camp-cb').forEach(function(cb) {
+                        cb.addEventListener('change', updateCount);
+                    });
+                    selectAll.checked = true;
+                    selectAll.onchange = function() {
+                        oppList.querySelectorAll('.bl-camp-cb').forEach(function(cb) { cb.checked = selectAll.checked; });
+                        updateCount();
+                    };
+                    updateCount();
 
-                        const id  = ids[done];
-                        const pct = Math.round((done / total) * 100);
-                        bar.style.width    = pct + '%';
-                        status.textContent = 'Processing ' + (done + 1) + ' of ' + total + '…';
+                    phaseGen.style.display    = 'none';
+                    phaseSelect.style.display = '';
+                    runCampaignBtn.disabled   = false;
 
-                        fetch(ajaxurl, {
-                            method: 'POST',
-                            body: new URLSearchParams({
-                                action:     'wnq_backlink',
-                                nonce:      nonce,
-                                client_id:  clientId,
-                                sub_action: 'campaign_process_one',
-                                link_id:    id,
-                            })
-                        })
-                        .then(function(r) { return r.json(); })
-                        .then(function(resp) {
-                            const r   = resp.data || {};
-                            const ok  = resp.success && r.success;
-                            const li  = document.createElement('div');
-                            li.style.cssText = 'padding:5px 0;border-bottom:1px solid #f3f4f6;font-size:12px;line-height:1.5;';
-                            if (ok) {
-                                li.setAttribute('data-ok', '1');
-                                li.innerHTML = '<span style="color:#16a34a;font-weight:700;">✓</span> <strong>' + esc(r.domain) + '</strong> → ' + esc(r.contact_email) + ' — <em>email sent</em>';
-                            } else {
-                                li.innerHTML = '<span style="color:#dc2626;font-weight:700;">✗</span> <strong>' + esc(r.domain || '#' + id) + '</strong> — ' + esc(r.message || 'Failed');
-                            }
+                    // ── Phase 3: Save selected + run outreach ─────────────────
+                    runBtn.onclick = function() {
+                        const selected = [];
+                        oppList.querySelectorAll('.bl-camp-cb:checked').forEach(function(cb) {
+                            selected.push(opps[parseInt(cb.dataset.idx)]);
+                        });
+                        if (!selected.length) return;
+
+                        phaseSelect.style.display = 'none';
+                        phaseRun.style.display    = '';
+                        title.textContent          = '🚀 Campaign Running…';
+                        runCampaignBtn.disabled    = true;
+
+                        const bar    = document.getElementById('bl-campaign-bar');
+                        const status = document.getElementById('bl-campaign-status');
+                        const log    = document.getElementById('bl-campaign-log');
+                        bar.style.width    = '0%';
+                        log.innerHTML      = '';
+                        status.textContent = 'Starting…';
+
+                        let done = 0;
+                        const total = selected.length;
+
+                        function logResult(ok, label, msg) {
+                            const li = document.createElement('div');
+                            li.style.cssText = 'padding:6px 0;border-bottom:1px solid #f3f4f6;font-size:12px;line-height:1.5;';
+                            if (ok) li.setAttribute('data-ok', '1');
+                            li.innerHTML =
+                                (ok ? '<span style="color:#16a34a;font-weight:700;">✓</span>' : '<span style="color:#dc2626;font-weight:700;">✗</span>') +
+                                ' <strong>' + esc(label) + '</strong>' + (msg ? ' — ' + esc(msg) : '');
                             log.appendChild(li);
                             log.scrollTop = log.scrollHeight;
-                            done++;
-                            // Small delay between calls to be polite to mail server
-                            setTimeout(processNext, 800);
-                        })
-                        .catch(function() {
-                            const li = document.createElement('div');
-                            li.style.cssText = 'padding:5px 0;font-size:12px;color:#dc2626;';
-                            li.textContent   = '✗ Network error on link #' + id;
-                            log.appendChild(li);
-                            done++;
-                            setTimeout(processNext, 800);
-                        });
-                    }
+                        }
 
-                    processNext();
+                        function processNext() {
+                            if (done >= total) {
+                                const sent = log.querySelectorAll('[data-ok="1"]').length;
+                                status.textContent    = '✅ Done! ' + sent + ' email' + (sent === 1 ? '' : 's') + ' sent out of ' + total + ' selected.';
+                                bar.style.width       = '100%';
+                                title.textContent     = '🚀 Campaign Complete';
+                                runCampaignBtn.disabled = false;
+                                return;
+                            }
+
+                            const opp   = selected[done];
+                            const label = opp.description || opp.type;
+                            bar.style.width    = Math.round((done / total) * 100) + '%';
+                            status.textContent = '(' + (done + 1) + '/' + total + ') ' + label + '…';
+
+                            // Derive a slug domain from the description for the DB record
+                            const slug = (opp.description || opp.type).toLowerCase()
+                                .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 60);
+
+                            // Step 1: Save opportunity to DB
+                            fetch(ajaxurl, {
+                                method: 'POST',
+                                body: new URLSearchParams({
+                                    action: 'wnq_backlink', nonce: nonce, client_id: clientId,
+                                    sub_action: 'add_link',
+                                    link_type:     opp.type || 'guest_post',
+                                    target_domain: slug,
+                                    site_name:     opp.description || '',
+                                    submission_url: '',
+                                })
+                            })
+                            .then(function(r) { return r.json(); })
+                            .then(function(r1) {
+                                if (!r1.success || !r1.data || !r1.data.link_id) {
+                                    logResult(false, label, 'Could not save to tracker');
+                                    done++; setTimeout(processNext, 400); return;
+                                }
+                                // Step 2: Run full outreach pipeline
+                                return fetch(ajaxurl, {
+                                    method: 'POST',
+                                    body: new URLSearchParams({
+                                        action: 'wnq_backlink', nonce: nonce, client_id: clientId,
+                                        sub_action: 'campaign_process_one',
+                                        link_id: r1.data.link_id,
+                                    })
+                                });
+                            })
+                            .then(function(r) { return r && r.json(); })
+                            .then(function(r2) {
+                                if (!r2) return;
+                                const ok = r2.success && r2.data && r2.data.success;
+                                const d2 = r2.data || {};
+                                logResult(ok, label, ok ? ('Email sent to ' + d2.contact_email) : (d2.message || 'No contact email found — saved to tracker'));
+                                done++; setTimeout(processNext, 800);
+                            })
+                            .catch(function() {
+                                logResult(false, label, 'Network error');
+                                done++; setTimeout(processNext, 400);
+                            });
+                        }
+
+                        processNext();
+                    };
+
                 }, runCampaignBtn);
             });
 
@@ -715,15 +794,39 @@ final class BacklinkAdmin
         ]);
         $non_citations = array_filter($opportunities, fn($r) => $r['link_type'] !== 'citation');
         ?>
-        <?php /* ── Campaign progress overlay ── */ ?>
+        <?php /* ── Campaign overlay (3-phase: generating → select → running) ── */ ?>
         <div class="wnq-campaign-overlay" id="bl-campaign-overlay">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <h3 style="margin:0;font-size:15px;font-weight:700;color:#15803d;">🚀 Outreach Campaign Running</h3>
-                <button class="wnq-bl-btn wnq-bl-btn-secondary wnq-bl-btn-sm" id="bl-campaign-close">Close &amp; Refresh</button>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                <h3 id="bl-camp-title" style="margin:0;font-size:15px;font-weight:700;color:#15803d;">🚀 Outreach Campaign</h3>
+                <button class="wnq-bl-btn wnq-bl-btn-secondary wnq-bl-btn-sm" id="bl-campaign-close">✕ Close</button>
             </div>
-            <div class="wnq-campaign-bar-wrap"><div class="wnq-campaign-bar" id="bl-campaign-bar"></div></div>
-            <p id="bl-campaign-status" style="margin:4px 0;font-size:12px;color:#374151;"></p>
-            <div class="wnq-campaign-log" id="bl-campaign-log"></div>
+
+            <?php /* Phase 1: AI generating */ ?>
+            <div id="bl-camp-phase-gen" style="padding:24px;text-align:center;">
+                <span class="wnq-bl-spin" style="width:22px;height:22px;border-width:3px;display:inline-block;"></span>
+                <p style="margin:12px 0 0;color:#374151;font-size:13px;">Generating link-building opportunities with AI…</p>
+            </div>
+
+            <?php /* Phase 2: Select which to run */ ?>
+            <div id="bl-camp-phase-select" style="display:none;">
+                <p style="margin:0 0 10px;font-size:12px;color:#6b7280;">
+                    Select the opportunities you want to pursue. For each one, we'll scrape the target site for a contact email, write a personalised outreach email with AI, send it, and mark it submitted — automatically.
+                </p>
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                    <label style="font-size:12px;cursor:pointer;color:#374151;display:flex;align-items:center;gap:5px;">
+                        <input type="checkbox" id="bl-camp-select-all" checked> Select / deselect all
+                    </label>
+                </div>
+                <div id="bl-camp-opp-list" style="max-height:320px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px;"></div>
+                <button class="wnq-bl-btn wnq-bl-btn-go" id="bl-camp-run-btn" style="min-width:180px;">Save &amp; Run Outreach (0)</button>
+            </div>
+
+            <?php /* Phase 3: Running progress */ ?>
+            <div id="bl-camp-phase-run" style="display:none;">
+                <div class="wnq-campaign-bar-wrap"><div class="wnq-campaign-bar" id="bl-campaign-bar"></div></div>
+                <p id="bl-campaign-status" style="margin:6px 0 10px;font-size:12px;color:#374151;font-weight:600;"></p>
+                <div class="wnq-campaign-log" id="bl-campaign-log"></div>
+            </div>
         </div>
 
         <div class="wnq-bl-card">
@@ -731,12 +834,12 @@ final class BacklinkAdmin
                 <div>
                     <h3 style="margin:0 0 4px;">AI-Generated Opportunities</h3>
                     <p style="margin:0;font-size:12px;color:#6b7280;">
-                        AI analyzes the client's industry, services, and location to generate 8 targeted link-building ideas — each with a Google search query and an outreach email.
+                        Click <strong>Run Outreach Campaign</strong> to generate opportunities, pick the ones you want, and automatically send personalised outreach emails.
                     </p>
                 </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <button class="wnq-bl-btn wnq-bl-btn-go" id="bl-run-campaign" title="Automatically scrape emails, generate outreach, send, and mark submitted for all pending opportunities">🚀 Run Outreach Campaign</button>
-                    <button class="wnq-bl-btn wnq-bl-btn-primary" id="bl-gen-opps">Generate Opportunities</button>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                    <button class="wnq-bl-btn wnq-bl-btn-secondary" id="bl-gen-opps" title="Preview AI opportunities without running outreach">Preview Opportunities</button>
+                    <button class="wnq-bl-btn wnq-bl-btn-go" id="bl-run-campaign">🚀 Run Outreach Campaign</button>
                 </div>
             </div>
             <div id="bl-opps-wrap" style="margin-top:16px;"></div>
