@@ -461,7 +461,7 @@ final class BacklinkAdmin
                 const bar     = document.getElementById('bl-campaign-bar');
                 const status  = document.getElementById('bl-campaign-status');
 
-                overlay.style.display = '';
+                overlay.style.display = 'block';
                 log.innerHTML         = '';
                 bar.style.width       = '0%';
                 status.textContent    = 'Starting campaign…';
