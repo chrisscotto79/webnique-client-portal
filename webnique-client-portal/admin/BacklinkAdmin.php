@@ -490,11 +490,12 @@ final class BacklinkAdmin
                         row.style.cssText = 'display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-bottom:1px solid #f3f4f6;cursor:pointer;';
                         row.innerHTML =
                             '<input type="checkbox" class="bl-camp-cb" data-idx="' + i + '" style="margin-top:3px;flex-shrink:0;" checked>' +
-                            '<div style="font-size:12px;line-height:1.5;">' +
-                                '<span class="wnq-opp-type">' + esc(opp.type) + '</span>&nbsp;' +
-                                '<strong>' + esc(opp.description) + '</strong>' +
-                                '<div style="color:#6b7280;margin-top:2px;">' + esc(opp.value) + '</div>' +
-                                '<div style="font-family:monospace;font-size:10px;color:#7c3aed;margin-top:3px;">🔍 ' + esc(opp.search_query) + '</div>' +
+                            '<div style="font-size:12px;line-height:1.5;flex:1;">' +
+                                '<span class="wnq-opp-type">' + esc(opp.type || 'guest_post') + '</span>&nbsp;' +
+                                '<strong>' + esc(opp.site_name || opp.domain || '') + '</strong>' +
+                                (opp.domain ? ' <span style="color:#7c3aed;font-family:monospace;font-size:10px;">(' + esc(opp.domain) + ')</span>' : '') +
+                                '<div style="color:#6b7280;margin-top:2px;">' + esc(opp.pitch || opp.value || '') + '</div>' +
+                                (opp.contact_email ? '<div style="color:#16a34a;font-size:10px;margin-top:2px;">✉ ' + esc(opp.contact_email) + '</div>' : '') +
                             '</div>';
                         oppList.appendChild(row);
                     });
@@ -563,23 +564,20 @@ final class BacklinkAdmin
                             }
 
                             const opp   = selected[done];
-                            const label = opp.description || opp.type;
+                            const label = opp.site_name || opp.domain || opp.type;
                             bar.style.width    = Math.round((done / total) * 100) + '%';
                             status.textContent = '(' + (done + 1) + '/' + total + ') ' + label + '…';
 
-                            // Derive a slug domain from the description for the DB record
-                            const slug = (opp.description || opp.type).toLowerCase()
-                                .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').substring(0, 60);
-
-                            // Step 1: Save opportunity to DB
+                            // Step 1: Save opportunity to DB with real domain + AI-suggested contact email
                             fetch(ajaxurl, {
                                 method: 'POST',
                                 body: new URLSearchParams({
                                     action: 'wnq_backlink', nonce: nonce, client_id: clientId,
-                                    sub_action: 'add_link',
+                                    sub_action:    'add_link',
                                     link_type:     opp.type || 'guest_post',
-                                    target_domain: slug,
-                                    site_name:     opp.description || '',
+                                    target_domain: opp.domain || opp.site_name || '',
+                                    site_name:     opp.site_name || '',
+                                    contact_email: opp.contact_email || '',
                                     submission_url: '',
                                 })
                             })
@@ -1143,12 +1141,14 @@ final class BacklinkAdmin
                 if (!$client_id) { wp_send_json_error(['message' => 'No client']); }
                 $domain = sanitize_text_field($_POST['target_domain'] ?? '');
                 if (!$domain) { wp_send_json_error(['message' => 'Domain required']); }
+                $contact_email = sanitize_email($_POST['contact_email'] ?? '');
                 $new_id = BacklinkManager::insert([
                     'client_id'      => $client_id,
                     'link_type'      => sanitize_key($_POST['link_type'] ?? 'guest_post'),
                     'target_domain'  => $domain,
                     'site_name'      => sanitize_text_field($_POST['site_name'] ?? ''),
                     'submission_url' => esc_url_raw($_POST['submission_url'] ?? ''),
+                    'contact_email'  => $contact_email ?: null,
                     'status'         => 'pending',
                 ]);
                 wp_send_json_success(['link_id' => $new_id]);
@@ -1193,7 +1193,7 @@ final class BacklinkAdmin
                     'website'       => $client['website'] ?? '',
                     'services'      => implode(', ', array_slice((array)$services, 0, 3)),
                     'location'      => $locs[0] ?? 'local area',
-                ], $client_id, ['max_tokens' => 800, 'cache_ttl' => 0]);
+                ], $client_id, ['max_tokens' => 1200, 'cache_ttl' => 0]);
 
                 if (!$result['success']) {
                     wp_send_json_error(['message' => $result['error'] ?? 'AI generation failed']);
