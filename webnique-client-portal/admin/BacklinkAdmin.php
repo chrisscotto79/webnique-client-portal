@@ -437,8 +437,8 @@ final class BacklinkAdmin
         $seeded    = count($citations);
 
         // NAP data from profile / client
-        $services_raw = $profile ? json_decode($profile['primary_services'] ?? '[]', true) : [];
-        $locs_raw     = $profile ? json_decode($profile['service_locations'] ?? '[]', true) : [];
+        $services_raw = $profile ? (array)($profile['primary_services'] ?? []) : [];
+        $locs_raw     = $profile ? (array)($profile['service_locations'] ?? []) : [];
         $nap = [
             'Business Name' => $client['company'] ?? '',
             'Website'       => $client['website'] ?? '',
@@ -834,8 +834,8 @@ final class BacklinkAdmin
                 if (!$client_id) { wp_send_json_error(['message' => 'No client']); }
                 $profile  = SEOHub::getProfile($client_id);
                 $client   = Client::getByClientId($client_id);
-                $services = json_decode($profile['primary_services'] ?? '[]', true);
-                $locs     = json_decode($profile['service_locations'] ?? '[]', true);
+                $services = (array)($profile['primary_services'] ?? []);
+                $locs     = (array)($profile['service_locations'] ?? []);
 
                 $result = AIEngine::generate('backlink_outreach_email', [
                     'business_name' => $client['company'] ?? $client_id,
@@ -862,8 +862,8 @@ final class BacklinkAdmin
                 @set_time_limit(60);
                 $profile  = SEOHub::getProfile($client_id);
                 $client   = Client::getByClientId($client_id);
-                $services = json_decode($profile['primary_services'] ?? '[]', true);
-                $locs     = json_decode($profile['service_locations'] ?? '[]', true);
+                $services = (array)($profile['primary_services'] ?? []);
+                $locs     = (array)($profile['service_locations'] ?? []);
 
                 $result = AIEngine::generate('backlink_opportunities', [
                     'business_name' => $client['company'] ?? $client_id,
