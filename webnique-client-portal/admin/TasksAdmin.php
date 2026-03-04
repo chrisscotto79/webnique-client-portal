@@ -76,6 +76,9 @@ final class TasksAdmin
         }
 
         switch ($view) {
+            case 'schedule':
+                self::renderScheduleView();
+                break;
             case 'calendar':
                 self::renderCalendarView();
                 break;
@@ -184,6 +187,9 @@ final class TasksAdmin
                 </a>
                 <a href="<?php echo admin_url('admin.php?page=wnq-tasks&view=archive'); ?>" class="tab-item">
                     <span class="tab-icon">📦</span> Archive
+                </a>
+                <a href="<?php echo admin_url('admin.php?page=wnq-tasks&view=schedule'); ?>" class="tab-item">
+                    <span class="tab-icon">📋</span> Daily Schedule
                 </a>
             </div>
 
@@ -588,6 +594,9 @@ final class TasksAdmin
                 <a href="<?php echo admin_url('admin.php?page=wnq-tasks&view=archive'); ?>" class="tab-item">
                     <span class="tab-icon">📦</span> Archive
                 </a>
+                <a href="<?php echo admin_url('admin.php?page=wnq-tasks&view=schedule'); ?>" class="tab-item">
+                    <span class="tab-icon">📋</span> Daily Schedule
+                </a>
             </div>
 
             <!-- Date Navigation -->
@@ -770,6 +779,9 @@ final class TasksAdmin
                 <a href="<?php echo admin_url('admin.php?page=wnq-tasks&view=archive'); ?>" class="tab-item active">
                     <span class="tab-icon">📦</span> Archive
                 </a>
+                <a href="<?php echo admin_url('admin.php?page=wnq-tasks&view=schedule'); ?>" class="tab-item">
+                    <span class="tab-icon">📋</span> Daily Schedule
+                </a>
             </div>
 
             <?php if (empty($archived_tasks)): ?>
@@ -922,6 +934,9 @@ final class TasksAdmin
                 <a href="<?php echo admin_url('admin.php?page=wnq-tasks&view=archive'); ?>" class="tab-item">
                     <span class="tab-icon">📦</span> Archive
                 </a>
+                <a href="<?php echo admin_url('admin.php?page=wnq-tasks&view=schedule'); ?>" class="tab-item">
+                    <span class="tab-icon">📋</span> Daily Schedule
+                </a>
             </div>
 
             <!-- Week Navigation -->
@@ -1071,6 +1086,9 @@ final class TasksAdmin
                 </a>
                 <a href="<?php echo admin_url('admin.php?page=wnq-tasks&view=archive'); ?>" class="tab-item">
                     <span class="tab-icon">📦</span> Archive
+                </a>
+                <a href="<?php echo admin_url('admin.php?page=wnq-tasks&view=schedule'); ?>" class="tab-item">
+                    <span class="tab-icon">📋</span> Daily Schedule
                 </a>
             </div>
 
@@ -3265,6 +3283,324 @@ final class TasksAdmin
                 grid-template-columns: 1fr;
             }
         }
+        </style>
+        <?php
+    }
+
+    // ── Daily Schedule View ─────────────────────────────────────────────────
+
+    private static function renderScheduleView(): void
+    {
+        $today_num = (int)date('N'); // 1=Mon … 7=Sun
+        $today_name = date('l');
+
+        $schedule = [
+            1 => ['day' => 'Monday',    'color' => '#6366f1', 'light' => '#eef2ff', 'border' => '#c7d2fe',
+                  'focus' => "Work on Stephen's site",    'media' => 'Post YouTube Video'],
+            2 => ['day' => 'Tuesday',   'color' => '#0ea5e9', 'light' => '#e0f2fe', 'border' => '#bae6fd',
+                  'focus' => "Work on Maurice's site",    'media' => 'Record YouTube Video'],
+            3 => ['day' => 'Wednesday', 'color' => '#10b981', 'light' => '#d1fae5', 'border' => '#a7f3d0',
+                  'focus' => "Work on Sam's site",        'media' => 'Post YouTube Video'],
+            4 => ['day' => 'Thursday',  'color' => '#f59e0b', 'light' => '#fef3c7', 'border' => '#fde68a',
+                  'focus' => "Work on WebNique's site",   'media' => 'Record YouTube Video'],
+            5 => ['day' => 'Friday',    'color' => '#ef4444', 'light' => '#fee2e2', 'border' => '#fecaca',
+                  'focus' => "WebNique development",      'media' => 'Post YouTube Video'],
+            6 => ['day' => 'Saturday',  'color' => '#8b5cf6', 'light' => '#ede9fe', 'border' => '#ddd6fe',
+                  'focus' => 'Catch up on past tasks',    'media' => 'Record YouTube Video'],
+            7 => ['day' => 'Sunday',    'color' => '#64748b', 'light' => '#f1f5f9', 'border' => '#e2e8f0',
+                  'focus' => 'Rest',                      'media' => null],
+        ];
+
+        $daily_essentials = [
+            ['icon' => '📱', 'label' => 'Post on socials',       'detail' => 'Facebook &amp; Instagram'],
+            ['icon' => '📞', 'label' => 'Cold call 200 people',  'detail' => 'Every workday'],
+            ['icon' => '📧', 'label' => 'Cold email 50 people',  'detail' => 'Every workday'],
+            ['icon' => '🤝', 'label' => 'Reach out to 10 friends &amp; family', 'detail' => 'Every workday'],
+        ];
+        ?>
+        <div class="wrap wnq-tasks-wrap">
+
+            <div class="tasks-header">
+                <div class="header-left">
+                    <h1>📋 Daily Schedule</h1>
+                    <p class="subtitle">What must happen every day for the company to survive</p>
+                </div>
+            </div>
+
+            <div class="premium-tabs">
+                <a href="<?php echo admin_url('admin.php?page=wnq-tasks&view=kanban'); ?>" class="tab-item">
+                    <span class="tab-icon">📊</span> Kanban
+                </a>
+                <a href="<?php echo admin_url('admin.php?page=wnq-tasks&view=calendar'); ?>" class="tab-item">
+                    <span class="tab-icon">📅</span> Calendar
+                </a>
+                <a href="<?php echo admin_url('admin.php?page=wnq-tasks&view=recurring'); ?>" class="tab-item">
+                    <span class="tab-icon">🔁</span> Recurring
+                </a>
+                <a href="<?php echo admin_url('admin.php?page=wnq-tasks&view=journal'); ?>" class="tab-item">
+                    <span class="tab-icon">📓</span> Daily Journal
+                </a>
+                <a href="<?php echo admin_url('admin.php?page=wnq-tasks&view=archive'); ?>" class="tab-item">
+                    <span class="tab-icon">📦</span> Archive
+                </a>
+                <a href="<?php echo admin_url('admin.php?page=wnq-tasks&view=schedule'); ?>" class="tab-item active">
+                    <span class="tab-icon">📋</span> Daily Schedule
+                </a>
+            </div>
+
+            <?php /* ── Today banner ── */ ?>
+            <?php $td = $schedule[$today_num]; ?>
+            <div class="sched-today-banner" style="border-left-color:<?php echo $td['color']; ?>;background:<?php echo $td['light']; ?>;">
+                <div class="sched-today-left">
+                    <span class="sched-today-label">TODAY — <?php echo strtoupper($today_name); ?></span>
+                    <span class="sched-today-focus" style="color:<?php echo $td['color']; ?>"><?php echo esc_html($td['focus']); ?></span>
+                    <?php if ($td['media']): ?>
+                        <span class="sched-today-media">🎬 <?php echo esc_html($td['media']); ?></span>
+                    <?php endif; ?>
+                </div>
+                <?php if ($today_num < 7): ?>
+                <div class="sched-today-essentials">
+                    <span style="font-size:11px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.5px;">Today's Essentials</span>
+                    <?php foreach ($daily_essentials as $e): ?>
+                        <span class="sched-essential-pill"><?php echo $e['icon']; ?> <?php echo $e['label']; ?></span>
+                    <?php endforeach; ?>
+                </div>
+                <?php endif; ?>
+            </div>
+
+            <?php /* ── Week grid ── */ ?>
+            <div class="sched-week-grid">
+            <?php foreach ($schedule as $num => $day): $is_today = ($num === $today_num); ?>
+                <div class="sched-day-card <?php echo $is_today ? 'sched-today' : ''; ?>"
+                     style="<?php echo $is_today ? "border-color:{$day['color']};box-shadow:0 0 0 3px {$day['border']};" : ''; ?>">
+                    <div class="sched-day-header" style="background:<?php echo $is_today ? $day['color'] : $day['light']; ?>;color:<?php echo $is_today ? '#fff' : $day['color']; ?>;">
+                        <?php echo esc_html($day['day']); ?>
+                        <?php if ($is_today): ?><span class="sched-today-dot">TODAY</span><?php endif; ?>
+                    </div>
+                    <div class="sched-day-body">
+                        <?php if ($num === 7): ?>
+                            <div class="sched-rest">
+                                <span style="font-size:28px;">😴</span>
+                                <strong>Rest Day</strong>
+                                <span style="color:#94a3b8;font-size:12px;">Recharge for the week ahead</span>
+                            </div>
+                        <?php else: ?>
+                            <div class="sched-task-row">
+                                <span class="sched-task-icon">💼</span>
+                                <span class="sched-task-text"><?php echo esc_html($day['focus']); ?></span>
+                            </div>
+                            <?php if ($day['media']): ?>
+                            <div class="sched-task-row">
+                                <span class="sched-task-icon">🎬</span>
+                                <span class="sched-task-text"><?php echo esc_html($day['media']); ?></span>
+                            </div>
+                            <?php endif; ?>
+                            <div class="sched-essentials-mini">
+                                <?php foreach ($daily_essentials as $e): ?>
+                                    <div class="sched-ess-row"><span><?php echo $e['icon']; ?></span><span><?php echo $e['label']; ?></span></div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+            </div>
+
+            <?php /* ── Daily Essentials card ── */ ?>
+            <div class="sched-essentials-card">
+                <h3>⚡ Daily Non-Negotiables <span style="font-size:13px;font-weight:400;color:#ef4444;">(Monday – Saturday)</span></h3>
+                <p style="margin:0 0 16px;font-size:13px;color:#64748b;">These four actions must happen every workday. Without them, the pipeline dries up.</p>
+                <div class="sched-ess-grid">
+                    <div class="sched-ess-card">
+                        <div class="sched-ess-icon">📱</div>
+                        <div class="sched-ess-title">Post on Socials</div>
+                        <div class="sched-ess-sub">Facebook &amp; Instagram — main accounts</div>
+                    </div>
+                    <div class="sched-ess-card">
+                        <div class="sched-ess-icon">📞</div>
+                        <div class="sched-ess-title">Cold Call 200 People</div>
+                        <div class="sched-ess-sub">Target businesses that need web services</div>
+                    </div>
+                    <div class="sched-ess-card">
+                        <div class="sched-ess-icon">📧</div>
+                        <div class="sched-ess-title">Cold Email 50 People</div>
+                        <div class="sched-ess-sub">Personalized outreach to potential clients</div>
+                    </div>
+                    <div class="sched-ess-card">
+                        <div class="sched-ess-icon">🤝</div>
+                        <div class="sched-ess-title">Reach Out to 10 Friends &amp; Family</div>
+                        <div class="sched-ess-sub">Referrals &amp; warm introductions</div>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- .wnq-tasks-wrap -->
+        <?php self::renderScheduleStyles(); ?>
+        <?php
+    }
+
+    private static function renderScheduleStyles(): void
+    {
+        ?>
+        <style>
+        /* ── Daily Schedule View ─────────────────────────────── */
+        .sched-today-banner {
+            border-left: 5px solid;
+            border-radius: 10px;
+            padding: 18px 22px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: flex-start;
+            gap: 30px;
+            flex-wrap: wrap;
+        }
+        .sched-today-left {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            min-width: 200px;
+        }
+        .sched-today-label {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: #64748b;
+            text-transform: uppercase;
+        }
+        .sched-today-focus {
+            font-size: 20px;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+        .sched-today-media {
+            font-size: 13px;
+            color: #374151;
+            font-weight: 500;
+        }
+        .sched-today-essentials {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .sched-essential-pill {
+            background: rgba(255,255,255,0.7);
+            border: 1px solid rgba(0,0,0,0.08);
+            border-radius: 20px;
+            padding: 4px 12px;
+            font-size: 12px;
+            font-weight: 500;
+            color: #374151;
+            white-space: nowrap;
+        }
+        /* Week grid */
+        .sched-week-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        @media (max-width: 1100px) {
+            .sched-week-grid { grid-template-columns: repeat(4, 1fr); }
+        }
+        @media (max-width: 700px) {
+            .sched-week-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        .sched-day-card {
+            background: #fff;
+            border: 2px solid #e5e7eb;
+            border-radius: 10px;
+            overflow: hidden;
+            transition: transform .15s, box-shadow .15s;
+        }
+        .sched-day-card:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(0,0,0,.08); }
+        .sched-day-header {
+            padding: 9px 12px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .5px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .sched-today-dot {
+            background: rgba(255,255,255,0.3);
+            border-radius: 10px;
+            padding: 1px 7px;
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: .5px;
+        }
+        .sched-day-body {
+            padding: 12px;
+        }
+        .sched-task-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+        .sched-task-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+        .sched-task-text { font-size: 12px; font-weight: 600; color: #1e293b; line-height: 1.4; }
+        .sched-rest {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            padding: 10px 0;
+            text-align: center;
+        }
+        .sched-rest strong { font-size: 13px; color: #475569; }
+        .sched-essentials-mini {
+            margin-top: 8px;
+            border-top: 1px solid #f3f4f6;
+            padding-top: 8px;
+        }
+        .sched-ess-row {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 10px;
+            color: #6b7280;
+            margin-bottom: 3px;
+        }
+        /* Essentials big card */
+        .sched-essentials-card {
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 22px 24px;
+            margin-bottom: 20px;
+        }
+        .sched-essentials-card h3 {
+            margin: 0 0 6px;
+            font-size: 16px;
+            font-weight: 700;
+            color: #1e293b;
+        }
+        .sched-ess-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
+        }
+        @media (max-width: 900px) {
+            .sched-ess-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 500px) {
+            .sched-ess-grid { grid-template-columns: 1fr; }
+        }
+        .sched-ess-card {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 16px;
+            text-align: center;
+            transition: box-shadow .15s;
+        }
+        .sched-ess-card:hover { box-shadow: 0 2px 10px rgba(0,0,0,.07); }
+        .sched-ess-icon { font-size: 28px; margin-bottom: 8px; }
+        .sched-ess-title { font-size: 13px; font-weight: 700; color: #1e293b; margin-bottom: 4px; }
+        .sched-ess-sub { font-size: 11px; color: #64748b; line-height: 1.4; }
         </style>
         <?php
     }
