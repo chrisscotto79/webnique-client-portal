@@ -252,23 +252,17 @@ PROMPT,
         // ── Backlink / Outreach Templates ──────────────────────────────────
 
         'backlink_outreach_email' => <<<'PROMPT'
-You are an expert link-building outreach specialist. Write a short, human, personalized cold email.
+Write a short, casual outreach email asking about guest posting on {target_domain}.
 
-Business: {business_name}
-Website: {website}
-Services: {services}
-City: {location}
-Link Type: {link_type}
-Target Site: {target_domain}
+From: {business_name} ({website})
 
 Rules:
-- First line must be: Subject: [your subject line]
+- First line must be: Subject: Guest Post Inquiry
 - Then a blank line, then the email body
-- Under 180 words total
-- Sound like a real person, not a template
-- Be specific about why THIS site is a good fit
-- One clear ask, low pressure
-- Sign off with the business name
+- 3-4 sentences max
+- Casual and friendly, not salesy
+- Just ask about the process and pricing for a guest post or article
+- Sign off with the name from {business_name}
 
 Write it now:
 PROMPT,
