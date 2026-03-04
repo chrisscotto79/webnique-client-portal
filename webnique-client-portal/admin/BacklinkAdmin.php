@@ -42,7 +42,7 @@ final class BacklinkAdmin
     {
         $cap = current_user_can('wnq_manage_portal') ? 'wnq_manage_portal' : 'manage_options';
         add_submenu_page(
-            'wnq-seo-os',
+            'wnq-seo-hub',
             'Backlink Manager',
             'Backlinks',
             $cap,

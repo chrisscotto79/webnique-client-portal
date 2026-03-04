@@ -45,7 +45,7 @@ final class LeadFinderAdmin
     {
         $cap = current_user_can('wnq_manage_portal') ? 'wnq_manage_portal' : 'manage_options';
         add_submenu_page(
-            'wnq-portal',
+            'wnq-seo-hub',
             'Lead Finder',
             'Lead Finder',
             $cap,
