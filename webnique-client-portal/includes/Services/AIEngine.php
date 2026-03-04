@@ -248,6 +248,48 @@ Return ONLY a numbered list in this exact format (one per line, no extra text):
 1. [Title] | [Category: Services/Informational/Seasonal] | [Focus Keyword]
 2. [Title] | [Category] | [Focus Keyword]
 PROMPT,
+
+        // ── Backlink / Outreach Templates ──────────────────────────────────
+
+        'backlink_outreach_email' => <<<'PROMPT'
+You are an expert link-building outreach specialist. Write a short, human, personalized cold email.
+
+Business: {business_name}
+Website: {website}
+Services: {services}
+City: {location}
+Link Type: {link_type}
+Target Site: {target_domain}
+
+Rules:
+- First line must be: Subject: [your subject line]
+- Then a blank line, then the email body
+- Under 180 words total
+- Sound like a real person, not a template
+- Be specific about why THIS site is a good fit
+- One clear ask, low pressure
+- Sign off with the business name
+
+Write it now:
+PROMPT,
+
+        'backlink_opportunities' => <<<'PROMPT'
+You are a local SEO link-building strategist. Generate specific backlink opportunities.
+
+Business: {business_name}
+Industry: {services}
+Location: {location}
+Website: {website}
+
+Generate 8 actionable backlink opportunities. Return ONLY a valid JSON array with these exact fields per item:
+- "type": one of [guest_post, resource_page, directory, sponsor, press, partnership]
+- "description": specific type of site to target (e.g. "home improvement blog accepting guest posts in {location}")
+- "search_query": exact Google search string to find these sites
+- "value": one-sentence SEO benefit
+
+Return the JSON array only, no markdown, no explanation.
+PROMPT,
+
     ];
 
     // ── Public API ──────────────────────────────────────────────────────────

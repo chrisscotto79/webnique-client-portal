@@ -19,6 +19,7 @@ if (!defined('ABSPATH')) {
 
 use WNQ\Services\AuditEngine;
 use WNQ\Services\AutomationEngine;
+use WNQ\Services\BacklinkVerifier;
 use WNQ\Services\BlogPublisher;
 use WNQ\Services\CrawlEngine;
 use WNQ\Services\LeadFinderEngine;
@@ -40,6 +41,7 @@ final class CronScheduler
         add_action('wnq_spider_auto_crawl',       [self::class, 'runSpiderCrawls']);
         add_action('wnq_spider_run_batch',        [self::class, 'runCronBatch'], 10, 1);
         add_action('wnq_lead_finder_daily',       [self::class, 'runLeadFinder']);
+        add_action('wnq_backlink_verify',         [self::class, 'runBacklinkVerify']);
 
         // Schedule jobs if not already scheduled
         self::scheduleJobs();
@@ -54,6 +56,10 @@ final class CronScheduler
         $schedules['monthly'] = [
             'interval' => 30 * DAY_IN_SECONDS,
             'display'  => 'Monthly',
+        ];
+        $schedules['weekly'] = [
+            'interval' => 7 * DAY_IN_SECONDS,
+            'display'  => 'Weekly',
         ];
         return $schedules;
     }
@@ -99,11 +105,17 @@ final class CronScheduler
             $next_9am = strtotime('tomorrow 9:00am');
             wp_schedule_event($next_9am, 'daily', 'wnq_lead_finder_daily');
         }
+
+        // Backlink verifier — weekly on Sunday at 4am
+        if (!wp_next_scheduled('wnq_backlink_verify')) {
+            $next_sunday_4am = strtotime('next Sunday 4:00am');
+            wp_schedule_event($next_sunday_4am, 'weekly', 'wnq_backlink_verify');
+        }
     }
 
     public static function unscheduleAll(): void
     {
-        $hooks = ['wnq_seo_nightly_audit', 'wnq_seo_nightly_automation', 'wnq_seo_process_queue', 'wnq_seo_monthly_reports', 'wnq_blog_publisher', 'wnq_spider_auto_crawl', 'wnq_lead_finder_daily'];
+        $hooks = ['wnq_seo_nightly_audit', 'wnq_seo_nightly_automation', 'wnq_seo_process_queue', 'wnq_seo_monthly_reports', 'wnq_blog_publisher', 'wnq_spider_auto_crawl', 'wnq_lead_finder_daily', 'wnq_backlink_verify'];
         foreach ($hooks as $hook) {
             $timestamp = wp_next_scheduled($hook);
             if ($timestamp) {
@@ -148,6 +160,12 @@ final class CronScheduler
     {
         if (!self::canRun()) return;
         LeadFinderEngine::runDailyCron();
+    }
+
+    public static function runBacklinkVerify(): void
+    {
+        if (!self::canRun()) return;
+        BacklinkVerifier::verifyAllClients();
     }
 
     /**
@@ -232,6 +250,7 @@ final class CronScheduler
             'wnq_blog_publisher'         => 'Blog Auto-Publisher (8am daily)',
             'wnq_spider_auto_crawl'      => 'Spider Auto-Crawl Scheduler (hourly check)',
             'wnq_lead_finder_daily'      => 'Lead Finder (9am daily)',
+            'wnq_backlink_verify'        => 'Backlink Verifier (Sunday 4am weekly)',
         ];
 
         $status = [];
