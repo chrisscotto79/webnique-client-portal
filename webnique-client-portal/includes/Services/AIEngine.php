@@ -274,20 +274,16 @@ Write it now:
 PROMPT,
 
         'backlink_opportunities' => <<<'PROMPT'
-You are a local SEO link-building strategist. Generate specific backlink opportunities.
+You are a link-building specialist. Find real, specific websites where {business_name} ({services}, based in {location}) can get backlinks through guest posts or outreach.
 
-Business: {business_name}
-Industry: {services}
-Location: {location}
-Website: {website}
-
-Generate 8 actionable backlink opportunities. Return ONLY a valid JSON array with these exact fields per item:
+Return ONLY a valid JSON array of 8 real websites. Every item must have these exact fields:
 - "type": one of [guest_post, resource_page, directory, sponsor, press, partnership]
-- "description": specific type of site to target (e.g. "home improvement blog accepting guest posts in {location}")
-- "search_query": exact Google search string to find these sites
-- "value": one-sentence SEO benefit
+- "site_name": the real name of the website (e.g. "Search Engine Journal")
+- "domain": the real domain only, no https, no trailing slash (e.g. "searchenginejournal.com")
+- "contact_email": the most likely editorial or contact email for link outreach at this site (e.g. "contribute@searchenginejournal.com"). Use common patterns like contribute@, guest@, editor@, editorial@, hello@, or info@ if unsure.
+- "pitch": one sentence describing what to pitch to this specific site, relevant to {services}
 
-Return the JSON array only, no markdown, no explanation.
+Mix industry blogs relevant to {services} with local {location} blogs and business publications. Only include websites that genuinely exist and accept contributions or outreach. Return JSON only, no markdown, no explanation.
 PROMPT,
 
     ];
