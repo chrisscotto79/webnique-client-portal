@@ -158,6 +158,9 @@ final class SEOOSBootstrap
             'admin/BlogSchedulerAdmin.php'                    => 'WNQ\\Admin\\BlogSchedulerAdmin',
             'admin/SpiderAdmin.php'                           => 'WNQ\\Admin\\SpiderAdmin',
             'admin/LeadFinderAdmin.php'                       => 'WNQ\\Admin\\LeadFinderAdmin',
+            'includes/Models/BacklinkManager.php'             => 'WNQ\\Models\\BacklinkManager',
+            'includes/Services/BacklinkVerifier.php'          => 'WNQ\\Services\\BacklinkVerifier',
+            'admin/BacklinkAdmin.php'                         => 'WNQ\\Admin\\BacklinkAdmin',
         ];
         return $map[$file] ?? '';
     }
