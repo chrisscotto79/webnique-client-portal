@@ -103,6 +103,7 @@ final class SEOOSBootstrap
             // Backlink Manager
             'includes/Models/BacklinkManager.php',
             'includes/Services/BacklinkVerifier.php',
+            'includes/Services/BacklinkOutreachEngine.php',
             // Controllers & Core
             'includes/Controllers/SEOAgentController.php',
             'includes/Core/CronScheduler.php',
@@ -158,9 +159,10 @@ final class SEOOSBootstrap
             'admin/BlogSchedulerAdmin.php'                    => 'WNQ\\Admin\\BlogSchedulerAdmin',
             'admin/SpiderAdmin.php'                           => 'WNQ\\Admin\\SpiderAdmin',
             'admin/LeadFinderAdmin.php'                       => 'WNQ\\Admin\\LeadFinderAdmin',
-            'includes/Models/BacklinkManager.php'             => 'WNQ\\Models\\BacklinkManager',
-            'includes/Services/BacklinkVerifier.php'          => 'WNQ\\Services\\BacklinkVerifier',
-            'admin/BacklinkAdmin.php'                         => 'WNQ\\Admin\\BacklinkAdmin',
+            'includes/Models/BacklinkManager.php'                  => 'WNQ\\Models\\BacklinkManager',
+            'includes/Services/BacklinkVerifier.php'               => 'WNQ\\Services\\BacklinkVerifier',
+            'includes/Services/BacklinkOutreachEngine.php'         => 'WNQ\\Services\\BacklinkOutreachEngine',
+            'admin/BacklinkAdmin.php'                              => 'WNQ\\Admin\\BacklinkAdmin',
         ];
         return $map[$file] ?? '';
     }
