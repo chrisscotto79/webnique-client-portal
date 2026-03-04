@@ -28,7 +28,9 @@ use WNQ\Models\BacklinkManager;
 use WNQ\Models\Client;
 use WNQ\Models\SEOHub;
 use WNQ\Services\AIEngine;
+use WNQ\Services\BacklinkOutreachEngine;
 use WNQ\Services\BacklinkVerifier;
+use WNQ\Services\LeadEmailExtractor;
 
 final class BacklinkAdmin
 {
@@ -36,6 +38,29 @@ final class BacklinkAdmin
     {
         add_action('admin_menu',              [self::class, 'addMenuPage'], 30);
         add_action('wp_ajax_wnq_backlink',    [self::class, 'handleAjax']);
+        add_action('phpmailer_init',          [self::class, 'configureSmtp']);
+    }
+
+    /**
+     * Configure PHPMailer to use Hostinger SMTP when credentials are saved.
+     *
+     * @param \PHPMailer\PHPMailer\PHPMailer $phpmailer
+     */
+    public static function configureSmtp($phpmailer): void
+    {
+        $host = get_option('wnq_smtp_host', '');
+        $user = get_option('wnq_smtp_user', '');
+        $pass = get_option('wnq_smtp_pass', '');
+        if (!$host || !$user || !$pass) return;
+
+        $port = (int)get_option('wnq_smtp_port', 587);
+        $phpmailer->isSMTP();
+        $phpmailer->Host       = $host;
+        $phpmailer->SMTPAuth   = true;
+        $phpmailer->Port       = $port;
+        $phpmailer->Username   = $user;
+        $phpmailer->Password   = $pass;
+        $phpmailer->SMTPSecure = $port === 465 ? 'ssl' : 'tls';
     }
 
     public static function addMenuPage(): void
@@ -155,6 +180,17 @@ final class BacklinkAdmin
         .wnq-contact-inp { padding:4px 8px;border:1px solid #d1d5db;border-radius:5px;font-size:11px;width:160px; }
         .wnq-bl-btn-send { background:#0ea5e9;color:#fff; }
         .wnq-bl-btn-send:hover { background:#0284c7; }
+        .wnq-bl-btn-go { background:#16a34a;color:#fff; }
+        .wnq-bl-btn-go:hover { background:#15803d; }
+        /* Campaign overlay */
+        .wnq-campaign-overlay { display:none;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin-bottom:14px; }
+        .wnq-campaign-bar-wrap { background:#e5e7eb;border-radius:6px;height:10px;overflow:hidden;margin:10px 0; }
+        .wnq-campaign-bar { height:100%;background:#16a34a;border-radius:6px;width:0%;transition:width .3s; }
+        .wnq-campaign-log { max-height:220px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;padding:10px;margin-top:10px;background:#f9fafb;font-size:12px; }
+        /* SMTP settings form */
+        .wnq-smtp-grid { display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:600px; }
+        .wnq-smtp-grid label { font-size:11px;font-weight:600;display:block;margin-bottom:3px;color:#374151; }
+        .wnq-smtp-grid input { width:100%;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;box-sizing:border-box; }
         </style>
 
         <div class="wnq-bl-header">
@@ -201,7 +237,7 @@ final class BacklinkAdmin
 
         <?php /* ── Tabs ── */ ?>
         <div class="wnq-bl-tabs">
-            <?php foreach (['citations' => 'Citations (Directories)', 'opportunities' => 'Opportunities', 'links' => 'All Links'] as $t => $label): ?>
+            <?php foreach (['citations' => 'Citations (Directories)', 'opportunities' => 'Opportunities', 'links' => 'All Links', 'settings' => '⚙ Settings'] as $t => $label): ?>
                 <a href="<?php echo esc_url(add_query_arg(['tab' => $t, 'client_id' => $client_id], $base_url)); ?>"
                    class="wnq-bl-tab <?php echo $tab === $t ? 'active' : ''; ?>">
                     <?php echo esc_html($label); ?>
@@ -213,6 +249,7 @@ final class BacklinkAdmin
         match ($tab) {
             'opportunities' => self::renderOpportunitiesTab($client_id, $profile, $client, $nonce),
             'links'         => self::renderAllLinksTab($client_id, $nonce),
+            'settings'      => self::renderSettingsTab(),
             default         => self::renderCitationsTab($client_id, $profile, $client, $nonce),
         };
         ?>
@@ -416,6 +453,119 @@ final class BacklinkAdmin
                 });
             });
 
+            // ── Run Outreach Campaign ────────────────────────────────────────
+            const runCampaignBtn = document.getElementById('bl-run-campaign');
+            runCampaignBtn && runCampaignBtn.addEventListener('click', function() {
+                const overlay = document.getElementById('bl-campaign-overlay');
+                const log     = document.getElementById('bl-campaign-log');
+                const bar     = document.getElementById('bl-campaign-bar');
+                const status  = document.getElementById('bl-campaign-status');
+
+                overlay.style.display = '';
+                log.innerHTML         = '';
+                bar.style.width       = '0%';
+                status.textContent    = 'Starting campaign…';
+                runCampaignBtn.disabled     = true;
+                runCampaignBtn.textContent  = 'Running…';
+
+                blAjax({ sub_action: 'campaign_start' }, function(d) {
+                    const ids   = d.ids   || [];
+                    const total = d.total || 0;
+
+                    if (!total) {
+                        status.textContent      = 'No pending opportunities to process. Add some on this tab first.';
+                        bar.style.width         = '100%';
+                        runCampaignBtn.disabled = false;
+                        runCampaignBtn.textContent = '🚀 Run Outreach Campaign';
+                        return;
+                    }
+
+                    status.textContent = 'Found ' + total + ' opportunit' + (total === 1 ? 'y' : 'ies') + ' to process…';
+                    let done = 0;
+
+                    function processNext() {
+                        if (done >= ids.length) {
+                            const sentCount = log.querySelectorAll('[data-ok="1"]').length;
+                            status.textContent      = '✅ Campaign complete! ' + sentCount + ' email' + (sentCount === 1 ? '' : 's') + ' sent out of ' + total + ' opportunities.';
+                            bar.style.width         = '100%';
+                            runCampaignBtn.disabled = false;
+                            runCampaignBtn.textContent = '🚀 Run Outreach Campaign';
+                            return;
+                        }
+
+                        const id  = ids[done];
+                        const pct = Math.round((done / total) * 100);
+                        bar.style.width    = pct + '%';
+                        status.textContent = 'Processing ' + (done + 1) + ' of ' + total + '…';
+
+                        fetch(ajaxurl, {
+                            method: 'POST',
+                            body: new URLSearchParams({
+                                action:     'wnq_backlink',
+                                nonce:      nonce,
+                                client_id:  clientId,
+                                sub_action: 'campaign_process_one',
+                                link_id:    id,
+                            })
+                        })
+                        .then(function(r) { return r.json(); })
+                        .then(function(resp) {
+                            const r   = resp.data || {};
+                            const ok  = resp.success && r.success;
+                            const li  = document.createElement('div');
+                            li.style.cssText = 'padding:5px 0;border-bottom:1px solid #f3f4f6;font-size:12px;line-height:1.5;';
+                            if (ok) {
+                                li.setAttribute('data-ok', '1');
+                                li.innerHTML = '<span style="color:#16a34a;font-weight:700;">✓</span> <strong>' + esc(r.domain) + '</strong> → ' + esc(r.contact_email) + ' — <em>email sent</em>';
+                            } else {
+                                li.innerHTML = '<span style="color:#dc2626;font-weight:700;">✗</span> <strong>' + esc(r.domain || '#' + id) + '</strong> — ' + esc(r.message || 'Failed');
+                            }
+                            log.appendChild(li);
+                            log.scrollTop = log.scrollHeight;
+                            done++;
+                            // Small delay between calls to be polite to mail server
+                            setTimeout(processNext, 800);
+                        })
+                        .catch(function() {
+                            const li = document.createElement('div');
+                            li.style.cssText = 'padding:5px 0;font-size:12px;color:#dc2626;';
+                            li.textContent   = '✗ Network error on link #' + id;
+                            log.appendChild(li);
+                            done++;
+                            setTimeout(processNext, 800);
+                        });
+                    }
+
+                    processNext();
+                }, runCampaignBtn);
+            });
+
+            // Close campaign overlay
+            const closeCampaignBtn = document.getElementById('bl-campaign-close');
+            closeCampaignBtn && closeCampaignBtn.addEventListener('click', function() {
+                location.reload();
+            });
+
+            // ── SMTP settings form ───────────────────────────────────────────
+            const smtpForm = document.getElementById('wnq-smtp-form');
+            smtpForm && smtpForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const fd = new FormData(smtpForm);
+                blAjax({
+                    sub_action: 'smtp_save',
+                    smtp_host:  fd.get('smtp_host'),
+                    smtp_port:  fd.get('smtp_port'),
+                    smtp_user:  fd.get('smtp_user'),
+                    smtp_pass:  fd.get('smtp_pass'),
+                }, function() {
+                    const saved = document.getElementById('smtp-saved');
+                    if (saved) {
+                        saved.style.display = '';
+                        setTimeout(function() { saved.style.display = 'none'; }, 3000);
+                    }
+                });
+            });
+
             // Utility: escape HTML for dynamic insertion
             function esc(s) {
                 if (typeof s !== 'string') return '';
@@ -565,6 +715,17 @@ final class BacklinkAdmin
         ]);
         $non_citations = array_filter($opportunities, fn($r) => $r['link_type'] !== 'citation');
         ?>
+        <?php /* ── Campaign progress overlay ── */ ?>
+        <div class="wnq-campaign-overlay" id="bl-campaign-overlay">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <h3 style="margin:0;font-size:15px;font-weight:700;color:#15803d;">🚀 Outreach Campaign Running</h3>
+                <button class="wnq-bl-btn wnq-bl-btn-secondary wnq-bl-btn-sm" id="bl-campaign-close">Close &amp; Refresh</button>
+            </div>
+            <div class="wnq-campaign-bar-wrap"><div class="wnq-campaign-bar" id="bl-campaign-bar"></div></div>
+            <p id="bl-campaign-status" style="margin:4px 0;font-size:12px;color:#374151;"></p>
+            <div class="wnq-campaign-log" id="bl-campaign-log"></div>
+        </div>
+
         <div class="wnq-bl-card">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;">
                 <div>
@@ -573,7 +734,10 @@ final class BacklinkAdmin
                         AI analyzes the client's industry, services, and location to generate 8 targeted link-building ideas — each with a Google search query and an outreach email.
                     </p>
                 </div>
-                <button class="wnq-bl-btn wnq-bl-btn-primary" id="bl-gen-opps">Generate Opportunities</button>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button class="wnq-bl-btn wnq-bl-btn-go" id="bl-run-campaign" title="Automatically scrape emails, generate outreach, send, and mark submitted for all pending opportunities">🚀 Run Outreach Campaign</button>
+                    <button class="wnq-bl-btn wnq-bl-btn-primary" id="bl-gen-opps">Generate Opportunities</button>
+                </div>
             </div>
             <div id="bl-opps-wrap" style="margin-top:16px;"></div>
         </div>
@@ -774,6 +938,62 @@ final class BacklinkAdmin
         <?php
     }
 
+    // ── Tab: Settings ────────────────────────────────────────────────────────
+
+    private static function renderSettingsTab(): void
+    {
+        $host     = esc_attr(get_option('wnq_smtp_host', 'smtp.hostinger.com'));
+        $port     = esc_attr(get_option('wnq_smtp_port', '587'));
+        $user     = esc_attr(get_option('wnq_smtp_user', 'chris@web-nique.com'));
+        $has_pass = !empty(get_option('wnq_smtp_pass', ''));
+        ?>
+        <div class="wnq-bl-card">
+            <h3>SMTP Mail Settings</h3>
+            <p style="margin:0 0 16px;font-size:12px;color:#6b7280;">
+                Configure outgoing email for automated outreach campaigns. Enter your Hostinger mail credentials below — saved securely as WordPress options.
+            </p>
+            <form id="wnq-smtp-form">
+                <div class="wnq-smtp-grid">
+                    <div>
+                        <label>SMTP Host</label>
+                        <input type="text" name="smtp_host" value="<?php echo $host; ?>" placeholder="smtp.hostinger.com">
+                    </div>
+                    <div>
+                        <label>SMTP Port</label>
+                        <input type="number" name="smtp_port" value="<?php echo $port; ?>" placeholder="587">
+                        <p style="margin:3px 0 0;font-size:10px;color:#9ca3af;">587 = TLS &nbsp;|&nbsp; 465 = SSL</p>
+                    </div>
+                    <div>
+                        <label>Username (Email Address)</label>
+                        <input type="email" name="smtp_user" value="<?php echo $user; ?>" placeholder="chris@web-nique.com">
+                    </div>
+                    <div>
+                        <label>Password <?php echo $has_pass ? '<span style="color:#16a34a;font-weight:400;">(saved)</span>' : ''; ?></label>
+                        <input type="password" name="smtp_pass" placeholder="<?php echo $has_pass ? '••••••••  (leave blank to keep current)' : 'Enter Hostinger mail password'; ?>">
+                    </div>
+                    <div style="grid-column:1/-1;display:flex;align-items:center;gap:12px;margin-top:4px;">
+                        <button type="submit" class="wnq-bl-btn wnq-bl-btn-primary">Save Settings</button>
+                        <span id="smtp-saved" style="display:none;color:#16a34a;font-size:12px;font-weight:600;">✓ Saved!</span>
+                    </div>
+                </div>
+            </form>
+        </div>
+
+        <div class="wnq-bl-card" style="background:#f0fdf4;border-color:#86efac;">
+            <h3 style="color:#15803d;margin:0 0 8px;">How Automated Outreach Works</h3>
+            <ol style="margin:0;padding-left:18px;font-size:13px;color:#374151;line-height:1.8;">
+                <li>Click <strong>🚀 Run Outreach Campaign</strong> on the Opportunities tab.</li>
+                <li>For each saved opportunity that hasn't been emailed yet:</li>
+                <li style="list-style:none;padding-left:16px;">🔍 Scrapes the target website to find the best contact email address.</li>
+                <li style="list-style:none;padding-left:16px;">✉️ AI generates a personalised outreach email based on the client's services &amp; location.</li>
+                <li style="list-style:none;padding-left:16px;">📤 Sends the email via your Hostinger mail account above.</li>
+                <li style="list-style:none;padding-left:16px;">✅ Marks the link as <em>Submitted</em> and logs the sent timestamp.</li>
+                <li>A live progress log shows each result as it happens.</li>
+            </ol>
+        </div>
+        <?php
+    }
+
     // ── AJAX Handler ────────────────────────────────────────────────────────
 
     public static function handleAjax(): void
@@ -926,6 +1146,27 @@ final class BacklinkAdmin
                 @set_time_limit(120);
                 $results = BacklinkVerifier::verifyClientLinks($client_id);
                 wp_send_json_success($results);
+
+            case 'campaign_start':
+                if (!$client_id) { wp_send_json_error(['message' => 'No client']); }
+                $ids = BacklinkOutreachEngine::getPendingLinkIds($client_id);
+                wp_send_json_success(['ids' => $ids, 'total' => count($ids)]);
+
+            case 'campaign_process_one':
+                if (!$client_id) { wp_send_json_error(['message' => 'No client']); }
+                if (!$link_id)   { wp_send_json_error(['message' => 'No link_id provided']); }
+                @set_time_limit(60);
+                $result = BacklinkOutreachEngine::processLink($link_id, $client_id);
+                wp_send_json_success($result);
+
+            case 'smtp_save':
+                update_option('wnq_smtp_host', sanitize_text_field($_POST['smtp_host'] ?? ''));
+                update_option('wnq_smtp_port', (int)($_POST['smtp_port'] ?? 587));
+                update_option('wnq_smtp_user', sanitize_email($_POST['smtp_user'] ?? ''));
+                if (!empty($_POST['smtp_pass'])) {
+                    update_option('wnq_smtp_pass', sanitize_text_field($_POST['smtp_pass']));
+                }
+                wp_send_json_success(['message' => 'SMTP settings saved.']);
 
             default:
                 wp_send_json_error(['message' => 'Unknown action: ' . $sub_action]);
