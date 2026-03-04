@@ -29,6 +29,7 @@ final class BlogSchedulerAdmin
         add_action('wp_ajax_wnq_blog_generate_titles', [self::class, 'ajaxGenerateTitles']);
         add_action('wp_ajax_wnq_blog_publish_now',     [self::class, 'ajaxPublishNow']);
         add_action('wp_ajax_wnq_blog_mark_read',       [self::class, 'ajaxMarkNotifRead']);
+        add_action('wp_ajax_wnq_blog_get_agents',      [self::class, 'ajaxGetAgents']);
     }
 
     // ── Page Router ─────────────────────────────────────────────────────────
@@ -326,6 +327,32 @@ jQuery(function($) {
         ?>
 <script>
 jQuery(function($) {
+    // Refresh agent dropdown when client changes
+    $('#gen-client').on('change', function() {
+        var clientId = $(this).val();
+        var $agentSel = $('#gen-agent');
+        $agentSel.html('<option value="">— Loading… —</option>').prop('disabled', true);
+        $.post(WNQ_SEOHUB.ajaxUrl, {
+            action:    'wnq_blog_get_agents',
+            nonce:     WNQ_SEOHUB.nonce,
+            client_id: clientId
+        }, function(resp) {
+            $agentSel.prop('disabled', false);
+            if (resp.success) {
+                var opts = '<option value="">— Any Site —</option>';
+                (resp.data.agents || []).forEach(function(a) {
+                    var lbl = a.site_name || a.site_url || a.id;
+                    opts += '<option value="' + a.id + '">' + $('<div>').text(lbl).html() + '</option>';
+                });
+                $agentSel.html(opts);
+            } else {
+                $agentSel.html('<option value="">— Any Site —</option>');
+            }
+        }).fail(function() {
+            $agentSel.prop('disabled', false).html('<option value="">— Any Site —</option>');
+        });
+    });
+
     $('#wnq-gen-titles-btn').on('click', function() {
         var clientId = $('#gen-client').val();
         var count    = $('#gen-count').val();
@@ -585,6 +612,15 @@ jQuery(function($) {
         $id = (int)($_POST['id'] ?? 0);
         if ($id) BlogScheduler::markRead($id);
         wp_send_json_success();
+    }
+
+    public static function ajaxGetAgents(): void
+    {
+        check_ajax_referer('wnq_seohub_nonce', 'nonce');
+        self::checkCap();
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $agents = $client_id ? BlogScheduler::getClientAgents($client_id) : [];
+        wp_send_json_success(['agents' => $agents]);
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
