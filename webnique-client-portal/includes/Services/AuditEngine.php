@@ -82,8 +82,11 @@ final class AuditEngine
         foreach ($pages as $page) {
             $url = $page['page_url'];
 
-            // Missing H1
-            if (empty($page['h1']) || !$page['has_h1']) {
+            // Missing H1 — check has_h1 flag only.
+            // The h1 text column may be empty after an auto-fix (we set the flag
+            // without re-syncing the actual text), so checking the text too would
+            // cause false re-detects on every subsequent audit run.
+            if (!(int)$page['has_h1']) {
                 SEOHub::insertAuditFinding($client_id, 'missing_h1', 'critical', $url, [
                     'title' => $page['title'],
                 ]);
