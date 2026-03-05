@@ -135,33 +135,51 @@ final class SEOFixer
             }
         }
 
-        // ── H1 fix: promote first H2 to H1 (never change post_title or slug) ───
+        // ── H1 fix: promote first heading to H1 and hide the WP post title ──────
         // Hub sends promote_first_h2 = true when a page has no H1 tag.
-        // We find the first H2 in Elementor widget data or post_content and
-        // change its heading level to H1. The page title is never modified.
+        // Strategy:
+        //   1. Find the FIRST heading widget in Elementor (any level — default/h2/h3/etc.)
+        //      and change its heading_size to 'h1'.
+        //   2. Also set _elementor_page_settings[hide_title] = 'yes' so the theme
+        //      stops rendering the WordPress post title above the Elementor content.
+        //   3. Fall back to raw <h2> → <h1> replacement for non-Elementor pages.
         if (!empty($body['promote_first_h2'])) {
             $promoted = false;
 
-            // Try Elementor first (most client sites use it)
+            // ── Elementor path ──────────────────────────────────────────────
             $elementor_raw = get_post_meta($post_id, '_elementor_data', true);
             if (!empty($elementor_raw)) {
                 $elementor_data = json_decode($elementor_raw, true);
                 if (is_array($elementor_data)) {
-                    self::promoteFirstH2InElementor($elementor_data, $promoted);
+                    self::promoteFirstHeadingInElementor($elementor_data, $promoted);
                     if ($promoted) {
-                        // wp_slash is required so WP doesn't strip backslashes on save
-                        update_post_meta($post_id, '_elementor_data', wp_slash(wp_json_encode($elementor_data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)));
-                        // Bust Elementor's per-post CSS cache
-                        delete_post_meta($post_id, '_elementor_css');
+                        update_post_meta(
+                            $post_id,
+                            '_elementor_data',
+                            wp_slash(wp_json_encode($elementor_data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
+                        );
+                        delete_post_meta($post_id, '_elementor_css'); // bust CSS cache
                         $applied[] = 'h1_promoted_elementor';
                     }
                 }
+
+                // Always hide the post title on Elementor pages — whether we promoted
+                // a heading or not — so "Home" / page name stops appearing.
+                $page_settings = get_post_meta($post_id, '_elementor_page_settings', true);
+                if (!is_array($page_settings)) {
+                    $page_settings = [];
+                }
+                if (($page_settings['hide_title'] ?? '') !== 'yes') {
+                    $page_settings['hide_title'] = 'yes';
+                    update_post_meta($post_id, '_elementor_page_settings', $page_settings);
+                    $applied[] = 'elementor_title_hidden';
+                }
             }
 
-            // Fall back to raw post_content for non-Elementor pages
+            // ── Classic / Gutenberg fallback ────────────────────────────────
             if (!$promoted && !empty($post->post_content)) {
                 $content = $post->post_content;
-                // Replace only the FIRST <h2 …> opening and its matching </h2>
+                // Replace only the FIRST <h2 …>…</h2>
                 $new_content = preg_replace('/<h2(\s[^>]*)?>/', '<h1$1>', $content, 1, $h2_count);
                 if ($h2_count > 0) {
                     $new_content = preg_replace('/<\/h2>/', '</h1>', $new_content, 1);
@@ -234,35 +252,42 @@ final class SEOFixer
         ], 200);
     }
 
-    // ── Elementor H2→H1 Promoter ─────────────────────────────────────────────
+    // ── Elementor Heading Promoter ────────────────────────────────────────────
 
     /**
-     * Recursively walk Elementor JSON elements and change the first heading
-     * widget whose heading_size is 'h2' to 'h1'. Sets $changed = true once
-     * the first match is found so subsequent calls are no-ops.
+     * Recursively walk Elementor JSON elements and promote the FIRST heading
+     * widget to H1, regardless of its current heading_size value.
+     *
+     * Elementor heading widgets use heading_size values like:
+     *   'default' (renders as H2), 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
+     *
+     * We skip any widget already set to 'h1'. The first non-H1 heading found
+     * is promoted. $changed is set to true once done so recursion stops early.
      */
-    private static function promoteFirstH2InElementor(array &$elements, bool &$changed): void
+    private static function promoteFirstHeadingInElementor(array &$elements, bool &$changed): void
     {
         if ($changed) return;
 
         foreach ($elements as &$element) {
             if ($changed) break;
 
-            // Heading widget found — promote if it is currently h2
+            // Heading widget — promote to H1 if not already H1
             if (
                 isset($element['elType']) &&
                 $element['elType'] === 'widget' &&
-                ($element['widgetType'] ?? '') === 'heading' &&
-                ($element['settings']['heading_size'] ?? '') === 'h2'
+                ($element['widgetType'] ?? '') === 'heading'
             ) {
-                $element['settings']['heading_size'] = 'h1';
-                $changed = true;
-                break;
+                $current_size = $element['settings']['heading_size'] ?? 'default';
+                if ($current_size !== 'h1') {
+                    $element['settings']['heading_size'] = 'h1';
+                    $changed = true;
+                    break;
+                }
             }
 
-            // Recurse into child elements (sections, columns, containers)
+            // Recurse into child elements (sections, columns, containers, divs)
             if (!empty($element['elements']) && is_array($element['elements'])) {
-                self::promoteFirstH2InElementor($element['elements'], $changed);
+                self::promoteFirstHeadingInElementor($element['elements'], $changed);
             }
         }
         unset($element);
