@@ -446,6 +446,23 @@ jQuery(function($) {
         $saved = sanitize_text_field($_GET['settings_saved'] ?? '');
         if ($saved === '1') echo '<div class="wnq-notice success">✅ Settings saved.</div>';
 
+        // Client selector for template section
+        echo '<div class="wnq-blog-card" style="padding:14px 20px;">';
+        echo '<div style="display:flex;align-items:center;gap:12px;">';
+        echo '<strong style="white-space:nowrap;">Client Site:</strong>';
+        echo '<form method="get" style="margin:0;">';
+        echo '<input type="hidden" name="page" value="wnq-seo-hub-blog">';
+        echo '<input type="hidden" name="tab" value="settings">';
+        echo '<select name="client_id" onchange="this.form.submit()" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;min-width:220px;">';
+        foreach ($clients as $c) {
+            $sel = $c['client_id'] === $client_id ? ' selected' : '';
+            echo '<option value="' . esc_attr($c['client_id']) . '"' . $sel . '>' . esc_html($c['company'] ?? $c['name'] ?? $c['client_id']) . '</option>';
+        }
+        echo '</select>';
+        echo '</form>';
+        echo '</div>';
+        echo '</div>';
+
         // Per-site Elementor templates
         $settings_agents = BlogScheduler::getClientAgents($client_id);
         $widget_hint = '<p style="color:#6b7280;font-size:12px;"><strong>Widget IDs:</strong> Heading <code>5af58bd2</code> (H1) · Text Editor <code>5b794435</code> (body) · Text Editor <code>4861ee91</code> (TOC) · Image <code>1b605b78</code> (featured — add manually)</p>';
@@ -489,18 +506,6 @@ jQuery(function($) {
         echo '<div class="wnq-blog-card">';
         echo '<h3>🔗 Always Link To — ' . esc_html($client_id) . '</h3>';
         echo '<p style="color:#6b7280;">These links take priority in every blog post for this client. Add pages you always want to reference (service pages, key landing pages).</p>';
-
-        echo '<div style="margin-bottom:12px;">';
-        echo '<form method="get">';
-        echo '<input type="hidden" name="page" value="wnq-seo-hub-blog">';
-        echo '<input type="hidden" name="tab" value="settings">';
-        echo '<select name="client_id" onchange="this.form.submit()">';
-        foreach ($clients as $c) {
-            $selected = $c['client_id'] === $client_id ? ' selected' : '';
-            echo '<option value="' . esc_attr($c['client_id']) . '"' . $selected . '>' . esc_html($c['company'] ?? $c['name'] ?? $c['client_id']) . '</option>';
-        }
-        echo '</select></form>';
-        echo '</div>';
 
         echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
         echo '<input type="hidden" name="action" value="wnq_blog_save_always_link">';
