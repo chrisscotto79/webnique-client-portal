@@ -146,7 +146,15 @@
       var $r = $('#wnq-action-result');
       $r.removeClass('success error').addClass(success ? 'success' : 'error')
         .html((success ? '✅ ' : '❌ ') + msg).show();
-      setTimeout(function () { $r.fadeOut(400, function () { $r.removeClass('success error').text(''); }); }, 8000);
+
+      if (success && fixedTotal > 0) {
+        // Reload the page so the Open Findings count, severity bars, and
+        // findings table all reflect the newly-resolved items.
+        $status.html('✅ <strong>' + msg + '</strong> Refreshing…');
+        setTimeout(function () { location.reload(); }, 2000);
+      } else {
+        setTimeout(function () { $r.fadeOut(400, function () { $r.removeClass('success error').text(''); }); }, 8000);
+      }
     }
   };
 
