@@ -135,37 +135,43 @@ final class SEOFixer
             }
         }
 
-        // ── H1 / title visibility fix ─────────────────────────────────────────
-        // Sends the correct post_title and removes Elementor's hide_title setting
-        // so the WordPress page title (which themes output as <h1>) becomes visible.
-        $h1_title = isset($body['h1_title']) ? sanitize_text_field($body['h1_title']) : '';
-        if (!empty($h1_title)) {
-            // Use direct DB update — wp_update_post() fires save_post which can
-            // trigger Elementor's wp_die() inside a REST API request.
-            if ($post->post_title !== $h1_title) {
-                global $wpdb;
-                $wpdb->update(
-                    $wpdb->posts,
-                    ['post_title' => $h1_title, 'post_name' => sanitize_title($h1_title)],
-                    ['ID' => $post_id]
-                );
-                clean_post_cache($post_id);
-            }
+        // ── H1 fix: promote first H2 to H1 (never change post_title or slug) ───
+        // Hub sends promote_first_h2 = true when a page has no H1 tag.
+        // We find the first H2 in Elementor widget data or post_content and
+        // change its heading level to H1. The page title is never modified.
+        if (!empty($body['promote_first_h2'])) {
+            $promoted = false;
 
-            // Remove Elementor's hide_title — update_post_meta does NOT fire save_post
-            $page_settings = get_post_meta($post_id, '_elementor_page_settings', true);
-            if (is_array($page_settings) && isset($page_settings['hide_title']) && $page_settings['hide_title'] === 'yes') {
-                unset($page_settings['hide_title']);
-                update_post_meta($post_id, '_elementor_page_settings', $page_settings);
-            } elseif (is_string($page_settings) && !empty($page_settings)) {
-                $decoded = json_decode($page_settings, true);
-                if (is_array($decoded) && isset($decoded['hide_title'])) {
-                    unset($decoded['hide_title']);
-                    update_post_meta($post_id, '_elementor_page_settings', $decoded);
+            // Try Elementor first (most client sites use it)
+            $elementor_raw = get_post_meta($post_id, '_elementor_data', true);
+            if (!empty($elementor_raw)) {
+                $elementor_data = json_decode($elementor_raw, true);
+                if (is_array($elementor_data)) {
+                    self::promoteFirstH2InElementor($elementor_data, $promoted);
+                    if ($promoted) {
+                        // wp_slash is required so WP doesn't strip backslashes on save
+                        update_post_meta($post_id, '_elementor_data', wp_slash(wp_json_encode($elementor_data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)));
+                        // Bust Elementor's per-post CSS cache
+                        delete_post_meta($post_id, '_elementor_css');
+                        $applied[] = 'h1_promoted_elementor';
+                    }
                 }
             }
 
-            $applied[] = 'h1_title';
+            // Fall back to raw post_content for non-Elementor pages
+            if (!$promoted && !empty($post->post_content)) {
+                $content = $post->post_content;
+                // Replace only the FIRST <h2 …> opening and its matching </h2>
+                $new_content = preg_replace('/<h2(\s[^>]*)?>/', '<h1$1>', $content, 1, $h2_count);
+                if ($h2_count > 0) {
+                    $new_content = preg_replace('/<\/h2>/', '</h1>', $new_content, 1);
+                    global $wpdb;
+                    $wpdb->update($wpdb->posts, ['post_content' => $new_content], ['ID' => $post_id]);
+                    clean_post_cache($post_id);
+                    $promoted = true;
+                    $applied[] = 'h1_promoted_content';
+                }
+            }
         }
 
         // ── Missing alt text fix ──────────────────────────────────────────────
@@ -226,5 +232,39 @@ final class SEOFixer
             'post_id' => $post_id,
             'applied' => $applied,
         ], 200);
+    }
+
+    // ── Elementor H2→H1 Promoter ─────────────────────────────────────────────
+
+    /**
+     * Recursively walk Elementor JSON elements and change the first heading
+     * widget whose heading_size is 'h2' to 'h1'. Sets $changed = true once
+     * the first match is found so subsequent calls are no-ops.
+     */
+    private static function promoteFirstH2InElementor(array &$elements, bool &$changed): void
+    {
+        if ($changed) return;
+
+        foreach ($elements as &$element) {
+            if ($changed) break;
+
+            // Heading widget found — promote if it is currently h2
+            if (
+                isset($element['elType']) &&
+                $element['elType'] === 'widget' &&
+                ($element['widgetType'] ?? '') === 'heading' &&
+                ($element['settings']['heading_size'] ?? '') === 'h2'
+            ) {
+                $element['settings']['heading_size'] = 'h1';
+                $changed = true;
+                break;
+            }
+
+            // Recurse into child elements (sections, columns, containers)
+            if (!empty($element['elements']) && is_array($element['elements'])) {
+                self::promoteFirstH2InElementor($element['elements'], $changed);
+            }
+        }
+        unset($element);
     }
 }
