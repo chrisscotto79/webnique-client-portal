@@ -150,6 +150,73 @@
     }
   };
 
+  // ── Resolve / Verify Finding (findings table row-level actions) ──────────
+
+  window.wnqResolveFinding = function (findingId, btn) {
+    var $btn = $(btn);
+    $btn.prop('disabled', true).html('⏳…');
+
+    $.post(WNQ_SEOHUB.ajaxUrl, {
+      action:     'wnq_seohub_action',
+      hub_action: 'resolve_finding',
+      entity_id:  findingId,
+      nonce:      WNQ_SEOHUB.nonce
+    })
+    .done(function (res) {
+      if (res.success) {
+        $btn.closest('tr').css({ background: '#f0fdf4', opacity: '0.5' });
+        $btn.closest('td').html('<span style="color:#16a34a;font-weight:600;font-size:12px;">✓ Resolved</span>');
+        setTimeout(function () { $btn.closest('tr').fadeOut(400); }, 1200);
+      } else {
+        $btn.prop('disabled', false).html('✓ Resolve');
+        alert('Error: ' + (res.data ? res.data.message : 'Unknown error'));
+      }
+    })
+    .fail(function () {
+      $btn.prop('disabled', false).html('✓ Resolve');
+      alert('Network error — try again.');
+    });
+  };
+
+  window.wnqVerifyFinding = function (findingId, btn) {
+    var $btn = $(btn);
+    $btn.prop('disabled', true).html('⏳ Checking…');
+
+    $.post(WNQ_SEOHUB.ajaxUrl, {
+      action:     'wnq_seohub_action',
+      hub_action: 'verify_finding',
+      entity_id:  findingId,
+      nonce:      WNQ_SEOHUB.nonce
+    })
+    .done(function (res) {
+      var msg     = res.data ? res.data.message : 'Unknown response';
+      var resolved = res.data && res.data.resolved;
+
+      if (resolved) {
+        // Visually retire the row
+        $btn.closest('tr').css({ background: '#f0fdf4', opacity: '0.5' });
+        $btn.closest('td').html('<span style="color:#16a34a;font-weight:600;font-size:12px;">✅ Verified & Resolved</span>');
+        setTimeout(function () { $btn.closest('tr').fadeOut(400); }, 1500);
+      } else {
+        // Show inline warning on the button
+        $btn.prop('disabled', false)
+            .html('⚠️ Not yet confirmed')
+            .css({ background: '#fffbeb', color: '#b45309', borderColor: '#fcd34d' });
+        // Add a tooltip-like note below the button
+        var $note = $btn.next('.wnq-verify-note');
+        if (!$note.length) {
+          $note = $('<div class="wnq-verify-note" style="font-size:11px;color:#6b7280;margin-top:4px;max-width:200px;line-height:1.3;"></div>');
+          $btn.after($note);
+        }
+        $note.text('Run a fresh audit after your site syncs to confirm.');
+      }
+    })
+    .fail(function () {
+      $btn.prop('disabled', false).html('🔍 Verify Fix');
+      alert('Network error — try again.');
+    });
+  };
+
   // ── View/Approve Job Modal ────────────────────────────────────────────────
 
   window.wnqViewJob = function (jobId, btn) {

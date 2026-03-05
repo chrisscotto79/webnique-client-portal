@@ -136,15 +136,15 @@ final class SEOHealthFixer
                 if ($schema) $payload['schema_json'] = $schema;
             }
 
-            // H1 fix — always use the original crawled page title so the visible
-            // heading on the page is never changed by the auto-fixer.
+            // H1 fix — promote the first H2 tag to H1. The page title is
+            // never changed. Works for both Elementor and classic content.
             if (in_array('missing_h1', $finding_types, true)) {
-                $h1 = $page_data['title'] ?? '';
-                if ($h1) $payload['h1_title'] = $h1;
+                $payload['promote_first_h2'] = true;
             }
 
-            // Alt text fix — agent scans and updates images
-            if (in_array('missing_alt', $finding_types, true) && (int)($page_data['images_missing_alt'] ?? 0) > 0) {
+            // Alt text fix — always send when the finding exists. The agent
+            // will scan all images on the page and add alt text to any missing it.
+            if (in_array('missing_alt', $finding_types, true)) {
                 $payload['fix_missing_alt'] = true;
             }
 
@@ -182,11 +182,24 @@ final class SEOHealthFixer
             } else {
                 $failed++;
                 SEOHub::log('seo_auto_fix', [
-                    'client_id' => $client_id,
+                    'client_id'   => $client_id,
                     'entity_type' => 'audit_finding',
-                    'page_url'  => $page_url,
-                    'error'     => $push['message'],
+                    'page_url'    => $page_url,
+                    'error'       => $push['message'],
                 ], 'failed', 'auto');
+
+                // Mark findings as fix_failed so they exit the batch queue.
+                // This prevents a single unreachable page from blocking all progress.
+                // The next full audit will re-detect them once the agent is reachable.
+                global $wpdb;
+                $ids = array_column($page_findings, 'id');
+                foreach ($ids as $fid) {
+                    $wpdb->update(
+                        $wpdb->prefix . 'wnq_seo_audit_findings',
+                        ['status' => 'fix_failed', 'resolved_at' => current_time('mysql')],
+                        ['id' => (int)$fid]
+                    );
+                }
             }
         }
 
@@ -382,9 +395,8 @@ final class SEOHealthFixer
             $updates['schema_types'] = wp_json_encode([$type]);
         }
 
-        // H1 added → write new h1 text and set has_h1 = 1
-        if (!empty($payload['h1_title'])) {
-            $updates['h1']     = $payload['h1_title'];
+        // H1 promoted (first H2 → H1) → mark has_h1 = 1
+        if (!empty($payload['promote_first_h2'])) {
             $updates['has_h1'] = 1;
         }
 
