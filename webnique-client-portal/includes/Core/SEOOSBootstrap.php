@@ -48,6 +48,9 @@ final class SEOOSBootstrap
         // Migrate SEOHub tables for existing installs (adds period_start/period_end etc.)
         self::maybeMigrateSEOHubSchema();
 
+        // Migrate site_data table for existing installs (adds has_og_tags, images_without_lazy, title_length)
+        self::maybeMigrateSiteDataSchema();
+
         // Create lead finder table if not yet created
         \WNQ\Models\Lead::createTable();
 
@@ -749,6 +752,38 @@ final class SEOOSBootstrap
         }
 
         update_option('wnq_seohub_schema_ver', '1');
+    }
+
+    // ── Site Data Schema Migration ───────────────────────────────────────────
+    //
+    // Adds has_og_tags, images_without_lazy, title_length columns to
+    // wnq_seo_site_data for existing installs.
+
+    private static function maybeMigrateSiteDataSchema(): void
+    {
+        global $wpdb;
+
+        if (get_option('wnq_site_data_schema_ver', '0') === '1') {
+            return;
+        }
+
+        $t = $wpdb->prefix . 'wnq_seo_site_data';
+
+        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $t)) !== $t) {
+            update_option('wnq_site_data_schema_ver', '1');
+            return;
+        }
+
+        if (!$wpdb->get_row("SHOW COLUMNS FROM `{$t}` LIKE 'has_og_tags'")) {
+            $wpdb->query(
+                "ALTER TABLE `{$t}`
+                 ADD COLUMN `has_og_tags` tinyint(1) DEFAULT 0 AFTER `images_missing_alt`,
+                 ADD COLUMN `images_without_lazy` int(11) DEFAULT 0 AFTER `has_og_tags`,
+                 ADD COLUMN `title_length` smallint(6) DEFAULT 0 AFTER `images_without_lazy`"
+            );
+        }
+
+        update_option('wnq_site_data_schema_ver', '1');
     }
 
     private static function maybeMigrateBacklinkSchema(): void

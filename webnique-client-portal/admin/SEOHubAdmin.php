@@ -712,14 +712,20 @@ final class SEOHubAdmin
 
             // Issue summary
             $type_labels = [
-                'missing_h1'       => ['Missing H1', 'critical'],
-                'no_schema'        => ['No Schema Markup', 'warning'],
-                'thin_content'     => ['Thin Content (<300 words)', 'warning'],
-                'missing_alt'      => ['Missing Image Alt Text', 'warning'],
-                'kw_not_in_title'  => ['Keyword Not In Title', 'warning'],
-                'no_internal_links'=> ['No Internal Links', 'info'],
-                'missing_meta'     => ['Missing/Short Meta Description', 'warning'],
-                'declining_rank'   => ['Declining Rankings', 'warning'],
+                'missing_h1'              => ['Missing H1', 'critical'],
+                'no_schema'               => ['No Schema Markup', 'warning'],
+                'thin_content'            => ['Thin Content (<300 words)', 'warning'],
+                'missing_alt'             => ['Missing Image Alt Text', 'warning'],
+                'kw_not_in_title'         => ['Keyword Not In Title', 'warning'],
+                'no_internal_links'       => ['No Internal Links', 'info'],
+                'missing_meta'            => ['Missing/Short Meta Description', 'warning'],
+                'declining_rank'          => ['Declining Rankings', 'warning'],
+                'missing_og'              => ['Missing Open Graph Tags', 'warning'],
+                'no_image_lazy_load'      => ['Images Missing Lazy Load', 'info'],
+                'title_too_long'          => ['Title Too Long (>60 chars)', 'warning'],
+                'duplicate_title'         => ['Duplicate Page Title', 'warning'],
+                'duplicate_meta'          => ['Duplicate Meta Description', 'warning'],
+                'keyword_cannibalization' => ['Keyword Cannibalization', 'warning'],
             ];
 
             echo '<div class="wnq-hub-audit-grid">';
@@ -801,6 +807,19 @@ final class SEOHubAdmin
                 break;
             case 'kw_not_in_title':
                 $updates = ['keyword_in_title' => 1];
+                break;
+            case 'missing_og':
+                $updates = ['has_og_tags' => 1];
+                break;
+            case 'no_image_lazy_load':
+                $updates = ['images_without_lazy' => 0];
+                break;
+            case 'title_too_long':
+                // Mark keyword_in_title = 1 as a signal that the title was fixed
+                $updates = ['keyword_in_title' => 1];
+                break;
+            case 'no_internal_links':
+                $updates = ['internal_links_count' => 1];
                 break;
         }
 
@@ -1277,13 +1296,16 @@ final class SEOHubAdmin
                 $verified = false;
                 if ($page) {
                     switch ($finding['finding_type']) {
-                        case 'missing_h1':       $verified = !empty($page['has_h1']) && $page['has_h1'] == 1; break;
-                        case 'no_schema':        $verified = !empty($page['has_schema']) && $page['has_schema'] == 1; break;
-                        case 'missing_alt':      $verified = ((int)($page['images_missing_alt'] ?? 1)) === 0; break;
-                        case 'missing_meta':     $verified = !empty($page['meta_description']) && strlen($page['meta_description']) >= 80; break;
-                        case 'kw_not_in_title':  $verified = !empty($page['keyword_in_title']) && $page['keyword_in_title'] == 1; break;
-                        case 'no_internal_links':$verified = ((int)($page['internal_links_count'] ?? 0)) > 0; break;
-                        default:                 $verified = false;
+                        case 'missing_h1':              $verified = !empty($page['has_h1']) && $page['has_h1'] == 1; break;
+                        case 'no_schema':               $verified = !empty($page['has_schema']) && $page['has_schema'] == 1; break;
+                        case 'missing_alt':             $verified = ((int)($page['images_missing_alt'] ?? 1)) === 0; break;
+                        case 'missing_meta':            $verified = !empty($page['meta_description']) && strlen($page['meta_description']) >= 80; break;
+                        case 'kw_not_in_title':         $verified = !empty($page['keyword_in_title']) && $page['keyword_in_title'] == 1; break;
+                        case 'no_internal_links':       $verified = ((int)($page['internal_links_count'] ?? 0)) > 0; break;
+                        case 'missing_og':              $verified = !empty($page['has_og_tags']) && $page['has_og_tags'] == 1; break;
+                        case 'no_image_lazy_load':      $verified = ((int)($page['images_without_lazy'] ?? 1)) === 0; break;
+                        case 'title_too_long':          $verified = ((int)($page['title_length'] ?? 61)) <= 60; break;
+                        default:                        $verified = false;
                     }
                 }
                 if ($verified) {

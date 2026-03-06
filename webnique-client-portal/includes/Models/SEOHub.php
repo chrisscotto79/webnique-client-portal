@@ -88,6 +88,9 @@ final class SEOHub
             internal_links_count int(11) DEFAULT 0,
             images_count        int(11) DEFAULT 0,
             images_missing_alt  int(11) DEFAULT 0,
+            images_without_lazy int(11) DEFAULT 0,
+            has_og_tags         tinyint(1) DEFAULT 0,
+            title_length        smallint(6) DEFAULT 0,
             has_schema          tinyint(1) DEFAULT 0,
             schema_types        varchar(500) DEFAULT NULL COMMENT 'JSON array',
             has_h1              tinyint(1) DEFAULT 0,
@@ -366,6 +369,9 @@ final class SEOHub
                 'internal_links_count'=> (int)($page['internal_links_count'] ?? 0),
                 'images_count'        => (int)($page['images_count'] ?? 0),
                 'images_missing_alt'  => (int)($page['images_missing_alt'] ?? 0),
+                'images_without_lazy' => (int)($page['images_without_lazy'] ?? 0),
+                'has_og_tags'         => (int)($page['has_og_tags'] ?? 0),
+                'title_length'        => (int)($page['title_length'] ?? 0),
                 'has_schema'          => (int)(!empty($page['schema_types'])),
                 'schema_types'        => is_array($page['schema_types'] ?? null) ? wp_json_encode($page['schema_types']) : ($page['schema_types'] ?? null),
                 'has_h1'              => (int)(!empty($page['h1'])),
@@ -423,13 +429,16 @@ final class SEOHub
         $cid = $wpdb->prepare("%s", $client_id);
 
         return [
-            'total_pages'      => (int)$wpdb->get_var("SELECT COUNT(*) FROM $t WHERE client_id=$cid"),
-            'missing_h1'       => (int)$wpdb->get_var("SELECT COUNT(*) FROM $t WHERE client_id=$cid AND has_h1=0"),
-            'missing_alt'      => (int)$wpdb->get_var("SELECT COUNT(*) FROM $t WHERE client_id=$cid AND images_missing_alt>0"),
-            'thin_content'     => (int)$wpdb->get_var("SELECT COUNT(*) FROM $t WHERE client_id=$cid AND word_count>0 AND word_count<300"),
-            'no_schema'        => (int)$wpdb->get_var("SELECT COUNT(*) FROM $t WHERE client_id=$cid AND has_schema=0"),
-            'no_internal_links'=> (int)$wpdb->get_var("SELECT COUNT(*) FROM $t WHERE client_id=$cid AND internal_links_count=0 AND page_type='post'"),
-            'last_synced'      => $wpdb->get_var("SELECT MAX(last_synced) FROM $t WHERE client_id=$cid"),
+            'total_pages'        => (int)$wpdb->get_var("SELECT COUNT(*) FROM $t WHERE client_id=$cid"),
+            'missing_h1'         => (int)$wpdb->get_var("SELECT COUNT(*) FROM $t WHERE client_id=$cid AND has_h1=0"),
+            'missing_alt'        => (int)$wpdb->get_var("SELECT COUNT(*) FROM $t WHERE client_id=$cid AND images_missing_alt>0"),
+            'thin_content'       => (int)$wpdb->get_var("SELECT COUNT(*) FROM $t WHERE client_id=$cid AND word_count>0 AND word_count<300"),
+            'no_schema'          => (int)$wpdb->get_var("SELECT COUNT(*) FROM $t WHERE client_id=$cid AND has_schema=0"),
+            'no_internal_links'  => (int)$wpdb->get_var("SELECT COUNT(*) FROM $t WHERE client_id=$cid AND internal_links_count=0 AND page_type='post'"),
+            'missing_og'         => (int)$wpdb->get_var("SELECT COUNT(*) FROM $t WHERE client_id=$cid AND has_og_tags=0"),
+            'no_image_lazy_load' => (int)$wpdb->get_var("SELECT COUNT(*) FROM $t WHERE client_id=$cid AND images_count>0 AND images_without_lazy>0"),
+            'title_too_long'     => (int)$wpdb->get_var("SELECT COUNT(*) FROM $t WHERE client_id=$cid AND title_length>60"),
+            'last_synced'        => $wpdb->get_var("SELECT MAX(last_synced) FROM $t WHERE client_id=$cid"),
         ];
     }
 
