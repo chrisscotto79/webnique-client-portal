@@ -22,7 +22,6 @@ use WNQ\Services\AutomationEngine;
 use WNQ\Services\BacklinkVerifier;
 use WNQ\Services\BlogPublisher;
 use WNQ\Services\CrawlEngine;
-use WNQ\Services\LeadFinderEngine;
 use WNQ\Services\ReportGenerator;
 
 final class CronScheduler
@@ -40,7 +39,6 @@ final class CronScheduler
         add_action('wnq_blog_publisher',          [self::class, 'runBlogPublisher']);
         add_action('wnq_spider_auto_crawl',       [self::class, 'runSpiderCrawls']);
         add_action('wnq_spider_run_batch',        [self::class, 'runCronBatch'], 10, 1);
-        add_action('wnq_lead_finder_daily',       [self::class, 'runLeadFinder']);
         add_action('wnq_backlink_verify',         [self::class, 'runBacklinkVerify']);
 
         // Schedule jobs if not already scheduled
@@ -100,12 +98,6 @@ final class CronScheduler
             wp_schedule_event(time() + 300, 'hourly', 'wnq_spider_auto_crawl');
         }
 
-        // Lead Finder — daily at 9am (runs only if enabled in settings)
-        if (!wp_next_scheduled('wnq_lead_finder_daily')) {
-            $next_9am = strtotime('tomorrow 9:00am');
-            wp_schedule_event($next_9am, 'daily', 'wnq_lead_finder_daily');
-        }
-
         // Backlink verifier — weekly on Sunday at 4am
         if (!wp_next_scheduled('wnq_backlink_verify')) {
             $next_sunday_4am = strtotime('next Sunday 4:00am');
@@ -115,7 +107,7 @@ final class CronScheduler
 
     public static function unscheduleAll(): void
     {
-        $hooks = ['wnq_seo_nightly_audit', 'wnq_seo_nightly_automation', 'wnq_seo_process_queue', 'wnq_seo_monthly_reports', 'wnq_blog_publisher', 'wnq_spider_auto_crawl', 'wnq_lead_finder_daily', 'wnq_backlink_verify'];
+        $hooks = ['wnq_seo_nightly_audit', 'wnq_seo_nightly_automation', 'wnq_seo_process_queue', 'wnq_seo_monthly_reports', 'wnq_blog_publisher', 'wnq_spider_auto_crawl', 'wnq_backlink_verify'];
         foreach ($hooks as $hook) {
             $timestamp = wp_next_scheduled($hook);
             if ($timestamp) {
@@ -154,12 +146,6 @@ final class CronScheduler
     {
         if (!self::canRun()) return;
         BlogPublisher::processDuePosts();
-    }
-
-    public static function runLeadFinder(): void
-    {
-        if (!self::canRun()) return;
-        LeadFinderEngine::runDailyCron();
     }
 
     public static function runBacklinkVerify(): void
@@ -249,7 +235,6 @@ final class CronScheduler
             'wnq_seo_monthly_reports'    => 'Monthly Report Generator',
             'wnq_blog_publisher'         => 'Blog Auto-Publisher (8am daily)',
             'wnq_spider_auto_crawl'      => 'Spider Auto-Crawl Scheduler (hourly check)',
-            'wnq_lead_finder_daily'      => 'Lead Finder (9am daily)',
             'wnq_backlink_verify'        => 'Backlink Verifier (Sunday 4am weekly)',
         ];
 

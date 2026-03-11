@@ -98,7 +98,6 @@ final class SEOOSBootstrap
             'includes/Services/ServiceCoverageEngine.php',
             // Lead Finder
             'includes/Models/Lead.php',
-            'includes/Services/PlacesAPIClient.php',
             'includes/Services/LeadSEOScorer.php',
             'includes/Services/LeadEmailExtractor.php',
             'includes/Services/LeadEnrichmentService.php',
@@ -153,7 +152,6 @@ final class SEOOSBootstrap
             'includes/Services/ServiceCoverageEngine.php'     => 'WNQ\\Services\\ServiceCoverageEngine',
             // Lead Finder
             'includes/Models/Lead.php'                        => 'WNQ\\Models\\Lead',
-            'includes/Services/PlacesAPIClient.php'           => 'WNQ\\Services\\PlacesAPIClient',
             'includes/Services/LeadSEOScorer.php'             => 'WNQ\\Services\\LeadSEOScorer',
             'includes/Services/LeadEmailExtractor.php'        => 'WNQ\\Services\\LeadEmailExtractor',
             'includes/Services/LeadEnrichmentService.php'     => 'WNQ\\Services\\LeadEnrichmentService',
