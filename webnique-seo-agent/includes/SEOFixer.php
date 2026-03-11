@@ -18,6 +18,13 @@
  *                            and updates post_title if changed
  *   fix_missing_alt  bool    Updates featured image + attached image alt texts
  *                            using the post title as alt text
+ *   fix_open_graph   bool    Writes og:title / og:description / og:image to
+ *                            Yoast, RankMath, and generic _wnq_og_* meta
+ *   og_title         string  OG title override (defaults to post title)
+ *   og_description   string  OG description override
+ *   og_image         string  OG image URL override (defaults to featured image)
+ *   fix_image_lazy_load bool Add loading="lazy" to content <img> tags
+ *   internal_links   array   [{anchor, url}, …] to insert into post_content
  *
  * @package WebNique SEO Agent
  */
@@ -236,6 +243,101 @@ final class SEOFixer
 
             if ($images_fixed > 0) {
                 $applied[] = 'image_alt_texts(' . $images_fixed . ')';
+            }
+        }
+
+        // ── Open Graph fix ───────────────────────────────────────────────────────
+        // Writes og:title / og:description / og:image to Yoast, RankMath, or generic meta.
+        if (!empty($body['fix_open_graph'])) {
+            $og_title = isset($body['og_title']) ? sanitize_text_field($body['og_title']) : get_the_title($post_id);
+            $og_desc  = isset($body['og_description']) ? sanitize_text_field($body['og_description']) : '';
+            $og_image = isset($body['og_image']) ? esc_url_raw($body['og_image']) : '';
+
+            // Use featured image as OG image if hub didn't supply one
+            if (empty($og_image) && has_post_thumbnail($post_id)) {
+                $og_image = get_the_post_thumbnail_url($post_id, 'large') ?: '';
+            }
+
+            if (defined('WPSEO_VERSION')) {
+                if (!empty($og_title)) update_post_meta($post_id, '_yoast_wpseo_opengraph-title', $og_title);
+                if (!empty($og_desc))  update_post_meta($post_id, '_yoast_wpseo_opengraph-description', $og_desc);
+                if (!empty($og_image)) update_post_meta($post_id, '_yoast_wpseo_opengraph-image', $og_image);
+            }
+            if (class_exists('RankMath')) {
+                if (!empty($og_title)) update_post_meta($post_id, 'rank_math_facebook_title', $og_title);
+                if (!empty($og_desc))  update_post_meta($post_id, 'rank_math_facebook_description', $og_desc);
+                if (!empty($og_image)) update_post_meta($post_id, 'rank_math_facebook_image', $og_image);
+            }
+            // Generic fallback — output by wp_head hook in webnique-seo-agent.php
+            if (!empty($og_title)) update_post_meta($post_id, '_wnq_og_title', $og_title);
+            if (!empty($og_desc))  update_post_meta($post_id, '_wnq_og_description', $og_desc);
+            if (!empty($og_image)) update_post_meta($post_id, '_wnq_og_image', $og_image);
+
+            $applied[] = 'open_graph';
+        }
+
+        // ── Image lazy load fix ──────────────────────────────────────────────────
+        // Classic/Gutenberg: patch img tags in post_content directly.
+        // Elementor: set a flag; a wp_head JS snippet adds loading="lazy" at render time.
+        if (!empty($body['fix_image_lazy_load'])) {
+            $lazy_fixed    = 0;
+            $elementor_raw = get_post_meta($post_id, '_elementor_data', true);
+
+            if (empty($elementor_raw) && !empty($post->post_content)) {
+                // Classic / Gutenberg — patch <img> tags directly
+                $new_content = preg_replace_callback(
+                    '/<img(?![^>]*\bloading\b)([^>]*)>/i',
+                    function ($m) use (&$lazy_fixed) {
+                        $lazy_fixed++;
+                        return '<img' . $m[1] . ' loading="lazy">';
+                    },
+                    $post->post_content
+                );
+                if ($lazy_fixed > 0) {
+                    global $wpdb;
+                    $wpdb->update($wpdb->posts, ['post_content' => $new_content], ['ID' => $post_id]);
+                    clean_post_cache($post_id);
+                }
+            } elseif (!empty($elementor_raw)) {
+                // Elementor page — store flag; JS snippet in wp_head adds loading="lazy" at runtime
+                update_post_meta($post_id, '_wnq_lazy_load', 1);
+                $lazy_fixed = 1;
+            }
+
+            if ($lazy_fixed > 0) {
+                $applied[] = 'image_lazy_load';
+            }
+        }
+
+        // ── Internal links insertion ──────────────────────────────────────────────
+        // Hub sends internal_links: [{anchor, url}, …]. We wrap the first unlinked
+        // occurrence of each anchor phrase in an <a> tag.
+        if (!empty($body['internal_links']) && is_array($body['internal_links']) && !empty($post->post_content)) {
+            $content     = $post->post_content;
+            $links_added = 0;
+
+            foreach ($body['internal_links'] as $link) {
+                $anchor = sanitize_text_field($link['anchor'] ?? '');
+                $url    = esc_url_raw($link['url'] ?? '');
+                if (empty($anchor) || empty($url)) continue;
+
+                $escaped     = preg_quote($anchor, '/');
+                $new_content = preg_replace(
+                    '/(?<!["\'>])(' . $escaped . ')(?![^<]*>)(?![^<]*<\/a>)/ui',
+                    '<a href="' . esc_url($url) . '">' . $anchor . '</a>',
+                    $content, 1, $replaced
+                );
+                if ($replaced > 0) {
+                    $content = $new_content;
+                    $links_added++;
+                }
+            }
+
+            if ($links_added > 0) {
+                global $wpdb;
+                $wpdb->update($wpdb->posts, ['post_content' => $content], ['ID' => $post_id]);
+                clean_post_cache($post_id);
+                $applied[] = 'internal_links(' . $links_added . ')';
             }
         }
 

@@ -14,6 +14,9 @@
  *  - Post status, type, categories, tags
  *  - Featured image URL
  *  - Last modified date
+ *  - has_og_tags (Open Graph meta presence)
+ *  - images_without_lazy (count of img tags without loading="lazy")
+ *  - title_length (character count of SEO title)
  *
  * @package WebNique SEO Agent
  */
@@ -114,6 +117,15 @@ class DataCollector
         // Images
         [$img_count, $missing_alt] = $this->analyzeImages($content_raw, $post->ID);
 
+        // Lazy loading check
+        $images_without_lazy = $this->countImagesWithoutLazy($content_raw);
+
+        // Open Graph tags
+        $has_og_tags = $this->hasOGTags($post);
+
+        // Title length
+        $title_length = mb_strlen($title);
+
         // Schema
         $schema_types = $this->detectSchemaTypes($post, $content_raw);
 
@@ -146,6 +158,9 @@ class DataCollector
             'internal_links_count' => $internal_links,
             'images_count'         => $img_count,
             'images_missing_alt'   => $missing_alt,
+            'images_without_lazy'  => $images_without_lazy,
+            'has_og_tags'          => $has_og_tags ? 1 : 0,
+            'title_length'         => $title_length,
             'has_schema'           => !empty($schema_types),
             'schema_types'         => $schema_types,
             'has_h1'               => !empty($h1),
@@ -368,5 +383,39 @@ class DataCollector
         $terms = get_the_terms($post_id, $taxonomy);
         if (is_wp_error($terms) || empty($terms)) return [];
         return array_map(fn($t) => $t->name, $terms);
+    }
+
+    /**
+     * Count <img> tags in rendered HTML that do not have loading="lazy".
+     */
+    private function countImagesWithoutLazy(string $content_html): int
+    {
+        $count = 0;
+        if (preg_match_all('/<img[^>]+>/i', $content_html, $matches)) {
+            foreach ($matches[0] as $img_tag) {
+                if (!preg_match('/\bloading\s*=\s*["\']lazy["\']/', $img_tag)) {
+                    $count++;
+                }
+            }
+        }
+        return $count;
+    }
+
+    /**
+     * Check whether Open Graph meta tags exist for this post.
+     * Checks Yoast, RankMath, and the generic _wnq_og_* meta written by SEOFixer.
+     */
+    private function hasOGTags(\WP_Post $post): bool
+    {
+        if (defined('WPSEO_VERSION') && !empty(get_post_meta($post->ID, '_yoast_wpseo_opengraph-title', true))) {
+            return true;
+        }
+        if (class_exists('RankMath') && !empty(get_post_meta($post->ID, 'rank_math_facebook_title', true))) {
+            return true;
+        }
+        if (!empty(get_post_meta($post->ID, '_wnq_og_title', true))) {
+            return true;
+        }
+        return false;
     }
 }

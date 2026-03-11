@@ -59,9 +59,9 @@ add_action('plugins_loaded', function () {
     // Register SEO fixer REST endpoint (hub → agent auto-fix SEO meta)
     \WNQA\SEOFixer::register();
 
-    // Output BlogPosting JSON-LD schema on single posts (plugin-agnostic fallback)
+    // Output JSON-LD schema on single posts/pages (plugin-agnostic fallback)
     add_action('wp_head', function () {
-        if (!is_single()) return;
+        if (!is_singular()) return;
         $post_id = get_the_ID();
         if (!$post_id) return;
         $schema = get_post_meta($post_id, '_wnq_schema_json', true);
@@ -70,6 +70,40 @@ add_action('plugins_loaded', function () {
         if (defined('WPSEO_VERSION') || class_exists('RankMath')) return;
         echo '<script type="application/ld+json">' . $schema . '</script>' . "\n";
     });
+
+    // Output Open Graph meta tags (plugin-agnostic fallback)
+    add_action('wp_head', function () {
+        if (!is_singular()) return;
+        $post_id = get_the_ID();
+        if (!$post_id) return;
+        // Skip if Yoast or RankMath are active — they manage their own OG tags
+        if (defined('WPSEO_VERSION') || class_exists('RankMath')) return;
+        $og_title = get_post_meta($post_id, '_wnq_og_title', true);
+        $og_desc  = get_post_meta($post_id, '_wnq_og_description', true);
+        $og_image = get_post_meta($post_id, '_wnq_og_image', true);
+        if (empty($og_title) && empty($og_desc) && empty($og_image)) return;
+        if (!empty($og_title)) echo '<meta property="og:title" content="' . esc_attr($og_title) . '">' . "\n";
+        if (!empty($og_desc))  echo '<meta property="og:description" content="' . esc_attr($og_desc) . '">' . "\n";
+        if (!empty($og_image)) echo '<meta property="og:image" content="' . esc_url($og_image) . '">' . "\n";
+        echo '<meta property="og:type" content="' . (is_single() ? 'article' : 'website') . '">' . "\n";
+        echo '<meta property="og:url" content="' . esc_url(get_permalink($post_id)) . '">' . "\n";
+    });
+
+    // Add loading="lazy" to images on Elementor pages flagged by SEOFixer
+    add_action('wp_head', function () {
+        if (!is_singular()) return;
+        $post_id = get_the_ID();
+        if (!$post_id || !get_post_meta($post_id, '_wnq_lazy_load', true)) return;
+        echo '<script>document.addEventListener("DOMContentLoaded",function(){document.querySelectorAll("img:not([loading])").forEach(function(i){i.setAttribute("loading","lazy")});});</script>' . "\n";
+    });
+
+    // Append font-display:swap to Google Fonts stylesheet URLs for better CLS score
+    add_filter('style_loader_src', function ($src) {
+        if (strpos($src, 'fonts.googleapis.com') !== false && strpos($src, 'display=') === false) {
+            $src = add_query_arg('display', 'swap', $src);
+        }
+        return $src;
+    }, 10, 1);
 
     // Cron handlers
     add_action('wnqa_sync_to_hub', function () {

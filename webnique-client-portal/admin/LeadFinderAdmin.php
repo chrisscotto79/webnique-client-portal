@@ -19,23 +19,22 @@ if (!defined('ABSPATH')) {
 
 use WNQ\Models\Lead;
 use WNQ\Services\LeadFinderEngine;
-use WNQ\Services\LeadSEOScorer;
-use WNQ\Services\PlacesAPIClient;
 
 final class LeadFinderAdmin
 {
     public static function register(): void
     {
-        add_action('admin_menu', [self::class, 'addMenuPage']);
-        // Queue-based search (Phase 1: Places API only, returns immediately)
-        add_action('wp_ajax_wnq_lead_queue_search',    [self::class, 'ajaxQueueSearch']);
-        // Queue-based processing (Phase 2: process one candidate per call)
-        add_action('wp_ajax_wnq_lead_process_next',    [self::class, 'ajaxProcessNext']);
+        // Priority 22 — must run AFTER SEOHubAdmin::addMenuPages() (priority 20) so that
+        // the wnq-seo-hub parent slug exists when add_submenu_page() is called.
+        add_action('admin_menu', [self::class, 'addMenuPage'], 22);
+        // Queue-based search (Phase 1: parse URLs, store in transient)
+        add_action('wp_ajax_wnq_lead_queue_manual',       [self::class, 'ajaxQueueManual']);
+        // Queue-based processing (Phase 2: crawl one URL per call)
+        add_action('wp_ajax_wnq_lead_process_next_manual', [self::class, 'ajaxProcessNextManual']);
         add_action('wp_ajax_wnq_lead_update_status',   [self::class, 'ajaxUpdateStatus']);
         add_action('wp_ajax_wnq_lead_update_notes',    [self::class, 'ajaxUpdateNotes']);
         add_action('wp_ajax_wnq_lead_delete',          [self::class, 'ajaxDelete']);
         add_action('wp_ajax_wnq_lead_bulk_action',     [self::class, 'ajaxBulkAction']);
-        add_action('wp_ajax_wnq_lead_test_api',        [self::class, 'ajaxTestApi']);
         add_action('wp_ajax_wnq_lead_run_migration',   [self::class, 'ajaxRunMigration']);
         add_action('admin_post_wnq_lead_export_csv',    [self::class, 'handleExportCsv']);
         add_action('admin_post_wnq_lead_save_settings', [self::class, 'handleSaveSettings']);
@@ -253,94 +252,52 @@ final class LeadFinderAdmin
 
     private static function renderSearchTab(array $settings): void
     {
-        $nonce = wp_create_nonce('wnq_lead_queue_search');
+        $nonce = wp_create_nonce('wnq_lead_manual');
         ?>
         <style>
-        .wnq-mode-toggle { display:flex;gap:0;border:1px solid #d1d5db;border-radius:6px;overflow:hidden;width:fit-content;margin-bottom:16px; }
-        .wnq-mode-toggle button { padding:7px 18px;border:none;background:#f9fafb;font-size:13px;font-weight:500;color:#6b7280;cursor:pointer;border-right:1px solid #d1d5db; }
-        .wnq-mode-toggle button:last-child { border-right:none; }
-        .wnq-mode-toggle button.active { background:#2563eb;color:#fff; }
         .wnq-progressbar-wrap { background:#e5e7eb;border-radius:6px;height:10px;overflow:hidden;margin:8px 0; }
         .wnq-progressbar      { height:100%;background:#2563eb;border-radius:6px;transition:width .3s ease;width:0%; }
         .wnq-live-stats { display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:#374151;margin-top:8px; }
         .wnq-live-stats span { display:flex;align-items:center;gap:4px; }
         .wnq-live-stats b { font-size:15px;font-weight:700; }
-        .wnq-combo-row { display:flex;gap:6px;align-items:center;margin-bottom:6px; }
-        .wnq-combo-row input { flex:1;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px; }
-        .wnq-combo-row button { padding:5px 10px;border-radius:5px;border:1px solid #d1d5db;background:#f3f4f6;cursor:pointer;font-size:12px; }
         </style>
 
         <div class="wnq-card">
-            <h3>Discover New Prospects</h3>
+            <h3>Add Prospects Manually</h3>
             <p style="color:#6b7280;margin:-6px 0 14px;font-size:12px;">
-                Phase 1 queries Google Places (returns in seconds). Phase 2 crawls each site for SEO issues, email &amp; social media — processed one at a time with live progress so it never times out.
+                Paste one website URL per line. Optionally use <code>Business Name | URL</code> format.
+                Each site is crawled for SEO issues, email &amp; social media — processed one at a time so it never times out.
                 Franchises and duplicates are automatically filtered.
             </p>
 
-            <div id="lf-history" class="wnq-hist-wrap" style="display:none;" aria-label="Recent searches"></div>
-
-            <div class="wnq-mode-toggle">
-                <button class="active" id="mode-single" onclick="wnqSetMode('single')">Single Search</button>
-                <button id="mode-bulk"  onclick="wnqSetMode('bulk')">Bulk Mode</button>
+            <div class="wnq-field" style="margin-bottom:14px;">
+                <label>Website URLs (one per line)</label>
+                <textarea id="lf-urls" style="width:100%;height:160px;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:monospace;box-sizing:border-box;"
+                    placeholder="https://example-plumber.com&#10;Acme Roofing | https://acmeroofing.com&#10;https://bestelectrician.net"></textarea>
             </div>
 
-            <?php /* ── Single search form ── */ ?>
-            <div id="lf-single-form">
-                <div class="wnq-row2">
-                    <div class="wnq-field">
-                        <label>Industry / Keyword</label>
-                        <input type="text" id="lf-keyword" placeholder="e.g. roofing contractor, plumber, HVAC company" value="<?php echo esc_attr($settings['default_keyword'] ?? ''); ?>">
-                    </div>
-                    <div class="wnq-field">
-                        <label>City</label>
-                        <input type="text" id="lf-city" placeholder="e.g. Orlando FL, Baltimore MD">
-                    </div>
-                </div>
-            </div>
-
-            <?php /* ── Bulk search form ── */ ?>
-            <div id="lf-bulk-form" style="display:none;">
-                <p style="font-size:12px;color:#6b7280;margin:0 0 10px;">
-                    One search per line: <strong>keyword | city</strong>. Each runs sequentially — results accumulate in real time.
-                </p>
-                <textarea id="lf-bulk-lines" style="width:100%;height:140px;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:monospace;box-sizing:border-box;"
-                    placeholder="roofing contractor | Baltimore MD&#10;plumber | Charlotte NC&#10;HVAC company | Orlando FL&#10;electrician | Richmond VA&#10;landscaping | Tampa FL"></textarea>
-            </div>
-
-            <div class="wnq-row4" style="margin-top:14px;">
+            <div class="wnq-row2" style="margin-bottom:14px;">
                 <div class="wnq-field">
-                    <label>Min Reviews</label>
-                    <input type="number" id="lf-min-reviews" value="<?php echo esc_attr($settings['min_reviews'] ?? 20); ?>" min="0">
-                </div>
-                <div class="wnq-field">
-                    <label>Min Rating</label>
-                    <input type="number" id="lf-min-rating" value="<?php echo esc_attr($settings['min_rating'] ?? 3.5); ?>" min="0" max="5" step="0.1">
+                    <label>Industry / Label</label>
+                    <input type="text" id="lf-industry" placeholder="e.g. roofing contractor" value="<?php echo esc_attr($settings['default_keyword'] ?? ''); ?>">
+                    <small>Tags all leads in this batch for filtering &amp; export</small>
                 </div>
                 <div class="wnq-field">
                     <label>Min SEO Score</label>
                     <input type="number" id="lf-min-seo" value="<?php echo esc_attr($settings['min_seo_score'] ?? 2); ?>" min="0" max="7">
-                    <small>0–7 issues. 2+ = real SEO gaps.</small>
-                </div>
-                <div class="wnq-field">
-                    <label>Max per Search</label>
-                    <select id="lf-max-results">
-                        <option value="20">20</option>
-                        <option value="40">40</option>
-                        <option value="60" selected>60 (max)</option>
-                    </select>
+                    <small>0–7 issues found. 2+ means real SEO gaps.</small>
                 </div>
             </div>
 
             <div style="display:flex;gap:10px;align-items:center;margin-top:4px;">
                 <button class="wnq-btn wnq-btn-primary" id="lf-start-btn" onclick="wnqStartSearch()">
-                    Start &amp; Qualify Leads
+                    Analyze &amp; Save Leads
                 </button>
                 <button class="wnq-btn wnq-btn-secondary" id="lf-stop-btn" onclick="wnqStop()" style="display:none;">
                     Stop
                 </button>
             </div>
 
-            <?php /* ── Live progress area ── */ ?>
             <div id="lf-progress-area" style="display:none;margin-top:16px;">
                 <div style="display:flex;justify-content:space-between;font-size:12px;color:#374151;margin-bottom:4px;">
                     <span id="lf-progress-label">Starting…</span>
@@ -349,9 +306,8 @@ final class LeadFinderAdmin
                 <div id="lf-sub-status" style="font-size:11px;color:#6b7280;margin-bottom:6px;min-height:15px;"></div>
                 <div class="wnq-progressbar-wrap"><div class="wnq-progressbar" id="lf-bar"></div></div>
                 <div class="wnq-live-stats">
-                    <span>Found: <b id="ls-found">0</b></span>
+                    <span>Total: <b id="ls-found">0</b></span>
                     <span>Saved: <b id="ls-saved" style="color:#16a34a;">0</b></span>
-                    <span>Low Reviews: <b id="ls-lowrev">0</b></span>
                     <span>Franchise skip: <b id="ls-franchise">0</b></span>
                     <span>Duplicate: <b id="ls-duplicate">0</b></span>
                     <span>No website: <b id="ls-noweb">0</b></span>
@@ -364,99 +320,15 @@ final class LeadFinderAdmin
 
         <script>
         (function() {
-            let _stopped   = false;
-            let _mode      = 'single';
-            let _totSaved  = 0;
-
-            // ── Search history (localStorage, last 10) ────────────────────
-            function saveToHistory(keyword, city) {
-                let hist = JSON.parse(localStorage.getItem('wnq_lf_history') || '[]');
-                hist = hist.filter(function(h) { return !(h.kw === keyword && h.city === city); });
-                hist.unshift({ kw: keyword, city: city, t: Date.now() });
-                hist = hist.slice(0, 10);
-                localStorage.setItem('wnq_lf_history', JSON.stringify(hist));
-                renderHistory();
-            }
-
-            window.wnqUseHistory = function(kw, city) {
-                document.getElementById('lf-keyword').value = kw;
-                document.getElementById('lf-city').value    = city;
-                localStorage.setItem('wnq_lf_keyword', kw);
-                localStorage.setItem('wnq_lf_city',    city);
-                wnqSetMode('single');
-            };
-
-            function renderHistory() {
-                const wrap = document.getElementById('lf-history');
-                if (!wrap) return;
-                const hist = JSON.parse(localStorage.getItem('wnq_lf_history') || '[]');
-                if (!hist.length) { wrap.style.display = 'none'; return; }
-                wrap.innerHTML = '<span style="font-size:10px;color:#9ca3af;align-self:center;">Recent:</span>'
-                    + hist.map(function(h) {
-                        return '<button class="wnq-hist-chip" onclick="wnqUseHistory(\''
-                            + h.kw.replace(/'/g,"\\'") + '\',\''
-                            + h.city.replace(/'/g,"\\'") + '\')">'
-                            + h.kw + ' | ' + h.city + '</button>';
-                    }).join('');
-                wrap.style.display = 'flex';
-                wrap.style.alignItems = 'center';
-                wrap.style.gap = '5px';
-            }
-
-            // ── Restore search form from localStorage ─────────────────────
-            (function restoreForm() {
-                const kw   = localStorage.getItem('wnq_lf_keyword');
-                const city = localStorage.getItem('wnq_lf_city');
-                const bulk = localStorage.getItem('wnq_lf_bulk');
-                if (kw)   document.getElementById('lf-keyword').value    = kw;
-                if (city) document.getElementById('lf-city').value       = city;
-                if (bulk) document.getElementById('lf-bulk-lines').value = bulk;
-                renderHistory();
-            })();
-
-            document.getElementById('lf-keyword').addEventListener('input', function() {
-                localStorage.setItem('wnq_lf_keyword', this.value);
-            });
-            document.getElementById('lf-city').addEventListener('input', function() {
-                localStorage.setItem('wnq_lf_city', this.value);
-            });
-            document.getElementById('lf-bulk-lines').addEventListener('input', function() {
-                localStorage.setItem('wnq_lf_bulk', this.value);
-            });
-
-            window.wnqSetMode = function(m) {
-                _mode = m;
-                document.getElementById('lf-single-form').style.display = m === 'single' ? '' : 'none';
-                document.getElementById('lf-bulk-form').style.display   = m === 'bulk'   ? '' : 'none';
-                document.getElementById('mode-single').classList.toggle('active', m === 'single');
-                document.getElementById('mode-bulk').classList.toggle('active',   m === 'bulk');
-            };
-
+            let _stopped = false;
             window.wnqStop = function() { _stopped = true; };
 
             window.wnqStartSearch = function() {
-                _stopped  = false;
-                _totSaved = 0;
-
-                const minReviews = document.getElementById('lf-min-reviews').value;
-                const minRating  = document.getElementById('lf-min-rating').value;
-                const minSeo     = document.getElementById('lf-min-seo').value;
-                const maxResults = document.getElementById('lf-max-results').value;
-
-                let combos = [];
-                if (_mode === 'single') {
-                    const kw   = document.getElementById('lf-keyword').value.trim();
-                    const city = document.getElementById('lf-city').value.trim();
-                    if (!kw || !city) { alert('Enter both a keyword and a city.'); return; }
-                    combos = [{ keyword: kw, city }];
-                } else {
-                    const lines = document.getElementById('lf-bulk-lines').value.trim().split('\n');
-                    for (const line of lines) {
-                        const [kw, city] = line.split('|').map(s => s.trim());
-                        if (kw && city) combos.push({ keyword: kw, city });
-                    }
-                    if (!combos.length) { alert('Enter at least one keyword | city line.'); return; }
-                }
+                _stopped = false;
+                const urls     = document.getElementById('lf-urls').value.trim();
+                const minSeo   = document.getElementById('lf-min-seo').value;
+                const industry = document.getElementById('lf-industry').value.trim();
+                if (!urls) { alert('Enter at least one website URL.'); return; }
 
                 document.getElementById('lf-start-btn').disabled = true;
                 document.getElementById('lf-stop-btn').style.display = '';
@@ -464,173 +336,123 @@ final class LeadFinderAdmin
                 document.getElementById('lf-result').innerHTML = '';
                 wnqResetStats();
 
-                // Cumulative stats across all combos (each batch resets its own stats)
-                let _cumStats = { saved: 0, franchise: 0, duplicate: 0, no_website: 0, low_seo: 0, low_reviews: 0 };
-                let _lastBatchStats = null;
-
-                function absorbLastBatch() {
-                    if (!_lastBatchStats) return;
-                    _cumStats.saved        += _lastBatchStats.saved;
-                    _cumStats.franchise    += _lastBatchStats.franchise;
-                    _cumStats.duplicate    += _lastBatchStats.duplicate;
-                    _cumStats.no_website   += _lastBatchStats.no_website;
-                    _cumStats.low_seo      += _lastBatchStats.low_seo;
-                    _cumStats.low_reviews  += (_lastBatchStats.low_reviews || 0);
-                    _lastBatchStats = null;
-                }
-
-                (async function runAllCombos() {
-                    for (let i = 0; i < combos.length && !_stopped; i++) {
-                        const { keyword, city } = combos[i];
-                        wnqSetProgressLabel(`Combo ${i+1}/${combos.length}: queuing "${keyword}" in "${city}"…`);
-
-                        // Phase 1: queue the search (Places API only — fast)
-                        // 90s hard timeout: worst case is 3 pages × 8s + 2 sleeps × 2s = 28s,
-                        // but give generous headroom for slow Google API responses.
-                        let queueResp;
-                        try {
-                            const qCtrl = new AbortController();
-                            const qTid  = setTimeout(() => qCtrl.abort(), 90000);
-                            const fd = new FormData();
-                            fd.append('action',      'wnq_lead_queue_search');
-                            fd.append('nonce',       '<?php echo esc_js($nonce); ?>');
-                            fd.append('keyword',     keyword);
-                            fd.append('city',        city);
-                            fd.append('max_results', maxResults);
-                            const r = await fetch(ajaxurl, { method:'POST', body: fd, signal: qCtrl.signal });
-                            clearTimeout(qTid);
-                            const rawQ = await r.text();
-                            try {
-                                queueResp = JSON.parse(rawQ);
-                            } catch(je) {
-                                const preview = rawQ.replace(/<[^>]+>/g,'').trim().substring(0, 120);
-                                wnqShowError(`Phase 1 PHP error for "${keyword} | ${city}": ${preview || '(empty response)'}`);
-                                break;
-                            }
-                        } catch(e) {
-                            wnqShowError(`Network error queuing "${keyword} | ${city}": ${e.message}`);
-                            break;
+                (async function() {
+                    // Phase 1: queue URLs (fast — parse and store in transient)
+                    let queueResp;
+                    try {
+                        const fd = new FormData();
+                        fd.append('action',   'wnq_lead_queue_manual');
+                        fd.append('nonce',    '<?php echo esc_js($nonce); ?>');
+                        fd.append('urls',     urls);
+                        fd.append('industry', industry);
+                        wnqSetProgressLabel('Queuing URLs…');
+                        const r = await fetch(ajaxurl, { method: 'POST', body: fd });
+                        const rawQ = await r.text();
+                        try { queueResp = JSON.parse(rawQ); }
+                        catch(je) {
+                            const preview = rawQ.replace(/<[^>]+>/g,'').trim().substring(0, 120);
+                            wnqShowError('Queue failed: ' + (preview || '(empty response)'));
+                            document.getElementById('lf-start-btn').disabled = false;
+                            document.getElementById('lf-stop-btn').style.display = 'none';
+                            return;
                         }
-
-                        if (!queueResp.success) {
-                            wnqShowError(`${queueResp.data?.message || 'Queue failed'} — skipping "${keyword} | ${city}".`);
-                            continue;
-                        }
-
-                        const { batch_id, total } = queueResp.data;
-                        // Accumulate found count from all combos
-                        document.getElementById('ls-found').textContent =
-                            parseInt(document.getElementById('ls-found').textContent || 0) + (total || 0);
-
-                        if (!batch_id || total === 0) {
-                            continue;
-                        }
-
-                        // Phase 2: process one candidate at a time
-                        let comboProgress = 0;
-                        let consecutiveErrors = 0;
-                        while (comboProgress < total && !_stopped) {
-                            wnqSetProgressLabel(`Combo ${i+1}/${combos.length}: "${keyword}" in "${city}" — ${comboProgress}/${total} candidates…`);
-                            wnqSetSubStatus(`Processing candidate ${comboProgress + 1} of ${total}… (crawling website)`);
-
-                            let procResp = null;
-                            try {
-                                // 60-second hard browser timeout per candidate
-                                // HTTP calls now max at 8+5+4 = 17s so 60s is very safe
-                                const ctrl = new AbortController();
-                                const tid  = setTimeout(() => ctrl.abort(), 60000);
-                                const fd2 = new FormData();
-                                fd2.append('action',      'wnq_lead_process_next');
-                                fd2.append('nonce',       '<?php echo esc_js($nonce); ?>');
-                                fd2.append('batch_id',    batch_id);
-                                fd2.append('min_reviews', minReviews);
-                                fd2.append('min_rating',  minRating);
-                                fd2.append('min_seo',     minSeo);
-                                const r2 = await fetch(ajaxurl, { method:'POST', body: fd2, signal: ctrl.signal });
-                                clearTimeout(tid);
-                                // Read the raw text first so we can show it if JSON parse fails
-                                const rawText = await r2.text();
-                                try {
-                                    procResp = JSON.parse(rawText);
-                                } catch(je) {
-                                    // PHP returned non-JSON (fatal / timeout). Show raw snippet.
-                                    const preview = rawText.replace(/<[^>]+>/g,'').trim().substring(0, 120);
-                                    wnqShowError(`Candidate ${comboProgress+1} PHP error: ${preview || '(empty response)'}`);
-                                    consecutiveErrors++;
-                                    comboProgress++;
-                                    wnqSetProgress(comboProgress, total);
-                                    if (consecutiveErrors >= 5) { _stopped = true; }
-                                    continue;
-                                }
-                            } catch(e) {
-                                // AbortController fired or network error — skip candidate, keep going
-                                wnqSetSubStatus(`Candidate ${comboProgress+1} timed out — skipping.`);
-                                consecutiveErrors++;
-                                comboProgress++;
-                                wnqSetProgress(comboProgress, total);
-                                if (consecutiveErrors >= 5) {
-                                    wnqShowError(`5 consecutive timeouts — stopping "${keyword} | ${city}". Try again.`);
-                                    _stopped = true;
-                                }
-                                continue;
-                            }
-
-                            if (!procResp || !procResp.success) {
-                                const errMsg = procResp?.data?.message || 'Unknown server error';
-                                wnqSetSubStatus(`Candidate ${comboProgress+1}: ${errMsg}`);
-                                consecutiveErrors++;
-                                comboProgress++;
-                                wnqSetProgress(comboProgress, total);
-                                if (consecutiveErrors >= 5) {
-                                    wnqShowError(`5 consecutive server errors — stopping. Last: ${errMsg}`);
-                                    _stopped = true;
-                                }
-                                continue;
-                            }
-
-                            consecutiveErrors = 0;
-                            const d = procResp.data;
-                            comboProgress    = d.progress;
-                            _lastBatchStats  = d.stats;
-                            wnqSetSubStatus(`Candidate ${comboProgress} done.`);
-
-                            // Display = cumulative from finished combos + current batch
-                            wnqUpdateLiveStats(d.stats, _cumStats);
-                            wnqSetProgress(d.progress, d.total);
-
-                            if (d.done) break;
-                        }
-
-                        // Fold this combo's final stats into the cumulative totals
-                        absorbLastBatch();
-                        // Save completed search to history (single-mode only; bulk records each combo)
-                        if (_mode === 'single' || combos.length > 1) {
-                            saveToHistory(keyword, city);
-                        }
+                    } catch(e) {
+                        wnqShowError('Network error: ' + e.message);
+                        document.getElementById('lf-start-btn').disabled = false;
+                        document.getElementById('lf-stop-btn').style.display = 'none';
+                        return;
                     }
 
-                    // ── All combos done ──
+                    if (!queueResp.success) {
+                        wnqShowError(queueResp.data?.message || 'Failed to queue URLs');
+                        document.getElementById('lf-start-btn').disabled = false;
+                        document.getElementById('lf-stop-btn').style.display = 'none';
+                        return;
+                    }
+
+                    const { batch_id, total } = queueResp.data;
+                    document.getElementById('ls-found').textContent = total || 0;
+                    if (!batch_id || total === 0) {
+                        wnqShowError('No valid URLs found in the input.');
+                        document.getElementById('lf-start-btn').disabled = false;
+                        document.getElementById('lf-stop-btn').style.display = 'none';
+                        return;
+                    }
+
+                    // Phase 2: process one URL at a time
+                    let progress = 0, consecutiveErrors = 0, lastStats = null;
+                    while (progress < total && !_stopped) {
+                        wnqSetProgressLabel('Processing ' + progress + '/' + total + '…');
+                        wnqSetSubStatus('Crawling URL ' + (progress + 1) + ' of ' + total + '…');
+
+                        let procResp = null;
+                        try {
+                            const ctrl = new AbortController();
+                            const tid  = setTimeout(() => ctrl.abort(), 60000);
+                            const fd2 = new FormData();
+                            fd2.append('action',   'wnq_lead_process_next_manual');
+                            fd2.append('nonce',    '<?php echo esc_js($nonce); ?>');
+                            fd2.append('batch_id', batch_id);
+                            fd2.append('min_seo',  minSeo);
+                            const r2 = await fetch(ajaxurl, { method: 'POST', body: fd2, signal: ctrl.signal });
+                            clearTimeout(tid);
+                            const rawText = await r2.text();
+                            try { procResp = JSON.parse(rawText); }
+                            catch(je) {
+                                const preview = rawText.replace(/<[^>]+>/g,'').trim().substring(0, 120);
+                                wnqShowError('URL ' + (progress+1) + ' PHP error: ' + (preview || '(empty)'));
+                                consecutiveErrors++; progress++;
+                                wnqSetProgress(progress, total);
+                                if (consecutiveErrors >= 5) _stopped = true;
+                                continue;
+                            }
+                        } catch(e) {
+                            wnqSetSubStatus('URL ' + (progress+1) + ' timed out — skipping.');
+                            consecutiveErrors++; progress++;
+                            wnqSetProgress(progress, total);
+                            if (consecutiveErrors >= 5) {
+                                wnqShowError('5 consecutive timeouts — stopping. Try again.');
+                                _stopped = true;
+                            }
+                            continue;
+                        }
+
+                        if (!procResp || !procResp.success) {
+                            const errMsg = procResp?.data?.message || 'Unknown server error';
+                            wnqSetSubStatus('URL ' + (progress+1) + ': ' + errMsg);
+                            consecutiveErrors++; progress++;
+                            wnqSetProgress(progress, total);
+                            if (consecutiveErrors >= 5) {
+                                wnqShowError('5 server errors — stopping. Last: ' + errMsg);
+                                _stopped = true;
+                            }
+                            continue;
+                        }
+
+                        consecutiveErrors = 0;
+                        const d = procResp.data;
+                        progress  = d.progress;
+                        lastStats = d.stats;
+                        wnqSetSubStatus('URL ' + progress + ' done.');
+                        wnqUpdateLiveStats(d.stats);
+                        wnqSetProgress(d.progress, d.total);
+                        if (d.done) break;
+                    }
+
                     document.getElementById('lf-start-btn').disabled = false;
                     document.getElementById('lf-stop-btn').style.display = 'none';
-                    const saved = _cumStats.saved;
-
+                    const saved = lastStats ? lastStats.saved : 0;
                     if (!_stopped) {
                         wnqSetProgressLabel('Complete');
                         wnqSetSubStatus('');
                         wnqSetProgress(1, 1);
                         document.getElementById('lf-result').innerHTML =
-                            `<div class="wnq-result wnq-result-ok">
-                                <strong>All searches complete</strong>
-                                <p><b>${saved}</b> new lead${saved !== 1 ? 's' : ''} saved across ${combos.length} search${combos.length !== 1 ? 'es' : ''}.
-                                ${saved > 0 ? '<br><a href="admin.php?page=wnq-lead-finder&tab=leads" style="color:#15803d;font-weight:600">View leads &rarr;</a>' : ''}</p>
-                            </div>`;
+                            '<div class="wnq-result wnq-result-ok"><strong>Done</strong><p><b>' + saved + '</b> new lead' + (saved !== 1 ? 's' : '') + ' saved.'
+                            + (saved > 0 ? ' <a href="admin.php?page=wnq-lead-finder&tab=leads" style="color:#15803d;font-weight:600">View leads &rarr;</a>' : '') + '</p></div>';
                     } else {
                         wnqSetProgressLabel('Stopped');
                         document.getElementById('lf-result').innerHTML =
-                            `<div class="wnq-result" style="background:#fef9c3;border:1px solid #fde68a;color:#92400e;">
-                                <strong>Search stopped</strong>
-                                <p>${saved} lead${saved !== 1 ? 's' : ''} saved so far. You can run another search to continue.</p>
-                            </div>`;
+                            '<div class="wnq-result" style="background:#fef9c3;border:1px solid #fde68a;color:#92400e;"><strong>Search stopped</strong><p>' + saved + ' lead' + (saved !== 1 ? 's' : '') + ' saved so far.</p></div>';
                     }
                 })();
             };
@@ -638,20 +460,18 @@ final class LeadFinderAdmin
             // ── Helpers ──────────────────────────────────────────────────────
 
             function wnqResetStats() {
-                ['ls-found','ls-saved','ls-lowrev','ls-franchise','ls-duplicate','ls-noweb','ls-lowseo'].forEach(id => {
+                ['ls-found','ls-saved','ls-franchise','ls-duplicate','ls-noweb','ls-lowseo'].forEach(function(id) {
                     document.getElementById(id).textContent = '0';
                 });
                 wnqSetProgress(0, 1);
             }
 
-            function wnqUpdateLiveStats(s, cumStats) {
-                // Show cumulative from finished combos + current batch-in-progress
-                document.getElementById('ls-saved').textContent     = cumStats.saved                    + s.saved;
-                document.getElementById('ls-lowrev').textContent    = (cumStats.low_reviews || 0)       + (s.low_reviews || 0);
-                document.getElementById('ls-franchise').textContent = cumStats.franchise                + s.franchise;
-                document.getElementById('ls-duplicate').textContent = cumStats.duplicate                + s.duplicate;
-                document.getElementById('ls-noweb').textContent     = cumStats.no_website               + s.no_website;
-                document.getElementById('ls-lowseo').textContent    = cumStats.low_seo                  + s.low_seo;
+            function wnqUpdateLiveStats(s) {
+                document.getElementById('ls-saved').textContent     = s.saved;
+                document.getElementById('ls-franchise').textContent = s.franchise;
+                document.getElementById('ls-duplicate').textContent = s.duplicate;
+                document.getElementById('ls-noweb').textContent     = s.no_website;
+                document.getElementById('ls-lowseo').textContent    = s.low_seo;
             }
 
             function wnqSetProgress(current, total) {
@@ -670,7 +490,7 @@ final class LeadFinderAdmin
 
             function wnqShowError(msg) {
                 document.getElementById('lf-result').innerHTML +=
-                    `<div class="wnq-result wnq-result-err" style="margin-bottom:6px;"><strong>Error</strong> — ${msg}</div>`;
+                    '<div class="wnq-result wnq-result-err" style="margin-bottom:6px;"><strong>Error</strong> — ' + msg + '</div>';
             }
         })();
         </script>
@@ -1052,92 +872,24 @@ final class LeadFinderAdmin
 
     private static function renderSettingsTab(array $settings): void
     {
-        $test_nonce = wp_create_nonce('wnq_lead_test_api');
         ?>
         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
             <?php wp_nonce_field('wnq_lead_save_settings', 'wnq_nonce'); ?>
             <input type="hidden" name="action" value="wnq_lead_save_settings">
 
             <div class="wnq-card">
-                <h3>Google Places API</h3>
-                <div class="wnq-row2">
-                    <div class="wnq-field">
-                        <label>API Key</label>
-                        <input type="password" name="google_places_key" value="<?php echo esc_attr($settings['google_places_key'] ?? ''); ?>" placeholder="AIza…">
-                        <small>
-                            Enable <strong>Places API</strong> in
-                            <a href="https://console.cloud.google.com/apis/library/places-backend.googleapis.com" target="_blank">Google Cloud Console</a>.
-                            Billing must be active (~$17/1,000 Place Details calls).
-                        </small>
-                    </div>
-                    <div class="wnq-field" style="justify-content:flex-end;">
-                        <button type="button" class="wnq-btn wnq-btn-secondary" onclick="wnqTestApi()">Test API Key</button>
-                        <div id="api-test-result" style="margin-top:8px;font-size:12px;"></div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="wnq-card">
-                <h3>Daily Automation</h3>
-                <label style="font-size:13px;display:flex;align-items:center;gap:8px;margin-bottom:16px;">
-                    <input type="checkbox" name="enabled" value="1" <?php checked(!empty($settings['enabled'])); ?>>
-                    Enable daily cron — runs at 9am, one industry + city per day
-                </label>
-                <div class="wnq-row2">
-                    <div class="wnq-field">
-                        <label>Target Industries (one per line)</label>
-                        <textarea name="target_industries" placeholder="roofing contractor&#10;plumber&#10;HVAC company&#10;electrician&#10;landscaping"><?php echo esc_textarea($settings['target_industries'] ?? ''); ?></textarea>
-                        <small>Each line is used as a Google Places search keyword</small>
-                    </div>
-                    <div class="wnq-field">
-                        <label>Target Cities (one per line)</label>
-                        <textarea name="target_cities" placeholder="Baltimore MD&#10;Orlando FL&#10;Charlotte NC&#10;Richmond VA"><?php echo esc_textarea($settings['target_cities'] ?? ''); ?></textarea>
-                        <small>Will be combined with industry keywords automatically</small>
-                    </div>
-                </div>
-            </div>
-
-            <div class="wnq-card">
                 <h3>Default Qualification Filters</h3>
-                <div class="wnq-row3">
-                    <div class="wnq-field">
-                        <label>Min Google Reviews</label>
-                        <input type="number" name="min_reviews" value="<?php echo esc_attr($settings['min_reviews'] ?? 20); ?>" min="0">
-                        <small>Confirms the business is established and has customers</small>
-                    </div>
-                    <div class="wnq-field">
-                        <label>Min Rating</label>
-                        <input type="number" name="min_rating" value="<?php echo esc_attr($settings['min_rating'] ?? 3.5); ?>" min="0" max="5" step="0.1">
-                        <small>Skip businesses with very poor reputations</small>
-                    </div>
+                <div class="wnq-row2">
                     <div class="wnq-field">
                         <label>Min SEO Score</label>
                         <input type="number" name="min_seo_score" value="<?php echo esc_attr($settings['min_seo_score'] ?? 2); ?>" min="0" max="7">
-                        <small>Issues found (1–7). 2+ means real SEO problems.</small>
+                        <small>Issues found (0–7). 2+ means real SEO problems worth pitching.</small>
                     </div>
                 </div>
             </div>
 
             <button type="submit" class="wnq-btn wnq-btn-primary">Save Settings</button>
         </form>
-
-        <script>
-        function wnqTestApi() {
-            const btn = event.target;
-            btn.disabled = true; btn.textContent = 'Testing…';
-            const fd = new FormData();
-            fd.append('action', 'wnq_lead_test_api');
-            fd.append('nonce',  '<?php echo esc_js($test_nonce); ?>');
-            fetch(ajaxurl, { method:'POST', body: fd })
-                .then(r => r.json())
-                .then(resp => {
-                    btn.disabled = false; btn.textContent = 'Test API Key';
-                    document.getElementById('api-test-result').innerHTML = resp.success
-                        ? '<span style="color:#16a34a">✓ ' + resp.data.message + '</span>'
-                        : '<span style="color:#dc2626">✗ ' + (resp.data?.message || 'Failed') + '</span>';
-                });
-        }
-        </script>
 
         <?php if (!empty($_GET['settings_saved'])): ?>
             <div class="notice notice-success is-dismissible" style="margin-top:14px;"><p>Settings saved.</p></div>
@@ -1148,27 +900,21 @@ final class LeadFinderAdmin
     // ── AJAX Handlers ────────────────────────────────────────────────────────
 
     /**
-     * Phase 1 — Queue a search: runs the Google Places API only, stores raw
-     * candidates in a transient, returns immediately with a batch_id.
-     * No website crawling happens here, so this call is always fast (~5–10s).
+     * Phase 1 — Queue manual URL search: parses the URL list and stores
+     * it in a transient, returns immediately with a batch_id.
      */
-    public static function ajaxQueueSearch(): void
+    public static function ajaxQueueManual(): void
     {
-        // Phase 1 fetches up to 3 Pages API pages (8s each) + 2×2s sleeps = ~28s worst-case.
-        // Many shared hosts cap PHP at 30s — bump to 120s so pagination never gets killed.
-        @set_time_limit(120);
-
-        if (!check_ajax_referer('wnq_lead_queue_search', 'nonce', false)) {
+        if (!check_ajax_referer('wnq_lead_manual', 'nonce', false)) {
             wp_send_json_error(['message' => 'Security check failed — refresh the page and try again.']);
         }
         if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
             wp_send_json_error(['message' => 'Access denied']);
         }
 
-        $result = LeadFinderEngine::queueSearch([
-            'keyword'     => sanitize_text_field($_POST['keyword']      ?? ''),
-            'city'        => sanitize_text_field($_POST['city']         ?? ''),
-            'max_results' => (int)($_POST['max_results'] ?? 60),
+        $result = LeadFinderEngine::queueManualSearch([
+            'urls'     => sanitize_textarea_field($_POST['urls']     ?? ''),
+            'industry' => sanitize_text_field($_POST['industry']     ?? ''),
         ]);
 
         $result['ok']
@@ -1177,14 +923,12 @@ final class LeadFinderAdmin
     }
 
     /**
-     * Phase 2 — Process next candidate: web-crawls exactly one Place result
-     * from the queued batch. Called in a loop by the browser until done=true.
-     * Worst-case HTTP budget: 8s (Details) + 5s (homepage) + 4s (email) = 17s,
-     * comfortably inside any host's configured max_execution_time (30s+).
+     * Phase 2 — Process next manual URL: crawls exactly one URL from the
+     * queued batch. Called in a loop by the browser until done=true.
      */
-    public static function ajaxProcessNext(): void
+    public static function ajaxProcessNextManual(): void
     {
-        if (!check_ajax_referer('wnq_lead_queue_search', 'nonce', false)) {
+        if (!check_ajax_referer('wnq_lead_manual', 'nonce', false)) {
             wp_send_json_error(['message' => 'Security check failed — refresh the page and try again.']);
         }
         if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
@@ -1196,10 +940,8 @@ final class LeadFinderAdmin
             wp_send_json_error(['message' => 'Missing batch_id']);
         }
 
-        $result = LeadFinderEngine::processNextCandidate($batch_id, [
-            'min_reviews'   => (int)($_POST['min_reviews']   ?? 20),
-            'min_rating'    => (float)($_POST['min_rating']  ?? 3.5),
-            'min_seo_score' => (int)($_POST['min_seo']       ?? 2),
+        $result = LeadFinderEngine::processNextManual($batch_id, [
+            'min_seo_score' => (int)($_POST['min_seo'] ?? 2),
         ]);
 
         $result['ok']
@@ -1245,18 +987,6 @@ final class LeadFinderAdmin
         if (!$id) wp_send_json_error();
         Lead::delete($id);
         wp_send_json_success();
-    }
-
-    public static function ajaxTestApi(): void
-    {
-        check_ajax_referer('wnq_lead_test_api', 'nonce');
-        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
-            wp_send_json_error();
-        }
-        $result = PlacesAPIClient::testApiKey();
-        $result['ok']
-            ? wp_send_json_success(['message' => $result['message']])
-            : wp_send_json_error(['message'   => $result['message']]);
     }
 
     public static function ajaxRunMigration(): void
@@ -1321,15 +1051,10 @@ final class LeadFinderAdmin
             wp_die('Access denied');
         }
 
-        update_option('wnq_lead_finder_settings', [
-            'google_places_key' => sanitize_text_field($_POST['google_places_key']  ?? ''),
-            'enabled'           => !empty($_POST['enabled']) ? 1 : 0,
-            'target_industries' => sanitize_textarea_field($_POST['target_industries'] ?? ''),
-            'target_cities'     => sanitize_textarea_field($_POST['target_cities']     ?? ''),
-            'min_reviews'       => max(0, (int)($_POST['min_reviews']    ?? 20)),
-            'min_rating'        => max(0.0, min(5.0, (float)($_POST['min_rating'] ?? 3.5))),
-            'min_seo_score'     => max(0, min(7, (int)($_POST['min_seo_score']    ?? 2))),
-        ]);
+        $existing = get_option('wnq_lead_finder_settings', []);
+        update_option('wnq_lead_finder_settings', array_merge($existing, [
+            'min_seo_score' => max(0, min(7, (int)($_POST['min_seo_score'] ?? 2))),
+        ]));
 
         wp_redirect(admin_url('admin.php?page=wnq-lead-finder&tab=settings&settings_saved=1'));
         exit;

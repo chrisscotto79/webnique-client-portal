@@ -12,6 +12,12 @@
  *  - missing_meta         warning
  *  - orphan_page          warning  (no internal links pointing to it)
  *  - declining_rank       warning  (position dropped > 5 spots)
+ *  - missing_og          warning  (no Open Graph meta tags)
+ *  - no_image_lazy_load  info     (images without loading="lazy")
+ *  - title_too_long      warning  (SEO title > 60 characters)
+ *  - duplicate_title     warning  (same title on multiple pages)
+ *  - duplicate_meta      warning  (same meta description on multiple pages)
+ *  - keyword_cannibalization warning (same focus_keyword on multiple pages)
  *
  * @package WebNique Portal
  */
@@ -60,15 +66,21 @@ final class AuditEngine
         $pages    = SEOHub::getSiteData($client_id);
         $keywords = SEOHub::getKeywords($client_id);
         $counts   = [
-            'missing_h1'        => 0,
-            'no_schema'         => 0,
-            'thin_content'      => 0,
-            'missing_alt'       => 0,
-            'kw_not_in_title'   => 0,
-            'no_internal_links' => 0,
-            'missing_meta'      => 0,
-            'orphan_page'       => 0,
-            'declining_rank'    => 0,
+            'missing_h1'              => 0,
+            'no_schema'               => 0,
+            'thin_content'            => 0,
+            'missing_alt'             => 0,
+            'kw_not_in_title'         => 0,
+            'no_internal_links'       => 0,
+            'missing_meta'            => 0,
+            'orphan_page'             => 0,
+            'declining_rank'          => 0,
+            'missing_og'              => 0,
+            'no_image_lazy_load'      => 0,
+            'title_too_long'          => 0,
+            'duplicate_title'         => 0,
+            'duplicate_meta'          => 0,
+            'keyword_cannibalization' => 0,
         ];
 
         // Build set of URLs that are linked to (for orphan detection)
@@ -145,6 +157,90 @@ final class AuditEngine
                     'title'          => $page['title'],
                 ]);
                 $counts['missing_meta']++;
+            }
+
+            // Missing Open Graph tags (only flag posts and pages)
+            if (in_array($page['page_type'], ['page', 'post']) && !(int)($page['has_og_tags'] ?? 0)) {
+                SEOHub::insertAuditFinding($client_id, 'missing_og', 'warning', $url, [
+                    'title' => $page['title'],
+                ]);
+                $counts['missing_og']++;
+            }
+
+            // Images without lazy loading
+            if ((int)($page['images_count'] ?? 0) > 0 && (int)($page['images_without_lazy'] ?? 0) > 0) {
+                SEOHub::insertAuditFinding($client_id, 'no_image_lazy_load', 'info', $url, [
+                    'images_total'        => $page['images_count'],
+                    'images_without_lazy' => $page['images_without_lazy'],
+                ]);
+                $counts['no_image_lazy_load']++;
+            }
+
+            // Title too long (> 60 chars hurts CTR)
+            if ((int)($page['title_length'] ?? 0) > 60) {
+                SEOHub::insertAuditFinding($client_id, 'title_too_long', 'warning', $url, [
+                    'title'        => $page['title'],
+                    'title_length' => $page['title_length'],
+                ]);
+                $counts['title_too_long']++;
+            }
+        }
+
+        // ── Cross-page checks ────────────────────────────────────────────────
+
+        // Duplicate titles
+        $title_map = [];
+        foreach ($pages as $page) {
+            $t = trim($page['title'] ?? '');
+            if (empty($t)) continue;
+            $title_map[$t][] = $page['page_url'];
+        }
+        foreach ($title_map as $title => $urls) {
+            if (count($urls) > 1) {
+                foreach ($urls as $url) {
+                    SEOHub::insertAuditFinding($client_id, 'duplicate_title', 'warning', $url, [
+                        'title'      => $title,
+                        'also_found' => implode(', ', array_slice(array_filter($urls, fn($u) => $u !== $url), 0, 3)),
+                    ]);
+                    $counts['duplicate_title']++;
+                }
+            }
+        }
+
+        // Duplicate meta descriptions
+        $meta_map = [];
+        foreach ($pages as $page) {
+            $m = trim($page['meta_description'] ?? '');
+            if (strlen($m) < 80) continue; // skip blank / placeholder values
+            $meta_map[$m][] = $page['page_url'];
+        }
+        foreach ($meta_map as $meta => $urls) {
+            if (count($urls) > 1) {
+                foreach ($urls as $url) {
+                    SEOHub::insertAuditFinding($client_id, 'duplicate_meta', 'warning', $url, [
+                        'also_found' => implode(', ', array_slice(array_filter($urls, fn($u) => $u !== $url), 0, 3)),
+                    ]);
+                    $counts['duplicate_meta']++;
+                }
+            }
+        }
+
+        // Keyword cannibalization (same focus_keyword on multiple published pages)
+        $kw_map = [];
+        foreach ($pages as $page) {
+            $kw = strtolower(trim($page['focus_keyword'] ?? ''));
+            if (empty($kw) || $page['post_status'] !== 'publish') continue;
+            $kw_map[$kw][] = $page['page_url'];
+        }
+        foreach ($kw_map as $kw => $urls) {
+            if (count($urls) > 1) {
+                foreach ($urls as $url) {
+                    SEOHub::insertAuditFinding($client_id, 'keyword_cannibalization', 'warning', $url, [
+                        'focus_keyword' => $kw,
+                        'also_found'    => implode(', ', array_slice(array_filter($urls, fn($u) => $u !== $url), 0, 3)),
+                    ]);
+                    $counts['keyword_cannibalization']++;
+                }
             }
         }
 
@@ -251,6 +347,32 @@ final class AuditEngine
             "SELECT f.id FROM $ft f
              JOIN $st s ON f.client_id=s.client_id AND f.page_url=s.page_url
              WHERE f.client_id=%s AND f.finding_type='missing_alt' AND f.status='open' AND s.images_missing_alt=0",
+            $client_id
+        ), ARRAY_A) ?: [];
+
+        foreach ($fixed as $row) {
+            SEOHub::resolveAuditFinding((int)$row['id']);
+            $resolved++;
+        }
+
+        // Resolve missing_og
+        $fixed = $wpdb->get_results($wpdb->prepare(
+            "SELECT f.id FROM $ft f
+             JOIN $st s ON f.client_id=s.client_id AND f.page_url=s.page_url
+             WHERE f.client_id=%s AND f.finding_type='missing_og' AND f.status='open' AND s.has_og_tags=1",
+            $client_id
+        ), ARRAY_A) ?: [];
+
+        foreach ($fixed as $row) {
+            SEOHub::resolveAuditFinding((int)$row['id']);
+            $resolved++;
+        }
+
+        // Resolve no_image_lazy_load
+        $fixed = $wpdb->get_results($wpdb->prepare(
+            "SELECT f.id FROM $ft f
+             JOIN $st s ON f.client_id=s.client_id AND f.page_url=s.page_url
+             WHERE f.client_id=%s AND f.finding_type='no_image_lazy_load' AND f.status='open' AND s.images_without_lazy=0",
             $client_id
         ), ARRAY_A) ?: [];
 
