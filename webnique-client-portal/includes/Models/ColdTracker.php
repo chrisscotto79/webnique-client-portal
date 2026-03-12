@@ -1,0 +1,348 @@
+<?php
+/**
+ * Cold Tracker Model
+ *
+ * Handles database operations for cold call KPI tracking.
+ * Table: wp_wnq_cold_calls
+ *
+ * @package WebNique Portal
+ */
+
+namespace WNQ\Models;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+final class ColdTracker
+{
+    private static function table(): string
+    {
+        global $wpdb;
+        return $wpdb->prefix . 'wnq_cold_calls';
+    }
+
+    public static function createTable(): void
+    {
+        global $wpdb;
+        $c = $wpdb->get_charset_collate();
+        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+
+        dbDelta("CREATE TABLE IF NOT EXISTS " . self::table() . " (
+            id            bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            call_date     date NOT NULL,
+            num_calls     int(11) NOT NULL DEFAULT 0,
+            num_answers   int(11) NOT NULL DEFAULT 0,
+            num_pitches   int(11) NOT NULL DEFAULT 0,
+            num_meetings  int(11) NOT NULL DEFAULT 0,
+            notes         text,
+            created_at    datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at    datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY call_date (call_date),
+            KEY idx_date (call_date)
+        ) $c;");
+    }
+
+    /**
+     * Save or update a day's data. Returns true on success.
+     */
+    public static function saveDay(array $data): bool
+    {
+        global $wpdb;
+
+        $date = sanitize_text_field($data['call_date'] ?? '');
+        if (!$date || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
+            return false;
+        }
+
+        $row = [
+            'call_date'    => $date,
+            'num_calls'    => max(0, (int)($data['num_calls']    ?? 0)),
+            'num_answers'  => max(0, (int)($data['num_answers']  ?? 0)),
+            'num_pitches'  => max(0, (int)($data['num_pitches']  ?? 0)),
+            'num_meetings' => max(0, (int)($data['num_meetings'] ?? 0)),
+            'notes'        => sanitize_textarea_field($data['notes'] ?? ''),
+            'updated_at'   => current_time('mysql'),
+        ];
+
+        $existing = self::getDay($date);
+        if ($existing) {
+            return false !== $wpdb->update(self::table(), $row, ['call_date' => $date]);
+        }
+
+        $row['created_at'] = current_time('mysql');
+        return false !== $wpdb->insert(self::table(), $row);
+    }
+
+    /**
+     * Get a single day's data, or null if not logged.
+     */
+    public static function getDay(string $date): ?array
+    {
+        global $wpdb;
+        $row = $wpdb->get_row(
+            $wpdb->prepare("SELECT * FROM " . self::table() . " WHERE call_date = %s", $date),
+            ARRAY_A
+        );
+        return $row ?: null;
+    }
+
+    /**
+     * Get all logged days in a date range, keyed by date string.
+     */
+    public static function getRange(string $from, string $to): array
+    {
+        global $wpdb;
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM " . self::table() . " WHERE call_date BETWEEN %s AND %s ORDER BY call_date ASC",
+                $from,
+                $to
+            ),
+            ARRAY_A
+        ) ?: [];
+
+        $result = [];
+        foreach ($rows as $row) {
+            $result[$row['call_date']] = $row;
+        }
+        return $result;
+    }
+
+    /**
+     * Get all logged days in a calendar month, keyed by date string.
+     */
+    public static function getMonthData(int $year, int $month): array
+    {
+        $from = sprintf('%04d-%02d-01', $year, $month);
+        $to   = date('Y-m-t', strtotime($from));
+        return self::getRange($from, $to);
+    }
+
+    /**
+     * Aggregate an array of day rows into totals + conversion rates.
+     */
+    public static function aggregateStats(array $days): array
+    {
+        $totals = [
+            'calls'       => 0,
+            'answers'     => 0,
+            'pitches'     => 0,
+            'meetings'    => 0,
+            'days_called' => 0,
+        ];
+
+        foreach ($days as $day) {
+            $totals['calls']    += (int)$day['num_calls'];
+            $totals['answers']  += (int)$day['num_answers'];
+            $totals['pitches']  += (int)$day['num_pitches'];
+            $totals['meetings'] += (int)$day['num_meetings'];
+            if ((int)$day['num_calls'] > 0) {
+                $totals['days_called']++;
+            }
+        }
+
+        $totals['avg_calls']     = $totals['days_called'] > 0
+            ? round($totals['calls'] / $totals['days_called'], 1)
+            : 0;
+        $totals['answer_rate']   = $totals['calls']   > 0 ? round($totals['answers']  / $totals['calls']   * 100, 1) : 0;
+        $totals['pitch_rate']    = $totals['answers'] > 0 ? round($totals['pitches']  / $totals['answers'] * 100, 1) : 0;
+        $totals['meeting_rate']  = $totals['pitches'] > 0 ? round($totals['meetings'] / $totals['pitches'] * 100, 1) : 0;
+        $totals['call_to_meet']  = $totals['calls']   > 0 ? round($totals['meetings'] / $totals['calls']   * 100, 2) : 0;
+
+        return $totals;
+    }
+
+    /**
+     * Generate smart coaching suggestions based on KPI stats.
+     * Returns array of ['type' => 'success|warning|danger|info', 'msg' => '...']
+     */
+    public static function generateSuggestions(array $stats, string $period = 'week'): array
+    {
+        $suggestions = [];
+
+        $calls   = $stats['calls']        ?? 0;
+        $days    = $stats['days_called']  ?? 0;
+        $ar      = $stats['answer_rate']  ?? 0;
+        $pr      = $stats['pitch_rate']   ?? 0;
+        $mr      = $stats['meeting_rate'] ?? 0;
+        $avg     = $stats['avg_calls']    ?? 0;
+        $c2m     = $stats['call_to_meet'] ?? 0;
+
+        if ($calls === 0) {
+            $suggestions[] = [
+                'type' => 'info',
+                'msg'  => 'No calls logged this ' . $period . ' yet. Enter your daily KPIs to start seeing insights.',
+            ];
+            return $suggestions;
+        }
+
+        // ── Call Volume ──────────────────────────────────────────────────
+        if ($avg > 0 && $avg < 150) {
+            $suggestions[] = [
+                'type' => 'warning',
+                'msg'  => "Averaging {$avg} calls/day — below the 200 target. Time-block 2-hour call sessions to hit your daily number consistently.",
+            ];
+        } elseif ($avg >= 200) {
+            $suggestions[] = [
+                'type' => 'success',
+                'msg'  => "Solid volume — you're averaging {$avg} calls/day and hitting your target. Keep that momentum.",
+            ];
+        }
+
+        // Missed days
+        if ($period === 'week' && $days < 4) {
+            $suggestions[] = [
+                'type' => 'warning',
+                'msg'  => "You called on {$days} day(s) this week. Daily consistency compounds over time — even 100 calls on a slow day keeps the pipeline moving.",
+            ];
+        }
+
+        // ── Answer Rate ──────────────────────────────────────────────────
+        if ($ar < 10) {
+            $suggestions[] = [
+                'type' => 'danger',
+                'msg'  => "Answer rate is {$ar}% — very low. Shift call windows to 8–9am or 4–6pm when decision-makers are more reachable. Avoid Mondays and Fridays.",
+            ];
+        } elseif ($ar < 18) {
+            $suggestions[] = [
+                'type' => 'warning',
+                'msg'  => "Answer rate of {$ar}% is below the 18–25% benchmark. Experiment with local area codes or call from a mobile number — caller ID matters.",
+            ];
+        } elseif ($ar >= 25) {
+            $suggestions[] = [
+                'type' => 'success',
+                'msg'  => "Strong answer rate at {$ar}%! Your timing and approach are working. Document what's working and protect those call windows.",
+            ];
+        }
+
+        // ── Pitch Rate (of answers) ──────────────────────────────────────
+        if ($pr < 30) {
+            $suggestions[] = [
+                'type' => 'danger',
+                'msg'  => "Only {$pr}% of answers become pitches. You have 7 seconds — lead with a specific, relevant pain point, not a company intro. Test a new opener this week.",
+            ];
+        } elseif ($pr < 50) {
+            $suggestions[] = [
+                'type' => 'warning',
+                'msg'  => "Pitch rate is {$pr}%. Work on a stronger pattern interrupt or curiosity hook to earn 60 more seconds before they hang up.",
+            ];
+        } elseif ($pr >= 60) {
+            $suggestions[] = [
+                'type' => 'success',
+                'msg'  => "Excellent pitch rate at {$pr}%! Your opener is resonating. Record what you're saying so you can refine and scale it.",
+            ];
+        }
+
+        // ── Meeting Rate (of pitches) ────────────────────────────────────
+        if ($mr < 10) {
+            $suggestions[] = [
+                'type' => 'danger',
+                'msg'  => "Meeting conversion is {$mr}%. Make the ask feel low-commitment: offer a 15-minute call (not a demo) and give a specific time — 'Tuesday at 2pm or Thursday at 10am?'",
+            ];
+        } elseif ($mr < 20) {
+            $suggestions[] = [
+                'type' => 'warning',
+                'msg'  => "Meeting rate is {$mr}%. Try asking for permission to send a quick case study before the close — warms them up for the meeting ask.",
+            ];
+        } elseif ($mr >= 25) {
+            $suggestions[] = [
+                'type' => 'success',
+                'msg'  => "Great meeting conversion at {$mr}%! Your value proposition is clear and your close is working.",
+            ];
+        }
+
+        // ── Overall Efficiency ───────────────────────────────────────────
+        if ($calls >= 100 && $c2m > 0) {
+            $calls_per_meeting = round(1 / ($c2m / 100));
+            $suggestions[] = [
+                'type' => 'info',
+                'msg'  => "You're booking 1 meeting every ~{$calls_per_meeting} dials. Increase call volume or improve any one stage to bring that number down.",
+            ];
+        }
+
+        return $suggestions;
+    }
+
+    /**
+     * Get the current call streak (consecutive days with > 0 calls logged up to today).
+     */
+    public static function getCurrentStreak(): int
+    {
+        global $wpdb;
+        $rows = $wpdb->get_results(
+            "SELECT call_date FROM " . self::table() . " WHERE num_calls > 0 ORDER BY call_date DESC LIMIT 60",
+            ARRAY_A
+        ) ?: [];
+
+        if (empty($rows)) return 0;
+
+        $streak = 0;
+        $check  = current_time('Y-m-d');
+
+        // Allow today to not be logged yet (check from yesterday if today isn't there)
+        if ($rows[0]['call_date'] !== $check) {
+            $check = date('Y-m-d', strtotime($check . ' -1 day'));
+            if ($rows[0]['call_date'] !== $check) return 0;
+        }
+
+        foreach ($rows as $row) {
+            if ($row['call_date'] === $check) {
+                $streak++;
+                $check = date('Y-m-d', strtotime($check . ' -1 day'));
+            } else {
+                break;
+            }
+        }
+
+        return $streak;
+    }
+
+    /**
+     * Get weekly breakdown rows for a given month (array of weeks with stats).
+     */
+    public static function getWeeklyBreakdown(int $year, int $month): array
+    {
+        $monthData = self::getMonthData($year, $month);
+        $firstDay  = sprintf('%04d-%02d-01', $year, $month);
+        $lastDay   = date('Y-m-t', strtotime($firstDay));
+
+        $current = $firstDay;
+        $weeks   = [];
+        $weekNum = 1;
+
+        while ($current <= $lastDay) {
+            // Week starts on Monday
+            $dow       = (int)date('N', strtotime($current)); // 1=Mon, 7=Sun
+            $weekStart = date('Y-m-d', strtotime($current . ' -' . ($dow - 1) . ' days'));
+            $weekEnd   = date('Y-m-d', strtotime($weekStart . ' +6 days'));
+
+            // Clamp to month boundaries
+            $rangeStart = max($current, $weekStart);
+            $rangeEnd   = min($lastDay, $weekEnd);
+
+            $weekDays = [];
+            $d = $rangeStart;
+            while ($d <= $rangeEnd) {
+                if (isset($monthData[$d])) {
+                    $weekDays[] = $monthData[$d];
+                }
+                $d = date('Y-m-d', strtotime($d . ' +1 day'));
+            }
+
+            $stats = self::aggregateStats($weekDays);
+            $weeks[] = [
+                'week'  => $weekNum,
+                'start' => $rangeStart,
+                'end'   => $rangeEnd,
+                'stats' => $stats,
+            ];
+
+            $weekNum++;
+            $current = date('Y-m-d', strtotime($weekEnd . ' +1 day'));
+        }
+
+        return $weeks;
+    }
+}

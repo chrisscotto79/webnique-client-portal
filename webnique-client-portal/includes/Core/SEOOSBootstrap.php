@@ -38,6 +38,7 @@ final class SEOOSBootstrap
             \WNQ\Admin\SpiderAdmin::register();
             \WNQ\Admin\LeadFinderAdmin::register();
             \WNQ\Admin\BacklinkAdmin::register();
+            \WNQ\Admin\ColdTrackerAdmin::register();
             // Register get_job ajax handler
             add_action('wp_ajax_wnq_seohub_get_job', [self::class, 'ajaxGetJob']);
         }
@@ -56,6 +57,9 @@ final class SEOOSBootstrap
 
         // Create backlink manager table if not yet created
         \WNQ\Models\BacklinkManager::createTable();
+
+        // Create cold tracker table if not yet created
+        \WNQ\Models\ColdTracker::createTable();
 
         // Migrate backlink table for existing installs (adds contact_email etc.)
         self::maybeMigrateBacklinkSchema();
@@ -102,6 +106,8 @@ final class SEOOSBootstrap
             'includes/Services/LeadEmailExtractor.php',
             'includes/Services/LeadEnrichmentService.php',
             'includes/Services/LeadFinderEngine.php',
+            // Cold Tracker
+            'includes/Models/ColdTracker.php',
             // Backlink Manager
             'includes/Models/BacklinkManager.php',
             'includes/Services/BacklinkVerifier.php',
@@ -115,6 +121,7 @@ final class SEOOSBootstrap
             'admin/SpiderAdmin.php',
             'admin/LeadFinderAdmin.php',
             'admin/BacklinkAdmin.php',
+            'admin/ColdTrackerAdmin.php',
         ];
 
         foreach ($files as $f) {
@@ -164,6 +171,9 @@ final class SEOOSBootstrap
             'includes/Services/BacklinkVerifier.php'               => 'WNQ\\Services\\BacklinkVerifier',
             'includes/Services/BacklinkOutreachEngine.php'         => 'WNQ\\Services\\BacklinkOutreachEngine',
             'admin/BacklinkAdmin.php'                              => 'WNQ\\Admin\\BacklinkAdmin',
+            // Cold Tracker
+            'includes/Models/ColdTracker.php'                      => 'WNQ\\Models\\ColdTracker',
+            'admin/ColdTrackerAdmin.php'                           => 'WNQ\\Admin\\ColdTrackerAdmin',
         ];
         return $map[$file] ?? '';
     }
