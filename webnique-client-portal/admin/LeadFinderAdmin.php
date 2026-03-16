@@ -18,7 +18,6 @@ if (!defined('ABSPATH')) {
 
 use WNQ\Models\Lead;
 use WNQ\Services\LeadFinderEngine;
-use WNQ\Services\PlacesAPIClient;
 
 final class LeadFinderAdmin
 {
@@ -34,7 +33,6 @@ final class LeadFinderAdmin
         add_action('wp_ajax_wnq_lead_update_status', [self::class, 'ajaxUpdateStatus']);
         add_action('wp_ajax_wnq_lead_update_notes',  [self::class, 'ajaxUpdateNotes']);
         add_action('wp_ajax_wnq_lead_delete',        [self::class, 'ajaxDelete']);
-        add_action('wp_ajax_wnq_lead_test_api',      [self::class, 'ajaxTestApi']);
 
         add_action('admin_post_wnq_lead_export_csv',    [self::class, 'handleExportCsv']);
         add_action('admin_post_wnq_lead_save_settings', [self::class, 'handleSaveSettings']);
@@ -623,51 +621,25 @@ final class LeadFinderAdmin
 
     private static function renderSettingsTab(array $settings): void
     {
-        $nonce = wp_create_nonce('wnq_lead_nonce');
         ?>
         <div class="wnq-card" style="max-width:680px">
-            <h3>Google Places API</h3>
+            <h3>Lead Finder Settings</h3>
+            <p style="color:#6b7280;font-size:13px;margin:0 0 16px">
+                No API key required — the Lead Finder scrapes Google Maps directly.
+            </p>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <?php wp_nonce_field('wnq_lead_save_settings'); ?>
                 <input type="hidden" name="action" value="wnq_lead_save_settings">
 
                 <div class="wnq-field" style="margin-bottom:14px">
-                    <label>Google Places API Key</label>
-                    <input type="text" name="google_places_key" value="<?php echo esc_attr($settings['google_places_key'] ?? ''); ?>" placeholder="AIzaSy…">
-                    <small>Used for Text Search and Place Details. Enable "Places API" in Google Cloud Console.</small>
-                </div>
-
-                <div class="wnq-field" style="margin-bottom:14px">
                     <label>Default Keyword</label>
                     <input type="text" name="default_keyword" value="<?php echo esc_attr($settings['default_keyword'] ?? ''); ?>" placeholder="e.g. roofing contractor">
-                    <small>Pre-filled in the search box (you can still change it before each sweep).</small>
+                    <small>Pre-filled in the Search tab (you can still change it before each sweep).</small>
                 </div>
 
-                <div style="display:flex;gap:10px;align-items:center">
-                    <button type="submit" class="wnq-btn wnq-btn-primary">Save Settings</button>
-                    <button type="button" class="wnq-btn wnq-btn-secondary" onclick="wnqTestApi()">Test API Key</button>
-                    <span id="api-test-result" style="font-size:12px"></span>
-                </div>
+                <button type="submit" class="wnq-btn wnq-btn-primary">Save Settings</button>
             </form>
         </div>
-
-        <script>
-        function wnqTestApi() {
-            document.getElementById('api-test-result').textContent = 'Testing…';
-            const body = new URLSearchParams({
-                action: 'wnq_lead_test_api',
-                nonce:  <?php echo wp_json_encode($nonce); ?>,
-            });
-            fetch(<?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>, { method: 'POST', body })
-                .then(r => r.json())
-                .then(d => {
-                    document.getElementById('api-test-result').textContent = d.success
-                        ? '✓ ' + (d.data?.message || 'OK')
-                        : '✗ ' + (d.data?.message || 'Failed');
-                    document.getElementById('api-test-result').style.color = d.success ? '#15803d' : '#dc2626';
-                });
-        }
-        </script>
         <?php
     }
 
@@ -758,18 +730,6 @@ final class LeadFinderAdmin
         $id = (int)($_POST['id'] ?? 0);
         if ($id) Lead::delete($id);
         wp_send_json_success();
-    }
-
-    public static function ajaxTestApi(): void
-    {
-        check_ajax_referer('wnq_lead_nonce', 'nonce');
-        self::requireCap();
-        $result = PlacesAPIClient::testApiKey();
-        if ($result['ok']) {
-            wp_send_json_success(['message' => $result['message']]);
-        } else {
-            wp_send_json_error(['message' => $result['message']]);
-        }
     }
 
     // ── Admin POST: Export CSV ────────────────────────────────────────────────
