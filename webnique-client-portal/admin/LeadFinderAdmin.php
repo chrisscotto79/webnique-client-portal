@@ -194,7 +194,15 @@ final class LeadFinderAdmin
                 </div>
             </div>
 
-            <div style="display:flex;gap:10px;align-items:center;margin-top:4px">
+            <div class="wnq-row2" style="max-width:600px;margin-top:10px">
+                <div class="wnq-field">
+                    <label for="lf-delay">Delay between ZIPs (seconds)</label>
+                    <input type="number" id="lf-delay" value="3" min="1" max="30" step="1" style="width:80px">
+                    <small>Pause between each Google Maps request — keeps bulk runs from being rate-limited. Recommended: 3–5 s (<?php echo esc_html(number_format($total_zips)); ?> ZIPs × 3 s ≈ <?php echo esc_html(round($total_zips * 3 / 60)); ?> min just for searches).</small>
+                </div>
+            </div>
+
+            <div style="display:flex;gap:10px;align-items:center;margin-top:12px">
                 <button class="wnq-btn wnq-btn-primary" id="lf-start-btn" onclick="wnqZipStart()">
                     &#9654; Start ZIP Sweep
                 </button>
@@ -232,20 +240,25 @@ final class LeadFinderAdmin
         (function () {
             'use strict';
 
-            const NONCE     = <?php echo wp_json_encode($nonce); ?>;
-            const AJAX_URL  = <?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>;
-            const ABORT_MS  = 60000; // 60s browser-side timeout per AJAX call
+            const NONCE    = <?php echo wp_json_encode($nonce); ?>;
+            const AJAX_URL = <?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>;
+            const ABORT_MS = 60000; // 60s browser-side timeout per AJAX call
+
+            const delay = ms => new Promise(r => setTimeout(r, ms));
 
             let batchId    = '';
             let totalZips  = 0;
             let running    = false;
             let stopFlag   = false;
             let consecFail = 0;
+            let zipDelayMs = 3000;
             const MAX_FAIL = 5;
 
             window.wnqZipStart = async function () {
                 const keyword = document.getElementById('lf-keyword').value.trim();
                 if (!keyword) { alert('Please enter a keyword.'); return; }
+
+                zipDelayMs = Math.max(1000, (parseInt(document.getElementById('lf-delay').value, 10) || 3) * 1000);
 
                 running   = true;
                 stopFlag  = false;
@@ -328,11 +341,14 @@ final class LeadFinderAdmin
                     // Update status text
                     if (d.action === 'zip_searched') {
                         wnqSetStatus('ZIP ' + zipIdx + ' of ' + total + ' — found ' + (d.found || 0) + ' candidates (' + d.zip + ')');
+                        // Pause between ZIP searches so Google doesn't rate-limit us
+                        if (!d.done && !stopFlag) await delay(zipDelayMs);
                     } else if (d.action === 'candidate') {
                         wnqSetStatus('ZIP ' + zipIdx + ' of ' + total + ' — processing candidate…');
                         wnqSetSub('Result: ' + (d.outcome || 'unknown'));
                     } else if (d.action === 'zip_error') {
                         wnqSetSub('Error on ZIP ' + (d.zip || '') + ', skipping…');
+                        if (!d.done && !stopFlag) await delay(zipDelayMs);
                     } else if (d.action === 'complete') {
                         wnqSetProgress(100);
                         wnqSetStatus('Complete!');
