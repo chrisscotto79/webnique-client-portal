@@ -37,8 +37,6 @@ final class SEOOSBootstrap
             \WNQ\Admin\BlogSchedulerAdmin::register();
             \WNQ\Admin\SpiderAdmin::register();
             \WNQ\Admin\LeadFinderAdmin::register();
-            \WNQ\Admin\BacklinkAdmin::register();
-            \WNQ\Admin\ColdTrackerAdmin::register();
             // Register get_job ajax handler
             add_action('wp_ajax_wnq_seohub_get_job', [self::class, 'ajaxGetJob']);
         }
@@ -46,23 +44,8 @@ final class SEOOSBootstrap
         // Create blog tables if not yet created (schema migration for existing installs)
         self::maybeCreateBlogTables();
 
-        // Migrate SEOHub tables for existing installs (adds period_start/period_end etc.)
-        self::maybeMigrateSEOHubSchema();
-
-        // Migrate site_data table for existing installs (adds has_og_tags, images_without_lazy, title_length)
-        self::maybeMigrateSiteDataSchema();
-
         // Create lead finder table if not yet created
         \WNQ\Models\Lead::createTable();
-
-        // Create backlink manager table if not yet created
-        \WNQ\Models\BacklinkManager::createTable();
-
-        // Create cold tracker table if not yet created
-        \WNQ\Models\ColdTracker::createTable();
-
-        // Migrate backlink table for existing installs (adds contact_email etc.)
-        self::maybeMigrateBacklinkSchema();
 
         // Register REST API routes for SEO Agent
         add_action('rest_api_init', function () {
@@ -102,16 +85,13 @@ final class SEOOSBootstrap
             'includes/Services/ServiceCoverageEngine.php',
             // Lead Finder
             'includes/Models/Lead.php',
+            'includes/Data/FloridaZips.php',
+            'includes/Services/GoogleMapsClient.php',
+            'includes/Services/PlacesAPIClient.php',
             'includes/Services/LeadSEOScorer.php',
             'includes/Services/LeadEmailExtractor.php',
             'includes/Services/LeadEnrichmentService.php',
             'includes/Services/LeadFinderEngine.php',
-            // Cold Tracker
-            'includes/Models/ColdTracker.php',
-            // Backlink Manager
-            'includes/Models/BacklinkManager.php',
-            'includes/Services/BacklinkVerifier.php',
-            'includes/Services/BacklinkOutreachEngine.php',
             // Controllers & Core
             'includes/Controllers/SEOAgentController.php',
             'includes/Core/CronScheduler.php',
@@ -120,8 +100,6 @@ final class SEOOSBootstrap
             'admin/BlogSchedulerAdmin.php',
             'admin/SpiderAdmin.php',
             'admin/LeadFinderAdmin.php',
-            'admin/BacklinkAdmin.php',
-            'admin/ColdTrackerAdmin.php',
         ];
 
         foreach ($files as $f) {
@@ -159,6 +137,9 @@ final class SEOOSBootstrap
             'includes/Services/ServiceCoverageEngine.php'     => 'WNQ\\Services\\ServiceCoverageEngine',
             // Lead Finder
             'includes/Models/Lead.php'                        => 'WNQ\\Models\\Lead',
+            'includes/Data/FloridaZips.php'                   => 'WNQ\\Data\\FloridaZips',
+            'includes/Services/GoogleMapsClient.php'          => 'WNQ\\Services\\GoogleMapsClient',
+            'includes/Services/PlacesAPIClient.php'           => 'WNQ\\Services\\PlacesAPIClient',
             'includes/Services/LeadSEOScorer.php'             => 'WNQ\\Services\\LeadSEOScorer',
             'includes/Services/LeadEmailExtractor.php'        => 'WNQ\\Services\\LeadEmailExtractor',
             'includes/Services/LeadEnrichmentService.php'     => 'WNQ\\Services\\LeadEnrichmentService',
@@ -167,13 +148,6 @@ final class SEOOSBootstrap
             'admin/BlogSchedulerAdmin.php'                    => 'WNQ\\Admin\\BlogSchedulerAdmin',
             'admin/SpiderAdmin.php'                           => 'WNQ\\Admin\\SpiderAdmin',
             'admin/LeadFinderAdmin.php'                       => 'WNQ\\Admin\\LeadFinderAdmin',
-            'includes/Models/BacklinkManager.php'                  => 'WNQ\\Models\\BacklinkManager',
-            'includes/Services/BacklinkVerifier.php'               => 'WNQ\\Services\\BacklinkVerifier',
-            'includes/Services/BacklinkOutreachEngine.php'         => 'WNQ\\Services\\BacklinkOutreachEngine',
-            'admin/BacklinkAdmin.php'                              => 'WNQ\\Admin\\BacklinkAdmin',
-            // Cold Tracker
-            'includes/Models/ColdTracker.php'                      => 'WNQ\\Models\\ColdTracker',
-            'admin/ColdTrackerAdmin.php'                           => 'WNQ\\Admin\\ColdTrackerAdmin',
         ];
         return $map[$file] ?? '';
     }
@@ -714,111 +688,6 @@ final class SEOOSBootstrap
 
             update_option('wnq_blog_schema_ver', '2');
         }
-    }
-
-    // ── SEOHub Schema Migration (runs on every init, skipped after v1) ────────
-    //
-    // Problem: SEOHub::createTables() is only called on plugin activation.
-    // When new columns were added to wp_wnq_seo_reports (period_start,
-    // period_end) existing installs never received them because dbDelta() wasn't
-    // re-run.  This method fixes that with an explicit ALTER TABLE, same pattern
-    // used by maybeCreateBlogTables() above.
-
-    private static function maybeMigrateSEOHubSchema(): void
-    {
-        global $wpdb;
-
-        // Cheap option-based gate — once at '1' we skip the SHOW COLUMNS query.
-        if (get_option('wnq_seohub_schema_ver', '0') === '1') {
-            return;
-        }
-
-        $t = $wpdb->prefix . 'wnq_seo_reports';
-
-        // Guard: table may not exist at all on a fresh install (createTables handles that).
-        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $t)) !== $t) {
-            update_option('wnq_seohub_schema_ver', '1');
-            return;
-        }
-
-        // Add period_start if missing (period_end always comes with it).
-        if (!$wpdb->get_row("SHOW COLUMNS FROM `{$t}` LIKE 'period_start'")) {
-            $wpdb->query(
-                "ALTER TABLE `{$t}`
-                 ADD COLUMN `period_start` date NOT NULL DEFAULT '2024-01-01' AFTER `report_type`,
-                 ADD COLUMN `period_end`   date NOT NULL DEFAULT '2024-01-31' AFTER `period_start`,
-                 ADD INDEX  `period_start` (`period_start`)"
-            );
-        }
-
-        // Add exported_at if missing (added in a later release).
-        if (!$wpdb->get_row("SHOW COLUMNS FROM `{$t}` LIKE 'exported_at'")) {
-            $wpdb->query(
-                "ALTER TABLE `{$t}`
-                 ADD COLUMN `exported_at` datetime DEFAULT NULL AFTER `generated_at`"
-            );
-        }
-
-        update_option('wnq_seohub_schema_ver', '1');
-    }
-
-    // ── Site Data Schema Migration ───────────────────────────────────────────
-    //
-    // Adds has_og_tags, images_without_lazy, title_length columns to
-    // wnq_seo_site_data for existing installs.
-
-    private static function maybeMigrateSiteDataSchema(): void
-    {
-        global $wpdb;
-
-        if (get_option('wnq_site_data_schema_ver', '0') === '1') {
-            return;
-        }
-
-        $t = $wpdb->prefix . 'wnq_seo_site_data';
-
-        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $t)) !== $t) {
-            update_option('wnq_site_data_schema_ver', '1');
-            return;
-        }
-
-        if (!$wpdb->get_row("SHOW COLUMNS FROM `{$t}` LIKE 'has_og_tags'")) {
-            $wpdb->query(
-                "ALTER TABLE `{$t}`
-                 ADD COLUMN `has_og_tags` tinyint(1) DEFAULT 0 AFTER `images_missing_alt`,
-                 ADD COLUMN `images_without_lazy` int(11) DEFAULT 0 AFTER `has_og_tags`,
-                 ADD COLUMN `title_length` smallint(6) DEFAULT 0 AFTER `images_without_lazy`"
-            );
-        }
-
-        update_option('wnq_site_data_schema_ver', '1');
-    }
-
-    private static function maybeMigrateBacklinkSchema(): void
-    {
-        global $wpdb;
-
-        if (get_option('wnq_backlink_schema_ver', '0') === '1') {
-            return;
-        }
-
-        $t = $wpdb->prefix . 'wnq_backlinks';
-
-        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $t)) !== $t) {
-            update_option('wnq_backlink_schema_ver', '1');
-            return;
-        }
-
-        if (!$wpdb->get_row("SHOW COLUMNS FROM `{$t}` LIKE 'contact_email'")) {
-            $wpdb->query(
-                "ALTER TABLE `{$t}`
-                 ADD COLUMN `contact_email` varchar(255) DEFAULT NULL
-                            COMMENT 'Recipient email for outreach send'
-                            AFTER `outreach_email`"
-            );
-        }
-
-        update_option('wnq_backlink_schema_ver', '1');
     }
 
     // ── Table Creation (called on activation) ──────────────────────────────
