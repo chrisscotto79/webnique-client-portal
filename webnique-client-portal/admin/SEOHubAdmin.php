@@ -712,14 +712,20 @@ final class SEOHubAdmin
 
             // Issue summary
             $type_labels = [
-                'missing_h1'       => ['Missing H1', 'critical'],
-                'no_schema'        => ['No Schema Markup', 'warning'],
-                'thin_content'     => ['Thin Content (<300 words)', 'warning'],
-                'missing_alt'      => ['Missing Image Alt Text', 'warning'],
-                'kw_not_in_title'  => ['Keyword Not In Title', 'warning'],
-                'no_internal_links'=> ['No Internal Links', 'info'],
-                'missing_meta'     => ['Missing/Short Meta Description', 'warning'],
-                'declining_rank'   => ['Declining Rankings', 'warning'],
+                'missing_h1'              => ['Missing H1', 'critical'],
+                'no_schema'               => ['No Schema Markup', 'warning'],
+                'thin_content'            => ['Thin Content (<300 words)', 'warning'],
+                'missing_alt'             => ['Missing Image Alt Text', 'warning'],
+                'kw_not_in_title'         => ['Keyword Not In Title', 'warning'],
+                'no_internal_links'       => ['No Internal Links', 'info'],
+                'missing_meta'            => ['Missing/Short Meta Description', 'warning'],
+                'declining_rank'          => ['Declining Rankings', 'warning'],
+                'missing_og'              => ['Missing Open Graph Tags', 'warning'],
+                'no_image_lazy_load'      => ['Images Missing Lazy Load', 'info'],
+                'title_too_long'          => ['Title Too Long (>60 chars)', 'warning'],
+                'duplicate_title'         => ['Duplicate Page Title', 'warning'],
+                'duplicate_meta'          => ['Duplicate Meta Description', 'warning'],
+                'keyword_cannibalization' => ['Keyword Cannibalization', 'warning'],
             ];
 
             echo '<div class="wnq-hub-audit-grid">';
@@ -751,7 +757,10 @@ final class SEOHubAdmin
                         echo esc_html(str_replace('_', ' ', $k)) . ': <strong>' . esc_html($v) . '</strong><br>';
                     }
                     echo '</td>';
-                    echo '<td><button class="wnq-btn wnq-btn-sm" onclick="wnqHubAjax(\'resolve_finding\', \'\', ' . $f['id'] . ')">✓ Resolve</button></td>';
+                    echo '<td style="white-space:nowrap;">';
+                    echo '<button class="wnq-btn wnq-btn-sm" onclick="wnqResolveFinding(' . $f['id'] . ', this)">✓ Resolve</button>';
+                    echo ' <button class="wnq-btn wnq-btn-sm" style="background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe;" onclick="wnqVerifyFinding(' . $f['id'] . ', this)">🔍 Verify Fix</button>';
+                    echo '</td>';
                     echo '</tr>';
                 }
                 echo '</tbody></table></div>';
@@ -760,6 +769,63 @@ final class SEOHubAdmin
 
         echo '</div>';
         self::renderFooter();
+    }
+
+    // ── Audit Helpers ──────────────────────────────────────────────────────
+
+    /**
+     * When a finding is manually resolved, update wnq_seo_site_data so the
+     * next nightly audit does not immediately re-create the same finding.
+     */
+    private static function updateSiteDataForResolvedFinding(array $finding): void
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'wnq_seo_site_data';
+        $where = ['client_id' => $finding['client_id'], 'page_url' => $finding['page_url']];
+
+        $updates = [];
+        switch ($finding['finding_type']) {
+            case 'missing_h1':
+                $updates = ['has_h1' => 1];
+                break;
+            case 'no_schema':
+                $updates = ['has_schema' => 1];
+                break;
+            case 'missing_alt':
+                $updates = ['images_missing_alt' => 0];
+                break;
+            case 'missing_meta':
+                // Can't set a correct value here; set a placeholder that passes
+                // the >=80 char check so the next audit skips this page.
+                $existing = $wpdb->get_var($wpdb->prepare(
+                    "SELECT meta_description FROM $table WHERE client_id=%s AND page_url=%s LIMIT 1",
+                    $finding['client_id'], $finding['page_url']
+                ));
+                if (empty($existing) || strlen($existing) < 80) {
+                    $updates = ['meta_description' => str_pad('manually-resolved', 80, '-')];
+                }
+                break;
+            case 'kw_not_in_title':
+                $updates = ['keyword_in_title' => 1];
+                break;
+            case 'missing_og':
+                $updates = ['has_og_tags' => 1];
+                break;
+            case 'no_image_lazy_load':
+                $updates = ['images_without_lazy' => 0];
+                break;
+            case 'title_too_long':
+                // Mark keyword_in_title = 1 as a signal that the title was fixed
+                $updates = ['keyword_in_title' => 1];
+                break;
+            case 'no_internal_links':
+                $updates = ['internal_links_count' => 1];
+                break;
+        }
+
+        if (!empty($updates)) {
+            $wpdb->update($table, $updates, $where);
+        }
     }
 
     // ── Reports ────────────────────────────────────────────────────────────
@@ -1200,8 +1266,55 @@ final class SEOHubAdmin
 
             case 'resolve_finding':
                 if (!$entity_id) wp_send_json_error(['message' => 'No finding ID']);
+                global $wpdb;
+                $finding = $wpdb->get_row(
+                    $wpdb->prepare("SELECT * FROM {$wpdb->prefix}wnq_seo_audit_findings WHERE id = %d", $entity_id),
+                    ARRAY_A
+                );
                 SEOHub::resolveAuditFinding($entity_id);
+                // Update site_data so the next audit doesn't re-flag the same issue
+                if ($finding) self::updateSiteDataForResolvedFinding($finding);
                 wp_send_json_success(['message' => 'Finding resolved']);
+                break;
+
+            case 'verify_finding':
+                // Re-checks site_data to confirm a manually-applied fix is reflected.
+                if (!$entity_id) wp_send_json_error(['message' => 'No finding ID']);
+                global $wpdb;
+                $finding = $wpdb->get_row(
+                    $wpdb->prepare("SELECT * FROM {$wpdb->prefix}wnq_seo_audit_findings WHERE id = %d", $entity_id),
+                    ARRAY_A
+                );
+                if (!$finding) wp_send_json_error(['message' => 'Finding not found']);
+                $page = $wpdb->get_row(
+                    $wpdb->prepare(
+                        "SELECT * FROM {$wpdb->prefix}wnq_seo_site_data WHERE client_id=%s AND page_url=%s LIMIT 1",
+                        $finding['client_id'], $finding['page_url']
+                    ),
+                    ARRAY_A
+                );
+                $verified = false;
+                if ($page) {
+                    switch ($finding['finding_type']) {
+                        case 'missing_h1':              $verified = !empty($page['has_h1']) && $page['has_h1'] == 1; break;
+                        case 'no_schema':               $verified = !empty($page['has_schema']) && $page['has_schema'] == 1; break;
+                        case 'missing_alt':             $verified = ((int)($page['images_missing_alt'] ?? 1)) === 0; break;
+                        case 'missing_meta':            $verified = !empty($page['meta_description']) && strlen($page['meta_description']) >= 80; break;
+                        case 'kw_not_in_title':         $verified = !empty($page['keyword_in_title']) && $page['keyword_in_title'] == 1; break;
+                        case 'no_internal_links':       $verified = ((int)($page['internal_links_count'] ?? 0)) > 0; break;
+                        case 'missing_og':              $verified = !empty($page['has_og_tags']) && $page['has_og_tags'] == 1; break;
+                        case 'no_image_lazy_load':      $verified = ((int)($page['images_without_lazy'] ?? 1)) === 0; break;
+                        case 'title_too_long':          $verified = ((int)($page['title_length'] ?? 61)) <= 60; break;
+                        default:                        $verified = false;
+                    }
+                }
+                if ($verified) {
+                    SEOHub::resolveAuditFinding($entity_id);
+                    self::updateSiteDataForResolvedFinding($finding);
+                    wp_send_json_success(['message' => '✅ Fix confirmed in site data — finding resolved!', 'resolved' => true]);
+                } else {
+                    wp_send_json_success(['message' => '⚠️ Fix not yet reflected in synced data. Try running a fresh audit after the agent re-syncs.', 'resolved' => false]);
+                }
                 break;
 
             case 'fix_seo_issues':

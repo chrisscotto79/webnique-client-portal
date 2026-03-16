@@ -1,29 +1,25 @@
 <?php
 /**
- * Lead Finder Engine (ZIP Edition)
+ * Lead Finder Engine
  *
- * Mass lead generator that iterates through all Florida ZIP codes,
- * scrapes Google Maps for each, and saves qualifying businesses.
- * No API key required — uses direct HTTP requests to Google Maps.
+ * Supports two discovery modes:
  *
- * Architecture — two AJAX phases:
+ * Mode A — ZIP Sweep (Google Maps scraping, no API key):
  *   Phase 1 – startSearch(keyword)
  *     Stores a batch transient containing all FL ZIP codes and returns
  *     immediately. No external HTTP calls.
- *
  *   Phase 2 – processNext(batch_id)
  *     Called once per "unit of work" by the browser JS loop.
  *     Each call does ONE of:
  *       (a) Process a pending candidate (Maps place page + homepage scrape)
  *       (b) Search the next ZIP code via Google Maps HTML scraping
  *
- * Qualifying criteria:
- *   – Fewer than 50 Google reviews (small, under-the-radar businesses)
- *   – Must have a phone number (skipped if none found)
- *
- * Enrichment (homepage source only, no deep crawling):
- *   – Email: mailto: link → visible text regex for @
- *   – Socials: regex for FB / IG / X(Twitter) / LI / YT / TT URLs
+ * Mode B — Manual URL Queue:
+ *   Phase 1 – queueManualSearch(params)
+ *     Parses and validates the URL list, stores candidates in a transient,
+ *     and returns immediately with a batch_id.
+ *   Phase 2 – processNextManual(batch_id, filter_params)
+ *     Called once per URL by the browser (looped via JS).
  *
  * @package WebNique Portal
  */
@@ -39,9 +35,10 @@ use WNQ\Models\Lead;
 final class LeadFinderEngine
 {
     private const BATCH_TTL   = DAY_IN_SECONDS;
+    private const QUEUE_TTL   = DAY_IN_SECONDS;
     private const MAX_REVIEWS = 50;
 
-    // ── Phase 1: Start ───────────────────────────────────────────────────────
+    // ── Mode A Phase 1: Start ZIP Sweep ──────────────────────────────────────
 
     public static function startSearch(string $keyword): array
     {
@@ -63,7 +60,7 @@ final class LeadFinderEngine
             'zip_index'  => 0,
             'candidates' => [],
             'cand_index' => 0,
-            'stats'      => self::emptyStats(),
+            'stats'      => self::emptyZipStats(),
         ], self::BATCH_TTL);
 
         return [
@@ -73,7 +70,7 @@ final class LeadFinderEngine
         ];
     }
 
-    // ── Phase 2: Process one unit of work ────────────────────────────────────
+    // ── Mode A Phase 2: Process one unit of work ──────────────────────────────
 
     public static function processNext(string $batch_id): array
     {
@@ -313,16 +310,229 @@ final class LeadFinderEngine
         return 'saved';
     }
 
-    // ── Private: Helpers ─────────────────────────────────────────────────────
+    // ── Mode B Phase 1: Queue manual URL search ───────────────────────────────
+
+    /**
+     * Parse the raw URL list (one per line) and store candidates in a transient.
+     * Returns immediately with a batch_id — no web-crawling happens here.
+     *
+     * Supported formats (one per line):
+     *   https://example.com
+     *   Business Name | https://example.com
+     *
+     * @param array{urls: string, industry: string} $params
+     * @return array{ok: bool, batch_id?: string, total?: int, error?: string}
+     */
+    public static function queueManualSearch(array $params): array
+    {
+        $raw      = $params['urls']     ?? '';
+        $industry = sanitize_text_field($params['industry'] ?? '');
+
+        $lines = array_values(array_filter(
+            array_map('trim', explode("\n", $raw))
+        ));
+
+        $candidates = [];
+        foreach ($lines as $line) {
+            $name = '';
+            $url  = $line;
+            if (strpos($line, '|') !== false) {
+                [$name, $url] = array_map('trim', explode('|', $line, 2));
+            }
+            $url = esc_url_raw($url);
+            if (!$url || !filter_var($url, FILTER_VALIDATE_URL)) continue;
+            $candidates[] = [
+                'url'      => $url,
+                'name'     => sanitize_text_field($name),
+                'industry' => $industry,
+            ];
+        }
+
+        if (empty($candidates)) {
+            return ['ok' => false, 'error' => 'No valid URLs found — make sure each line is a full URL (https://…)'];
+        }
+
+        $batch_id = wp_generate_uuid4();
+        set_transient('wnq_lead_manual_queue_' . $batch_id, [
+            'candidates' => $candidates,
+            'next_index' => 0,
+            'stats'      => self::emptyManualStats(count($candidates)),
+        ], self::QUEUE_TTL);
+
+        return ['ok' => true, 'batch_id' => $batch_id, 'total' => count($candidates)];
+    }
+
+    // ── Mode B Phase 2: Process one URL ──────────────────────────────────────
+
+    /**
+     * Process the next unprocessed URL from a queued batch.
+     * One AJAX call per URL — no PHP timeout risk.
+     *
+     * @param string $batch_id   Returned by queueManualSearch()
+     * @param array  $filter_params min_seo_score
+     * @return array{ok: bool, done: bool, progress: int, total: int, stats: array, error?: string}
+     */
+    public static function processNextManual(string $batch_id, array $filter_params): array
+    {
+        $queue = get_transient('wnq_lead_manual_queue_' . $batch_id);
+        if (!$queue) {
+            return ['ok' => false, 'done' => true, 'error' => 'Batch not found or expired'];
+        }
+
+        $candidates = $queue['candidates'];
+        $next       = (int)$queue['next_index'];
+        $total      = count($candidates);
+        $stats      = $queue['stats'];
+
+        if ($next >= $total) {
+            delete_transient('wnq_lead_manual_queue_' . $batch_id);
+            return ['ok' => true, 'done' => true, 'progress' => $total, 'total' => $total, 'stats' => $stats];
+        }
+
+        // Advance transient index BEFORE processing to prevent infinite loops if
+        // a site causes an abort/timeout — next call will skip to the next URL.
+        $done = ($next + 1 >= $total);
+        $queue['next_index'] = $next + 1;
+        if ($done) {
+            delete_transient('wnq_lead_manual_queue_' . $batch_id);
+        } else {
+            set_transient('wnq_lead_manual_queue_' . $batch_id, $queue, self::QUEUE_TTL);
+        }
+
+        try {
+            $outcome = self::processSingleUrl(
+                $candidates[$next]['url'],
+                $candidates[$next]['name'],
+                $candidates[$next]['industry'],
+                $filter_params
+            );
+        } catch (\Throwable $e) {
+            $outcome = 'low_seo';
+            error_log(sprintf(
+                'WNQ Lead Finder: candidate %d/%d threw %s: %s (in %s:%d)',
+                $next + 1, $total,
+                get_class($e), $e->getMessage(),
+                $e->getFile(), $e->getLine()
+            ));
+        }
+
+        $stats = self::updateStats($stats, $outcome);
+
+        if (!$done) {
+            $q = get_transient('wnq_lead_manual_queue_' . $batch_id);
+            if ($q) {
+                $q['stats'] = $stats;
+                set_transient('wnq_lead_manual_queue_' . $batch_id, $q, self::QUEUE_TTL);
+            }
+        }
+
+        return [
+            'ok'       => true,
+            'done'     => $done,
+            'progress' => $next + 1,
+            'total'    => $total,
+            'stats'    => $stats,
+        ];
+    }
+
+    // ── Core Processing Logic (Mode B) ────────────────────────────────────────
+
+    /**
+     * Process a single URL through the full qualification and enrichment pipeline.
+     *
+     * @return string One of: duplicate | no_website | franchise | low_seo | saved
+     */
+    private static function processSingleUrl(
+        string $url,
+        string $business_name,
+        string $industry,
+        array $filter_params
+    ): string {
+        $min_seo = max(0, (int)($filter_params['min_seo_score'] ?? 2));
+
+        // Dedup: use md5(url) as place_id so the UNIQUE KEY catches repeated submissions
+        $url_key = md5($url);
+        if (Lead::findByPlaceId($url_key)) {
+            return 'duplicate';
+        }
+
+        // Fetch homepage HTML (reused by all enrichers — one HTTP request)
+        $homepage_html = self::fetchHtml($url);
+        if (!$homepage_html) {
+            return 'no_website';
+        }
+
+        // Extract business name from <title> if not provided
+        if (empty($business_name)) {
+            if (preg_match('/<title[^>]*>([^<]+)<\/title>/i', $homepage_html, $m)) {
+                $business_name = sanitize_text_field(html_entity_decode(trim($m[1])));
+            }
+            if (empty($business_name)) {
+                $business_name = (string)(parse_url($url, PHP_URL_HOST) ?: $url);
+            }
+        }
+
+        // Franchise detection (name + homepage content)
+        if (LeadEnrichmentService::isFranchise($business_name, $homepage_html)) {
+            return 'franchise';
+        }
+
+        // SEO scoring
+        $seo = LeadSEOScorer::scoreWebsiteFromHtml($homepage_html);
+        if (!$seo['ok'] || $seo['score'] < $min_seo) {
+            return 'low_seo';
+        }
+
+        // Enrichment
+        $email_data = LeadEmailExtractor::extractEmail($url, $homepage_html);
+        $social     = LeadEnrichmentService::extractSocialMedia($url, $homepage_html);
+
+        $insert_id = Lead::insert([
+            'place_id'         => $url_key,
+            'business_name'    => sanitize_text_field($business_name),
+            'industry'         => sanitize_text_field($industry),
+            'owner_first'      => '',
+            'owner_last'       => '',
+            'website'          => esc_url_raw($url),
+            'address'          => '',
+            'city'             => '',
+            'state'            => '',
+            'zip'              => '',
+            'phone'            => '',
+            'email'            => sanitize_email($email_data['email']),
+            'email_source'     => $email_data['source'] ? esc_url_raw($email_data['source']) : '',
+            'rating'           => 0,
+            'review_count'     => 0,
+            'social_facebook'  => $social['facebook']  ? esc_url_raw($social['facebook'])  : '',
+            'social_instagram' => $social['instagram'] ? esc_url_raw($social['instagram']) : '',
+            'social_linkedin'  => $social['linkedin']  ? esc_url_raw($social['linkedin'])  : '',
+            'social_twitter'   => $social['twitter']   ? esc_url_raw($social['twitter'])   : '',
+            'social_youtube'   => $social['youtube']   ? esc_url_raw($social['youtube'])   : '',
+            'social_tiktok'    => $social['tiktok']    ? esc_url_raw($social['tiktok'])    : '',
+            'seo_score'        => (int)$seo['score'],
+            'seo_issues'       => $seo['issues'],
+            'status'           => 'new',
+        ]);
+
+        if (!$insert_id) {
+            global $wpdb;
+            error_log('WNQ Lead Finder: DB insert failed for "' . $business_name . '" — ' . $wpdb->last_error);
+            return 'low_seo';
+        }
+
+        return 'saved';
+    }
+
+    // ── Shared Helpers ────────────────────────────────────────────────────────
 
     private static function fetchHtml(string $url): string
     {
         $response = wp_remote_get($url, [
-            'timeout'             => 5,
-            'user-agent'          => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+            'timeout'             => 8,
+            'user-agent'          => 'Mozilla/5.0 (compatible; WebNique/1.0; +https://webnique.com)',
             'sslverify'           => false,
             'redirection'         => 3,
-            'limit_response_size' => 262144,
+            'limit_response_size' => 512000, // 500 KB
         ]);
 
         if (is_wp_error($response)) return '';
@@ -420,16 +630,14 @@ final class LeadFinderEngine
         return compact('street', 'city', 'state', 'zip');
     }
 
-    private static function emptyStats(): array
+    private static function emptyZipStats(): array
     {
-        return [
-            'zips_searched' => 0,
-            'saved'         => 0,
-            'duplicate'     => 0,
-            'no_phone'      => 0,
-            'no_website'    => 0,
-            'skipped'       => 0,
-        ];
+        return ['zips_searched'=>0,'saved'=>0,'duplicate'=>0,'no_phone'=>0,'no_website'=>0,'skipped'=>0];
+    }
+
+    private static function emptyManualStats(int $found = 0): array
+    {
+        return ['found'=>$found,'franchise'=>0,'duplicate'=>0,'no_website'=>0,'low_seo'=>0,'saved'=>0];
     }
 
     private static function updateStats(array $stats, string $outcome): array

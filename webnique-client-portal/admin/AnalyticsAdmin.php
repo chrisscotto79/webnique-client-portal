@@ -142,7 +142,11 @@ final class AnalyticsAdmin
                     success: function(resp) {
                         console.log('Response:', resp);
                         if (resp.success) {
-                            renderData(resp.data);
+                            if (resp.data && resp.data.error) {
+                                showError('Google Analytics error: ' + resp.data.error);
+                            } else {
+                                renderData(resp.data);
+                            }
                         } else {
                             showError(resp.data?.message || 'Failed to load data');
                         }
@@ -884,6 +888,8 @@ final class AnalyticsAdmin
                 $data['key_events']         = self::fetchKeyEvents($token, $config['ga4_property_id'], $start_date, $end_date);
             } catch (\Exception $e) {
                 error_log('[WNQ Analytics] Fetch error: ' . $e->getMessage());
+                // Clear cached token in case it expired or is invalid
+                delete_transient('wnq_ga_access_token');
                 $data['overview']           = ['total_users' => 0, 'page_views' => 0, 'sessions' => 0, 'bounce_rate' => 0];
                 $data['visitors_over_time'] = [];
                 $data['traffic_sources']    = [];

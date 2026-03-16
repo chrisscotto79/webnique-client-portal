@@ -14,6 +14,9 @@
  *  - Post status, type, categories, tags
  *  - Featured image URL
  *  - Last modified date
+ *  - has_og_tags (Open Graph meta presence)
+ *  - images_without_lazy (count of img tags without loading="lazy")
+ *  - title_length (character count of SEO title)
  *
  * @package WebNique SEO Agent
  */
@@ -114,6 +117,15 @@ class DataCollector
         // Images
         [$img_count, $missing_alt] = $this->analyzeImages($content_raw, $post->ID);
 
+        // Lazy loading check
+        $images_without_lazy = $this->countImagesWithoutLazy($content_raw);
+
+        // Open Graph tags
+        $has_og_tags = $this->hasOGTags($post);
+
+        // Title length
+        $title_length = mb_strlen($title);
+
         // Schema
         $schema_types = $this->detectSchemaTypes($post, $content_raw);
 
@@ -146,6 +158,9 @@ class DataCollector
             'internal_links_count' => $internal_links,
             'images_count'         => $img_count,
             'images_missing_alt'   => $missing_alt,
+            'images_without_lazy'  => $images_without_lazy,
+            'has_og_tags'          => $has_og_tags ? 1 : 0,
+            'title_length'         => $title_length,
             'has_schema'           => !empty($schema_types),
             'schema_types'         => $schema_types,
             'has_h1'               => !empty($h1),
@@ -230,11 +245,51 @@ class DataCollector
 
     private function getH1(\WP_Post $post, string $content_html): string
     {
-        // Try to parse H1 from content
-        if (preg_match('/<h1[^>]*>(.*?)<\/h1>/i', $content_html, $matches)) {
+        // 1. Classic / Gutenberg: look for <h1> in rendered content
+        if (preg_match('/<h1[^>]*>(.*?)<\/h1>/is', $content_html, $matches)) {
             return wp_strip_all_tags($matches[1]);
         }
+
+        // 2. Elementor: scan _elementor_data for a heading widget with heading_size=h1.
+        //    apply_filters('the_content') doesn't fully render Elementor in a sync
+        //    context, so <h1> tags won't appear in $content_html for Elementor pages.
+        $elementor_raw = get_post_meta($post->ID, '_elementor_data', true);
+        if (!empty($elementor_raw)) {
+            $elements = json_decode($elementor_raw, true);
+            if (is_array($elements)) {
+                $h1_text = $this->findElementorH1($elements);
+                if ($h1_text !== null) {
+                    return $h1_text;
+                }
+            }
+        }
+
         return '';
+    }
+
+    /**
+     * Recursively search Elementor elements for a heading widget set to h1.
+     * Returns the heading text, or null if none found.
+     */
+    private function findElementorH1(array $elements): ?string
+    {
+        foreach ($elements as $element) {
+            if (
+                isset($element['elType']) &&
+                $element['elType'] === 'widget' &&
+                ($element['widgetType'] ?? '') === 'heading' &&
+                ($element['settings']['heading_size'] ?? 'default') === 'h1'
+            ) {
+                return wp_strip_all_tags($element['settings']['title'] ?? '');
+            }
+            if (!empty($element['elements']) && is_array($element['elements'])) {
+                $result = $this->findElementorH1($element['elements']);
+                if ($result !== null) {
+                    return $result;
+                }
+            }
+        }
+        return null;
     }
 
     // ── Content Analysis ────────────────────────────────────────────────────
@@ -293,13 +348,23 @@ class DataCollector
             $types = array_unique($matches[1]);
         }
 
-        // Check post meta for schema
+        // Check post meta for schema (various SEO plugins + our own _wnq_schema_json)
         $meta_schema = get_post_meta($post->ID, '_schema_type', true)
             ?: get_post_meta($post->ID, 'rank_math_schema_JsonLd', true)
             ?: get_post_meta($post->ID, '_yoast_wpseo_schema_page_type', true);
 
         if (!empty($meta_schema) && is_string($meta_schema)) {
             $types[] = $meta_schema;
+        }
+
+        // Also check _wnq_schema_json — written by SEOFixer when auto-fix adds schema
+        $wnq_schema = get_post_meta($post->ID, '_wnq_schema_json', true);
+        if (!empty($wnq_schema)) {
+            if (preg_match_all('/"@type"\s*:\s*"([^"]+)"/i', $wnq_schema, $sm)) {
+                foreach ($sm[1] as $st) {
+                    $types[] = $st;
+                }
+            }
         }
 
         // Check head output for schema (via output buffering)
@@ -318,5 +383,39 @@ class DataCollector
         $terms = get_the_terms($post_id, $taxonomy);
         if (is_wp_error($terms) || empty($terms)) return [];
         return array_map(fn($t) => $t->name, $terms);
+    }
+
+    /**
+     * Count <img> tags in rendered HTML that do not have loading="lazy".
+     */
+    private function countImagesWithoutLazy(string $content_html): int
+    {
+        $count = 0;
+        if (preg_match_all('/<img[^>]+>/i', $content_html, $matches)) {
+            foreach ($matches[0] as $img_tag) {
+                if (!preg_match('/\bloading\s*=\s*["\']lazy["\']/', $img_tag)) {
+                    $count++;
+                }
+            }
+        }
+        return $count;
+    }
+
+    /**
+     * Check whether Open Graph meta tags exist for this post.
+     * Checks Yoast, RankMath, and the generic _wnq_og_* meta written by SEOFixer.
+     */
+    private function hasOGTags(\WP_Post $post): bool
+    {
+        if (defined('WPSEO_VERSION') && !empty(get_post_meta($post->ID, '_yoast_wpseo_opengraph-title', true))) {
+            return true;
+        }
+        if (class_exists('RankMath') && !empty(get_post_meta($post->ID, 'rank_math_facebook_title', true))) {
+            return true;
+        }
+        if (!empty(get_post_meta($post->ID, '_wnq_og_title', true))) {
+            return true;
+        }
+        return false;
     }
 }

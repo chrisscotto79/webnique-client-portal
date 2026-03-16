@@ -54,6 +54,7 @@ final class Lead
             notes            TEXT,
             scraped_at       DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
             contacted_at     DATETIME         DEFAULT NULL,
+            exported_at      DATETIME         DEFAULT NULL,
             PRIMARY KEY  (id),
             UNIQUE KEY   place_id (place_id),
             KEY          industry_city (industry(50), city(50)),
@@ -68,14 +69,15 @@ final class Lead
     // ── Migration ───────────────────────────────────────────────────────────
 
     /**
-     * Returns true if the table is missing columns added in v2 of the schema.
+     * Returns true if the table is missing any columns added after v1.
      */
     public static function tableNeedsMigration(): bool
     {
         global $wpdb;
         $cols = $wpdb->get_col("DESCRIBE {$wpdb->prefix}wnq_leads", 0);
         if (empty($cols)) return false; // table doesn't exist yet
-        return !in_array('owner_first', $cols, true);
+        return !in_array('owner_first', $cols, true)
+            || !in_array('exported_at', $cols, true);
     }
 
     /**
@@ -98,6 +100,7 @@ final class Lead
             'social_twitter'   => "VARCHAR(500) NOT NULL DEFAULT '' AFTER social_linkedin",
             'social_youtube'   => "VARCHAR(500) NOT NULL DEFAULT '' AFTER social_twitter",
             'social_tiktok'    => "VARCHAR(500) NOT NULL DEFAULT '' AFTER social_youtube",
+            'exported_at'      => "DATETIME DEFAULT NULL AFTER contacted_at",
         ];
 
         foreach ($columns as $col => $definition) {
@@ -181,6 +184,72 @@ final class Lead
         $wpdb->delete($wpdb->prefix . 'wnq_leads', ['id' => $id]);
     }
 
+    /**
+     * Update the status of multiple leads in a single query.
+     * Also stamps contacted_at for status='contacted'.
+     *
+     * @param int[]  $ids
+     * @param string $status  One of: new | contacted | qualified | closed
+     */
+    public static function bulkUpdateStatus(array $ids, string $status): void
+    {
+        global $wpdb;
+        if (empty($ids)) return;
+        if (!in_array($status, ['new', 'contacted', 'qualified', 'closed'], true)) return;
+
+        $ids = array_map('intval', $ids);
+        $in  = implode(',', $ids);
+
+        if ($status === 'contacted') {
+            $now = current_time('mysql');
+            $wpdb->query(
+                "UPDATE {$wpdb->prefix}wnq_leads
+                 SET status = '{$status}', contacted_at = '{$now}'
+                 WHERE id IN ({$in})"
+            );
+        } else {
+            $wpdb->query(
+                "UPDATE {$wpdb->prefix}wnq_leads
+                 SET status = '{$status}'
+                 WHERE id IN ({$in})"
+            );
+        }
+    }
+
+    /**
+     * Delete multiple leads in a single query.
+     *
+     * @param int[] $ids
+     */
+    public static function bulkDelete(array $ids): void
+    {
+        global $wpdb;
+        if (empty($ids)) return;
+        $ids = array_map('intval', $ids);
+        $in  = implode(',', $ids);
+        $wpdb->query("DELETE FROM {$wpdb->prefix}wnq_leads WHERE id IN ({$in})");
+    }
+
+    /**
+     * Stamp a batch of lead IDs as exported (sets exported_at to now).
+     * Only stamps leads that haven't been exported yet so the first-export date is preserved.
+     *
+     * @param int[] $ids
+     */
+    public static function markExported(array $ids): void
+    {
+        global $wpdb;
+        if (empty($ids)) return;
+        $ids   = array_map('intval', $ids);
+        $in    = implode(',', $ids);
+        $now   = current_time('mysql');
+        $wpdb->query(
+            "UPDATE {$wpdb->prefix}wnq_leads
+             SET exported_at = '{$now}'
+             WHERE id IN ({$in}) AND exported_at IS NULL"
+        );
+    }
+
     // ── Read Operations ─────────────────────────────────────────────────────
 
     public static function findByPlaceId(string $place_id): ?array
@@ -243,12 +312,8 @@ final class Lead
         if (!empty($args['has_email'])) {
             $where[] = "email != ''";
         }
-        if (!empty($args['has_owner'])) {
-            // Guard: only add filter if column exists (old installs may not have it)
-            $cols_check = $wpdb->get_col("DESCRIBE {$table}", 0);
-            if (in_array('owner_first', $cols_check, true)) {
-                $where[] = "owner_first != ''";
-            }
+        if (!empty($args['not_exported'])) {
+            $where[] = "exported_at IS NULL";
         }
 
         $allowed_orderby = ['id', 'review_count', 'seo_score', 'rating', 'business_name', 'scraped_at', 'city', 'state'];
@@ -288,12 +353,7 @@ final class Lead
         if (!empty($args['status']))   { $where[] = 'status = %s';   $params[] = $args['status']; }
         if (isset($args['min_seo_score'])) { $where[] = 'seo_score >= %d'; $params[] = (int)$args['min_seo_score']; }
         if (!empty($args['has_email'])) { $where[] = "email != ''"; }
-        if (!empty($args['has_owner'])) {
-            $cols_check = $wpdb->get_col("DESCRIBE {$table}", 0);
-            if (in_array('owner_first', $cols_check, true)) {
-                $where[] = "owner_first != ''";
-            }
-        }
+        if (!empty($args['not_exported'])) { $where[] = "exported_at IS NULL"; }
 
         $where_sql = implode(' AND ', $where);
         $sql = "SELECT COUNT(*) FROM {$table} WHERE {$where_sql}";
@@ -306,18 +366,18 @@ final class Lead
         global $wpdb;
         $t    = $wpdb->prefix . 'wnq_leads';
         $cols = $wpdb->get_col("DESCRIBE {$t}", 0);
-        $has_owner = in_array('owner_first', $cols, true);
+        $has_exported_col = in_array('exported_at', $cols, true);
 
         return [
-            'total'      => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t}"),
-            'new'        => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE status='new'"),
-            'contacted'  => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE status='contacted'"),
-            'qualified'  => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE status='qualified'"),
-            'closed'     => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE status='closed'"),
-            'with_email' => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE email != ''"),
-            'with_owner' => $has_owner
-                ? (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE owner_first != ''")
-                : 0,
+            'total'        => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t}"),
+            'new'          => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE status='new'"),
+            'contacted'    => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE status='contacted'"),
+            'qualified'    => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE status='qualified'"),
+            'closed'       => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE status='closed'"),
+            'with_email'   => (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE email != ''"),
+            'not_exported' => $has_exported_col
+                ? (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t} WHERE exported_at IS NULL")
+                : (int)$wpdb->get_var("SELECT COUNT(*) FROM {$t}"),
         ];
     }
 
@@ -341,6 +401,9 @@ final class Lead
     {
         $rows = self::getAll(array_merge($args, ['limit' => 9999, 'offset' => 0]));
 
+        // Mark all exported leads (first export date only — won't overwrite existing)
+        self::markExported(array_column($rows, 'id'));
+
         header('Content-Type: text/csv; charset=utf-8');
         header('Content-Disposition: attachment; filename="wnq-leads-ghl-' . date('Y-m-d') . '.csv"');
         header('Pragma: no-cache');
@@ -349,8 +412,6 @@ final class Lead
 
         // GHL-compatible headers
         fputcsv($out, [
-            'First Name',
-            'Last Name',
             'Company Name',
             'Email',
             'Phone',
@@ -375,6 +436,7 @@ final class Lead
             'SEO Issues',
             'Status',
             'Scraped Date',
+            'Exported Date',
         ]);
 
         foreach ($rows as $row) {
@@ -391,8 +453,6 @@ final class Lead
             ]);
 
             fputcsv($out, [
-                $row['owner_first'],
-                $row['owner_last'],
                 $row['business_name'],
                 $row['email'],
                 $row['phone'],
@@ -417,6 +477,7 @@ final class Lead
                 $issues_str,
                 $row['status'],
                 $row['scraped_at'],
+                $row['exported_at'] ?? '',
             ]);
         }
 

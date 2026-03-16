@@ -248,6 +248,38 @@ Return ONLY a numbered list in this exact format (one per line, no extra text):
 1. [Title] | [Category: Services/Informational/Seasonal] | [Focus Keyword]
 2. [Title] | [Category] | [Focus Keyword]
 PROMPT,
+
+        // ── Backlink / Outreach Templates ──────────────────────────────────
+
+        'backlink_outreach_email' => <<<'PROMPT'
+Write a short, casual outreach email asking about guest posting on {target_domain}.
+
+From: {business_name} ({website})
+
+Rules:
+- First line must be: Subject: Guest Post Inquiry
+- Then a blank line, then the email body
+- 3-4 sentences max
+- Casual and friendly, not salesy
+- Just ask about the process and pricing for a guest post or article
+- Sign off with the name from {business_name}
+
+Write it now:
+PROMPT,
+
+        'backlink_opportunities' => <<<'PROMPT'
+You are a link-building specialist. Find real, specific websites where {business_name} ({services}, based in {location}) can get backlinks through guest posts or outreach.
+
+Return ONLY a valid JSON array of 8 real websites. Every item must have these exact fields:
+- "type": one of [guest_post, resource_page, directory, sponsor, press, partnership]
+- "site_name": the real name of the website (e.g. "Search Engine Journal")
+- "domain": the real domain only, no https, no trailing slash (e.g. "searchenginejournal.com")
+- "contact_email": the most likely editorial or contact email for link outreach at this site (e.g. "contribute@searchenginejournal.com"). Use common patterns like contribute@, guest@, editor@, editorial@, hello@, or info@ if unsure.
+- "pitch": one sentence describing what to pitch to this specific site, relevant to {services}
+
+Mix industry blogs relevant to {services} with local {location} blogs and business publications. Only include websites that genuinely exist and accept contributions or outreach. Return JSON only, no markdown, no explanation.
+PROMPT,
+
     ];
 
     // ── Public API ──────────────────────────────────────────────────────────

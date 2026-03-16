@@ -29,6 +29,7 @@ final class BlogSchedulerAdmin
         add_action('wp_ajax_wnq_blog_generate_titles', [self::class, 'ajaxGenerateTitles']);
         add_action('wp_ajax_wnq_blog_publish_now',     [self::class, 'ajaxPublishNow']);
         add_action('wp_ajax_wnq_blog_mark_read',       [self::class, 'ajaxMarkNotifRead']);
+        add_action('wp_ajax_wnq_blog_get_agents',      [self::class, 'ajaxGetAgents']);
     }
 
     // ── Page Router ─────────────────────────────────────────────────────────
@@ -326,6 +327,32 @@ jQuery(function($) {
         ?>
 <script>
 jQuery(function($) {
+    // Refresh agent dropdown when client changes
+    $('#gen-client').on('change', function() {
+        var clientId = $(this).val();
+        var $agentSel = $('#gen-agent');
+        $agentSel.html('<option value="">— Loading… —</option>').prop('disabled', true);
+        $.post(WNQ_SEOHUB.ajaxUrl, {
+            action:    'wnq_blog_get_agents',
+            nonce:     WNQ_SEOHUB.nonce,
+            client_id: clientId
+        }, function(resp) {
+            $agentSel.prop('disabled', false);
+            if (resp.success) {
+                var opts = '<option value="">— Any Site —</option>';
+                (resp.data.agents || []).forEach(function(a) {
+                    var lbl = a.site_name || a.site_url || a.id;
+                    opts += '<option value="' + a.id + '">' + $('<div>').text(lbl).html() + '</option>';
+                });
+                $agentSel.html(opts);
+            } else {
+                $agentSel.html('<option value="">— Any Site —</option>');
+            }
+        }).fail(function() {
+            $agentSel.prop('disabled', false).html('<option value="">— Any Site —</option>');
+        });
+    });
+
     $('#wnq-gen-titles-btn').on('click', function() {
         var clientId = $('#gen-client').val();
         var count    = $('#gen-count').val();
@@ -419,6 +446,23 @@ jQuery(function($) {
         $saved = sanitize_text_field($_GET['settings_saved'] ?? '');
         if ($saved === '1') echo '<div class="wnq-notice success">✅ Settings saved.</div>';
 
+        // Client selector for template section
+        echo '<div class="wnq-blog-card" style="padding:14px 20px;">';
+        echo '<div style="display:flex;align-items:center;gap:12px;">';
+        echo '<strong style="white-space:nowrap;">Client Site:</strong>';
+        echo '<form method="get" style="margin:0;">';
+        echo '<input type="hidden" name="page" value="wnq-seo-hub-blog">';
+        echo '<input type="hidden" name="tab" value="settings">';
+        echo '<select name="client_id" onchange="this.form.submit()" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;min-width:220px;">';
+        foreach ($clients as $c) {
+            $sel = $c['client_id'] === $client_id ? ' selected' : '';
+            echo '<option value="' . esc_attr($c['client_id']) . '"' . $sel . '>' . esc_html($c['company'] ?? $c['name'] ?? $c['client_id']) . '</option>';
+        }
+        echo '</select>';
+        echo '</form>';
+        echo '</div>';
+        echo '</div>';
+
         // Per-site Elementor templates
         $settings_agents = BlogScheduler::getClientAgents($client_id);
         $widget_hint = '<p style="color:#6b7280;font-size:12px;"><strong>Widget IDs:</strong> Heading <code>5af58bd2</code> (H1) · Text Editor <code>5b794435</code> (body) · Text Editor <code>4861ee91</code> (TOC) · Image <code>1b605b78</code> (featured — add manually)</p>';
@@ -462,18 +506,6 @@ jQuery(function($) {
         echo '<div class="wnq-blog-card">';
         echo '<h3>🔗 Always Link To — ' . esc_html($client_id) . '</h3>';
         echo '<p style="color:#6b7280;">These links take priority in every blog post for this client. Add pages you always want to reference (service pages, key landing pages).</p>';
-
-        echo '<div style="margin-bottom:12px;">';
-        echo '<form method="get">';
-        echo '<input type="hidden" name="page" value="wnq-seo-hub-blog">';
-        echo '<input type="hidden" name="tab" value="settings">';
-        echo '<select name="client_id" onchange="this.form.submit()">';
-        foreach ($clients as $c) {
-            $selected = $c['client_id'] === $client_id ? ' selected' : '';
-            echo '<option value="' . esc_attr($c['client_id']) . '"' . $selected . '>' . esc_html($c['company'] ?? $c['name'] ?? $c['client_id']) . '</option>';
-        }
-        echo '</select></form>';
-        echo '</div>';
 
         echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
         echo '<input type="hidden" name="action" value="wnq_blog_save_always_link">';
@@ -585,6 +617,15 @@ jQuery(function($) {
         $id = (int)($_POST['id'] ?? 0);
         if ($id) BlogScheduler::markRead($id);
         wp_send_json_success();
+    }
+
+    public static function ajaxGetAgents(): void
+    {
+        check_ajax_referer('wnq_seohub_nonce', 'nonce');
+        self::checkCap();
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $agents = $client_id ? BlogScheduler::getClientAgents($client_id) : [];
+        wp_send_json_success(['agents' => $agents]);
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
