@@ -1,33 +1,28 @@
 <?php
 /**
- * Lead Finder Engine
+ * Lead Finder Engine (ZIP Edition)
  *
- * Orchestrates the full prospect-discovery pipeline in two phases
- * designed for reliable bulk operation:
+ * Mass lead generator that iterates through all Florida ZIP codes,
+ * queries Google Places for each, and saves qualifying businesses.
  *
- * Phase 1 – queueSearch()
- *   Queries Google Places Text Search (up to 60 results per keyword+city),
- *   stores the raw candidates in a WordPress transient, and returns
- *   immediately so the browser AJAX call never times out.
+ * Architecture — two AJAX phases:
+ *   Phase 1 – startSearch(keyword)
+ *     Stores a batch transient containing all FL ZIP codes and returns
+ *     immediately. No HTTP calls to external services.
  *
- * Phase 2 – processNextCandidate()
- *   Called once per candidate by the browser (looped via JS).
- *   Each call processes exactly one Place result:
- *     1. Franchise detection by name
- *     2. Review count + rating filter
- *     3. Duplicate check (place_id + name+city)
- *     4. Place Details API call → website + phone
- *     5. Homepage fetch (HTML reused by all enrichers)
- *     6. Franchise detection by website content
- *     7. SEO scoring
- *     8. Email extraction
- *     9. Owner name extraction
- *    10. Social media extraction
- *    11. Address parsing
- *    12. DB insert
+ *   Phase 2 – processNext(batch_id)
+ *     Called once per "unit of work" by the browser JS loop.
+ *     Each call does ONE of:
+ *       (a) Process a pending candidate (Place Details + homepage scrape)
+ *       (b) Search the next ZIP code via Google Places Text Search
  *
- * runSearch() (used by daily WP-Cron) runs the full pipeline in one
- * blocking call — acceptable for background jobs with no user-facing timeout.
+ * Qualifying criteria:
+ *   – Fewer than 50 Google reviews (small, under-the-radar businesses)
+ *   – Must have a phone number (skipped if none in Place Details)
+ *
+ * Enrichment (homepage source only, no deep crawling):
+ *   – Email: mailto: link → visible text regex for @
+ *   – Socials: regex for FB / IG / X(Twitter) / LI / YT / TT URLs
  *
  * @package WebNique Portal
  */
@@ -42,312 +37,288 @@ use WNQ\Models\Lead;
 
 final class LeadFinderEngine
 {
-    private const QUEUE_TTL = DAY_IN_SECONDS; // transient lifetime
+    private const BATCH_TTL  = DAY_IN_SECONDS;
+    private const MAX_REVIEWS = 50; // businesses with fewer reviews are targeted
 
-    // ── Phase 1: Queue ───────────────────────────────────────────────────────
+    // ── Phase 1: Start ───────────────────────────────────────────────────────
 
     /**
-     * Run a Google Places search and store the raw candidates in a transient.
-     * Returns immediately with a batch_id — no web-crawling happens here.
+     * Initialise a new ZIP-sweep batch.
+     * Returns immediately — no external HTTP calls made here.
      *
-     * @param array{keyword: string, city: string, max_results?: int} $params
-     * @return array{ok: bool, batch_id?: string, total?: int, error?: string}
+     * @param  string $keyword e.g. "roofing contractor"
+     * @return array{ok: bool, batch_id?: string, total_zips?: int, error?: string}
      */
-    public static function queueSearch(array $params): array
+    public static function startSearch(string $keyword): array
     {
-        $keyword     = sanitize_text_field($params['keyword']      ?? '');
-        $city        = sanitize_text_field($params['city']         ?? '');
-        $max_results = min(60, max(1, (int)($params['max_results'] ?? 60)));
-
-        if (!$keyword || !$city) {
-            return ['ok' => false, 'error' => 'Keyword and city are required'];
+        $keyword = sanitize_text_field($keyword);
+        if (!$keyword) {
+            return ['ok' => false, 'error' => 'Keyword is required'];
         }
 
-        $all_places = [];
-        $page_token = '';
-        $pages      = 0;
+        $zips = \WNQ\Data\FloridaZips::getAll();
+        // Remove duplicates that may exist in the data file
+        $zips = array_values(array_unique($zips));
 
-        do {
-            if ($pages > 0) {
-                sleep(2); // Google requires a pause between paginated requests
-            }
-
-            $data = PlacesAPIClient::textSearch($keyword . ' in ' . $city, $page_token);
-
-            if (!empty($data['error'])) {
-                if (empty($all_places)) {
-                    return ['ok' => false, 'error' => $data['error']];
-                }
-                break;
-            }
-
-            $all_places = array_merge($all_places, $data['results'] ?? []);
-            $page_token = $data['next_page_token'] ?? '';
-            $pages++;
-
-        } while ($page_token && count($all_places) < $max_results && $pages < 3);
-
-        if (empty($all_places)) {
-            return ['ok' => true, 'batch_id' => '', 'total' => 0];
+        if (empty($zips)) {
+            return ['ok' => false, 'error' => 'ZIP code list is empty'];
         }
 
         $batch_id = wp_generate_uuid4();
-        set_transient('wnq_lead_queue_' . $batch_id, [
-            'keyword'    => $keyword,
-            'city'       => $city,
-            'places'     => $all_places,
-            'next_index' => 0,
-            'stats'      => self::emptyStats(count($all_places)),
-        ], self::QUEUE_TTL);
 
-        return ['ok' => true, 'batch_id' => $batch_id, 'total' => count($all_places)];
+        set_transient('wnq_zip_batch_' . $batch_id, [
+            'keyword'    => $keyword,
+            'zips'       => $zips,
+            'zip_index'  => 0,       // index of next ZIP to search
+            'page_token' => '',      // Places pagination token for current ZIP
+            'candidates' => [],      // places fetched from current ZIP, not yet processed
+            'cand_index' => 0,       // next candidate to process
+            'stats'      => self::emptyStats(),
+        ], self::BATCH_TTL);
+
+        return [
+            'ok'         => true,
+            'batch_id'   => $batch_id,
+            'total_zips' => count($zips),
+        ];
     }
 
-    // ── Phase 2: Process one candidate ──────────────────────────────────────
+    // ── Phase 2: Process one unit of work ────────────────────────────────────
 
     /**
-     * Process the next unprocessed candidate from a queued batch.
-     * One AJAX call per candidate → no PHP timeout risk.
+     * Process the next available unit of work in the batch.
+     * One call either (a) processes a pending candidate or (b) fetches the next ZIP.
      *
-     * @param string $batch_id     Returned by queueSearch()
-     * @param array  $filter_params min_reviews, min_rating, min_seo_score
-     * @return array{ok: bool, done: bool, progress: int, total: int, stats: array, error?: string}
+     * @param  string $batch_id Returned by startSearch()
+     * @return array{ok: bool, done: bool, zip_index: int, total_zips: int, stats: array, action?: string}
      */
-    public static function processNextCandidate(string $batch_id, array $filter_params): array
+    public static function processNext(string $batch_id): array
     {
-        // Do NOT call set_time_limit — the ceiling here is the server's configured
-        // max_execution_time. Our HTTP calls are capped at 8+5+4 = 17s worst case,
-        // which fits comfortably inside any reasonable PHP time limit (30s+).
-        // Calling set_time_limit(30) was reducing the available time on hosts
-        // that allow longer execution, causing PHP to die mid-request.
-
-        $queue = get_transient('wnq_lead_queue_' . $batch_id);
-        if (!$queue) {
+        $batch = get_transient('wnq_zip_batch_' . $batch_id);
+        if (!$batch) {
             return ['ok' => false, 'done' => true, 'error' => 'Batch not found or expired'];
         }
 
-        $places     = $queue['places'];
-        $next       = (int)$queue['next_index'];
-        $total      = count($places);
-        $stats      = $queue['stats'];
-        $keyword    = $queue['keyword'];
-        $city       = $queue['city'];
+        $candidates = $batch['candidates'];
+        $cand_index = (int)$batch['cand_index'];
 
-        // All candidates processed
-        if ($next >= $total) {
-            delete_transient('wnq_lead_queue_' . $batch_id);
-            return ['ok' => true, 'done' => true, 'progress' => $total, 'total' => $total, 'stats' => $stats];
+        // (a) Pending candidates → process one
+        if ($cand_index < count($candidates)) {
+            return self::handleCandidate($batch_id, $batch, $candidates[$cand_index]);
         }
 
-        // *** CRITICAL: Advance the transient index BEFORE processing ***
-        // If the browser AbortController fires (45s) and the JS skips this
-        // candidate, the next AJAX call will pick up the NEXT candidate instead
-        // of retrying this one forever. Without this, a single slow site causes
-        // 5 consecutive "timeouts" on the SAME candidate → loop stops at 0/N.
-        $done = ($next + 1 >= $total);
-        $queue['next_index'] = $next + 1;
+        // (b) No candidates → check if any ZIPs remain
+        $zips      = $batch['zips'];
+        $zip_index = (int)$batch['zip_index'];
+        $stats     = $batch['stats'];
+
+        if ($zip_index >= count($zips)) {
+            delete_transient('wnq_zip_batch_' . $batch_id);
+            return [
+                'ok'        => true,
+                'done'      => true,
+                'zip_index' => count($zips),
+                'total_zips'=> count($zips),
+                'stats'     => $stats,
+                'action'    => 'complete',
+            ];
+        }
+
+        // (b) Fetch next ZIP
+        return self::handleZipSearch($batch_id, $batch);
+    }
+
+    // ── Private: Process one candidate ───────────────────────────────────────
+
+    private static function handleCandidate(string $batch_id, array $batch, array $place): array
+    {
+        $cand_index = (int)$batch['cand_index'];
+        $zips       = $batch['zips'];
+        $zip_index  = (int)$batch['zip_index'];
+        $stats      = $batch['stats'];
+        $keyword    = $batch['keyword'];
+        $total_zips = count($zips);
+
+        // *** Advance cand_index BEFORE processing ***
+        // If the browser AbortController fires and the JS moves on, the next
+        // AJAX call picks up the NEXT candidate instead of retrying this one.
+        $batch['cand_index'] = $cand_index + 1;
+        $cands_exhausted     = ($cand_index + 1 >= count($batch['candidates']));
+        $zips_exhausted      = ($zip_index >= $total_zips);
+        $done                = $cands_exhausted && $zips_exhausted;
+
         if ($done) {
-            delete_transient('wnq_lead_queue_' . $batch_id);
+            delete_transient('wnq_zip_batch_' . $batch_id);
         } else {
-            set_transient('wnq_lead_queue_' . $batch_id, $queue, self::QUEUE_TTL);
+            set_transient('wnq_zip_batch_' . $batch_id, $batch, self::BATCH_TTL);
         }
 
-        // Process the candidate (isolated — queue is already advanced)
+        // Process — errors counted as skipped, never block the queue
         try {
-            $outcome = self::processSingleCandidate(
-                $places[$next],
-                $keyword,
-                $city,
-                $filter_params
-            );
+            $outcome = self::processCandidate($place, $keyword);
         } catch (\Throwable $e) {
-            $outcome = 'low_seo'; // count as filtered, never block the queue
+            $outcome = 'skipped';
         }
+
         $stats = self::updateStats($stats, $outcome);
 
-        // Write final stats back to transient (best-effort — may already be gone)
+        // Write stats back best-effort (transient may be gone if done)
         if (!$done) {
-            $q = get_transient('wnq_lead_queue_' . $batch_id);
+            $q = get_transient('wnq_zip_batch_' . $batch_id);
             if ($q) {
                 $q['stats'] = $stats;
-                set_transient('wnq_lead_queue_' . $batch_id, $q, self::QUEUE_TTL);
+                set_transient('wnq_zip_batch_' . $batch_id, $q, self::BATCH_TTL);
             }
         }
 
         return [
-            'ok'       => true,
-            'done'     => $done,
-            'progress' => $next + 1,
-            'total'    => $total,
-            'stats'    => $stats,
+            'ok'        => true,
+            'done'      => $done,
+            'zip_index' => $zip_index,
+            'total_zips'=> $total_zips,
+            'stats'     => $stats,
+            'action'    => 'candidate',
+            'outcome'   => $outcome,
         ];
     }
 
-    // ── Daily Cron (blocking — runs in background) ───────────────────────────
+    // ── Private: Fetch one ZIP (or next page) from Places API ────────────────
 
-    /**
-     * Full blocking pipeline for WP-Cron.
-     * No user-facing timeout risk since it runs in the background.
-     */
-    public static function runDailyCron(): void
+    private static function handleZipSearch(string $batch_id, array $batch): array
     {
-        $settings = get_option('wnq_lead_finder_settings', []);
-        if (empty($settings['enabled'])) return;
+        $zips       = $batch['zips'];
+        $zip_index  = (int)$batch['zip_index'];
+        $page_token = $batch['page_token'] ?? '';
+        $keyword    = $batch['keyword'];
+        $stats      = $batch['stats'];
+        $total_zips = count($zips);
+        $zip        = $zips[$zip_index];
 
-        $industries = array_values(array_filter(
-            array_map('trim', explode("\n", $settings['target_industries'] ?? ''))
-        ));
-        $cities = array_values(array_filter(
-            array_map('trim', explode("\n", $settings['target_cities'] ?? ''))
-        ));
+        // Query Places API (15s timeout is in PlacesAPIClient)
+        $data = PlacesAPIClient::textSearch($keyword . ' ' . $zip, $page_token);
 
-        if (empty($industries) || empty($cities)) return;
-
-        $day      = (int)date('z');
-        $keyword  = $industries[$day % count($industries)];
-        $city     = $cities[$day % count($cities)];
-
-        self::runSearch([
-            'keyword'       => $keyword,
-            'city'          => $city,
-            'min_reviews'   => (int)($settings['min_reviews']   ?? 20),
-            'min_rating'    => (float)($settings['min_rating']  ?? 3.5),
-            'min_seo_score' => (int)($settings['min_seo_score'] ?? 2),
-            'max_results'   => 60,
-        ]);
-    }
-
-    /**
-     * Blocking single-request search — kept for cron and internal use.
-     */
-    public static function runSearch(array $params): array
-    {
-        $keyword     = sanitize_text_field($params['keyword']        ?? '');
-        $city        = sanitize_text_field($params['city']           ?? '');
-        $min_reviews = max(0, (int)($params['min_reviews']           ?? 20));
-        $min_rating  = max(0.0, (float)($params['min_rating']        ?? 3.5));
-        $min_seo     = max(0, (int)($params['min_seo_score']         ?? 2));
-        $max_results = min(60, max(1, (int)($params['max_results']   ?? 60)));
-
-        if (!$keyword || !$city) {
-            return ['ok' => false, 'error' => 'Keyword and city are required'];
-        }
-
-        $all_places = [];
-        $page_token = '';
-        $pages      = 0;
-
-        do {
-            if ($pages > 0) sleep(2);
-            $data = PlacesAPIClient::textSearch($keyword . ' in ' . $city, $page_token);
-            if (!empty($data['error'])) {
-                if (empty($all_places)) return ['ok' => false, 'error' => $data['error']];
-                break;
+        if (!empty($data['error'])) {
+            // Advance ZIP index on error so we don't retry forever
+            $batch['zip_index']  = $zip_index + 1;
+            $batch['page_token'] = '';
+            $batch['candidates'] = [];
+            $batch['cand_index'] = 0;
+            $done = ($zip_index + 1 >= $total_zips);
+            if ($done) {
+                delete_transient('wnq_zip_batch_' . $batch_id);
+            } else {
+                set_transient('wnq_zip_batch_' . $batch_id, $batch, self::BATCH_TTL);
             }
-            $all_places = array_merge($all_places, $data['results'] ?? []);
-            $page_token = $data['next_page_token'] ?? '';
-            $pages++;
-        } while ($page_token && count($all_places) < $max_results && $pages < 3);
-
-        $stats = self::emptyStats(count($all_places));
-
-        foreach ($all_places as $place) {
-            $outcome = self::processSingleCandidate(
-                $place,
-                $keyword,
-                $city,
-                ['min_reviews' => $min_reviews, 'min_rating' => $min_rating, 'min_seo_score' => $min_seo]
-            );
-            $stats = self::updateStats($stats, $outcome);
+            return [
+                'ok'        => true,
+                'done'      => $done,
+                'zip_index' => $zip_index + 1,
+                'total_zips'=> $total_zips,
+                'stats'     => $stats,
+                'action'    => 'zip_error',
+                'zip'       => $zip,
+            ];
         }
 
-        return ['ok' => true, 'stats' => $stats];
+        $raw = $data['results'] ?? [];
+
+        // Filter: fewer than MAX_REVIEWS reviews, not permanently closed
+        $filtered = array_values(array_filter($raw, static function (array $p): bool {
+            if (($p['business_status'] ?? '') === 'PERMANENTLY_CLOSED') return false;
+            return (int)($p['user_ratings_total'] ?? 0) < self::MAX_REVIEWS;
+        }));
+
+        $next_page_token = $data['next_page_token'] ?? '';
+
+        // Advance ZIP or stay on same ZIP for next page
+        if ($next_page_token) {
+            $batch['page_token'] = $next_page_token;
+            // zip_index stays the same — we'll fetch next page on the next "empty" call
+        } else {
+            $batch['zip_index']  = $zip_index + 1;
+            $batch['page_token'] = '';
+        }
+
+        $batch['candidates'] = $filtered;
+        $batch['cand_index'] = 0;
+
+        $stats['zips_searched'] = ($stats['zips_searched'] ?? 0) + 1;
+        $batch['stats']         = $stats;
+
+        $new_zip_index = $next_page_token ? $zip_index : ($zip_index + 1);
+        $done          = ($new_zip_index >= $total_zips && !$next_page_token && empty($filtered));
+
+        if ($done) {
+            delete_transient('wnq_zip_batch_' . $batch_id);
+        } else {
+            set_transient('wnq_zip_batch_' . $batch_id, $batch, self::BATCH_TTL);
+        }
+
+        return [
+            'ok'        => true,
+            'done'      => $done,
+            'zip_index' => $new_zip_index,
+            'total_zips'=> $total_zips,
+            'stats'     => $stats,
+            'action'    => 'zip_searched',
+            'zip'       => $zip,
+            'found'     => count($filtered),
+        ];
     }
 
-    // ── Core Processing Logic ────────────────────────────────────────────────
+    // ── Private: Qualify + enrich a single Places result ────────────────────
 
     /**
-     * Process a single Google Places result through the full qualification
-     * and enrichment pipeline.
-     *
-     * @return string One of: franchise | low_reviews | duplicate | no_website | low_seo | saved
+     * @return string  saved | duplicate | no_phone | no_website | skipped
      */
-    private static function processSingleCandidate(
-        array $place,
-        string $keyword,
-        string $city,
-        array $filter_params
-    ): string {
-        $min_reviews = max(0, (int)($filter_params['min_reviews']   ?? 20));
-        $min_rating  = max(0.0, (float)($filter_params['min_rating']  ?? 3.5));
-        $min_seo     = max(0, (int)($filter_params['min_seo_score'] ?? 2));
-
-        $business_name = sanitize_text_field($place['name'] ?? '');
-
-        // 1. Franchise check by name (free — no API call)
-        if (LeadEnrichmentService::isFranchise($business_name)) {
-            return 'franchise';
-        }
-
-        // 2. Reviews, rating, status filters
-        if ((int)($place['user_ratings_total'] ?? 0) < $min_reviews) return 'low_reviews';
-        if ((float)($place['rating'] ?? 0) < $min_rating)            return 'low_reviews';
-        if (($place['business_status'] ?? '') === 'PERMANENTLY_CLOSED') return 'low_reviews';
-
+    private static function processCandidate(array $place, string $keyword): string
+    {
         $place_id = $place['place_id'] ?? '';
-        if (!$place_id) return 'low_reviews';
+        if (!$place_id) return 'skipped';
 
-        // 3. Dedup by place_id
+        // 1. Dedup by place_id (fast DB check)
         if (Lead::findByPlaceId($place_id)) return 'duplicate';
 
-        // 4. Address parsing (needed for city dedup)
-        $addr      = LeadEnrichmentService::parseAddress($place['formatted_address'] ?? '');
-        $lead_city = $addr['city'] ?: $city;
-
-        // 5. Dedup by name + city
-        if (Lead::existsByNameAndCity($business_name, $lead_city)) return 'duplicate';
-
-        // 6. Place Details API → website + phone
+        // 2. Place Details → phone + website (8s timeout in PlacesAPIClient)
         $details = PlacesAPIClient::getDetails($place_id);
-        $website = $details['website'] ?? '';
-        $phone   = $details['formatted_phone_number'] ?? '';
+        $phone   = trim($details['formatted_phone_number'] ?? '');
+        $website = trim($details['website'] ?? '');
 
+        // 3. Skip if no phone (user requirement)
+        if (!$phone) return 'no_phone';
+
+        // 4. Skip if no website
         if (!$website) return 'no_website';
 
-        // 7. Fetch homepage HTML (shared by all enrichers — one HTTP request total)
-        $homepage_html = self::fetchHtml($website);
+        // 5. Parse address (needed for name+city dedup)
+        $addr          = self::parseAddress($place['formatted_address'] ?? '');
+        $business_name = sanitize_text_field($place['name'] ?? '');
+        $lead_city     = $addr['city'] ?: '';
 
-        // 8. Franchise check against website content
-        if ($homepage_html && LeadEnrichmentService::isFranchise($business_name, $homepage_html)) {
-            return 'franchise';
-        }
+        // 6. Dedup by name + city
+        if ($lead_city && Lead::existsByNameAndCity($business_name, $lead_city)) return 'duplicate';
 
-        // 9. SEO scoring
-        $seo = $homepage_html
-            ? LeadSEOScorer::scoreWebsiteFromHtml($homepage_html)
-            : LeadSEOScorer::scoreWebsite($website);
+        // 7. Fetch homepage source (5s timeout, 256 KB cap)
+        $html = self::fetchHtml($website);
 
-        if (!$seo['ok'] || $seo['score'] < $min_seo) return 'low_seo';
-
-        // 10–12. Enrichment (email, owner, social all reuse $homepage_html)
-        $email_data = LeadEmailExtractor::extractEmail($website, $homepage_html);
-        $owner      = LeadEnrichmentService::extractOwnerName($website, $homepage_html);
-        $social     = LeadEnrichmentService::extractSocialMedia($website, $homepage_html);
+        // 8. Extract email + social media from homepage source only
+        $email  = self::extractEmail($html);
+        $social = self::extractSocials($html);
 
         Lead::insert([
             'place_id'         => $place_id,
             'business_name'    => $business_name,
             'industry'         => $keyword,
-            'owner_first'      => sanitize_text_field($owner['first']),
-            'owner_last'       => sanitize_text_field($owner['last']),
+            'owner_first'      => '',
+            'owner_last'       => '',
             'website'          => esc_url_raw($website),
             'address'          => sanitize_text_field($addr['street']),
             'city'             => sanitize_text_field($lead_city),
             'state'            => sanitize_text_field($addr['state']),
             'zip'              => sanitize_text_field($addr['zip']),
             'phone'            => sanitize_text_field($phone),
-            'email'            => sanitize_email($email_data['email']),
-            'email_source'     => $email_data['source'] ? esc_url_raw($email_data['source']) : '',
+            'email'            => sanitize_email($email),
+            'email_source'     => '',
             'rating'           => (float)($place['rating'] ?? 0),
             'review_count'     => (int)($place['user_ratings_total'] ?? 0),
             'social_facebook'  => $social['facebook']  ? esc_url_raw($social['facebook'])  : '',
@@ -356,15 +327,15 @@ final class LeadFinderEngine
             'social_twitter'   => $social['twitter']   ? esc_url_raw($social['twitter'])   : '',
             'social_youtube'   => $social['youtube']   ? esc_url_raw($social['youtube'])   : '',
             'social_tiktok'    => $social['tiktok']    ? esc_url_raw($social['tiktok'])    : '',
-            'seo_score'        => (int)$seo['score'],
-            'seo_issues'       => $seo['issues'],
+            'seo_score'        => 0,
+            'seo_issues'       => [],
             'status'           => 'new',
         ]);
 
         return 'saved';
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
+    // ── Private: Helpers ─────────────────────────────────────────────────────
 
     private static function fetchHtml(string $url): string
     {
@@ -373,7 +344,7 @@ final class LeadFinderEngine
             'user-agent'          => 'Mozilla/5.0 (compatible; WebNique/1.0; +https://webnique.com)',
             'sslverify'           => false,
             'redirection'         => 3,
-            'limit_response_size' => 512000, // 500 KB — enough for HTML head + visible text
+            'limit_response_size' => 262144, // 256 KB — enough for head + visible text
         ]);
 
         if (is_wp_error($response)) return '';
@@ -383,32 +354,113 @@ final class LeadFinderEngine
         return wp_remote_retrieve_body($response);
     }
 
-    private static function emptyStats(int $found = 0): array
+    /**
+     * Extract the first valid email address from homepage HTML.
+     * Prefers mailto: links, falls back to regex on visible text.
+     */
+    private static function extractEmail(string $html): string
+    {
+        if (!$html) return '';
+
+        // 1. mailto: links (most reliable signal)
+        if (preg_match('/mailto:([a-zA-Z0-9_.+\-]+@[a-zA-Z0-9\-]+\.[a-zA-Z0-9\-.]+)/i', $html, $m)) {
+            $email = strtolower($m[1]);
+            if (filter_var($email, FILTER_VALIDATE_EMAIL) &&
+                !preg_match('/\.(png|jpg|jpeg|gif|svg|webp|pdf|zip)$/i', $email)) {
+                return $email;
+            }
+        }
+
+        // 2. Visible text (strip HTML tags first)
+        $text = strip_tags($html);
+        if (preg_match('/[a-zA-Z0-9_.+\-]+@[a-zA-Z0-9\-]+\.[a-zA-Z0-9\-.]{2,}/i', $text, $m)) {
+            $email = strtolower($m[0]);
+            if (filter_var($email, FILTER_VALIDATE_EMAIL) &&
+                !preg_match('/\.(png|jpg|jpeg|gif|svg|webp|pdf|zip)$/i', $email) &&
+                !in_array(explode('@', $email)[1] ?? '', ['example.com','test.com','domain.com'], true)) {
+                return $email;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * Extract social media URLs from homepage HTML source.
+     * Returns first match per platform.
+     */
+    private static function extractSocials(string $html): array
+    {
+        $out = [
+            'facebook'  => '',
+            'instagram' => '',
+            'twitter'   => '',
+            'linkedin'  => '',
+            'youtube'   => '',
+            'tiktok'    => '',
+        ];
+
+        if (!$html) return $out;
+
+        $patterns = [
+            'facebook'  => '/https?:\/\/(?:www\.)?facebook\.com\/(?!sharer)[a-zA-Z0-9._\-\/]+/i',
+            'instagram' => '/https?:\/\/(?:www\.)?instagram\.com\/[a-zA-Z0-9._\-]+/i',
+            'twitter'   => '/https?:\/\/(?:www\.)?(?:twitter|x)\.com\/[a-zA-Z0-9_]+/i',
+            'linkedin'  => '/https?:\/\/(?:www\.)?linkedin\.com\/(?:company|in)\/[a-zA-Z0-9_\-]+/i',
+            'youtube'   => '/https?:\/\/(?:www\.)?youtube\.com\/(?:channel\/|c\/|user\/|@)[a-zA-Z0-9_\-]+/i',
+            'tiktok'    => '/https?:\/\/(?:www\.)?tiktok\.com\/@[a-zA-Z0-9._\-]+/i',
+        ];
+
+        foreach ($patterns as $network => $pattern) {
+            if (preg_match($pattern, $html, $m)) {
+                $out[$network] = rtrim($m[0], '/.,;)"\' ');
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * Parse a Google Places formatted_address into components.
+     * Example input: "123 Main St, Orlando, FL 32801, USA"
+     */
+    private static function parseAddress(string $formatted): array
+    {
+        // Strip trailing country
+        $formatted = preg_replace('/,\s*USA\s*$/', '', $formatted);
+        $parts     = array_map('trim', explode(',', $formatted));
+
+        $street    = $parts[0] ?? '';
+        $city      = $parts[1] ?? '';
+        $state_zip = trim($parts[2] ?? '');
+        $state     = '';
+        $zip       = '';
+
+        if (preg_match('/^([A-Z]{2})\s+(\d{5}(?:-\d{4})?)/', $state_zip, $m)) {
+            $state = $m[1];
+            $zip   = $m[2];
+        }
+
+        return compact('street', 'city', 'state', 'zip');
+    }
+
+    private static function emptyStats(): array
     {
         return [
-            'found'     => $found,
-            'franchise' => 0,
-            'filtered'  => 0,   // passed reviews/rating — tracked as total - low_reviews
-            'duplicate' => 0,
-            'no_website'=> 0,
-            'low_seo'   => 0,
-            'saved'     => 0,
+            'zips_searched' => 0,
+            'saved'         => 0,
+            'duplicate'     => 0,
+            'no_phone'      => 0,
+            'no_website'    => 0,
+            'skipped'       => 0,
         ];
     }
 
     private static function updateStats(array $stats, string $outcome): array
     {
-        if ($outcome === 'franchise')  { $stats['franchise']++;  }
-        if ($outcome === 'duplicate')  { $stats['duplicate']++;  }
-        if ($outcome === 'no_website') { $stats['no_website']++; }
-        if ($outcome === 'low_seo')    { $stats['low_seo']++;    }
-        if ($outcome === 'saved')      { $stats['saved']++;      }
-
-        // 'filtered' = candidates that passed reviews/rating and dedup (had a website attempt)
-        if (in_array($outcome, ['no_website', 'low_seo', 'saved'], true)) {
-            $stats['filtered']++;
+        if (array_key_exists($outcome, $stats)) {
+            $stats[$outcome]++;
         }
-
         return $stats;
     }
 }
