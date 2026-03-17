@@ -639,7 +639,7 @@ final class LeadFinderEngine
 
     private static function emptyManualStats(int $found = 0): array
     {
-        return ['found'=>$found,'franchise'=>0,'duplicate'=>0,'no_website'=>0,'low_seo'=>0,'saved'=>0];
+        return ['found'=>$found,'franchise'=>0,'duplicate'=>0,'no_website'=>0,'saved'=>0,'error'=>0];
     }
 
     private static function updateStats(array $stats, string $outcome): array

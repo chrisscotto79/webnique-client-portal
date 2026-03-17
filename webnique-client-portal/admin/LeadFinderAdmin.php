@@ -332,6 +332,7 @@ final class LeadFinderAdmin
                     <span>Franchise: <b id="lm-franchise">0</b></span>
                     <span>Dupe: <b id="lm-dup">0</b></span>
                     <span>No Site: <b id="lm-noweb">0</b></span>
+                    <span>Errors: <b id="lm-error" style="color:#dc2626">0</b></span>
                 </div>
                 <div id="lf-manual-log" style="background:#0f172a;border-radius:6px;padding:10px 12px;font-family:monospace;font-size:11px;color:#94a3b8;max-height:200px;overflow-y:auto;line-height:1.7"></div>
             </div>
@@ -370,7 +371,7 @@ final class LeadFinderAdmin
                     mSetLabel('Processing '+progress+'/'+total+'…');
                     let pr=null;
                     try{const ctrl=new AbortController(),tid=setTimeout(()=>ctrl.abort(),60000);
-                        const fd2=new FormData();fd2.append('action','wnq_lead_process_next_manual');fd2.append('nonce',<?php echo wp_json_encode($nonce); ?>);fd2.append('batch_id',batch_id);fd2.append('min_seo','0');
+                        const fd2=new FormData();fd2.append('action','wnq_lead_process_next_manual');fd2.append('nonce',<?php echo wp_json_encode($nonce); ?>);fd2.append('batch_id',batch_id);
                         const r2=await fetch(ajaxurl,{method:'POST',body:fd2,signal:ctrl.signal});clearTimeout(tid);
                         const raw2=await r2.text();try{pr=JSON.parse(raw2);}catch(je){mErr('URL '+(progress+1)+' PHP error: '+raw2.replace(/<[^>]+>/g,'').trim().substring(0,120));if(++consec>=5)_stopped=true;progress++;msetProg(progress,total);continue;}
                     }catch(e){mLog('URL '+(progress+1)+' timed out.','#fb923c');if(++consec>=5){mErr('5 timeouts — stopping.');_stopped=true;}progress++;msetProg(progress,total);continue;}
@@ -384,7 +385,7 @@ final class LeadFinderAdmin
                     else if(outcome==='no_website'){mLog('✗ Could not fetch site: '+(d.url||label),'#fb923c');}
                     else if(outcome==='error'){mLog('✗ Error on '+(d.url||label)+': '+(d.error||'unknown'),'#f87171');}
                     else{mLog('— '+outcome+': '+label,'#94a3b8');}
-                    if(d.stats){document.getElementById('lm-saved').textContent=d.stats.saved||0;document.getElementById('lm-franchise').textContent=d.stats.franchise||0;document.getElementById('lm-dup').textContent=d.stats.duplicate||0;document.getElementById('lm-noweb').textContent=d.stats.no_website||0;}
+                    if(d.stats){document.getElementById('lm-saved').textContent=d.stats.saved||0;document.getElementById('lm-franchise').textContent=d.stats.franchise||0;document.getElementById('lm-dup').textContent=d.stats.duplicate||0;document.getElementById('lm-noweb').textContent=d.stats.no_website||0;document.getElementById('lm-error').textContent=d.stats.error||0;}
                     msetProg(d.progress,d.total);if(d.done)break;
                 }
                 startBtn.disabled=false;stopBtn.style.display='none';

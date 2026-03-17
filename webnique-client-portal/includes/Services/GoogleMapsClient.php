@@ -216,8 +216,8 @@ final class GoogleMapsClient
             $nodes = isset($data['@graph']) ? $data['@graph'] : [$data];
             foreach ($nodes as $node) {
                 $type = strtolower($node['@type'] ?? '');
-                if (!str_contains($type, 'localbusiness') && !str_contains($type, 'organization')
-                    && !str_contains($type, 'plumber') && !str_contains($type, 'service')) {
+                if (strpos($type, 'localbusiness') === false && strpos($type, 'organization') === false
+                    && strpos($type, 'plumber') === false && strpos($type, 'service') === false) {
                     continue;
                 }
                 $name    = $node['name'] ?? '';
