@@ -29,6 +29,10 @@ final class GoogleMapsClient
     private const SEARCH_BASE2 = 'https://www.google.com/search';
     private const MAPS_HOST    = 'https://www.google.com';
 
+    /** Persistent Puppeteer scraper server (started on-demand by the plugin) */
+    private const SCRAPER_PORT = 3099;
+    private const SCRAPER_URL  = 'http://127.0.0.1:3099';
+
     /** Realistic Chrome User-Agent */
     private const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
 
@@ -37,8 +41,8 @@ final class GoogleMapsClient
     /**
      * Search for businesses matching the query.
      *
-     * First tries Google Maps HTML (sometimes returns static place links).
-     * Falls back to Google Search local results (server-rendered, more reliable).
+     * Primary: Puppeteer scraper server (JS-rendered, 10–20 real results).
+     * Fallback: direct HTTP scraping of Maps + Google Search (limited).
      *
      * @param  string $query  e.g. "pressure washing 34211"
      * @return array{results: array, error?: string}
@@ -47,52 +51,59 @@ final class GoogleMapsClient
     {
         $query = trim($query);
         $all   = [];
-        $seen  = []; // keyed by lowercase name to deduplicate across strategies
+        $seen  = [];
 
-        // Strategy 1: Google Maps HTML scrape
-        $maps_html = self::fetch(self::SEARCH_BASE . rawurlencode($query) . '?hl=en');
-        if ($maps_html) {
-            foreach (self::parseSearchResults($maps_html) as $p) {
-                $key = strtolower($p['name']);
-                if ($key && !isset($seen[$key])) {
-                    $seen[$key] = true;
-                    $all[] = $p;
-                }
+        // ── Primary: Puppeteer scraper ───────────────────────────────────────
+        $scraped = self::scraperSearch($query);
+        foreach ($scraped['results'] ?? [] as $p) {
+            $key = strtolower($p['name'] ?? '');
+            if ($key && !isset($seen[$key])) {
+                $seen[$key] = true;
+                $all[] = $p;
             }
         }
 
-        // Strategy 2: Google Search local pack (server-rendered, always run and merge)
-        $search_html = self::fetch(self::SEARCH_BASE2 . '?' . http_build_query([
-            'q'   => $query,
-            'gl'  => 'us',
-            'hl'  => 'en',
-            'num' => '20',
-        ]));
-        if ($search_html) {
-            foreach (self::parseGoogleSearchResults($search_html, $query) as $p) {
-                $key = strtolower($p['name']);
-                if ($key && !isset($seen[$key])) {
-                    $seen[$key] = true;
-                    $all[] = $p;
+        // ── Fallback: direct HTTP (when scraper is unavailable) ──────────────
+        if (empty($all)) {
+            // Maps HTML (server-rendered, usually 1 result max)
+            $maps_html = self::fetch(self::SEARCH_BASE . rawurlencode($query) . '?hl=en');
+            if ($maps_html) {
+                foreach (self::parseSearchResults($maps_html) as $p) {
+                    $key = strtolower($p['name']);
+                    if ($key && !isset($seen[$key])) { $seen[$key] = true; $all[] = $p; }
+                }
+            }
+            // Google Search local pack
+            $search_html = self::fetch(self::SEARCH_BASE2 . '?' . http_build_query([
+                'q' => $query, 'gl' => 'us', 'hl' => 'en', 'num' => '20',
+            ]));
+            if ($search_html) {
+                foreach (self::parseGoogleSearchResults($search_html, $query) as $p) {
+                    $key = strtolower($p['name']);
+                    if ($key && !isset($seen[$key])) { $seen[$key] = true; $all[] = $p; }
                 }
             }
         }
-
-        return $all
-            ? ['results' => $all]
-            : ['results' => [], 'error' => 'No businesses found'];
-    }
 
     /**
      * Fetch phone, website, rating, and review count from a Google Maps place page.
+     *
+     * Primary: Puppeteer scraper (renders JS — much more reliable for phone/website).
+     * Fallback: direct HTTP + regex patterns.
      *
      * @param  string $place_url  Full URL from search results
      * @return array{phone: string, website: string, rating: float, review_count: int, address: string}
      */
     public static function getPlaceDetails(string $place_url): array
     {
-        $html = self::fetch($place_url . (strpos($place_url, '?') === false ? '?' : '&') . 'hl=en');
+        // Try Puppeteer scraper first
+        $details = self::scraperPlaceDetails($place_url);
+        if ($details['phone'] || $details['website']) {
+            return $details;
+        }
 
+        // Fallback: raw HTTP
+        $html = self::fetch($place_url . (strpos($place_url, '?') === false ? '?' : '&') . 'hl=en');
         return [
             'phone'        => $html ? self::extractPhone($html)       : '',
             'website'      => $html ? self::extractWebsite($html)     : '',
@@ -100,6 +111,102 @@ final class GoogleMapsClient
             'review_count' => $html ? self::extractReviewCount($html) : 0,
             'address'      => $html ? self::extractAddress($html)     : '',
         ];
+    }
+
+    // ── Private: Puppeteer scraper server ────────────────────────────────────
+
+    /**
+     * Call the local Puppeteer server's /search endpoint.
+     * Starts the server on-demand if it isn't already running.
+     */
+    private static function scraperSearch(string $query): array
+    {
+        if (!self::ensureScraperRunning()) return ['results' => []];
+
+        $response = wp_remote_get(
+            self::SCRAPER_URL . '/search?' . http_build_query(['q' => $query]),
+            ['timeout' => 35, 'sslverify' => false]
+        );
+        if (is_wp_error($response)) return ['results' => []];
+
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        return ['results' => $data['results'] ?? []];
+    }
+
+    /**
+     * Call the local Puppeteer server's /place endpoint to get phone/website.
+     */
+    private static function scraperPlaceDetails(string $place_url): array
+    {
+        $empty = ['phone' => '', 'website' => '', 'rating' => 0.0, 'review_count' => 0, 'address' => ''];
+        if (!self::ensureScraperRunning()) return $empty;
+
+        $response = wp_remote_get(
+            self::SCRAPER_URL . '/place?' . http_build_query(['url' => $place_url]),
+            ['timeout' => 25, 'sslverify' => false]
+        );
+        if (is_wp_error($response)) return $empty;
+
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        if (!is_array($data) || isset($data['error'])) return $empty;
+
+        return [
+            'phone'        => $data['phone']        ?? '',
+            'website'      => $data['website']       ?? '',
+            'rating'       => (float)($data['rating']       ?? 0),
+            'review_count' => (int)($data['review_count']   ?? 0),
+            'address'      => $data['address']       ?? '',
+        ];
+    }
+
+    /**
+     * Ensure the Puppeteer scraper server is running on localhost:3099.
+     * Starts it as a background process if the health check fails.
+     * Returns true if the server is (or becomes) reachable.
+     */
+    private static function ensureScraperRunning(): bool
+    {
+        static $state = null; // cache result within one PHP request
+        if ($state !== null) return $state;
+
+        // Quick health check
+        $h = wp_remote_get(self::SCRAPER_URL . '/health', ['timeout' => 2, 'sslverify' => false]);
+        if (!is_wp_error($h) && (int)wp_remote_retrieve_response_code($h) === 200) {
+            return ($state = true);
+        }
+
+        // Locate node binary and server script
+        $node   = self::findNodeBin();
+        $server = realpath(dirname(__FILE__, 4) . '/scraper/server.js');
+        if (!$node || !$server) return ($state = false);
+
+        // Spawn server as background process
+        $log = sys_get_temp_dir() . '/wnq-scraper.log';
+        shell_exec(
+            escapeshellarg($node) . ' ' . escapeshellarg($server) .
+            ' > ' . escapeshellarg($log) . ' 2>&1 &'
+        );
+
+        // Wait up to 10 s for Chromium to extract and start
+        for ($i = 0; $i < 20; $i++) {
+            usleep(500000);
+            $h = wp_remote_get(self::SCRAPER_URL . '/health', ['timeout' => 1, 'sslverify' => false]);
+            if (!is_wp_error($h) && (int)wp_remote_retrieve_response_code($h) === 200) {
+                return ($state = true);
+            }
+        }
+
+        return ($state = false);
+    }
+
+    /** Find the node binary on the server. */
+    private static function findNodeBin(): string
+    {
+        foreach (['/opt/node22/bin/node', '/usr/local/bin/node', '/usr/bin/node'] as $p) {
+            if (file_exists($p) && is_executable($p)) return $p;
+        }
+        $which = trim((string)shell_exec('which node 2>/dev/null'));
+        return $which ?: '';
     }
 
     // ── Private: HTTP ────────────────────────────────────────────────────────
