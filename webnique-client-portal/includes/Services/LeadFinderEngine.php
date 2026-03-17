@@ -243,15 +243,24 @@ final class LeadFinderEngine
     {
         $place_url = $place['place_url'] ?? '';
         $name      = sanitize_text_field($place['name'] ?? '');
-        if (!$place_url || !$name) return 'skipped';
+        if (!$name) return 'skipped';
 
-        // 1. Fetch place page → phone, website, review_count, address
-        $details      = GoogleMapsClient::getPlaceDetails($place_url);
-        $phone        = trim($details['phone']   ?? '');
-        $website      = trim($details['website'] ?? '');
-        $review_count = (int)($details['review_count'] ?? $place['review_count'] ?? 0);
-        $rating       = (float)($details['rating']       ?? $place['rating']       ?? 0);
-        $raw_address  = trim($details['address']  ?? '');
+        // 1. If we have a Maps place URL, fetch details from it.
+        //    Google Search results already include website/phone directly.
+        $phone        = trim($place['phone']   ?? '');
+        $website      = trim($place['website'] ?? '');
+        $review_count = (int)($place['review_count'] ?? 0);
+        $rating       = (float)($place['rating']       ?? 0);
+        $raw_address  = trim($place['address']  ?? '');
+
+        if ($place_url) {
+            $details      = GoogleMapsClient::getPlaceDetails($place_url);
+            $phone        = $phone   ?: trim($details['phone']        ?? '');
+            $website      = $website ?: trim($details['website']      ?? '');
+            $review_count = $review_count ?: (int)($details['review_count'] ?? 0);
+            $rating       = $rating       ?: (float)($details['rating']     ?? 0);
+            $raw_address  = $raw_address  ?: trim($details['address']       ?? '');
+        }
 
         // 2. Filter: skip if 50+ reviews (confirm with place page data)
         if ($review_count >= self::MAX_REVIEWS) return 'skipped';
@@ -280,7 +289,7 @@ final class LeadFinderEngine
         $social = self::extractSocials($html);
 
         Lead::insert([
-            'place_id'         => '',
+            'place_id'         => md5($website ?: $name . $raw_address),
             'business_name'    => $name,
             'industry'         => $keyword,
             'owner_first'      => '',
@@ -406,13 +415,10 @@ final class LeadFinderEngine
                 $filter_params
             );
         } catch (\Throwable $e) {
-            $outcome = 'low_seo';
-            error_log(sprintf(
-                'WNQ Lead Finder: candidate %d/%d threw %s: %s (in %s:%d)',
-                $next + 1, $total,
-                get_class($e), $e->getMessage(),
-                $e->getFile(), $e->getLine()
-            ));
+            $err_msg = get_class($e) . ': ' . $e->getMessage() . ' in ' . basename($e->getFile()) . ':' . $e->getLine();
+            error_log('WNQ Lead Finder: ' . $err_msg);
+            $outcome = 'error';
+            $err_msg_short = substr($e->getMessage(), 0, 120);
         }
 
         $stats = self::updateStats($stats, $outcome);
@@ -434,6 +440,7 @@ final class LeadFinderEngine
             'url'     => $candidates[$next]['url'],
             'name'    => $candidates[$next]['name'],
             'outcome' => $outcome,
+            'error'   => $err_msg_short ?? '',
         ];
     }
 
@@ -512,7 +519,7 @@ final class LeadFinderEngine
         if (!$insert_id) {
             global $wpdb;
             error_log('WNQ Lead Finder: DB insert failed for "' . $business_name . '" — ' . $wpdb->last_error);
-            return 'low_seo';
+            throw new \RuntimeException('DB insert failed: ' . $wpdb->last_error);
         }
 
         return 'saved';

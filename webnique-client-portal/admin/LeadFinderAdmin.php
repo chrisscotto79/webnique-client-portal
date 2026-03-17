@@ -382,6 +382,7 @@ final class LeadFinderAdmin
                     else if(outcome==='duplicate'){mLog('⟳ Dupe: '+label,'#94a3b8');}
                     else if(outcome==='franchise'){mLog('✗ Franchise filtered: '+label,'#c084fc');}
                     else if(outcome==='no_website'){mLog('✗ Could not fetch site: '+(d.url||label),'#fb923c');}
+                    else if(outcome==='error'){mLog('✗ Error on '+(d.url||label)+': '+(d.error||'unknown'),'#f87171');}
                     else{mLog('— '+outcome+': '+label,'#94a3b8');}
                     if(d.stats){document.getElementById('lm-saved').textContent=d.stats.saved||0;document.getElementById('lm-franchise').textContent=d.stats.franchise||0;document.getElementById('lm-dup').textContent=d.stats.duplicate||0;document.getElementById('lm-noweb').textContent=d.stats.no_website||0;}
                     msetProg(d.progress,d.total);if(d.done)break;
