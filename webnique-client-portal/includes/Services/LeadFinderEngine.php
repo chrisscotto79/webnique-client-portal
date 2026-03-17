@@ -477,14 +477,16 @@ final class LeadFinderEngine
             return 'franchise';
         }
 
-        // SEO scoring
+        // SEO scoring — always score but only reject when automated (min_seo > 0)
+        // Manual entries are explicitly chosen by the user so we save them regardless.
         $seo = LeadSEOScorer::scoreWebsiteFromHtml($homepage_html);
-        if (!$seo['ok'] || $seo['score'] < $min_seo) {
+        if ($min_seo > 0 && (!$seo['ok'] || $seo['score'] < $min_seo)) {
             return 'low_seo';
         }
 
         // Enrichment
         $email_data = LeadEmailExtractor::extractEmail($url, $homepage_html);
+        $phone      = self::extractPhoneFromHtml($homepage_html);
         $social     = LeadEnrichmentService::extractSocialMedia($url, $homepage_html);
 
         $insert_id = Lead::insert([
@@ -498,7 +500,7 @@ final class LeadFinderEngine
             'city'             => '',
             'state'            => '',
             'zip'              => '',
-            'phone'            => '',
+            'phone'            => sanitize_text_field($phone),
             'email'            => sanitize_email($email_data['email']),
             'email_source'     => $email_data['source'] ? esc_url_raw($email_data['source']) : '',
             'rating'           => 0,
