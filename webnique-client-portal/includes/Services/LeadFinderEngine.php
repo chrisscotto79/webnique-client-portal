@@ -154,6 +154,7 @@ final class LeadFinderEngine
             'stats'     => $stats,
             'action'    => 'candidate',
             'outcome'   => $outcome,
+            'name'      => sanitize_text_field($place['name'] ?? ''),
         ];
     }
 
@@ -255,29 +256,27 @@ final class LeadFinderEngine
         // 2. Filter: skip if 50+ reviews (confirm with place page data)
         if ($review_count >= self::MAX_REVIEWS) return 'skipped';
 
-        // 3. Skip if no phone
-        if (!$phone) return 'no_phone';
-
-        // 4. Skip if no website
+        // 3. Skip if no website — we need it to scrape email/phone
         if (!$website) return 'no_website';
 
-        // 5. Parse address
+        // 4. Parse address
         $addr = self::parseAddress($raw_address ?: ($place['address'] ?? ''));
 
-        // 6. Dedup by name + city
+        // 5. Dedup by name + city
         if ($addr['city'] && Lead::existsByNameAndCity($name, $addr['city'])) return 'duplicate';
 
-        // 7. Fetch business homepage
+        // 6. Fetch business homepage
         $html = self::fetchHtml($website);
+        if (!$html) return 'no_website';
 
-        // 8. Extract email + phone fallback from homepage
-        $email = self::extractEmail($html);
+        // 7. Extract phone from website if Maps didn't provide one
         if (!$phone) {
             $phone = self::extractPhoneFromHtml($html);
             if (!$phone) return 'no_phone';
         }
 
-        // 9. Extract social links
+        // 8. Extract email and social links from homepage
+        $email  = self::extractEmail($html);
         $social = self::extractSocials($html);
 
         Lead::insert([
@@ -427,11 +426,14 @@ final class LeadFinderEngine
         }
 
         return [
-            'ok'       => true,
-            'done'     => $done,
-            'progress' => $next + 1,
-            'total'    => $total,
-            'stats'    => $stats,
+            'ok'      => true,
+            'done'    => $done,
+            'progress'=> $next + 1,
+            'total'   => $total,
+            'stats'   => $stats,
+            'url'     => $candidates[$next]['url'],
+            'name'    => $candidates[$next]['name'],
+            'outcome' => $outcome,
         ];
     }
 
@@ -448,8 +450,6 @@ final class LeadFinderEngine
         string $industry,
         array $filter_params
     ): string {
-        $min_seo = max(0, (int)($filter_params['min_seo_score'] ?? 2));
-
         // Dedup: use md5(url) as place_id so the UNIQUE KEY catches repeated submissions
         $url_key = md5($url);
         if (Lead::findByPlaceId($url_key)) {
@@ -477,14 +477,7 @@ final class LeadFinderEngine
             return 'franchise';
         }
 
-        // SEO scoring — always score but only reject when automated (min_seo > 0)
-        // Manual entries are explicitly chosen by the user so we save them regardless.
-        $seo = LeadSEOScorer::scoreWebsiteFromHtml($homepage_html);
-        if ($min_seo > 0 && (!$seo['ok'] || $seo['score'] < $min_seo)) {
-            return 'low_seo';
-        }
-
-        // Enrichment
+        // Enrichment — no SEO scoring, just scrape what we can
         $email_data = LeadEmailExtractor::extractEmail($url, $homepage_html);
         $phone      = self::extractPhoneFromHtml($homepage_html);
         $social     = LeadEnrichmentService::extractSocialMedia($url, $homepage_html);
@@ -511,8 +504,8 @@ final class LeadFinderEngine
             'social_twitter'   => $social['twitter']   ? esc_url_raw($social['twitter'])   : '',
             'social_youtube'   => $social['youtube']   ? esc_url_raw($social['youtube'])   : '',
             'social_tiktok'    => $social['tiktok']    ? esc_url_raw($social['tiktok'])    : '',
-            'seo_score'        => (int)$seo['score'],
-            'seo_issues'       => $seo['issues'],
+            'seo_score'        => 0,
+            'seo_issues'       => [],
             'status'           => 'new',
         ]);
 

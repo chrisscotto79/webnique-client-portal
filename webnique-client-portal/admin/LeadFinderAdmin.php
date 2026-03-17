@@ -204,14 +204,14 @@ final class LeadFinderAdmin
             <div class="wnq-progress" id="lf-progress">
                 <div class="wnq-progress-row"><div class="wnq-spinner"></div><span id="lf-status-text">Starting…</span></div>
                 <div class="wnq-progress-row"><div class="wnq-pbar-wrap"><div class="wnq-pbar" id="lf-pbar"></div></div><span id="lf-pct" style="font-size:12px;white-space:nowrap">0%</span></div>
-                <div class="wnq-sub-status" id="lf-sub-status"></div>
-                <div class="wnq-live-stats">
+                <div class="wnq-live-stats" style="margin:6px 0">
                     <div class="wnq-ls-item"><span class="wnq-ls-num" id="ls-saved">0</span>&nbsp;<span class="wnq-ls-lbl">Saved</span></div>
                     <div class="wnq-ls-item"><span class="wnq-ls-num" id="ls-duplicate">0</span>&nbsp;<span class="wnq-ls-lbl">Dupe</span></div>
                     <div class="wnq-ls-item"><span class="wnq-ls-num" id="ls-no_phone">0</span>&nbsp;<span class="wnq-ls-lbl">No Phone</span></div>
                     <div class="wnq-ls-item"><span class="wnq-ls-num" id="ls-no_website">0</span>&nbsp;<span class="wnq-ls-lbl">No Website</span></div>
                     <div class="wnq-ls-item"><span class="wnq-ls-num" id="ls-zips">0</span>&nbsp;<span class="wnq-ls-lbl">ZIPs Done</span></div>
                 </div>
+                <div id="lf-log" style="background:#0f172a;border-radius:6px;padding:10px 12px;font-family:monospace;font-size:11px;color:#94a3b8;max-height:200px;overflow-y:auto;line-height:1.7"></div>
             </div>
             <div class="wnq-result" id="lf-result" style="display:none"></div>
         </div>
@@ -222,6 +222,11 @@ final class LeadFinderAdmin
             const delay=ms=>new Promise(r=>setTimeout(r,ms));
             let batchId='',totalZips=0,running=false,stopFlag=false,consecFail=0,zipDelayMs=3000;
             const MAX_FAIL=5;
+            function wnqLog(msg,color){
+                const el=document.getElementById('lf-log');if(!el)return;
+                const line=document.createElement('div');line.style.color=color||'#94a3b8';line.textContent=msg;
+                el.appendChild(line);el.scrollTop=el.scrollHeight;
+            }
             window.wnqZipStart=async function(){
                 const keyword=document.getElementById('lf-keyword').value.trim();
                 if(!keyword){alert('Please enter a keyword.');return;}
@@ -230,7 +235,9 @@ final class LeadFinderAdmin
                 document.getElementById('lf-start-btn').style.display='none';
                 document.getElementById('lf-stop-btn').style.display='';
                 document.getElementById('lf-result').style.display='none';
-                wnqShowProgress(true);wnqSetStatus('Initialising search…');wnqSetSub('');
+                document.getElementById('lf-log').innerHTML='';
+                wnqShowProgress(true);wnqSetStatus('Initialising search…');
+                wnqLog('Starting ZIP sweep for "'+keyword+'"…','#60a5fa');
                 try{
                     const sr=await wnqPost({action:'wnq_zip_start',nonce:NONCE,keyword});
                     if(!sr.success){wnqShowResult(false,sr.data?.error||'Failed to start.');wnqDone();return;}
@@ -244,21 +251,31 @@ final class LeadFinderAdmin
                 while(running&&!stopFlag){
                     let resp;
                     try{resp=await wnqPost({action:'wnq_zip_process',nonce:NONCE,batch_id:batchId});}
-                    catch(err){if(++consecFail>=MAX_FAIL){wnqShowResult(false,'Stopped after '+MAX_FAIL+' failures.');wnqDone();return;}wnqSetSub('Error ('+consecFail+'/'+MAX_FAIL+'): '+err.message);continue;}
+                    catch(err){if(++consecFail>=MAX_FAIL){wnqShowResult(false,'Stopped after '+MAX_FAIL+' failures.');wnqDone();return;}wnqLog('Network error: '+err.message,'#f87171');continue;}
                     if(!resp.success){wnqShowResult(false,resp.data?.error||'Server error.');wnqDone();return;}
                     consecFail=0;const d=resp.data||{};
                     const zipIdx=typeof d.zip_index==='number'?d.zip_index:0,total=typeof d.total_zips==='number'?d.total_zips:(totalZips||1);
                     wnqSetProgress(Math.min(100,Math.round(zipIdx/total*100)));
-                    if(d.action==='zip_searched'){wnqSetStatus('ZIP '+zipIdx+' of '+total+' — '+( d.found||0)+' candidates ('+d.zip+')');if(!d.done&&!stopFlag)await delay(zipDelayMs);}
-                    else if(d.action==='candidate'){wnqSetStatus('ZIP '+zipIdx+' of '+total+' — processing…');wnqSetSub('Result: '+(d.outcome||'?'));}
-                    else if(d.action==='zip_error'){wnqSetSub('Error ZIP '+(d.zip||'')+', skipping…');if(!d.done&&!stopFlag)await delay(zipDelayMs);}
-                    else if(d.action==='complete'){wnqSetProgress(100);wnqSetStatus('Complete!');}
+                    if(d.action==='zip_searched'){
+                        wnqSetStatus('ZIP '+zipIdx+' of '+total+' ('+d.zip+')');
+                        wnqLog('🗺  Google Maps ZIP '+d.zip+' → '+(d.found||0)+' businesses found','#60a5fa');
+                        if(!d.done&&!stopFlag)await delay(zipDelayMs);
+                    } else if(d.action==='candidate'){
+                        wnqSetStatus('ZIP '+zipIdx+' of '+total+' — scraping website…');
+                        const name=d.name||'unknown';
+                        const outcome=d.outcome||'?';
+                        if(outcome==='saved'){wnqLog('  ✓ Saved: '+name,'#4ade80');}
+                        else if(outcome==='duplicate'){wnqLog('  ⟳ Dupe: '+name,'#94a3b8');}
+                        else if(outcome==='no_phone'){wnqLog('  ✗ No phone found: '+name,'#fb923c');}
+                        else if(outcome==='no_website'){wnqLog('  ✗ No website: '+name,'#fb923c');}
+                        else{wnqLog('  — Skipped: '+name+' ('+outcome+')','#94a3b8');}
+                    } else if(d.action==='complete'){wnqSetProgress(100);wnqSetStatus('Complete!');}
                     const s=d.stats||{};
                     ['saved','duplicate','no_phone','no_website'].forEach(k=>{try{document.getElementById('ls-'+k).textContent=s[k]||0;}catch(_){}});
                     try{document.getElementById('ls-zips').textContent=s.zips_searched||0;}catch(_){}
-                    if(d.done){wnqShowResult(true,'Sweep complete! <strong>'+(s.saved||0)+' leads saved</strong>. ZIPs: '+(s.zips_searched||0)+' | Dupes: '+(s.duplicate||0)+' | No Phone: '+(s.no_phone||0)+' | No Site: '+(s.no_website||0));wnqDone();return;}
+                    if(d.done){wnqLog('Sweep complete — '+(s.saved||0)+' leads saved.','#4ade80');wnqShowResult(true,'Sweep complete! <strong>'+(s.saved||0)+' leads saved</strong>. ZIPs: '+(s.zips_searched||0)+' | Dupes: '+(s.duplicate||0)+' | No Phone: '+(s.no_phone||0)+' | No Site: '+(s.no_website||0));wnqDone();return;}
                 }
-                if(stopFlag){wnqShowResult(false,'Search stopped manually.');wnqDone();}
+                if(stopFlag){wnqLog('Stopped manually.','#fbbf24');wnqShowResult(false,'Search stopped manually.');wnqDone();}
             }
             async function wnqPost(data){
                 const ctrl=new AbortController(),timer=setTimeout(()=>ctrl.abort(),ABORT_MS);
@@ -268,7 +285,6 @@ final class LeadFinderAdmin
             function wnqShowProgress(s){document.getElementById('lf-progress').classList.toggle('show',s);}
             function wnqSetProgress(p){try{document.getElementById('lf-pbar').style.width=p+'%';document.getElementById('lf-pct').textContent=p+'%';}catch(_){}}
             function wnqSetStatus(m){try{document.getElementById('lf-status-text').textContent=m;}catch(_){}}
-            function wnqSetSub(m){try{document.getElementById('lf-sub-status').textContent=m;}catch(_){}}
             function wnqShowResult(ok,html){const el=document.getElementById('lf-result');el.className='wnq-result '+(ok?'wnq-result-ok':'wnq-result-err');el.innerHTML=html;el.style.display='';}
             function wnqDone(){running=false;document.getElementById('lf-start-btn').style.display='';document.getElementById('lf-stop-btn').style.display='none';wnqShowProgress(false);}
         }());
@@ -286,7 +302,7 @@ final class LeadFinderAdmin
             <h3>Add Prospects Manually</h3>
             <p style="color:#6b7280;margin:-6px 0 14px;font-size:12px;">
                 Paste one website URL per line. Optionally use <code>Business Name | URL</code> format.
-                Each site is crawled for SEO issues, email &amp; social media — processed one at a time.
+                Each site's source is scraped for email &amp; phone — processed one at a time.
                 Franchises and duplicates are automatically filtered.
             </p>
             <div class="wnq-field" style="margin-bottom:14px">
@@ -294,52 +310,48 @@ final class LeadFinderAdmin
                 <textarea id="lf-urls" style="width:100%;height:160px;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:monospace;box-sizing:border-box;"
                     placeholder="https://example-plumber.com&#10;Acme Roofing | https://acmeroofing.com"></textarea>
             </div>
-            <div class="wnq-row2" style="max-width:600px;margin-bottom:14px">
+            <div style="max-width:320px;margin-bottom:14px">
                 <div class="wnq-field">
                     <label>Industry / Label</label>
                     <input type="text" id="lf-industry" placeholder="e.g. roofing contractor" value="<?php echo esc_attr($settings['default_keyword'] ?? ''); ?>">
                     <small>Tags all leads in this batch</small>
                 </div>
-                <div class="wnq-field">
-                    <label>Min SEO Score</label>
-                    <input type="number" id="lf-min-seo" value="<?php echo esc_attr($settings['min_seo_score'] ?? 2); ?>" min="0" max="7">
-                    <small>0–7 issues found. 2+ = real SEO gaps.</small>
-                </div>
             </div>
             <div style="display:flex;gap:10px;align-items:center">
-                <button class="wnq-btn wnq-btn-primary" id="lf-manual-start-btn" onclick="wnqStartManual()">Analyze &amp; Save Leads</button>
+                <button class="wnq-btn wnq-btn-primary" id="lf-manual-start-btn" onclick="wnqStartManual()">Scrape &amp; Save Leads</button>
                 <button class="wnq-btn wnq-btn-secondary" id="lf-manual-stop-btn" onclick="wnqStopManual()" style="display:none">Stop</button>
             </div>
             <div id="lf-manual-progress" style="display:none;margin-top:16px">
                 <div style="display:flex;justify-content:space-between;font-size:12px;color:#374151;margin-bottom:4px">
                     <span id="lf-manual-label">Starting…</span><span id="lf-manual-pct">0%</span>
                 </div>
-                <div id="lf-manual-sub" style="font-size:11px;color:#6b7280;margin-bottom:6px;min-height:15px"></div>
                 <div class="wnq-progressbar-wrap"><div class="wnq-progressbar" id="lf-manual-bar"></div></div>
-                <div class="wnq-live-stats" style="margin-top:8px">
+                <div class="wnq-live-stats" style="margin:8px 0">
                     <span>Total: <b id="lm-found">0</b></span>
                     <span>Saved: <b id="lm-saved" style="color:#16a34a">0</b></span>
                     <span>Franchise: <b id="lm-franchise">0</b></span>
                     <span>Dupe: <b id="lm-dup">0</b></span>
                     <span>No Site: <b id="lm-noweb">0</b></span>
-                    <span>Low SEO: <b id="lm-lowseo">0</b></span>
                 </div>
+                <div id="lf-manual-log" style="background:#0f172a;border-radius:6px;padding:10px 12px;font-family:monospace;font-size:11px;color:#94a3b8;max-height:200px;overflow-y:auto;line-height:1.7"></div>
             </div>
             <div id="lf-manual-result" style="margin-top:12px"></div>
         </div>
         <script>
         (function(){
             let _stopped=false;
+            function mLog(msg,color){const el=document.getElementById('lf-manual-log');if(!el)return;const line=document.createElement('div');line.style.color=color||'#94a3b8';line.textContent=msg;el.appendChild(line);el.scrollTop=el.scrollHeight;}
             window.wnqStopManual=function(){_stopped=true;};
             window.wnqStartManual=async function(){
                 _stopped=false;
-                const urls=document.getElementById('lf-urls').value.trim(),minSeo=document.getElementById('lf-min-seo').value,industry=document.getElementById('lf-industry').value.trim();
+                const urls=document.getElementById('lf-urls').value.trim(),industry=document.getElementById('lf-industry').value.trim();
                 if(!urls){alert('Enter at least one URL.');return;}
                 const startBtn=document.getElementById('lf-manual-start-btn'),stopBtn=document.getElementById('lf-manual-stop-btn');
                 startBtn.disabled=true;stopBtn.style.display='';
                 document.getElementById('lf-manual-progress').style.display='';
                 document.getElementById('lf-manual-result').innerHTML='';
-                ['lm-found','lm-saved','lm-franchise','lm-dup','lm-noweb','lm-lowseo'].forEach(id=>document.getElementById(id).textContent='0');
+                document.getElementById('lf-manual-log').innerHTML='';
+                ['lm-found','lm-saved','lm-franchise','lm-dup','lm-noweb'].forEach(id=>document.getElementById(id).textContent='0');
                 msetProg(0,1);
                 let qr;
                 try{const fd=new FormData();fd.append('action','wnq_lead_queue_manual');fd.append('nonce',<?php echo wp_json_encode($nonce); ?>);fd.append('urls',urls);fd.append('industry',industry);mSetLabel('Queuing URLs…');
@@ -352,18 +364,26 @@ final class LeadFinderAdmin
                 document.getElementById('lm-found').textContent=total||0;
                 if(!batch_id||!total){mErr('No valid URLs found.');return;}
                 startBtn.disabled=true;stopBtn.style.display='';
+                mLog('Queued '+total+' URL(s). Starting scrape…','#60a5fa');
                 let progress=0,consec=0,lastStats=null;
                 while(progress<total&&!_stopped){
-                    mSetLabel('Processing '+progress+'/'+total+'…');mSetSub('Crawling URL '+(progress+1)+' of '+total+'…');
+                    mSetLabel('Processing '+progress+'/'+total+'…');
                     let pr=null;
                     try{const ctrl=new AbortController(),tid=setTimeout(()=>ctrl.abort(),60000);
-                        const fd2=new FormData();fd2.append('action','wnq_lead_process_next_manual');fd2.append('nonce',<?php echo wp_json_encode($nonce); ?>);fd2.append('batch_id',batch_id);fd2.append('min_seo',minSeo);
+                        const fd2=new FormData();fd2.append('action','wnq_lead_process_next_manual');fd2.append('nonce',<?php echo wp_json_encode($nonce); ?>);fd2.append('batch_id',batch_id);fd2.append('min_seo','0');
                         const r2=await fetch(ajaxurl,{method:'POST',body:fd2,signal:ctrl.signal});clearTimeout(tid);
                         const raw2=await r2.text();try{pr=JSON.parse(raw2);}catch(je){mErr('URL '+(progress+1)+' PHP error: '+raw2.replace(/<[^>]+>/g,'').trim().substring(0,120));if(++consec>=5)_stopped=true;progress++;msetProg(progress,total);continue;}
-                    }catch(e){mSetSub('URL '+(progress+1)+' timed out.');if(++consec>=5){mErr('5 timeouts — stopping.');_stopped=true;}progress++;meProg(progress,total);continue;}
-                    if(!pr?.success){mSetSub('URL '+(progress+1)+': '+(pr?.data?.message||'Error'));if(++consec>=5){mErr('5 errors — stopping.');_stopped=true;}progress++;msetProg(progress,total);continue;}
-                    consec=0;const d=pr.data;progress=d.progress;lastStats=d.stats;mSetSub('URL '+progress+' done.');
-                    if(d.stats){document.getElementById('lm-saved').textContent=d.stats.saved||0;document.getElementById('lm-franchise').textContent=d.stats.franchise||0;document.getElementById('lm-dup').textContent=d.stats.duplicate||0;document.getElementById('lm-noweb').textContent=d.stats.no_website||0;document.getElementById('lm-lowseo').textContent=d.stats.low_seo||0;}
+                    }catch(e){mLog('URL '+(progress+1)+' timed out.','#fb923c');if(++consec>=5){mErr('5 timeouts — stopping.');_stopped=true;}progress++;msetProg(progress,total);continue;}
+                    if(!pr?.success){mLog('URL '+(progress+1)+': '+(pr?.data?.message||'Error'),'#f87171');if(++consec>=5){mErr('5 errors — stopping.');_stopped=true;}progress++;msetProg(progress,total);continue;}
+                    consec=0;const d=pr.data;progress=d.progress;lastStats=d.stats;
+                    const label=d.name||(d.url||('URL '+progress));
+                    const outcome=d.outcome||'?';
+                    if(outcome==='saved'){mLog('✓ Saved: '+label+(d.url?' ('+d.url+')':''),'#4ade80');}
+                    else if(outcome==='duplicate'){mLog('⟳ Dupe: '+label,'#94a3b8');}
+                    else if(outcome==='franchise'){mLog('✗ Franchise filtered: '+label,'#c084fc');}
+                    else if(outcome==='no_website'){mLog('✗ Could not fetch site: '+(d.url||label),'#fb923c');}
+                    else{mLog('— '+outcome+': '+label,'#94a3b8');}
+                    if(d.stats){document.getElementById('lm-saved').textContent=d.stats.saved||0;document.getElementById('lm-franchise').textContent=d.stats.franchise||0;document.getElementById('lm-dup').textContent=d.stats.duplicate||0;document.getElementById('lm-noweb').textContent=d.stats.no_website||0;}
                     msetProg(d.progress,d.total);if(d.done)break;
                 }
                 startBtn.disabled=false;stopBtn.style.display='none';
@@ -372,7 +392,6 @@ final class LeadFinderAdmin
                 else{mSetLabel('Stopped');document.getElementById('lf-manual-result').innerHTML='<div class="wnq-result" style="background:#fef9c3;border:1px solid #fde68a;color:#92400e;"><strong>Stopped</strong><p>'+saved+' lead'+(saved!==1?'s':'')+' saved.</p></div>';}
             };
             function mSetLabel(m){document.getElementById('lf-manual-label').textContent=m;}
-            function mSetSub(m){document.getElementById('lf-manual-sub').textContent=m;}
             function msetProg(c,t){const p=t>0?Math.round(c/t*100):0;document.getElementById('lf-manual-bar').style.width=p+'%';document.getElementById('lf-manual-pct').textContent=p+'%';}
             function mErr(m){document.getElementById('lf-manual-result').innerHTML+='<div class="wnq-result wnq-result-err" style="margin-bottom:6px"><strong>Error</strong> — '+m+'</div>';document.getElementById('lf-manual-start-btn').disabled=false;document.getElementById('lf-manual-stop-btn').style.display='none';}
         })();
