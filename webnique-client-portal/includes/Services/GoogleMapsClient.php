@@ -25,8 +25,9 @@ if (!defined('ABSPATH')) {
 
 final class GoogleMapsClient
 {
-    private const SEARCH_BASE = 'https://www.google.com/maps/search/';
-    private const MAPS_HOST   = 'https://www.google.com';
+    private const SEARCH_BASE  = 'https://www.google.com/maps/search/';
+    private const SEARCH_BASE2 = 'https://www.google.com/search';
+    private const MAPS_HOST    = 'https://www.google.com';
 
     /** Realistic Chrome User-Agent */
     private const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
@@ -34,24 +35,44 @@ final class GoogleMapsClient
     // ── Public API ───────────────────────────────────────────────────────────
 
     /**
-     * Search Google Maps for businesses matching the query.
-     * Builds URL: https://www.google.com/maps/search/{query}
+     * Search for businesses matching the query.
+     *
+     * First tries Google Maps HTML (sometimes returns static place links).
+     * Falls back to Google Search local results (server-rendered, more reliable).
      *
      * @param  string $query  e.g. "pressure washing 34211"
      * @return array{results: array, error?: string}
      */
     public static function search(string $query): array
     {
-        $url  = self::SEARCH_BASE . rawurlencode(trim($query)) . '?hl=en';
-        $html = self::fetch($url);
+        $query = trim($query);
 
-        if (!$html) {
-            return ['results' => [], 'error' => 'Could not fetch Google Maps search page'];
+        // Strategy 1: Google Maps HTML scrape
+        $maps_url = self::SEARCH_BASE . rawurlencode($query) . '?hl=en';
+        $maps_html = self::fetch($maps_url);
+        if ($maps_html) {
+            $places = self::parseSearchResults($maps_html);
+            if (!empty($places)) {
+                return ['results' => $places];
+            }
         }
 
-        $places = self::parseSearchResults($html);
+        // Strategy 2: Google Search local pack (server-rendered)
+        $search_url = self::SEARCH_BASE2 . '?' . http_build_query([
+            'q'   => $query,
+            'gl'  => 'us',
+            'hl'  => 'en',
+            'num' => '20',
+        ]);
+        $search_html = self::fetch($search_url);
+        if ($search_html) {
+            $places = self::parseGoogleSearchResults($search_html, $query);
+            if (!empty($places)) {
+                return ['results' => $places];
+            }
+        }
 
-        return ['results' => $places];
+        return ['results' => [], 'error' => 'No businesses found'];
     }
 
     /**
@@ -165,6 +186,107 @@ final class GoogleMapsClient
                     'rating'       => 0.0,
                     'address'      => '',
                 ];
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Parse Google Search results page for local business listings.
+     * Google Search IS server-rendered and includes local pack + organic results.
+     *
+     * Extracts business name, website, phone, address, rating, review count
+     * from the structured data (JSON-LD) and visible HTML.
+     *
+     * @return array  Each item: {name, place_url, website, phone, review_count, rating, address}
+     */
+    private static function parseGoogleSearchResults(string $html, string $query): array
+    {
+        $results = [];
+        $seen    = [];
+
+        // ── Strategy A: JSON-LD structured data ───────────────────────────────
+        // Google Search embeds LocalBusiness / Organization schema in some results
+        preg_match_all('/<script[^>]+type=["\']application\/ld\+json["\'][^>]*>(.*?)<\/script>/is', $html, $ld_matches);
+        foreach ($ld_matches[1] as $json_raw) {
+            $data = json_decode(trim($json_raw), true);
+            if (!$data) continue;
+
+            $nodes = isset($data['@graph']) ? $data['@graph'] : [$data];
+            foreach ($nodes as $node) {
+                $type = strtolower($node['@type'] ?? '');
+                if (!str_contains($type, 'localbusiness') && !str_contains($type, 'organization')
+                    && !str_contains($type, 'plumber') && !str_contains($type, 'service')) {
+                    continue;
+                }
+                $name    = $node['name'] ?? '';
+                $website = $node['url'] ?? '';
+                $phone   = $node['telephone'] ?? '';
+                $address_obj = $node['address'] ?? [];
+                $address = '';
+                if (is_array($address_obj)) {
+                    $address = implode(', ', array_filter([
+                        $address_obj['streetAddress']   ?? '',
+                        $address_obj['addressLocality'] ?? '',
+                        $address_obj['addressRegion']   ?? '',
+                        $address_obj['postalCode']      ?? '',
+                    ]));
+                }
+                $rating = (float)($node['aggregateRating']['ratingValue'] ?? 0);
+                $reviews = (int)($node['aggregateRating']['reviewCount'] ?? 0);
+
+                if (!$name || isset($seen[$name])) continue;
+                $seen[$name] = true;
+
+                $results[] = [
+                    'name'         => sanitize_text_field($name),
+                    'place_url'    => '',
+                    'website'      => $website,
+                    'phone'        => $phone,
+                    'review_count' => $reviews,
+                    'rating'       => $rating,
+                    'address'      => $address,
+                ];
+            }
+        }
+
+        // ── Strategy B: Google local pack HTML patterns ────────────────────────
+        // The local pack (3 businesses) often has data-cid attributes and structured spans
+        // Pattern: data in JS init data embedded as escaped JSON in script tags
+        if (empty($results)) {
+            // Extract all external website hrefs that look like business sites
+            preg_match_all('/href="(https?:\/\/(?!www\.google\.com)[^"]{8,})"[^>]*>([^<]{3,80})<\/a>/i', $html, $link_matches, PREG_SET_ORDER);
+            foreach ($link_matches as $m) {
+                $url  = $m[1];
+                $text = trim(strip_tags($m[2]));
+                if (!$text || strlen($text) < 3) continue;
+
+                $host = parse_url($url, PHP_URL_HOST) ?: '';
+                // Skip social/known non-business domains
+                $skip = ['facebook.com','instagram.com','twitter.com','x.com','linkedin.com',
+                         'youtube.com','yelp.com','tripadvisor.com','bbb.org','yellowpages.com',
+                         'angi.com','thumbtack.com','houzz.com','nextdoor.com','maps.google'];
+                $skip_it = false;
+                foreach ($skip as $s) {
+                    if (stripos($host, $s) !== false) { $skip_it = true; break; }
+                }
+                if ($skip_it) continue;
+                if (!preg_match('/\.[a-z]{2,}$/i', $host)) continue;
+                if (isset($seen[$host])) continue;
+                $seen[$host] = true;
+
+                $results[] = [
+                    'name'         => $text,
+                    'place_url'    => '',
+                    'website'      => $url,
+                    'phone'        => '',
+                    'review_count' => 0,
+                    'rating'       => 0.0,
+                    'address'      => '',
+                ];
+
+                if (count($results) >= 15) break;
             }
         }
 
