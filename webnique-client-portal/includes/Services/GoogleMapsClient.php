@@ -46,33 +46,41 @@ final class GoogleMapsClient
     public static function search(string $query): array
     {
         $query = trim($query);
+        $all   = [];
+        $seen  = []; // keyed by lowercase name to deduplicate across strategies
 
         // Strategy 1: Google Maps HTML scrape
-        $maps_url = self::SEARCH_BASE . rawurlencode($query) . '?hl=en';
-        $maps_html = self::fetch($maps_url);
+        $maps_html = self::fetch(self::SEARCH_BASE . rawurlencode($query) . '?hl=en');
         if ($maps_html) {
-            $places = self::parseSearchResults($maps_html);
-            if (!empty($places)) {
-                return ['results' => $places];
+            foreach (self::parseSearchResults($maps_html) as $p) {
+                $key = strtolower($p['name']);
+                if ($key && !isset($seen[$key])) {
+                    $seen[$key] = true;
+                    $all[] = $p;
+                }
             }
         }
 
-        // Strategy 2: Google Search local pack (server-rendered)
-        $search_url = self::SEARCH_BASE2 . '?' . http_build_query([
+        // Strategy 2: Google Search local pack (server-rendered, always run and merge)
+        $search_html = self::fetch(self::SEARCH_BASE2 . '?' . http_build_query([
             'q'   => $query,
             'gl'  => 'us',
             'hl'  => 'en',
             'num' => '20',
-        ]);
-        $search_html = self::fetch($search_url);
+        ]));
         if ($search_html) {
-            $places = self::parseGoogleSearchResults($search_html, $query);
-            if (!empty($places)) {
-                return ['results' => $places];
+            foreach (self::parseGoogleSearchResults($search_html, $query) as $p) {
+                $key = strtolower($p['name']);
+                if ($key && !isset($seen[$key])) {
+                    $seen[$key] = true;
+                    $all[] = $p;
+                }
             }
         }
 
-        return ['results' => [], 'error' => 'No businesses found'];
+        return $all
+            ? ['results' => $all]
+            : ['results' => [], 'error' => 'No businesses found'];
     }
 
     /**
@@ -251,43 +259,51 @@ final class GoogleMapsClient
             }
         }
 
-        // ── Strategy B: Google local pack HTML patterns ────────────────────────
-        // The local pack (3 businesses) often has data-cid attributes and structured spans
-        // Pattern: data in JS init data embedded as escaped JSON in script tags
-        if (empty($results)) {
-            // Extract all external website hrefs that look like business sites
-            preg_match_all('/href="(https?:\/\/(?!www\.google\.com)[^"]{8,})"[^>]*>([^<]{3,80})<\/a>/i', $html, $link_matches, PREG_SET_ORDER);
-            foreach ($link_matches as $m) {
-                $url  = $m[1];
-                $text = trim(strip_tags($m[2]));
-                if (!$text || strlen($text) < 3) continue;
+        // ── Strategy B: Google Search visible link + phone extraction ─────────
+        // Always run (not just when A fails) to capture more listings.
+        // Phone numbers appear in visible text right next to each listing.
+        preg_match_all(
+            '/href="(https?:\/\/(?!www\.google\.com)[^"]{8,})"[^>]*>([^<]{3,80})<\/a>/i',
+            $html, $link_matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE
+        );
+        foreach ($link_matches as $m) {
+            $url      = $m[1][0];
+            $text     = trim(strip_tags($m[2][0]));
+            $html_pos = (int)$m[0][1];
+            if (!$text || strlen($text) < 3) continue;
 
-                $host = parse_url($url, PHP_URL_HOST) ?: '';
-                // Skip social/known non-business domains
-                $skip = ['facebook.com','instagram.com','twitter.com','x.com','linkedin.com',
-                         'youtube.com','yelp.com','tripadvisor.com','bbb.org','yellowpages.com',
-                         'angi.com','thumbtack.com','houzz.com','nextdoor.com','maps.google'];
-                $skip_it = false;
-                foreach ($skip as $s) {
-                    if (stripos($host, $s) !== false) { $skip_it = true; break; }
-                }
-                if ($skip_it) continue;
-                if (!preg_match('/\.[a-z]{2,}$/i', $host)) continue;
-                if (isset($seen[$host])) continue;
-                $seen[$host] = true;
-
-                $results[] = [
-                    'name'         => $text,
-                    'place_url'    => '',
-                    'website'      => $url,
-                    'phone'        => '',
-                    'review_count' => 0,
-                    'rating'       => 0.0,
-                    'address'      => '',
-                ];
-
-                if (count($results) >= 15) break;
+            $host = parse_url($url, PHP_URL_HOST) ?: '';
+            // Skip social/known non-business domains
+            $skip = ['facebook.com','instagram.com','twitter.com','x.com','linkedin.com',
+                     'youtube.com','yelp.com','tripadvisor.com','bbb.org','yellowpages.com',
+                     'angi.com','thumbtack.com','houzz.com','nextdoor.com','maps.google'];
+            $skip_it = false;
+            foreach ($skip as $s) {
+                if (stripos($host, $s) !== false) { $skip_it = true; break; }
             }
+            if ($skip_it) continue;
+            if (!preg_match('/\.[a-z]{2,}$/i', $host)) continue;
+            if (isset($seen[$host])) continue;
+            $seen[$host] = true;
+
+            // Extract phone from surrounding plain text (Google renders it in the listing)
+            $snippet = strip_tags(substr($html, max(0, $html_pos - 400), 900));
+            $phone   = '';
+            if (preg_match('/\(?\b(\d{3})\)?[\s.\-](\d{3})[\s.\-](\d{4})\b/', $snippet, $pm)) {
+                $phone = "({$pm[1]}) {$pm[2]}-{$pm[3]}";
+            }
+
+            $results[] = [
+                'name'         => $text,
+                'place_url'    => '',
+                'website'      => $url,
+                'phone'        => $phone,
+                'review_count' => 0,
+                'rating'       => 0.0,
+                'address'      => '',
+            ];
+
+            if (count($results) >= 20) break;
         }
 
         return $results;
@@ -309,7 +325,13 @@ final class GoogleMapsClient
             $name = urldecode(str_replace('+', ' ', $raw));
             // Strip trailing comma-separated address components that sometimes appear
             $name = preg_replace('/,.*$/', '', $name);
-            return trim($name);
+            $name = trim($name);
+
+            // Filter out Google UI link segments that are not business names
+            static $blocked = ['feedback','report','contribute','about','help','directions','search','nearby','maps','error','login','signin'];
+            if (in_array(strtolower($name), $blocked, true) || strlen($name) < 3) return '';
+
+            return $name;
         }
 
         return '';
