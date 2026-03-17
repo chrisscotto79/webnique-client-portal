@@ -85,6 +85,11 @@ final class GoogleMapsClient
             }
         }
 
+        return $all
+            ? ['results' => $all]
+            : ['results' => [], 'error' => 'No businesses found'];
+    }
+
     /**
      * Fetch phone, website, rating, and review count from a Google Maps place page.
      *
