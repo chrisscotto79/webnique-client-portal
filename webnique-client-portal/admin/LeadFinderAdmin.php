@@ -714,29 +714,42 @@ final class LeadFinderAdmin
 
     public static function ajaxNpmInstall(): void
     {
-        check_ajax_referer('wnq_lead_nonce', 'nonce');
+        if (!check_ajax_referer('wnq_lead_nonce', 'nonce', false)) {
+            wp_send_json_error(['message' => 'Security check failed — refresh and try again.']);
+            return;
+        }
         self::requireCap();
+
+        // npm install downloads Chromium (~300 MB) — remove the PHP time limit.
+        @set_time_limit(0);
+
+        // Capture any stray output (PHP notices, etc.) so it doesn't corrupt the JSON response.
+        ob_start();
 
         $scraper_dir = WNQ_PORTAL_PATH . 'scraper';
         if (!is_dir($scraper_dir)) {
+            ob_end_clean();
             wp_send_json_error(['message' => 'Scraper directory not found at: ' . $scraper_dir]);
             return;
         }
 
         // Find npm binary
-        $npm = trim((string)shell_exec('which npm 2>/dev/null'));
+        $npm = trim((string)@shell_exec('which npm 2>/dev/null'));
         if (!$npm) {
             foreach (['/opt/node22/bin/npm', '/usr/local/bin/npm', '/usr/bin/npm'] as $p) {
                 if (file_exists($p) && is_executable($p)) { $npm = $p; break; }
             }
         }
         if (!$npm) {
+            ob_end_clean();
             wp_send_json_error(['message' => 'npm not found. Please install Node.js on your server first.']);
             return;
         }
 
         $cmd    = 'cd ' . escapeshellarg($scraper_dir) . ' && ' . escapeshellarg($npm) . ' install 2>&1';
-        $output = shell_exec($cmd);
+        $output = @shell_exec($cmd);
+
+        ob_end_clean();
 
         $installed = is_dir($scraper_dir . '/node_modules/puppeteer');
         wp_send_json([
