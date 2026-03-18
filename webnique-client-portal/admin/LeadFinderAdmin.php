@@ -41,6 +41,7 @@ final class LeadFinderAdmin
         add_action('wp_ajax_wnq_lead_delete',        [self::class, 'ajaxDelete']);
         add_action('wp_ajax_wnq_lead_bulk_action',   [self::class, 'ajaxBulkAction']);
         add_action('wp_ajax_wnq_lead_run_migration', [self::class, 'ajaxRunMigration']);
+        add_action('wp_ajax_wnq_npm_install',        [self::class, 'ajaxNpmInstall']);
 
         add_action('admin_post_wnq_lead_export_csv',    [self::class, 'handleExportCsv']);
         add_action('admin_post_wnq_lead_save_settings', [self::class, 'handleSaveSettings']);
@@ -548,6 +549,58 @@ final class LeadFinderAdmin
                 <?php if(!empty($_GET['settings_saved'])):?><span style="margin-left:10px;color:#16a34a;font-size:12px">✓ Saved</span><?php endif;?>
             </form>
         </div>
+
+        <?php
+        $scraper_dir   = WNQ_PORTAL_PATH . 'scraper';
+        $npm_installed = is_dir($scraper_dir . '/node_modules/puppeteer');
+        $nonce         = wp_create_nonce('wnq_lead_nonce');
+        ?>
+        <div class="wnq-card" style="max-width:680px">
+            <h3>Scraper Setup (Puppeteer / Node.js)</h3>
+            <p style="color:#6b7280;font-size:13px;margin:0 0 12px">
+                The ZIP Sweep uses a local Puppeteer server to scrape Google Maps results.
+                Run <strong>npm install</strong> once to install Chromium and its dependencies.
+            </p>
+            <p style="margin:0 0 14px">
+                Status: <?php if($npm_installed):?>
+                    <strong style="color:#16a34a">✓ Installed</strong>
+                <?php else:?>
+                    <strong style="color:#dc2626">✗ Not installed</strong> — ZIP Sweep will use fallback HTTP (fewer results)
+                <?php endif;?>
+            </p>
+            <button id="wnq-npm-btn" class="wnq-btn wnq-btn-primary" onclick="wnqNpmInstall()">
+                <?php echo $npm_installed ? 'Re-run npm install' : 'Install Node Dependencies'; ?>
+            </button>
+            <div id="wnq-npm-out" style="display:none;margin-top:14px;background:#0f172a;color:#e2e8f0;padding:14px 16px;border-radius:8px;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:260px;overflow-y:auto"></div>
+            <script>
+            function wnqNpmInstall(){
+                const btn=document.getElementById('wnq-npm-btn');
+                const out=document.getElementById('wnq-npm-out');
+                btn.disabled=true; btn.textContent='Running npm install…';
+                out.style.display='block'; out.textContent='Starting…\n';
+                const fd=new FormData();
+                fd.append('action','wnq_npm_install');
+                fd.append('nonce',<?php echo wp_json_encode($nonce);?>);
+                fetch(ajaxurl,{method:'POST',body:fd})
+                    .then(r=>r.json())
+                    .then(d=>{
+                        out.textContent = (d.output||'(no output)');
+                        if(d.installed){
+                            btn.textContent='✓ Installed — Re-run npm install';
+                            btn.disabled=false;
+                        } else {
+                            btn.textContent='Install failed — try again';
+                            btn.disabled=false;
+                        }
+                    })
+                    .catch(e=>{
+                        out.textContent='Request failed: '+e.message;
+                        btn.textContent='Install Node Dependencies';
+                        btn.disabled=false;
+                    });
+            }
+            </script>
+        </div>
         <?php
     }
 
@@ -655,6 +708,42 @@ final class LeadFinderAdmin
         self::requireCap();
         Lead::runMigration();
         wp_send_json(['ok' => true]);
+    }
+
+    // ── AJAX: npm install ─────────────────────────────────────────────────────
+
+    public static function ajaxNpmInstall(): void
+    {
+        check_ajax_referer('wnq_lead_nonce', 'nonce');
+        self::requireCap();
+
+        $scraper_dir = WNQ_PORTAL_PATH . 'scraper';
+        if (!is_dir($scraper_dir)) {
+            wp_send_json_error(['message' => 'Scraper directory not found at: ' . $scraper_dir]);
+            return;
+        }
+
+        // Find npm binary
+        $npm = trim((string)shell_exec('which npm 2>/dev/null'));
+        if (!$npm) {
+            foreach (['/opt/node22/bin/npm', '/usr/local/bin/npm', '/usr/bin/npm'] as $p) {
+                if (file_exists($p) && is_executable($p)) { $npm = $p; break; }
+            }
+        }
+        if (!$npm) {
+            wp_send_json_error(['message' => 'npm not found. Please install Node.js on your server first.']);
+            return;
+        }
+
+        $cmd    = 'cd ' . escapeshellarg($scraper_dir) . ' && ' . escapeshellarg($npm) . ' install 2>&1';
+        $output = shell_exec($cmd);
+
+        $installed = is_dir($scraper_dir . '/node_modules/puppeteer');
+        wp_send_json([
+            'success'   => $installed,
+            'installed' => $installed,
+            'output'    => $output ?: '(no output)',
+        ]);
     }
 
     // ── Admin POST Handlers ───────────────────────────────────────────────────
