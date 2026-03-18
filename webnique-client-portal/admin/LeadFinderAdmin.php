@@ -35,6 +35,10 @@ final class LeadFinderAdmin
         add_action('wp_ajax_wnq_lead_queue_manual',        [self::class, 'ajaxQueueManual']);
         add_action('wp_ajax_wnq_lead_process_next_manual', [self::class, 'ajaxProcessNextManual']);
 
+        // Bulk Google Maps import
+        add_action('wp_ajax_wnq_bulk_maps_queue',   [self::class, 'ajaxBulkMapsQueue']);
+        add_action('wp_ajax_wnq_bulk_maps_process', [self::class, 'ajaxBulkMapsProcess']);
+
         // Lead management
         add_action('wp_ajax_wnq_lead_update_status', [self::class, 'ajaxUpdateStatus']);
         add_action('wp_ajax_wnq_lead_update_notes',  [self::class, 'ajaxUpdateNotes']);
@@ -399,6 +403,143 @@ final class LeadFinderAdmin
             function mErr(m){document.getElementById('lf-manual-result').innerHTML+='<div class="wnq-result wnq-result-err" style="margin-bottom:6px"><strong>Error</strong> — '+m+'</div>';document.getElementById('lf-manual-start-btn').disabled=false;document.getElementById('lf-manual-stop-btn').style.display='none';}
         })();
         </script>
+
+        <?php /* ── Bulk Google Maps Import ─────────────────────────────── */ ?>
+        <div class="wnq-card" style="margin-top:20px">
+            <h3>Bulk Google Maps Import</h3>
+            <p style="color:#6b7280;margin:-6px 0 10px;font-size:12px;">
+                Paste tab-separated rows exported from your Google Maps scraper.
+                Expected columns (with or without a header row):<br>
+                <code style="font-size:11px">Title &nbsp;·&nbsp; Rating &nbsp;·&nbsp; Reviews &nbsp;·&nbsp; Phone &nbsp;·&nbsp; Email &nbsp;·&nbsp; Industry &nbsp;·&nbsp; Address &nbsp;·&nbsp; Website &nbsp;·&nbsp; Google Maps Link</code><br>
+                Each website is fetched to fill in any missing email and collect social media links.
+            </p>
+            <div class="wnq-field" style="margin-bottom:14px">
+                <label>Paste TSV data</label>
+                <textarea id="bm-tsv" style="width:100%;height:180px;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;font-family:monospace;box-sizing:border-box;"
+                    placeholder="Roto-Rooter Plumbing&#9;4.8&#9;1102&#9;(407) 949-9004&#9;&#9;Plumber&#9;1535 W Broadway St&#9;https://www.rotorooter.com/&#9;https://www.google.com/maps/place/..."></textarea>
+            </div>
+            <div style="max-width:320px;margin-bottom:14px">
+                <div class="wnq-field">
+                    <label>Fallback Industry (used when column is blank)</label>
+                    <input type="text" id="bm-industry" placeholder="e.g. plumbing" value="<?php echo esc_attr($settings['default_keyword'] ?? ''); ?>">
+                </div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center">
+                <button class="wnq-btn wnq-btn-primary" id="bm-start-btn" onclick="wnqBulkMapsStart()">Import &amp; Save Leads</button>
+                <button class="wnq-btn wnq-btn-secondary" id="bm-stop-btn" onclick="wnqBulkMapsStop()" style="display:none">Stop</button>
+            </div>
+            <div id="bm-progress" style="display:none;margin-top:16px">
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:#374151;margin-bottom:4px">
+                    <span id="bm-label">Starting…</span><span id="bm-pct">0%</span>
+                </div>
+                <div class="wnq-progressbar-wrap"><div class="wnq-progressbar" id="bm-bar"></div></div>
+                <div class="wnq-live-stats" style="margin:8px 0">
+                    <span>Total: <b id="bm-found">0</b></span>
+                    <span>Saved: <b id="bm-saved" style="color:#16a34a">0</b></span>
+                    <span>Dupe: <b id="bm-dup">0</b></span>
+                    <span>No Site: <b id="bm-noweb">0</b></span>
+                    <span>Errors: <b id="bm-err" style="color:#dc2626">0</b></span>
+                </div>
+                <div id="bm-log" style="background:#0f172a;border-radius:6px;padding:10px 12px;font-family:monospace;font-size:11px;color:#94a3b8;max-height:220px;overflow-y:auto;line-height:1.7"></div>
+            </div>
+            <div id="bm-result" style="margin-top:12px"></div>
+        </div>
+        <script>
+        (function(){
+            let _bmStopped=false;
+            function bmLog(msg,color){const el=document.getElementById('bm-log');if(!el)return;const d=document.createElement('div');d.style.color=color||'#94a3b8';d.textContent=msg;el.appendChild(d);el.scrollTop=el.scrollHeight;}
+            function bmProg(c,t){const p=t>0?Math.round(c/t*100):0;document.getElementById('bm-bar').style.width=p+'%';document.getElementById('bm-pct').textContent=p+'%';}
+            function bmLabel(m){document.getElementById('bm-label').textContent=m;}
+            function bmErr(m){document.getElementById('bm-result').innerHTML+='<div class="wnq-result wnq-result-err" style="margin-bottom:6px"><strong>Error</strong> — '+m+'</div>';document.getElementById('bm-start-btn').disabled=false;document.getElementById('bm-stop-btn').style.display='none';}
+            window.wnqBulkMapsStop=function(){_bmStopped=true;};
+            window.wnqBulkMapsStart=async function(){
+                _bmStopped=false;
+                const tsv=document.getElementById('bm-tsv').value.trim();
+                const industry=document.getElementById('bm-industry').value.trim();
+                if(!tsv){alert('Paste your scraper data first.');return;}
+                const startBtn=document.getElementById('bm-start-btn'),stopBtn=document.getElementById('bm-stop-btn');
+                startBtn.disabled=true;stopBtn.style.display='';
+                document.getElementById('bm-progress').style.display='';
+                document.getElementById('bm-result').innerHTML='';
+                document.getElementById('bm-log').innerHTML='';
+                ['bm-found','bm-saved','bm-dup','bm-noweb','bm-err'].forEach(id=>document.getElementById(id).textContent='0');
+                bmProg(0,1);
+                // Phase 1: queue
+                let qr;
+                try{
+                    const fd=new FormData();
+                    fd.append('action','wnq_bulk_maps_queue');
+                    fd.append('nonce',<?php echo wp_json_encode($nonce); ?>);
+                    fd.append('tsv',tsv);
+                    fd.append('industry',industry);
+                    bmLabel('Parsing rows…');
+                    const r=await fetch(ajaxurl,{method:'POST',body:fd}),raw=await r.text();
+                    try{qr=JSON.parse(raw);}catch(je){bmErr('Parse failed: '+raw.replace(/<[^>]+>/g,'').trim().substring(0,160));startBtn.disabled=false;stopBtn.style.display='none';return;}
+                }catch(e){bmErr('Network error: '+e.message);startBtn.disabled=false;stopBtn.style.display='none';return;}
+                if(!qr.success){bmErr(qr.data?.message||'Failed to queue');startBtn.disabled=false;stopBtn.style.display='none';return;}
+                const{batch_id,total}=qr.data;
+                document.getElementById('bm-found').textContent=total||0;
+                if(!batch_id||!total){bmErr('No valid rows found. Check the format.');startBtn.disabled=false;stopBtn.style.display='none';return;}
+                bmLog('Queued '+total+' row(s). Fetching websites…','#60a5fa');
+                // Phase 2: process one row at a time
+                let progress=0,consec=0,lastStats=null;
+                while(progress<total&&!_bmStopped){
+                    bmLabel('Processing '+progress+'/'+total+'…');
+                    let pr=null;
+                    try{
+                        const ctrl=new AbortController(),tid=setTimeout(()=>ctrl.abort(),75000);
+                        const fd2=new FormData();
+                        fd2.append('action','wnq_bulk_maps_process');
+                        fd2.append('nonce',<?php echo wp_json_encode($nonce); ?>);
+                        fd2.append('batch_id',batch_id);
+                        const r2=await fetch(ajaxurl,{method:'POST',body:fd2,signal:ctrl.signal});
+                        clearTimeout(tid);
+                        const raw2=await r2.text();
+                        try{pr=JSON.parse(raw2);}catch(je){
+                            bmLog('Row '+(progress+1)+' server error: '+raw2.replace(/<[^>]+>/g,'').trim().substring(0,120),'#f87171');
+                            if(++consec>=5)_bmStopped=true;
+                            progress++;bmProg(progress,total);continue;
+                        }
+                    }catch(e){
+                        bmLog('Row '+(progress+1)+' timed out.','#fb923c');
+                        if(++consec>=5){bmErr('5 timeouts — stopping.');_bmStopped=true;}
+                        progress++;bmProg(progress,total);continue;
+                    }
+                    if(!pr?.success){
+                        bmLog('Row '+(progress+1)+': '+(pr?.data?.message||'Error'),'#f87171');
+                        if(++consec>=5){bmErr('5 errors — stopping.');_bmStopped=true;}
+                        progress++;bmProg(progress,total);continue;
+                    }
+                    consec=0;
+                    const d=pr.data;
+                    progress=d.progress;
+                    lastStats=d.stats;
+                    const name=d.name||('Row '+progress);
+                    if(d.outcome==='saved')         bmLog('✓ Saved: '+name,'#4ade80');
+                    else if(d.outcome==='duplicate') bmLog('⟳ Dupe: '+name,'#94a3b8');
+                    else if(d.outcome==='no_website')bmLog('✗ No site: '+name,'#fb923c');
+                    else                             bmLog('✗ '+d.outcome+': '+name,'#f87171');
+                    if(d.stats){
+                        document.getElementById('bm-saved').textContent=d.stats.saved||0;
+                        document.getElementById('bm-dup').textContent=d.stats.duplicate||0;
+                        document.getElementById('bm-noweb').textContent=d.stats.no_website||0;
+                        document.getElementById('bm-err').textContent=d.stats.error||0;
+                    }
+                    bmProg(d.progress,d.total);
+                    if(d.done)break;
+                }
+                startBtn.disabled=false;stopBtn.style.display='none';
+                const saved=lastStats?lastStats.saved:0;
+                if(!_bmStopped){
+                    bmLabel('Complete');
+                    document.getElementById('bm-result').innerHTML='<div class="wnq-result wnq-result-ok"><strong>Done</strong><p><b>'+saved+'</b> new lead'+(saved!==1?'s':'')+' saved.'+(saved>0?' <a href="admin.php?page=wnq-lead-finder&tab=leads" style="color:#15803d;font-weight:600">View leads &rarr;</a>':'')+' </p></div>';
+                }else{
+                    bmLabel('Stopped');
+                    document.getElementById('bm-result').innerHTML='<div class="wnq-result" style="background:#fef9c3;border:1px solid #fde68a;color:#92400e;"><strong>Stopped</strong><p>'+saved+' lead'+(saved!==1?'s':'')+' saved.</p></div>';
+                }
+            };
+        })();
+        </script>
         <?php
     }
 
@@ -690,6 +831,42 @@ final class LeadFinderAdmin
         $batch_id = sanitize_text_field($_POST['batch_id'] ?? '');
         if (!$batch_id) { wp_send_json_error(['message' => 'Missing batch_id']); return; }
         $result = LeadFinderEngine::processNextManual($batch_id, ['min_seo_score' => (int)($_POST['min_seo'] ?? 2)]);
+        $result['ok']
+            ? wp_send_json_success($result)
+            : wp_send_json_error(['message' => $result['error'] ?? 'Processing failed']);
+    }
+
+    // ── AJAX: Bulk Google Maps Import ─────────────────────────────────────────
+
+    public static function ajaxBulkMapsQueue(): void
+    {
+        if (!check_ajax_referer('wnq_lead_manual', 'nonce', false)) { wp_send_json_error(['message' => 'Security check failed — refresh and try again.']); return; }
+        self::requireCap();
+        $result = LeadFinderEngine::queueBulkMaps(
+            wp_unslash($_POST['tsv'] ?? ''),
+            sanitize_text_field($_POST['industry'] ?? '')
+        );
+        $result['ok']
+            ? wp_send_json_success(['batch_id' => $result['batch_id'], 'total' => $result['total']])
+            : wp_send_json_error(['message' => $result['error'] ?? 'Queue failed']);
+    }
+
+    public static function ajaxBulkMapsProcess(): void
+    {
+        if (!check_ajax_referer('wnq_lead_manual', 'nonce', false)) { wp_send_json_error(['message' => 'Security check failed — refresh and try again.']); return; }
+        self::requireCap();
+        $batch_id = sanitize_text_field($_POST['batch_id'] ?? '');
+        if (!$batch_id) { wp_send_json_error(['message' => 'Missing batch_id']); return; }
+        @set_time_limit(0);
+        ob_start();
+        try {
+            $result = LeadFinderEngine::processNextBulkMaps($batch_id);
+        } catch (\Throwable $e) {
+            ob_end_clean();
+            wp_send_json_error(['message' => $e->getMessage()]);
+            return;
+        }
+        ob_end_clean();
         $result['ok']
             ? wp_send_json_success($result)
             : wp_send_json_error(['message' => $result['error'] ?? 'Processing failed']);
