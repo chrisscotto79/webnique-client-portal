@@ -552,14 +552,15 @@ final class LeadFinderAdmin
 
         <?php
         $scraper_dir   = WNQ_PORTAL_PATH . 'scraper';
-        $npm_installed = is_dir($scraper_dir . '/node_modules/puppeteer');
+        $npm_installed = is_dir($scraper_dir . '/node_modules/puppeteer-core')
+                      || is_dir($scraper_dir . '/node_modules/puppeteer');
         $nonce         = wp_create_nonce('wnq_lead_nonce');
         ?>
         <div class="wnq-card" style="max-width:680px">
             <h3>Scraper Setup (Puppeteer / Node.js)</h3>
             <p style="color:#6b7280;font-size:13px;margin:0 0 12px">
                 The ZIP Sweep uses a local Puppeteer server to scrape Google Maps results.
-                Run <strong>npm install</strong> once to install Chromium and its dependencies.
+                Run <strong>npm install</strong> once to install the dependencies.
             </p>
             <p style="margin:0 0 14px">
                 Status: <?php if($npm_installed):?>
@@ -572,6 +573,10 @@ final class LeadFinderAdmin
                 <?php echo $npm_installed ? 'Re-run npm install' : 'Install Node Dependencies'; ?>
             </button>
             <div id="wnq-npm-out" style="display:none;margin-top:14px;background:#0f172a;color:#e2e8f0;padding:14px 16px;border-radius:8px;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:260px;overflow-y:auto"></div>
+            <div style="margin-top:16px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:12px">
+                <strong>Manual install (SSH):</strong><br>
+                <code style="display:block;margin-top:6px;font-size:11px;word-break:break-all">cd <?php echo esc_html($scraper_dir); ?> &amp;&amp; npm install</code>
+            </div>
             <script>
             function wnqNpmInstall(){
                 const btn=document.getElementById('wnq-npm-btn');
@@ -582,20 +587,38 @@ final class LeadFinderAdmin
                 fd.append('action','wnq_npm_install');
                 fd.append('nonce',<?php echo wp_json_encode($nonce);?>);
                 fetch(ajaxurl,{method:'POST',body:fd})
-                    .then(r=>r.json())
-                    .then(d=>{
-                        out.textContent = (d.output||'(no output)');
-                        if(d.installed){
+                    .then(function(r){return r.text();})
+                    .then(function(text){
+                        var d;
+                        try{ d=JSON.parse(text); }
+                        catch(e){
+                            out.textContent='Server returned an unexpected response:\n\n'+text.slice(0,800);
+                            btn.textContent='<?php echo $npm_installed ? 'Re-run npm install' : 'Install Node Dependencies'; ?>';
+                            btn.disabled=false;
+                            return;
+                        }
+                        if(d.shell_exec_disabled){
+                            out.textContent='Automated install is not available on this server (shell_exec is disabled).\n\nRun the command in the "Manual install" box below via SSH instead.';
+                            btn.textContent='<?php echo $npm_installed ? 'Re-run npm install' : 'Install Node Dependencies'; ?>';
+                            btn.disabled=false;
+                            return;
+                        }
+                        out.textContent = d.data ? (d.data.output||'(no output)') : (d.output||text);
+                        if(d.installed||(d.data&&d.data.installed)){
                             btn.textContent='✓ Installed — Re-run npm install';
+                            btn.disabled=false;
+                        } else if(!d.success&&d.data&&d.data.message){
+                            out.textContent=d.data.message;
+                            btn.textContent='Install failed — try again';
                             btn.disabled=false;
                         } else {
                             btn.textContent='Install failed — try again';
                             btn.disabled=false;
                         }
                     })
-                    .catch(e=>{
-                        out.textContent='Request failed: '+e.message;
-                        btn.textContent='Install Node Dependencies';
+                    .catch(function(e){
+                        out.textContent='Network error: '+e.message;
+                        btn.textContent='<?php echo $npm_installed ? 'Re-run npm install' : 'Install Node Dependencies'; ?>';
                         btn.disabled=false;
                     });
             }
@@ -720,10 +743,7 @@ final class LeadFinderAdmin
         }
         self::requireCap();
 
-        // npm install downloads Chromium (~300 MB) — remove the PHP time limit.
-        @set_time_limit(0);
-
-        // Capture any stray output (PHP notices, etc.) so it doesn't corrupt the JSON response.
+        // Capture any stray output (PHP notices, warnings) so nothing corrupts the JSON.
         ob_start();
 
         $scraper_dir = WNQ_PORTAL_PATH . 'scraper';
@@ -733,8 +753,27 @@ final class LeadFinderAdmin
             return;
         }
 
-        // Find npm binary
-        $npm = trim((string)@shell_exec('which npm 2>/dev/null'));
+        // Check whether shell_exec is actually usable on this server.
+        $shell_exec_disabled = !function_exists('shell_exec')
+            || in_array('shell_exec', array_map('trim', explode(',', (string)ini_get('disable_functions'))), true);
+
+        if ($shell_exec_disabled) {
+            ob_end_clean();
+            wp_send_json([
+                'success'             => false,
+                'installed'           => false,
+                'shell_exec_disabled' => true,
+                'output'              => 'shell_exec is disabled on this server. Run npm install manually via SSH.',
+            ]);
+            return;
+        }
+
+        // npm install can download ~300 MB — remove the PHP time and memory limits.
+        @set_time_limit(0);
+        @ini_set('memory_limit', '512M');
+
+        // Find npm binary.
+        $npm = trim((string)shell_exec('which npm 2>/dev/null'));
         if (!$npm) {
             foreach (['/opt/node22/bin/npm', '/usr/local/bin/npm', '/usr/bin/npm'] as $p) {
                 if (file_exists($p) && is_executable($p)) { $npm = $p; break; }
@@ -747,11 +786,13 @@ final class LeadFinderAdmin
         }
 
         $cmd    = 'cd ' . escapeshellarg($scraper_dir) . ' && ' . escapeshellarg($npm) . ' install 2>&1';
-        $output = @shell_exec($cmd);
+        $output = shell_exec($cmd);
 
         ob_end_clean();
 
-        $installed = is_dir($scraper_dir . '/node_modules/puppeteer');
+        $installed = is_dir($scraper_dir . '/node_modules/puppeteer-core')
+                  || is_dir($scraper_dir . '/node_modules/puppeteer');
+
         wp_send_json([
             'success'   => $installed,
             'installed' => $installed,
