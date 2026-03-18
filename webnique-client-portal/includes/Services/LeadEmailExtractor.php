@@ -89,14 +89,14 @@ final class LeadEmailExtractor
         $emails = [];
 
         // 1. Extract from mailto: links first (most reliable)
-        if (preg_match_all('/mailto:([a-zA-Z0-9_.+\-]+@[a-zA-Z0-9\-]+\.[a-zA-Z0-9\-.]+)/i', $html, $m)) {
+        if (preg_match_all('/mailto:([a-zA-Z0-9_.+\-]+@[a-zA-Z0-9\-]+\.[a-zA-Z0-9\-.]+)/i', $html, $m) && is_array($m[1])) {
             $emails = array_merge($emails, $m[1]);
         }
 
         // 2. Extract from visible text (strip tags)
         $text = strip_tags($html);
-        if (preg_match_all('/[a-zA-Z0-9_.+\-]+@[a-zA-Z0-9\-]+\.[a-zA-Z0-9\-.]{2,}/i', $text, $m)) {
-            $emails = array_merge($emails, $m[1]);
+        if (preg_match_all('/[a-zA-Z0-9_.+\-]+@[a-zA-Z0-9\-]+\.[a-zA-Z0-9\-.]{2,}/i', $text, $m) && is_array($m[0])) {
+            $emails = array_merge($emails, $m[0]);
         }
 
         // Normalise + deduplicate

@@ -181,9 +181,10 @@ final class GoogleMapsClient
         }
 
         // Locate node binary and server script
-        $node   = self::findNodeBin();
-        $server = realpath(dirname(__FILE__, 3) . '/scraper/server.js');
-        if (!$node || !$server) return ($state = false);
+        $node         = self::findNodeBin();
+        $server       = realpath(dirname(__FILE__, 3) . '/scraper/server.js');
+        $node_modules = dirname(__FILE__, 3) . '/scraper/node_modules';
+        if (!$node || !$server || !is_dir($node_modules)) return ($state = false);
 
         // Spawn server as background process
         $log = sys_get_temp_dir() . '/wnq-scraper.log';
