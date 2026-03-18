@@ -318,6 +318,182 @@ final class LeadFinderEngine
         return 'saved';
     }
 
+    // ── Mode C Phase 1: Queue Bulk Google Maps import ────────────────────────
+
+    /**
+     * Parse a TSV payload exported from a Google Maps scraper and store the
+     * validated rows in a transient for sequential processing.
+     *
+     * Expected columns (tab-separated, optional header row):
+     *   Title · Rating · Reviews · Phone · Email · Industry · Address · Website · Google Maps Link
+     *
+     * @return array{ok: bool, batch_id?: string, total?: int, error?: string}
+     */
+    public static function queueBulkMaps(string $tsv, string $default_industry): array
+    {
+        $lines = array_values(array_filter(
+            array_map('trim', explode("\n", str_replace("\r", '', $tsv)))
+        ));
+
+        $candidates = [];
+        foreach ($lines as $line) {
+            $f = explode("\t", $line);
+            // Require at least a name + website (cols 0 and 7)
+            if (count($f) < 8) continue;
+
+            $name     = trim($f[0] ?? '');
+            // Skip header rows
+            if (in_array(strtolower($name), ['title', 'name', 'business name', 'company'], true)) continue;
+            if (!$name) continue;
+
+            $rating   = (float) str_replace(',', '', $f[1] ?? '0');
+            $reviews  = (int)   str_replace(',', '', $f[2] ?? '0');
+            $phone    = trim($f[3] ?? '');
+            $email    = trim($f[4] ?? '');
+            $industry = trim($f[5] ?? '') ?: $default_industry;
+            $address  = trim($f[6] ?? '');
+            $website  = esc_url_raw(trim($f[7] ?? ''));
+            $maps_url = trim($f[8] ?? '');
+
+            if (!$website || !filter_var($website, FILTER_VALIDATE_URL)) continue;
+
+            $candidates[] = compact('name','rating','reviews','phone','email','industry','address','website','maps_url');
+        }
+
+        if (empty($candidates)) {
+            return ['ok' => false, 'error' => 'No valid rows found — ensure the data is tab-separated with at least 8 columns.'];
+        }
+
+        $batch_id = wp_generate_uuid4();
+        set_transient('wnq_bulk_maps_' . $batch_id, [
+            'candidates' => $candidates,
+            'next_index' => 0,
+            'stats'      => ['found' => count($candidates), 'saved' => 0, 'duplicate' => 0, 'no_website' => 0, 'error' => 0],
+        ], self::QUEUE_TTL);
+
+        return ['ok' => true, 'batch_id' => $batch_id, 'total' => count($candidates)];
+    }
+
+    // ── Mode C Phase 2: Process one bulk row ──────────────────────────────────
+
+    public static function processNextBulkMaps(string $batch_id): array
+    {
+        $queue = get_transient('wnq_bulk_maps_' . $batch_id);
+        if (!$queue) {
+            return ['ok' => false, 'done' => true, 'error' => 'Batch not found or expired'];
+        }
+
+        $candidates = $queue['candidates'];
+        $next       = (int)$queue['next_index'];
+        $total      = count($candidates);
+        $stats      = $queue['stats'];
+
+        if ($next >= $total) {
+            delete_transient('wnq_bulk_maps_' . $batch_id);
+            return ['ok' => true, 'done' => true, 'progress' => $total, 'total' => $total, 'stats' => $stats];
+        }
+
+        $done                = ($next + 1 >= $total);
+        $queue['next_index'] = $next + 1;
+        if ($done) {
+            delete_transient('wnq_bulk_maps_' . $batch_id);
+        } else {
+            set_transient('wnq_bulk_maps_' . $batch_id, $queue, self::QUEUE_TTL);
+        }
+
+        try {
+            $outcome = self::processBulkMapsRow($candidates[$next]);
+        } catch (\Throwable $e) {
+            error_log('WNQ Bulk Maps: ' . $e->getMessage());
+            $outcome = 'error';
+        }
+
+        if (array_key_exists($outcome, $stats)) $stats[$outcome]++;
+
+        if (!$done) {
+            $q = get_transient('wnq_bulk_maps_' . $batch_id);
+            if ($q) { $q['stats'] = $stats; set_transient('wnq_bulk_maps_' . $batch_id, $q, self::QUEUE_TTL); }
+        }
+
+        return [
+            'ok'      => true,
+            'done'    => $done,
+            'progress'=> $next + 1,
+            'total'   => $total,
+            'stats'   => $stats,
+            'name'    => sanitize_text_field($candidates[$next]['name']),
+            'outcome' => $outcome,
+        ];
+    }
+
+    // ── Mode C Core: Enrich + save one bulk row ───────────────────────────────
+
+    /**
+     * @return string  saved | duplicate | no_website | error
+     */
+    private static function processBulkMapsRow(array $row): string
+    {
+        $website = $row['website'];
+        $url_key = md5($website);
+
+        if (Lead::findByPlaceId($url_key)) return 'duplicate';
+
+        // Fetch homepage — used for email + social extraction
+        $html = self::fetchHtml($website);
+
+        // Email: use provided value if valid, else scrape the site
+        $email = '';
+        if (!empty($row['email']) && filter_var($row['email'], FILTER_VALIDATE_EMAIL)) {
+            $email = strtolower($row['email']);
+        } elseif ($html) {
+            $email_data = LeadEmailExtractor::extractEmail($website, $html);
+            $email      = $email_data['email'];
+        }
+
+        // Social links from homepage HTML
+        $social = $html ? self::extractSocials($html) : [];
+
+        // Phone: normalise to (XXX) XXX-XXXX; handle scrapers that drop the opening "("
+        $phone  = $row['phone'] ?? '';
+        $digits = preg_replace('/\D/', '', $phone);
+        if (strlen($digits) === 11 && $digits[0] === '1') $digits = substr($digits, 1);
+        if (strlen($digits) === 10) {
+            $phone = '(' . substr($digits, 0, 3) . ') ' . substr($digits, 3, 3) . '-' . substr($digits, 6);
+        }
+
+        // Address: parse into street/city/state/zip
+        $addr = self::parseAddress($row['address'] ?? '');
+
+        $insert_id = Lead::insert([
+            'place_id'         => $url_key,
+            'business_name'    => sanitize_text_field($row['name']),
+            'industry'         => sanitize_text_field($row['industry'] ?? ''),
+            'owner_first'      => '',
+            'owner_last'       => '',
+            'website'          => esc_url_raw($website),
+            'address'          => sanitize_text_field($addr['street']),
+            'city'             => sanitize_text_field($addr['city']),
+            'state'            => sanitize_text_field($addr['state']),
+            'zip'              => sanitize_text_field($addr['zip']),
+            'phone'            => sanitize_text_field($phone),
+            'email'            => sanitize_email($email),
+            'email_source'     => '',
+            'rating'           => (float)($row['rating']  ?? 0),
+            'review_count'     => (int)  ($row['reviews'] ?? 0),
+            'social_facebook'  => isset($social['facebook'])  && $social['facebook']  ? esc_url_raw($social['facebook'])  : '',
+            'social_instagram' => isset($social['instagram']) && $social['instagram'] ? esc_url_raw($social['instagram']) : '',
+            'social_linkedin'  => isset($social['linkedin'])  && $social['linkedin']  ? esc_url_raw($social['linkedin'])  : '',
+            'social_twitter'   => isset($social['twitter'])   && $social['twitter']   ? esc_url_raw($social['twitter'])   : '',
+            'social_youtube'   => isset($social['youtube'])   && $social['youtube']   ? esc_url_raw($social['youtube'])   : '',
+            'social_tiktok'    => isset($social['tiktok'])    && $social['tiktok']    ? esc_url_raw($social['tiktok'])    : '',
+            'seo_score'        => 0,
+            'seo_issues'       => [],
+            'status'           => 'new',
+        ]);
+
+        return $insert_id ? 'saved' : 'error';
+    }
+
     // ── Mode B Phase 1: Queue manual URL search ───────────────────────────────
 
     /**
