@@ -633,7 +633,15 @@ final class LeadFinderAdmin
     {
         if (!check_ajax_referer('wnq_lead_nonce', 'nonce', false)) { wp_send_json_error(['error' => 'Security check failed'], 403); return; }
         self::requireCap();
-        $result = LeadFinderEngine::startSearch(sanitize_text_field($_POST['keyword'] ?? ''));
+        ob_start();
+        try {
+            $result = LeadFinderEngine::startSearch(sanitize_text_field($_POST['keyword'] ?? ''));
+        } catch (\Throwable $e) {
+            ob_end_clean();
+            wp_send_json_error(['error' => $e->getMessage()]);
+            return;
+        }
+        ob_end_clean();
         $result['ok']
             ? wp_send_json_success(['batch_id' => $result['batch_id'], 'total_zips' => $result['total_zips']])
             : wp_send_json_error(['error' => $result['error'] ?? 'Unknown error']);
@@ -645,7 +653,16 @@ final class LeadFinderAdmin
         self::requireCap();
         $batch_id = sanitize_text_field($_POST['batch_id'] ?? '');
         if (!$batch_id) { wp_send_json_error(['error' => 'Missing batch_id']); return; }
-        $result = LeadFinderEngine::processNext($batch_id);
+        @set_time_limit(0);
+        ob_start();
+        try {
+            $result = LeadFinderEngine::processNext($batch_id);
+        } catch (\Throwable $e) {
+            ob_end_clean();
+            wp_send_json_error(['error' => $e->getMessage()]);
+            return;
+        }
+        ob_end_clean();
         $result['ok']
             ? wp_send_json_success($result)
             : wp_send_json_error(['error' => $result['error'] ?? 'Processing error']);
