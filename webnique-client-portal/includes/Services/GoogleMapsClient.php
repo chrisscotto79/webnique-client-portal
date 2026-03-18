@@ -188,7 +188,7 @@ final class GoogleMapsClient
 
         // Spawn server as background process
         $log = sys_get_temp_dir() . '/wnq-scraper.log';
-        shell_exec(
+        @shell_exec(
             escapeshellarg($node) . ' ' . escapeshellarg($server) .
             ' > ' . escapeshellarg($log) . ' 2>&1 &'
         );
@@ -211,7 +211,7 @@ final class GoogleMapsClient
         foreach (['/opt/node22/bin/node', '/usr/local/bin/node', '/usr/bin/node'] as $p) {
             if (file_exists($p) && is_executable($p)) return $p;
         }
-        $which = trim((string)shell_exec('which node 2>/dev/null'));
+        $which = trim((string)@shell_exec('which node 2>/dev/null'));
         return $which ?: '';
     }
 

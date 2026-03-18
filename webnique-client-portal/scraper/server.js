@@ -155,16 +155,23 @@ app.get('/search', async (req, res) => {
                 let rating = 0, review_count = 0, address = '';
 
                 if (card) {
-                    // Rating via aria-label="4.5 stars"
-                    const rEl = card.querySelector('[aria-label*="star"]');
+                    // Rating — try aria-label="4.5 stars" or aria-label="Rated 4.5"
+                    const rEl = card.querySelector('[aria-label*="star" i], [aria-label*="rated" i]');
                     if (rEl) {
-                        const rm = (rEl.getAttribute('aria-label') || '').match(/([0-9.]+)/);
+                        const rm = (rEl.getAttribute('aria-label') || '').match(/([0-9]+\.?[0-9]*)/);
                         if (rm) rating = parseFloat(rm[1]);
                     }
-                    // Review count: "(123)" pattern in visible text
+                    // Review count: try multiple formats Google uses:
+                    //   "(123)"  ·  "123 reviews"  ·  "4.5 stars 123 reviews"
                     const cardText = card.innerText || card.textContent || '';
-                    const countM = cardText.match(/\(([0-9,]+)\)/);
-                    if (countM) review_count = parseInt(countM[1].replace(/,/g, ''), 10);
+                    const countPatterns = [
+                        /\(([0-9,]+)\s*(?:reviews?)?\)/i,   // (123) or (123 reviews)
+                        /([0-9,]+)\s+reviews?/i,              // 123 reviews
+                    ];
+                    for (const pat of countPatterns) {
+                        const m = cardText.match(pat);
+                        if (m) { review_count = parseInt(m[1].replace(/,/g, ''), 10); break; }
+                    }
 
                     // Address: first span whose text looks like a street address
                     card.querySelectorAll('span').forEach(s => {
@@ -250,11 +257,24 @@ app.get('/place', async (req, res) => {
                 if (rm) rating = parseFloat(rm[1]);
             }
 
-            // Review count
+            // Review count — try aria-label first, then body text patterns
             let review_count = 0;
-            const bodyText = document.body.innerText || '';
-            const countM   = bodyText.match(/([0-9,]+)\s+(?:Google\s+)?reviews?/i);
-            if (countM) review_count = parseInt(countM[1].replace(/,/g, ''), 10);
+            const reviewEl = document.querySelector('[aria-label*="review" i]');
+            if (reviewEl) {
+                const rm = (reviewEl.getAttribute('aria-label') || '').match(/([0-9,]+)/);
+                if (rm) review_count = parseInt(rm[1].replace(/,/g, ''), 10);
+            }
+            if (!review_count) {
+                const bodyText = document.body.innerText || '';
+                const countPatterns = [
+                    /([0-9,]+)\s+(?:Google\s+)?reviews?/i,
+                    /\(([0-9,]+)\s*(?:reviews?)?\)/i,
+                ];
+                for (const pat of countPatterns) {
+                    const m = bodyText.match(pat);
+                    if (m) { review_count = parseInt(m[1].replace(/,/g, ''), 10); break; }
+                }
+            }
 
             // Address
             let address = '';

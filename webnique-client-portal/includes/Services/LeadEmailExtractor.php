@@ -93,9 +93,17 @@ final class LeadEmailExtractor
             $emails = array_merge($emails, $m[1]);
         }
 
-        // 2. Extract from visible text (strip tags)
+        // 2. Extract from visible text (strip tags).
+        // Require local part to start with a letter — prevents bleeding from adjacent
+        // phone digits (e.g. strip_tags turns "1092<br>info@..." into "1092info@...").
+        // Limit TLD to letters-only, max 8 chars + negative lookahead so the greedy
+        // match can't absorb a following city name ("comorlando" never matches; "com "
+        // matches fine because the space fails the (?![a-zA-Z]) lookahead).
         $text = strip_tags($html);
-        if (preg_match_all('/[a-zA-Z0-9_.+\-]+@[a-zA-Z0-9\-]+\.[a-zA-Z0-9\-.]{2,}/i', $text, $m) && is_array($m[0])) {
+        if (preg_match_all(
+            '/(?<![a-zA-Z0-9])[a-zA-Z][a-zA-Z0-9_.+\-]*@[a-zA-Z0-9][a-zA-Z0-9\-]*(?:\.[a-zA-Z0-9\-]+)*\.[a-zA-Z]{2,8}(?![a-zA-Z])/i',
+            $text, $m
+        ) && is_array($m[0])) {
             $emails = array_merge($emails, $m[0]);
         }
 

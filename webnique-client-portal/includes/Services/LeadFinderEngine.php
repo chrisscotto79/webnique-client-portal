@@ -557,7 +557,10 @@ final class LeadFinderEngine
         }
 
         $text = strip_tags($html);
-        if (preg_match('/[a-zA-Z0-9_.+\-]+@[a-zA-Z0-9\-]+\.[a-zA-Z0-9\-.]{2,}/i', $text, $m)) {
+        if (preg_match(
+            '/(?<![a-zA-Z0-9])[a-zA-Z][a-zA-Z0-9_.+\-]*@[a-zA-Z0-9][a-zA-Z0-9\-]*(?:\.[a-zA-Z0-9\-]+)*\.[a-zA-Z]{2,8}(?![a-zA-Z])/i',
+            $text, $m
+        )) {
             $email = strtolower($m[0]);
             if (filter_var($email, FILTER_VALIDATE_EMAIL) &&
                 !preg_match('/\.(png|jpg|jpeg|gif|svg|webp|pdf|zip)$/i', $email) &&
