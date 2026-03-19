@@ -1329,8 +1329,7 @@ final class LeadFinderAdmin
 
             $business_name = sanitize_text_field($get($col_map['business_name']));
             if (!$business_name) {
-                $filtered['no_phone']++; // counted as "no phone" since we won't be able to act on it anyway
-                continue;
+                continue; // silently skip rows with no business name (not counted in any filter bucket)
             }
 
             // 1. Review count < 100

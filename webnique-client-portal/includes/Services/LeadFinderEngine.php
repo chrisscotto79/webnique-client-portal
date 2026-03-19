@@ -273,17 +273,17 @@ final class LeadFinderEngine
         // 4. Parse address
         $addr = self::parseAddress($raw_address ?: ($place['address'] ?? ''));
 
-        // 6. Fetch business homepage
+        // 5. Fetch business homepage
         $html = self::fetchHtml($website);
         if (!$html) return 'no_website';
 
-        // 7. Extract phone from website if Maps didn't provide one
+        // 6. Extract phone from website if Maps didn't provide one
         if (!$phone) {
             $phone = self::extractPhoneFromHtml($html);
             // No phone found — save anyway with blank phone rather than discarding the lead
         }
 
-        // 8. Extract email and social links from homepage
+        // 7. Extract email and social links from homepage
         $email  = self::extractEmail($html);
         $social = self::extractSocials($html);
 
