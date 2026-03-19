@@ -316,7 +316,7 @@ final class Lead
             $where[] = "exported_at IS NULL";
         }
 
-        $allowed_orderby = ['id', 'review_count', 'seo_score', 'rating', 'business_name', 'scraped_at', 'city', 'state'];
+        $allowed_orderby = ['id', 'review_count', 'seo_score', 'rating', 'business_name', 'scraped_at', 'city', 'state', 'industry'];
         $orderby = in_array($args['orderby'] ?? '', $allowed_orderby, true) ? $args['orderby'] : 'scraped_at';
         $order   = ($args['order'] ?? 'DESC') === 'ASC' ? 'ASC' : 'DESC';
         $limit   = max(1, (int)($args['limit']  ?? 50));
@@ -399,7 +399,13 @@ final class Lead
      */
     public static function exportCsv(array $args = []): void
     {
-        $rows = self::getAll(array_merge($args, ['limit' => 9999, 'offset' => 0]));
+        // Always sort by industry first, then by business name — makes GHL imports tidy
+        $rows = self::getAll(array_merge($args, [
+            'limit'   => 9999,
+            'offset'  => 0,
+            'orderby' => 'industry',
+            'order'   => 'ASC',
+        ]));
 
         // Mark all exported leads (first export date only — won't overwrite existing)
         self::markExported(array_column($rows, 'id'));
@@ -432,6 +438,8 @@ final class Lead
             'Industry',
             'Stars',
             'Review Count',
+            'Has Phone',
+            'Temporarily Closed',
             'SEO Score',
             'SEO Issues',
             'Status',
@@ -439,18 +447,33 @@ final class Lead
             'Exported Date',
         ]);
 
+        $current_industry = null;
+
         foreach ($rows as $row) {
             $issues_str = implode(' | ', array_map(
                 fn($i) => \WNQ\Services\LeadSEOScorer::issueLabel($i),
                 (array)$row['seo_issues']
             ));
 
+            $is_temp_closed = stripos((string)($row['notes'] ?? ''), 'temporarily closed') !== false;
+
             $tags = array_filter([
                 $row['industry'],
                 'seo-score-' . $row['seo_score'],
                 $row['state'] ? 'state-' . strtolower($row['state']) : '',
+                !$row['phone'] ? 'no-phone' : '',
+                $is_temp_closed ? 'temporarily-closed' : '',
                 'webnique-lead',
             ]);
+
+            // Insert a blank separator row + industry heading each time the industry changes
+            if ($row['industry'] !== $current_industry) {
+                if ($current_industry !== null) {
+                    fputcsv($out, []); // blank spacer row
+                }
+                fputcsv($out, ['=== ' . strtoupper($row['industry'] ?: 'UNCATEGORIZED') . ' ===']);
+                $current_industry = $row['industry'];
+            }
 
             fputcsv($out, [
                 $row['business_name'],
@@ -473,6 +496,8 @@ final class Lead
                 $row['industry'],
                 $row['rating'],
                 $row['review_count'],
+                $row['phone'] ? 'Yes' : 'No',
+                $is_temp_closed ? 'Yes' : 'No',
                 $row['seo_score'],
                 $issues_str,
                 $row['status'],

@@ -110,11 +110,12 @@ final class GoogleMapsClient
         // Fallback: raw HTTP
         $html = self::fetch($place_url . (strpos($place_url, '?') === false ? '?' : '&') . 'hl=en');
         return [
-            'phone'        => $html ? self::extractPhone($html)       : '',
-            'website'      => $html ? self::extractWebsite($html)     : '',
-            'rating'       => $html ? self::extractRating($html)      : 0.0,
-            'review_count' => $html ? self::extractReviewCount($html) : 0,
-            'address'      => $html ? self::extractAddress($html)     : '',
+            'phone'              => $html ? self::extractPhone($html)       : '',
+            'website'            => $html ? self::extractWebsite($html)     : '',
+            'rating'             => $html ? self::extractRating($html)      : 0.0,
+            'review_count'       => $html ? self::extractReviewCount($html) : 0,
+            'address'            => $html ? self::extractAddress($html)     : '',
+            'temporarily_closed' => false,
         ];
     }
 
@@ -143,7 +144,7 @@ final class GoogleMapsClient
      */
     private static function scraperPlaceDetails(string $place_url): array
     {
-        $empty = ['phone' => '', 'website' => '', 'rating' => 0.0, 'review_count' => 0, 'address' => ''];
+        $empty = ['phone' => '', 'website' => '', 'rating' => 0.0, 'review_count' => 0, 'address' => '', 'temporarily_closed' => false];
         if (!self::ensureScraperRunning()) return $empty;
 
         $response = wp_remote_get(
@@ -156,11 +157,12 @@ final class GoogleMapsClient
         if (!is_array($data) || isset($data['error'])) return $empty;
 
         return [
-            'phone'        => $data['phone']        ?? '',
-            'website'      => $data['website']       ?? '',
-            'rating'       => (float)($data['rating']       ?? 0),
-            'review_count' => (int)($data['review_count']   ?? 0),
-            'address'      => $data['address']       ?? '',
+            'phone'              => $data['phone']              ?? '',
+            'website'            => $data['website']            ?? '',
+            'rating'             => (float)($data['rating']            ?? 0),
+            'review_count'       => (int)($data['review_count']        ?? 0),
+            'address'            => $data['address']            ?? '',
+            'temporarily_closed' => (bool)($data['temporarily_closed'] ?? false),
         ];
     }
 

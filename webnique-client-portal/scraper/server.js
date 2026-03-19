@@ -281,7 +281,11 @@ app.get('/place', async (req, res) => {
             const addrEl = document.querySelector('[data-item-id="address"] .fontBodyMedium, [aria-label*="Address" i]');
             if (addrEl) address = addrEl.textContent.trim();
 
-            return { phone, website, rating, review_count, address };
+            // Temporarily / permanently closed status
+            const bodyText2 = (document.body.innerText || document.body.textContent || '').toLowerCase();
+            const temporarily_closed = /temporarily\s+closed/.test(bodyText2) || /permanently\s+closed/.test(bodyText2);
+
+            return { phone, website, rating, review_count, address, temporarily_closed };
         });
 
         // Format the phone number
