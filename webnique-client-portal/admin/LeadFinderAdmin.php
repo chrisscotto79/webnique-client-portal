@@ -557,53 +557,84 @@ final class LeadFinderAdmin
         <div class="wnq-card">
             <h3>Bulk CSV Import</h3>
             <p style="color:#6b7280;margin:-6px 0 14px;font-size:12px;">
-                Import up to <strong>10,000 scraped leads</strong> from a CSV file. Columns are auto-detected from the header row.
-                Duplicates (matched by business name + city) are automatically skipped. No website scraping is performed — data is imported as-is.
+                Upload up to <strong>10,000 scraped leads</strong>. Rows are filtered, then each qualifying lead's
+                website is scraped for email + social links before saving.
             </p>
-            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:12px;color:#1d4ed8;line-height:1.7">
-                <strong>Auto-detected column names (case-insensitive):</strong><br>
-                Business Name / Company Name &nbsp;·&nbsp; Email &nbsp;·&nbsp; Phone &nbsp;·&nbsp; Website &nbsp;·&nbsp; Address &nbsp;·&nbsp; City &nbsp;·&nbsp; State &nbsp;·&nbsp; Zip / Postal Code &nbsp;·&nbsp;
-                Industry / Category &nbsp;·&nbsp; Rating / Stars &nbsp;·&nbsp; Review Count / Reviews &nbsp;·&nbsp;
-                Facebook &nbsp;·&nbsp; Instagram &nbsp;·&nbsp; LinkedIn &nbsp;·&nbsp; Twitter &nbsp;·&nbsp; YouTube &nbsp;·&nbsp; TikTok &nbsp;·&nbsp; Status &nbsp;·&nbsp; Notes
+
+            <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:12px;color:#15803d;line-height:1.9">
+                <strong>Pipeline (in order):</strong><br>
+                1. <strong>Reviews &lt; 100</strong> — filters out established businesses unlikely to need SEO help<br>
+                2. <strong>Has phone number</strong> — must have a phone in the CSV<br>
+                3. <strong>Not a franchise / chain</strong> — name check + website HTML check<br>
+                4. <strong>Not a duplicate</strong> — name + city match against existing leads<br>
+                5. <strong>Website scraped</strong> — email extracted, social links collected
             </div>
-            <div class="wnq-field" style="margin-bottom:14px;max-width:520px">
-                <label for="ci-file">CSV File</label>
-                <input type="file" id="ci-file" accept=".csv,text/csv" style="padding:6px 0">
-                <small>Max 10,000 rows · Max 20 MB · UTF-8 or Windows-1252 encoding. First row must be a header.</small>
+
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 16px;margin-bottom:16px;font-size:12px;color:#1d4ed8;line-height:1.7">
+                <strong>Auto-detected columns (case-insensitive):</strong>
+                Business Name / Company Name · Email · Phone · Website · Address · City · State · Zip / Postal Code ·
+                Industry / Category · Rating / Stars · Review Count / Reviews ·
+                Facebook · Instagram · LinkedIn · Twitter · YouTube · TikTok · Status · Notes
             </div>
-            <div style="max-width:340px;margin-bottom:16px">
+
+            <div class="wnq-row2" style="max-width:680px;margin-bottom:14px">
+                <div class="wnq-field">
+                    <label for="ci-file">CSV File</label>
+                    <input type="file" id="ci-file" accept=".csv,text/csv" style="padding:6px 0">
+                    <small>Max 10,000 rows · Max 20 MB · UTF-8 or Windows-1252. First row = header.</small>
+                </div>
                 <div class="wnq-field">
                     <label>Fallback Industry</label>
                     <input type="text" id="ci-industry" placeholder="e.g. pressure washing" value="<?php echo esc_attr($settings['default_keyword'] ?? ''); ?>">
-                    <small>Applied to rows where the Industry column is blank.</small>
+                    <small>Used for rows where the Industry column is blank.</small>
                 </div>
             </div>
+
             <div style="display:flex;gap:10px;align-items:center">
-                <button class="wnq-btn wnq-btn-primary" id="ci-start-btn" onclick="wnqCsvStart()">Upload &amp; Import Leads</button>
+                <button class="wnq-btn wnq-btn-primary" id="ci-start-btn" onclick="wnqCsvStart()">Upload &amp; Run Pipeline</button>
                 <button class="wnq-btn wnq-btn-secondary" id="ci-stop-btn" onclick="wnqCsvStop()" style="display:none">Stop</button>
             </div>
-            <div id="ci-progress" style="display:none;margin-top:16px">
+
+            <!-- Filter summary (shown after queue phase) -->
+            <div id="ci-filter-summary" style="display:none;margin-top:14px;padding:12px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:12px">
+                <strong style="display:block;margin-bottom:8px;color:#374151">Filter Results</strong>
+                <div style="display:flex;gap:20px;flex-wrap:wrap">
+                    <span>Total rows: <b id="ci-f-total">0</b></span>
+                    <span style="color:#dc2626">Too many reviews (≥100): <b id="ci-f-reviews">0</b></span>
+                    <span style="color:#dc2626">No phone: <b id="ci-f-nophone">0</b></span>
+                    <span style="color:#dc2626">Franchise/chain: <b id="ci-f-franchise">0</b></span>
+                    <span style="color:#dc2626">Multi-location: <b id="ci-f-multi">0</b></span>
+                    <span style="color:#dc2626">Already in DB: <b id="ci-f-dup">0</b></span>
+                    <span style="color:#16a34a;font-weight:600">Qualified to scrape: <b id="ci-f-qualified">0</b></span>
+                </div>
+            </div>
+
+            <!-- Scraping progress -->
+            <div id="ci-progress" style="display:none;margin-top:14px">
                 <div style="display:flex;justify-content:space-between;font-size:12px;color:#374151;margin-bottom:4px">
-                    <span id="ci-label">Uploading…</span><span id="ci-pct">0%</span>
+                    <span id="ci-label">Scraping…</span><span id="ci-pct">0%</span>
                 </div>
                 <div class="wnq-progressbar-wrap"><div class="wnq-progressbar" id="ci-bar"></div></div>
                 <div class="wnq-live-stats" style="margin:8px 0">
-                    <span>Total: <b id="ci-total">0</b></span>
+                    <span>Qualified: <b id="ci-total">0</b></span>
                     <span>Saved: <b id="ci-saved" style="color:#16a34a">0</b></span>
-                    <span>Dupes: <b id="ci-dup">0</b></span>
-                    <span>Skipped: <b id="ci-skip">0</b></span>
+                    <span>Franchise (HTML): <b id="ci-franchise">0</b></span>
+                    <span>No site: <b id="ci-noweb">0</b></span>
                     <span>Errors: <b id="ci-err" style="color:#dc2626">0</b></span>
                 </div>
+                <div id="ci-log" style="background:#0f172a;border-radius:6px;padding:10px 12px;font-family:monospace;font-size:11px;color:#94a3b8;max-height:220px;overflow-y:auto;line-height:1.7"></div>
             </div>
+
             <div id="ci-result" style="margin-top:12px"></div>
         </div>
         <script>
         (function(){
             let _ciStopped = false;
+            function ciLog(msg,color){const el=document.getElementById('ci-log');if(!el)return;const d=document.createElement('div');d.style.color=color||'#94a3b8';d.textContent=msg;el.appendChild(d);el.scrollTop=el.scrollHeight;}
             function ciProg(c,t){const p=t>0?Math.round(c/t*100):0;document.getElementById('ci-bar').style.width=p+'%';document.getElementById('ci-pct').textContent=p+'%';}
             function ciLabel(m){document.getElementById('ci-label').textContent=m;}
             function ciErr(m){document.getElementById('ci-result').innerHTML+='<div class="wnq-result wnq-result-err" style="margin-bottom:6px"><strong>Error</strong> — '+m+'</div>';document.getElementById('ci-start-btn').disabled=false;document.getElementById('ci-stop-btn').style.display='none';}
-            window.wnqCsvStop = function(){_ciStopped=true;};
+            window.wnqCsvStop = function(){_ciStopped=true;ciLabel('Stopping…');};
             window.wnqCsvStart = async function(){
                 _ciStopped = false;
                 const fileEl=document.getElementById('ci-file');
@@ -613,11 +644,13 @@ final class LeadFinderAdmin
                 if(file.size>20*1024*1024){alert('File too large. Max 20 MB.');return;}
                 const startBtn=document.getElementById('ci-start-btn'),stopBtn=document.getElementById('ci-stop-btn');
                 startBtn.disabled=true;stopBtn.style.display='';
-                document.getElementById('ci-progress').style.display='';
+                document.getElementById('ci-filter-summary').style.display='none';
+                document.getElementById('ci-progress').style.display='none';
                 document.getElementById('ci-result').innerHTML='';
-                ['ci-total','ci-saved','ci-dup','ci-skip','ci-err'].forEach(id=>document.getElementById(id).textContent='0');
-                ciProg(0,1);
-                // Phase 1: upload & parse
+                document.getElementById('ci-log').innerHTML='';
+                ['ci-total','ci-saved','ci-franchise','ci-noweb','ci-err'].forEach(id=>document.getElementById(id).textContent='0');
+
+                // ── Phase 1: upload + filter ─────────────────────────────
                 let qr;
                 try{
                     const fd=new FormData();
@@ -625,23 +658,45 @@ final class LeadFinderAdmin
                     fd.append('nonce',<?php echo wp_json_encode($nonce); ?>);
                     fd.append('csv_file',file);
                     fd.append('industry',industry);
-                    ciLabel('Uploading & parsing CSV…');
+                    ciLabel('Uploading & filtering CSV…');
+                    document.getElementById('ci-progress').style.display='';
+                    ciProg(0,1);
                     const r=await fetch(ajaxurl,{method:'POST',body:fd});
                     const raw=await r.text();
                     try{qr=JSON.parse(raw);}catch(je){ciErr('Parse failed: '+raw.replace(/<[^>]+>/g,'').trim().substring(0,200));startBtn.disabled=false;stopBtn.style.display='none';return;}
                 }catch(e){ciErr('Upload error: '+e.message);startBtn.disabled=false;stopBtn.style.display='none';return;}
                 if(!qr.success){ciErr(qr.data?.message||'Upload failed');startBtn.disabled=false;stopBtn.style.display='none';return;}
-                const{batch_id,total}=qr.data;
+
+                const{batch_id,total,filtered}=qr.data;
+
+                // Show filter summary
+                const fs=document.getElementById('ci-filter-summary');
+                fs.style.display='';
+                document.getElementById('ci-f-total').textContent=filtered.total_rows||0;
+                document.getElementById('ci-f-reviews').textContent=filtered.too_many_reviews||0;
+                document.getElementById('ci-f-nophone').textContent=filtered.no_phone||0;
+                document.getElementById('ci-f-franchise').textContent=filtered.franchise||0;
+                document.getElementById('ci-f-multi').textContent=filtered.multi_location||0;
+                document.getElementById('ci-f-dup').textContent=filtered.duplicate||0;
+                document.getElementById('ci-f-qualified').textContent=total||0;
                 document.getElementById('ci-total').textContent=total||0;
-                if(!batch_id||!total){ciErr('No valid rows found. Make sure the file has a header row and at least one data row.');startBtn.disabled=false;stopBtn.style.display='none';return;}
-                ciLabel('Parsed '+total+' rows. Importing…');
-                // Phase 2: process chunks of 200 rows per request
+
+                if(!batch_id||!total){
+                    startBtn.disabled=false;stopBtn.style.display='none';
+                    document.getElementById('ci-result').innerHTML='<div class="wnq-result" style="background:#fef9c3;border:1px solid #fde68a;color:#92400e;"><strong>No qualifying leads</strong><p>All '+( filtered.total_rows||0 )+' rows were filtered out. Check your data.</p></div>';
+                    ciProg(0,1);ciLabel('Done — 0 qualified');
+                    return;
+                }
+
+                ciLog('Filter complete — '+total+' of '+(filtered.total_rows||0)+' rows passed. Starting website scrape…','#60a5fa');
+
+                // ── Phase 2: scrape one lead per request ─────────────────
                 let processed=0,lastStats=null,consec=0;
                 while(processed<total&&!_ciStopped){
-                    ciLabel('Importing '+processed+' / '+total+'…');
+                    ciLabel('Scraping '+(processed+1)+' / '+total+'…');
                     let pr=null;
                     try{
-                        const ctrl=new AbortController(),tid=setTimeout(()=>ctrl.abort(),30000);
+                        const ctrl=new AbortController(),tid=setTimeout(()=>ctrl.abort(),45000);
                         const fd2=new FormData();
                         fd2.append('action','wnq_csv_import_process');
                         fd2.append('nonce',<?php echo wp_json_encode($nonce); ?>);
@@ -649,16 +704,22 @@ final class LeadFinderAdmin
                         const r2=await fetch(ajaxurl,{method:'POST',body:fd2,signal:ctrl.signal});
                         clearTimeout(tid);
                         const raw2=await r2.text();
-                        try{pr=JSON.parse(raw2);}catch(je){if(++consec>=5){ciErr('5 server errors — stopping.');_ciStopped=true;}processed=Math.min(processed+200,total);ciProg(processed,total);continue;}
-                    }catch(e){if(++consec>=5){ciErr('5 timeouts — stopping.');_ciStopped=true;}processed=Math.min(processed+200,total);ciProg(processed,total);continue;}
-                    if(!pr?.success){if(++consec>=5){ciErr('5 errors — stopping.');_ciStopped=true;}processed=Math.min(processed+200,total);ciProg(processed,total);continue;}
+                        try{pr=JSON.parse(raw2);}catch(je){ciLog('Row '+(processed+1)+' server error','#f87171');if(++consec>=5){ciErr('5 server errors — stopping.');_ciStopped=true;}processed++;ciProg(processed,total);continue;}
+                    }catch(e){ciLog('Row '+(processed+1)+' timed out.','#fb923c');if(++consec>=5){ciErr('5 timeouts — stopping.');_ciStopped=true;}processed++;ciProg(processed,total);continue;}
+                    if(!pr?.success){ciLog('Row '+(processed+1)+': '+(pr?.data?.message||'Error'),'#f87171');if(++consec>=5){ciErr('5 errors — stopping.');_ciStopped=true;}processed++;ciProg(processed,total);continue;}
                     consec=0;
                     const d=pr.data;
                     processed=d.processed;lastStats=d.stats;
+                    const name=d.name||('Row '+processed);
+                    if(d.outcome==='saved')            ciLog('✓ Saved: '+name+(d.email?' ('+d.email+')':''),'#4ade80');
+                    else if(d.outcome==='franchise')   ciLog('✗ Franchise (HTML): '+name,'#c084fc');
+                    else if(d.outcome==='no_website')  ciLog('✗ No site: '+name,'#fb923c');
+                    else if(d.outcome==='error')       ciLog('✗ Error: '+name,'#f87171');
+                    else                               ciLog('⟳ '+d.outcome+': '+name,'#94a3b8');
                     if(d.stats){
                         document.getElementById('ci-saved').textContent=d.stats.saved||0;
-                        document.getElementById('ci-dup').textContent=d.stats.duplicate||0;
-                        document.getElementById('ci-skip').textContent=d.stats.skipped||0;
+                        document.getElementById('ci-franchise').textContent=d.stats.franchise||0;
+                        document.getElementById('ci-noweb').textContent=d.stats.no_website||0;
                         document.getElementById('ci-err').textContent=d.stats.error||0;
                     }
                     ciProg(d.processed,d.total);
@@ -668,7 +729,7 @@ final class LeadFinderAdmin
                 const saved=lastStats?lastStats.saved:0;
                 if(!_ciStopped){
                     ciLabel('Complete');
-                    document.getElementById('ci-result').innerHTML='<div class="wnq-result wnq-result-ok"><strong>Done</strong><p><b>'+saved+'</b> lead'+(saved!==1?'s':'')+' imported.'+(saved>0?' <a href="admin.php?page=wnq-lead-finder&tab=leads" style="color:#15803d;font-weight:600">View leads &rarr;</a>':'')+' </p></div>';
+                    document.getElementById('ci-result').innerHTML='<div class="wnq-result wnq-result-ok"><strong>Done</strong><p><b>'+saved+'</b> lead'+(saved!==1?'s':'')+' saved.'+(saved>0?' <a href="admin.php?page=wnq-lead-finder&tab=leads" style="color:#15803d;font-weight:600">View leads &rarr;</a>':'')+' </p></div>';
                 }else{
                     ciLabel('Stopped');
                     document.getElementById('ci-result').innerHTML='<div class="wnq-result" style="background:#fef9c3;border:1px solid #fde68a;color:#92400e;"><strong>Stopped</strong><p>'+saved+' lead'+(saved!==1?'s':'')+' saved.</p></div>';
@@ -1170,12 +1231,8 @@ final class LeadFinderAdmin
         }
         self::requireCap();
 
-        if (empty($_FILES['csv_file']['tmp_name'])) {
+        if (empty($_FILES['csv_file']['tmp_name']) || !is_uploaded_file($_FILES['csv_file']['tmp_name'])) {
             wp_send_json_error(['message' => 'No file uploaded.']);
-            return;
-        }
-        if (!is_uploaded_file($_FILES['csv_file']['tmp_name'])) {
-            wp_send_json_error(['message' => 'Invalid file upload.']);
             return;
         }
         if ($_FILES['csv_file']['size'] > 20 * 1024 * 1024) {
@@ -1211,36 +1268,118 @@ final class LeadFinderAdmin
         }
 
         $fallback_industry = sanitize_text_field($_POST['industry'] ?? '');
-        $rows      = [];
-        $max_rows  = 10000;
 
-        while (($row = fgetcsv($handle, 0, $delimiter)) !== false && count($rows) < $max_rows) {
-            // Skip entirely blank rows
-            if (count(array_filter($row, fn($v) => trim((string)$v) !== '')) === 0) {
-                continue;
+        // Read all rows (cap at 10k)
+        $all_rows = [];
+        while (($row = fgetcsv($handle, 0, $delimiter)) !== false && count($all_rows) < 10000) {
+            if (count(array_filter($row, fn($v) => trim((string)$v) !== '')) > 0) {
+                $all_rows[] = $row;
             }
-            $rows[] = $row;
         }
         fclose($handle);
 
-        if (empty($rows)) {
+        if (empty($all_rows)) {
             wp_send_json_error(['message' => 'CSV has no data rows after the header.']);
+            return;
+        }
+
+        // ── Filtering pipeline ───────────────────────────────────────────────
+        $filtered = [
+            'total_rows'       => count($all_rows),
+            'too_many_reviews' => 0,
+            'no_phone'         => 0,
+            'franchise'        => 0,
+            'multi_location'   => 0,
+            'duplicate'        => 0,
+        ];
+
+        // Pass 1: build name frequency map to detect multi-location chains
+        // Normalise: lowercase + strip common location suffixes (of X, at X, - X)
+        $name_freq = [];
+        foreach ($all_rows as $row) {
+            $name = strtolower(trim((string)($row[$col_map['business_name']] ?? '')));
+            $name = preg_replace('/\s+(of|at|in|–|-)\s+\S.*$/', '', $name); // strip location suffix
+            $name = preg_replace('/[^a-z0-9 ]/', '', $name);
+            $name = preg_replace('/\s+/', ' ', trim($name));
+            if ($name) {
+                $name_freq[$name] = ($name_freq[$name] ?? 0) + 1;
+            }
+        }
+
+        // Pass 2: apply filters, collect qualifying rows
+        $qualified = [];
+        foreach ($all_rows as $row) {
+            $get = fn(int $idx): string => isset($row[$idx]) ? trim((string)$row[$idx]) : '';
+
+            $business_name = sanitize_text_field($get($col_map['business_name']));
+            if (!$business_name) {
+                $filtered['no_phone']++; // counted as "no phone" since we won't be able to act on it anyway
+                continue;
+            }
+
+            // 1. Review count < 100
+            $review_count = isset($col_map['review_count']) ? (int)$get($col_map['review_count']) : 0;
+            if ($review_count >= 100) {
+                $filtered['too_many_reviews']++;
+                continue;
+            }
+
+            // 2. Must have a phone number
+            $phone = isset($col_map['phone']) ? $get($col_map['phone']) : '';
+            if (empty($phone) || preg_replace('/[^0-9]/', '', $phone) === '') {
+                $filtered['no_phone']++;
+                continue;
+            }
+
+            // 3. Franchise check (name only — HTML check done during scrape phase)
+            if (\WNQ\Services\LeadEnrichmentService::isFranchise($business_name)) {
+                $filtered['franchise']++;
+                continue;
+            }
+
+            // 4. Multi-location chain: same normalised name appears 3+ times
+            $norm = preg_replace('/[^a-z0-9 ]/', '', strtolower($business_name));
+            $norm = preg_replace('/\s+(of|at|in|–|-)\s+\S.*$/', '', $norm);
+            $norm = preg_replace('/\s+/', ' ', trim($norm));
+            if (($name_freq[$norm] ?? 0) >= 3) {
+                $filtered['multi_location']++;
+                continue;
+            }
+
+            // 5. Already in database
+            $city = isset($col_map['city']) ? sanitize_text_field($get($col_map['city'])) : '';
+            if (Lead::existsByNameAndCity($business_name, $city)) {
+                $filtered['duplicate']++;
+                continue;
+            }
+
+            $qualified[] = $row;
+        }
+
+        if (empty($qualified)) {
+            // Return success with 0 total so UI shows the filter summary
+            wp_send_json_success([
+                'batch_id' => '',
+                'total'    => 0,
+                'filtered' => $filtered,
+            ]);
             return;
         }
 
         $batch_id = 'ci_' . bin2hex(random_bytes(8));
         set_transient('wnq_csv_' . $batch_id, [
-            'rows'              => $rows,
+            'rows'              => $qualified,
             'col_map'           => $col_map,
             'fallback_industry' => $fallback_industry,
-            'total'             => count($rows),
+            'total'             => count($qualified),
             'offset'            => 0,
-            'stats'             => ['saved' => 0, 'duplicate' => 0, 'skipped' => 0, 'error' => 0],
+            'stats'             => ['saved' => 0, 'franchise' => 0, 'no_website' => 0, 'error' => 0],
         ], 2 * HOUR_IN_SECONDS);
 
         wp_send_json_success([
             'batch_id' => $batch_id,
-            'total'    => count($rows),
+            'total'    => count($qualified),
+            'filtered' => $filtered,
         ]);
     }
 
@@ -1264,39 +1403,94 @@ final class LeadFinderAdmin
             return;
         }
 
-        $chunk_size = 200;
-        $rows       = $state['rows'];
-        $col_map    = $state['col_map'];
-        $offset     = $state['offset'];
-        $total      = $state['total'];
-        $stats      = $state['stats'];
-        $fallback   = $state['fallback_industry'];
+        @set_time_limit(0);
 
-        $chunk = array_slice($rows, $offset, $chunk_size);
+        $rows     = $state['rows'];
+        $col_map  = $state['col_map'];
+        $offset   = $state['offset'];
+        $total    = $state['total'];
+        $stats    = $state['stats'];
+        $fallback = $state['fallback_industry'];
 
-        foreach ($chunk as $row) {
-            try {
-                $data = self::mapCsvRow($row, $col_map, $fallback);
-                if (empty($data['business_name'])) {
-                    $stats['skipped']++;
-                    continue;
+        if ($offset >= $total) {
+            delete_transient('wnq_csv_' . $batch_id);
+            wp_send_json_success(['processed' => $total, 'total' => $total, 'stats' => $stats, 'done' => true]);
+            return;
+        }
+
+        // Process one lead per request (web fetch involved)
+        $row     = $rows[$offset];
+        $data    = self::mapCsvRow($row, $col_map, $fallback);
+        $name    = $data['business_name'];
+        $website = $data['website'];
+        $outcome = 'error';
+        $email   = '';
+
+        try {
+            $homepage_html = '';
+
+            // Fetch homepage if a website URL is present
+            if ($website) {
+                $resp = wp_remote_get($website, [
+                    'timeout'             => 8,
+                    'user-agent'          => 'Mozilla/5.0 (compatible; WebNique/1.0; +https://webnique.com)',
+                    'sslverify'           => false,
+                    'redirection'         => 3,
+                    'limit_response_size' => 300000,
+                ]);
+                if (!is_wp_error($resp) && wp_remote_retrieve_response_code($resp) < 400) {
+                    $homepage_html = wp_remote_retrieve_body($resp);
                 }
-                if (Lead::existsByNameAndCity($data['business_name'], $data['city'] ?? '')) {
-                    $stats['duplicate']++;
-                    continue;
-                }
+            }
+
+            // Re-check franchise via HTML (catches sites that disclose it on the page)
+            if ($homepage_html && \WNQ\Services\LeadEnrichmentService::isFranchise($name, $homepage_html)) {
+                $stats['franchise']++;
+                $outcome = 'franchise';
+            } elseif (!$website) {
+                $stats['no_website']++;
+                $outcome = 'no_website';
+                // Still save the lead if it had enough info (phone + name already confirmed)
                 $id = Lead::insert($data);
                 if ($id > 0) {
                     $stats['saved']++;
+                    $outcome = 'saved'; // saved without email
                 } else {
                     $stats['error']++;
+                    $outcome = 'error';
                 }
-            } catch (\Throwable $e) {
-                $stats['error']++;
+            } else {
+                // Extract email from homepage (or /contact fallback)
+                $email_result = \WNQ\Services\LeadEmailExtractor::extractEmail($website, $homepage_html);
+                if ($email_result['email']) {
+                    $data['email']        = $email_result['email'];
+                    $data['email_source'] = $email_result['source'];
+                    $email                = $email_result['email'];
+                }
+
+                // Extract social media if not already in CSV
+                $social = \WNQ\Services\LeadEnrichmentService::extractSocialMedia($website, $homepage_html);
+                foreach (['facebook','instagram','linkedin','twitter','youtube','tiktok'] as $sn) {
+                    if (empty($data['social_' . $sn]) && !empty($social[$sn])) {
+                        $data['social_' . $sn] = $social[$sn];
+                    }
+                }
+
+                $id = Lead::insert($data);
+                if ($id > 0) {
+                    $stats['saved']++;
+                    $outcome = 'saved';
+                } else {
+                    $stats['error']++;
+                    $outcome = 'error';
+                }
             }
+        } catch (\Throwable $e) {
+            $stats['error']++;
+            $outcome = 'error';
         }
 
-        $new_offset = $offset + count($chunk);
+        $new_offset = $offset + 1;
         $done       = $new_offset >= $total;
 
         $state['offset'] = $new_offset;
@@ -1313,6 +1507,9 @@ final class LeadFinderAdmin
             'total'     => $total,
             'stats'     => $stats,
             'done'      => $done,
+            'outcome'   => $outcome,
+            'name'      => $name,
+            'email'     => $email,
         ]);
     }
 
@@ -1376,8 +1573,7 @@ final class LeadFinderAdmin
         $city          = sanitize_text_field($get('city'));
         $phone         = sanitize_text_field($get('phone'));
 
-        // Generate a stable, unique place_id so the UNIQUE KEY constraint is satisfied
-        // and natural deduplication works at the DB level as a fallback.
+        // Stable, unique place_id so the UNIQUE KEY constraint is satisfied
         $place_id = 'csv_' . md5($business_name . '|' . strtolower($city) . '|' . $phone);
 
         return [
@@ -1392,7 +1588,7 @@ final class LeadFinderAdmin
             'state'            => sanitize_text_field($get('state')),
             'zip'              => sanitize_text_field($get('zip')),
             'phone'            => $phone,
-            'email'            => sanitize_email($get('email')),
+            'email'            => sanitize_email($get('email')), // may be overwritten by scraper
             'rating'           => (float)$get('rating'),
             'review_count'     => (int)$get('review_count'),
             'social_facebook'  => esc_url_raw($get('social_facebook')),
