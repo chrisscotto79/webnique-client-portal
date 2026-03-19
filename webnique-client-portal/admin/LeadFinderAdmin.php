@@ -39,6 +39,10 @@ final class LeadFinderAdmin
         add_action('wp_ajax_wnq_bulk_maps_queue',   [self::class, 'ajaxBulkMapsQueue']);
         add_action('wp_ajax_wnq_bulk_maps_process', [self::class, 'ajaxBulkMapsProcess']);
 
+        // CSV import
+        add_action('wp_ajax_wnq_csv_import_queue',   [self::class, 'ajaxCsvImportQueue']);
+        add_action('wp_ajax_wnq_csv_import_process', [self::class, 'ajaxCsvImportProcess']);
+
         // Lead management
         add_action('wp_ajax_wnq_lead_update_status', [self::class, 'ajaxUpdateStatus']);
         add_action('wp_ajax_wnq_lead_update_notes',  [self::class, 'ajaxUpdateNotes']);
@@ -159,17 +163,18 @@ final class LeadFinderAdmin
         </div>
 
         <div class="wnq-lf-tabs">
-            <?php foreach (['search'=>'ZIP Sweep','manual'=>'Manual URLs','leads'=>'All Leads','settings'=>'Settings'] as $t=>$label): ?>
+            <?php foreach (['search'=>'ZIP Sweep','manual'=>'Manual URLs','csv_import'=>'CSV Import','leads'=>'All Leads','settings'=>'Settings'] as $t=>$label): ?>
                 <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-lead-finder&tab='.$t)); ?>" class="wnq-lf-tab <?php echo $tab===$t?'active':''; ?>"><?php echo esc_html($label); ?></a>
             <?php endforeach; ?>
         </div>
 
         <?php
         match ($tab) {
-            'leads'    => self::renderLeadsTab(),
-            'settings' => self::renderSettingsTab($settings),
-            'manual'   => self::renderManualTab($settings),
-            default    => self::renderZipSweepTab($settings),
+            'leads'      => self::renderLeadsTab(),
+            'settings'   => self::renderSettingsTab($settings),
+            'manual'     => self::renderManualTab($settings),
+            'csv_import' => self::renderCsvImportTab($settings),
+            default      => self::renderZipSweepTab($settings),
         };
         ?>
         </div>
@@ -536,6 +541,137 @@ final class LeadFinderAdmin
                 }else{
                     bmLabel('Stopped');
                     document.getElementById('bm-result').innerHTML='<div class="wnq-result" style="background:#fef9c3;border:1px solid #fde68a;color:#92400e;"><strong>Stopped</strong><p>'+saved+' lead'+(saved!==1?'s':'')+' saved.</p></div>';
+                }
+            };
+        })();
+        </script>
+        <?php
+    }
+
+    // ── Tab: CSV Import ──────────────────────────────────────────────────────
+
+    private static function renderCsvImportTab(array $settings): void
+    {
+        $nonce = wp_create_nonce('wnq_csv_import');
+        ?>
+        <div class="wnq-card">
+            <h3>Bulk CSV Import</h3>
+            <p style="color:#6b7280;margin:-6px 0 14px;font-size:12px;">
+                Import up to <strong>10,000 scraped leads</strong> from a CSV file. Columns are auto-detected from the header row.
+                Duplicates (matched by business name + city) are automatically skipped. No website scraping is performed — data is imported as-is.
+            </p>
+            <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:12px;color:#1d4ed8;line-height:1.7">
+                <strong>Auto-detected column names (case-insensitive):</strong><br>
+                Business Name / Company Name &nbsp;·&nbsp; Email &nbsp;·&nbsp; Phone &nbsp;·&nbsp; Website &nbsp;·&nbsp; Address &nbsp;·&nbsp; City &nbsp;·&nbsp; State &nbsp;·&nbsp; Zip / Postal Code &nbsp;·&nbsp;
+                Industry / Category &nbsp;·&nbsp; Rating / Stars &nbsp;·&nbsp; Review Count / Reviews &nbsp;·&nbsp;
+                Facebook &nbsp;·&nbsp; Instagram &nbsp;·&nbsp; LinkedIn &nbsp;·&nbsp; Twitter &nbsp;·&nbsp; YouTube &nbsp;·&nbsp; TikTok &nbsp;·&nbsp; Status &nbsp;·&nbsp; Notes
+            </div>
+            <div class="wnq-field" style="margin-bottom:14px;max-width:520px">
+                <label for="ci-file">CSV File</label>
+                <input type="file" id="ci-file" accept=".csv,text/csv" style="padding:6px 0">
+                <small>Max 10,000 rows · Max 20 MB · UTF-8 or Windows-1252 encoding. First row must be a header.</small>
+            </div>
+            <div style="max-width:340px;margin-bottom:16px">
+                <div class="wnq-field">
+                    <label>Fallback Industry</label>
+                    <input type="text" id="ci-industry" placeholder="e.g. pressure washing" value="<?php echo esc_attr($settings['default_keyword'] ?? ''); ?>">
+                    <small>Applied to rows where the Industry column is blank.</small>
+                </div>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center">
+                <button class="wnq-btn wnq-btn-primary" id="ci-start-btn" onclick="wnqCsvStart()">Upload &amp; Import Leads</button>
+                <button class="wnq-btn wnq-btn-secondary" id="ci-stop-btn" onclick="wnqCsvStop()" style="display:none">Stop</button>
+            </div>
+            <div id="ci-progress" style="display:none;margin-top:16px">
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:#374151;margin-bottom:4px">
+                    <span id="ci-label">Uploading…</span><span id="ci-pct">0%</span>
+                </div>
+                <div class="wnq-progressbar-wrap"><div class="wnq-progressbar" id="ci-bar"></div></div>
+                <div class="wnq-live-stats" style="margin:8px 0">
+                    <span>Total: <b id="ci-total">0</b></span>
+                    <span>Saved: <b id="ci-saved" style="color:#16a34a">0</b></span>
+                    <span>Dupes: <b id="ci-dup">0</b></span>
+                    <span>Skipped: <b id="ci-skip">0</b></span>
+                    <span>Errors: <b id="ci-err" style="color:#dc2626">0</b></span>
+                </div>
+            </div>
+            <div id="ci-result" style="margin-top:12px"></div>
+        </div>
+        <script>
+        (function(){
+            let _ciStopped = false;
+            function ciProg(c,t){const p=t>0?Math.round(c/t*100):0;document.getElementById('ci-bar').style.width=p+'%';document.getElementById('ci-pct').textContent=p+'%';}
+            function ciLabel(m){document.getElementById('ci-label').textContent=m;}
+            function ciErr(m){document.getElementById('ci-result').innerHTML+='<div class="wnq-result wnq-result-err" style="margin-bottom:6px"><strong>Error</strong> — '+m+'</div>';document.getElementById('ci-start-btn').disabled=false;document.getElementById('ci-stop-btn').style.display='none';}
+            window.wnqCsvStop = function(){_ciStopped=true;};
+            window.wnqCsvStart = async function(){
+                _ciStopped = false;
+                const fileEl=document.getElementById('ci-file');
+                const industry=document.getElementById('ci-industry').value.trim();
+                if(!fileEl.files.length){alert('Please select a CSV file.');return;}
+                const file=fileEl.files[0];
+                if(file.size>20*1024*1024){alert('File too large. Max 20 MB.');return;}
+                const startBtn=document.getElementById('ci-start-btn'),stopBtn=document.getElementById('ci-stop-btn');
+                startBtn.disabled=true;stopBtn.style.display='';
+                document.getElementById('ci-progress').style.display='';
+                document.getElementById('ci-result').innerHTML='';
+                ['ci-total','ci-saved','ci-dup','ci-skip','ci-err'].forEach(id=>document.getElementById(id).textContent='0');
+                ciProg(0,1);
+                // Phase 1: upload & parse
+                let qr;
+                try{
+                    const fd=new FormData();
+                    fd.append('action','wnq_csv_import_queue');
+                    fd.append('nonce',<?php echo wp_json_encode($nonce); ?>);
+                    fd.append('csv_file',file);
+                    fd.append('industry',industry);
+                    ciLabel('Uploading & parsing CSV…');
+                    const r=await fetch(ajaxurl,{method:'POST',body:fd});
+                    const raw=await r.text();
+                    try{qr=JSON.parse(raw);}catch(je){ciErr('Parse failed: '+raw.replace(/<[^>]+>/g,'').trim().substring(0,200));startBtn.disabled=false;stopBtn.style.display='none';return;}
+                }catch(e){ciErr('Upload error: '+e.message);startBtn.disabled=false;stopBtn.style.display='none';return;}
+                if(!qr.success){ciErr(qr.data?.message||'Upload failed');startBtn.disabled=false;stopBtn.style.display='none';return;}
+                const{batch_id,total}=qr.data;
+                document.getElementById('ci-total').textContent=total||0;
+                if(!batch_id||!total){ciErr('No valid rows found. Make sure the file has a header row and at least one data row.');startBtn.disabled=false;stopBtn.style.display='none';return;}
+                ciLabel('Parsed '+total+' rows. Importing…');
+                // Phase 2: process chunks of 200 rows per request
+                let processed=0,lastStats=null,consec=0;
+                while(processed<total&&!_ciStopped){
+                    ciLabel('Importing '+processed+' / '+total+'…');
+                    let pr=null;
+                    try{
+                        const ctrl=new AbortController(),tid=setTimeout(()=>ctrl.abort(),30000);
+                        const fd2=new FormData();
+                        fd2.append('action','wnq_csv_import_process');
+                        fd2.append('nonce',<?php echo wp_json_encode($nonce); ?>);
+                        fd2.append('batch_id',batch_id);
+                        const r2=await fetch(ajaxurl,{method:'POST',body:fd2,signal:ctrl.signal});
+                        clearTimeout(tid);
+                        const raw2=await r2.text();
+                        try{pr=JSON.parse(raw2);}catch(je){if(++consec>=5){ciErr('5 server errors — stopping.');_ciStopped=true;}processed=Math.min(processed+200,total);ciProg(processed,total);continue;}
+                    }catch(e){if(++consec>=5){ciErr('5 timeouts — stopping.');_ciStopped=true;}processed=Math.min(processed+200,total);ciProg(processed,total);continue;}
+                    if(!pr?.success){if(++consec>=5){ciErr('5 errors — stopping.');_ciStopped=true;}processed=Math.min(processed+200,total);ciProg(processed,total);continue;}
+                    consec=0;
+                    const d=pr.data;
+                    processed=d.processed;lastStats=d.stats;
+                    if(d.stats){
+                        document.getElementById('ci-saved').textContent=d.stats.saved||0;
+                        document.getElementById('ci-dup').textContent=d.stats.duplicate||0;
+                        document.getElementById('ci-skip').textContent=d.stats.skipped||0;
+                        document.getElementById('ci-err').textContent=d.stats.error||0;
+                    }
+                    ciProg(d.processed,d.total);
+                    if(d.done)break;
+                }
+                startBtn.disabled=false;stopBtn.style.display='none';
+                const saved=lastStats?lastStats.saved:0;
+                if(!_ciStopped){
+                    ciLabel('Complete');
+                    document.getElementById('ci-result').innerHTML='<div class="wnq-result wnq-result-ok"><strong>Done</strong><p><b>'+saved+'</b> lead'+(saved!==1?'s':'')+' imported.'+(saved>0?' <a href="admin.php?page=wnq-lead-finder&tab=leads" style="color:#15803d;font-weight:600">View leads &rarr;</a>':'')+' </p></div>';
+                }else{
+                    ciLabel('Stopped');
+                    document.getElementById('ci-result').innerHTML='<div class="wnq-result" style="background:#fef9c3;border:1px solid #fde68a;color:#92400e;"><strong>Stopped</strong><p>'+saved+' lead'+(saved!==1?'s':'')+' saved.</p></div>';
                 }
             };
         })();
@@ -1022,6 +1158,252 @@ final class LeadFinderAdmin
         ));
         wp_redirect(admin_url('admin.php?page=wnq-lead-finder&tab=settings&settings_saved=1'));
         exit;
+    }
+
+    // ── AJAX: CSV Import ──────────────────────────────────────────────────────
+
+    public static function ajaxCsvImportQueue(): void
+    {
+        if (!check_ajax_referer('wnq_csv_import', 'nonce', false)) {
+            wp_send_json_error(['message' => 'Security check failed — refresh and try again.']);
+            return;
+        }
+        self::requireCap();
+
+        if (empty($_FILES['csv_file']['tmp_name'])) {
+            wp_send_json_error(['message' => 'No file uploaded.']);
+            return;
+        }
+        if (!is_uploaded_file($_FILES['csv_file']['tmp_name'])) {
+            wp_send_json_error(['message' => 'Invalid file upload.']);
+            return;
+        }
+        if ($_FILES['csv_file']['size'] > 20 * 1024 * 1024) {
+            wp_send_json_error(['message' => 'File too large. Max 20 MB.']);
+            return;
+        }
+
+        $handle = fopen($_FILES['csv_file']['tmp_name'], 'r');
+        if (!$handle) {
+            wp_send_json_error(['message' => 'Could not read uploaded file.']);
+            return;
+        }
+
+        // Auto-detect delimiter (comma or tab)
+        $first_line = fgets($handle);
+        rewind($handle);
+        $delimiter = substr_count($first_line, "\t") > substr_count($first_line, ',') ? "\t" : ',';
+
+        $header = fgetcsv($handle, 0, $delimiter);
+        if (!$header || count($header) < 2) {
+            fclose($handle);
+            wp_send_json_error(['message' => 'Could not read CSV header. Ensure the first row contains column names.']);
+            return;
+        }
+
+        $header  = array_map(fn($h) => strtolower(trim((string)$h)), $header);
+        $col_map = self::buildCsvColumnMap($header);
+
+        if (!isset($col_map['business_name'])) {
+            fclose($handle);
+            wp_send_json_error(['message' => 'Could not find a "Business Name" or "Company Name" column. Check your CSV headers.']);
+            return;
+        }
+
+        $fallback_industry = sanitize_text_field($_POST['industry'] ?? '');
+        $rows      = [];
+        $max_rows  = 10000;
+
+        while (($row = fgetcsv($handle, 0, $delimiter)) !== false && count($rows) < $max_rows) {
+            // Skip entirely blank rows
+            if (count(array_filter($row, fn($v) => trim((string)$v) !== '')) === 0) {
+                continue;
+            }
+            $rows[] = $row;
+        }
+        fclose($handle);
+
+        if (empty($rows)) {
+            wp_send_json_error(['message' => 'CSV has no data rows after the header.']);
+            return;
+        }
+
+        $batch_id = 'ci_' . bin2hex(random_bytes(8));
+        set_transient('wnq_csv_' . $batch_id, [
+            'rows'              => $rows,
+            'col_map'           => $col_map,
+            'fallback_industry' => $fallback_industry,
+            'total'             => count($rows),
+            'offset'            => 0,
+            'stats'             => ['saved' => 0, 'duplicate' => 0, 'skipped' => 0, 'error' => 0],
+        ], 2 * HOUR_IN_SECONDS);
+
+        wp_send_json_success([
+            'batch_id' => $batch_id,
+            'total'    => count($rows),
+        ]);
+    }
+
+    public static function ajaxCsvImportProcess(): void
+    {
+        if (!check_ajax_referer('wnq_csv_import', 'nonce', false)) {
+            wp_send_json_error(['message' => 'Security check failed — refresh and try again.']);
+            return;
+        }
+        self::requireCap();
+
+        $batch_id = sanitize_text_field($_POST['batch_id'] ?? '');
+        if (!$batch_id) {
+            wp_send_json_error(['message' => 'Missing batch_id']);
+            return;
+        }
+
+        $state = get_transient('wnq_csv_' . $batch_id);
+        if (!$state) {
+            wp_send_json_error(['message' => 'Import session expired or not found. Please re-upload the file.']);
+            return;
+        }
+
+        $chunk_size = 200;
+        $rows       = $state['rows'];
+        $col_map    = $state['col_map'];
+        $offset     = $state['offset'];
+        $total      = $state['total'];
+        $stats      = $state['stats'];
+        $fallback   = $state['fallback_industry'];
+
+        $chunk = array_slice($rows, $offset, $chunk_size);
+
+        foreach ($chunk as $row) {
+            try {
+                $data = self::mapCsvRow($row, $col_map, $fallback);
+                if (empty($data['business_name'])) {
+                    $stats['skipped']++;
+                    continue;
+                }
+                if (Lead::existsByNameAndCity($data['business_name'], $data['city'] ?? '')) {
+                    $stats['duplicate']++;
+                    continue;
+                }
+                $id = Lead::insert($data);
+                if ($id > 0) {
+                    $stats['saved']++;
+                } else {
+                    $stats['error']++;
+                }
+            } catch (\Throwable $e) {
+                $stats['error']++;
+            }
+        }
+
+        $new_offset = $offset + count($chunk);
+        $done       = $new_offset >= $total;
+
+        $state['offset'] = $new_offset;
+        $state['stats']  = $stats;
+
+        if ($done) {
+            delete_transient('wnq_csv_' . $batch_id);
+        } else {
+            set_transient('wnq_csv_' . $batch_id, $state, 2 * HOUR_IN_SECONDS);
+        }
+
+        wp_send_json_success([
+            'processed' => $new_offset,
+            'total'     => $total,
+            'stats'     => $stats,
+            'done'      => $done,
+        ]);
+    }
+
+    /**
+     * Build a map of lead field => CSV column index from the header row.
+     */
+    private static function buildCsvColumnMap(array $headers): array
+    {
+        $aliases = [
+            'business_name'    => ['business name','company name','company','name','business','title'],
+            'email'            => ['email','email address','e-mail'],
+            'phone'            => ['phone','phone number','telephone','tel'],
+            'website'          => ['website','website url','url','web','site'],
+            'address'          => ['address','street','street address','full address'],
+            'city'             => ['city','town'],
+            'state'            => ['state','province','region'],
+            'zip'              => ['zip','zip code','postal code','postcode','postal'],
+            'industry'         => ['industry','category','type','niche','keyword'],
+            'rating'           => ['rating','stars','star rating','score'],
+            'review_count'     => ['review count','reviews','review_count','num reviews','number of reviews','# reviews'],
+            'owner_first'      => ['owner first','first name','owner first name','firstname'],
+            'owner_last'       => ['owner last','last name','owner last name','lastname'],
+            'social_facebook'  => ['facebook','fb','facebook url','social_facebook'],
+            'social_instagram' => ['instagram','ig','instagram url','social_instagram'],
+            'social_linkedin'  => ['linkedin','linkedin url','social_linkedin'],
+            'social_twitter'   => ['twitter','x','twitter url','social_twitter','x (twitter)'],
+            'social_youtube'   => ['youtube','yt','youtube url','social_youtube'],
+            'social_tiktok'    => ['tiktok','tt','tiktok url','social_tiktok'],
+            'status'           => ['status','lead status'],
+            'notes'            => ['notes','note','comments','comment'],
+        ];
+
+        $map = [];
+        foreach ($aliases as $field => $names) {
+            foreach ($headers as $i => $h) {
+                if (in_array($h, $names, true)) {
+                    $map[$field] = $i;
+                    break;
+                }
+            }
+        }
+        return $map;
+    }
+
+    /**
+     * Map a single CSV row to a lead data array ready for Lead::insert().
+     */
+    private static function mapCsvRow(array $row, array $col_map, string $fallback_industry): array
+    {
+        $get = fn(string $field): string =>
+            isset($col_map[$field], $row[$col_map[$field]])
+                ? trim((string)$row[$col_map[$field]])
+                : '';
+
+        $status = $get('status');
+        if (!in_array($status, ['new', 'contacted', 'qualified', 'closed'], true)) {
+            $status = 'new';
+        }
+
+        $business_name = sanitize_text_field($get('business_name'));
+        $city          = sanitize_text_field($get('city'));
+        $phone         = sanitize_text_field($get('phone'));
+
+        // Generate a stable, unique place_id so the UNIQUE KEY constraint is satisfied
+        // and natural deduplication works at the DB level as a fallback.
+        $place_id = 'csv_' . md5($business_name . '|' . strtolower($city) . '|' . $phone);
+
+        return [
+            'place_id'         => $place_id,
+            'business_name'    => $business_name,
+            'industry'         => sanitize_text_field($get('industry') ?: $fallback_industry),
+            'owner_first'      => sanitize_text_field($get('owner_first')),
+            'owner_last'       => sanitize_text_field($get('owner_last')),
+            'website'          => esc_url_raw($get('website')),
+            'address'          => sanitize_text_field($get('address')),
+            'city'             => $city,
+            'state'            => sanitize_text_field($get('state')),
+            'zip'              => sanitize_text_field($get('zip')),
+            'phone'            => $phone,
+            'email'            => sanitize_email($get('email')),
+            'rating'           => (float)$get('rating'),
+            'review_count'     => (int)$get('review_count'),
+            'social_facebook'  => esc_url_raw($get('social_facebook')),
+            'social_instagram' => esc_url_raw($get('social_instagram')),
+            'social_linkedin'  => esc_url_raw($get('social_linkedin')),
+            'social_twitter'   => esc_url_raw($get('social_twitter')),
+            'social_youtube'   => esc_url_raw($get('social_youtube')),
+            'social_tiktok'    => esc_url_raw($get('social_tiktok')),
+            'status'           => $status,
+            'notes'            => sanitize_textarea_field($get('notes')),
+        ];
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
