@@ -253,13 +253,15 @@ final class LeadFinderEngine
         $rating       = (float)($place['rating']       ?? 0);
         $raw_address  = trim($place['address']  ?? '');
 
+        $temporarily_closed = false;
         if ($place_url) {
-            $details      = GoogleMapsClient::getPlaceDetails($place_url);
-            $phone        = $phone   ?: trim($details['phone']        ?? '');
-            $website      = $website ?: trim($details['website']      ?? '');
-            $review_count = $review_count ?: (int)($details['review_count'] ?? 0);
-            $rating       = $rating       ?: (float)($details['rating']     ?? 0);
-            $raw_address  = $raw_address  ?: trim($details['address']       ?? '');
+            $details            = GoogleMapsClient::getPlaceDetails($place_url);
+            $phone              = $phone   ?: trim($details['phone']        ?? '');
+            $website            = $website ?: trim($details['website']      ?? '');
+            $review_count       = $review_count ?: (int)($details['review_count'] ?? 0);
+            $rating             = $rating       ?: (float)($details['rating']     ?? 0);
+            $raw_address        = $raw_address  ?: trim($details['address']       ?? '');
+            $temporarily_closed = (bool)($details['temporarily_closed'] ?? false);
         }
 
         // 2. Filter: skip if 50+ reviews (confirm with place page data)
@@ -271,9 +273,6 @@ final class LeadFinderEngine
         // 4. Parse address
         $addr = self::parseAddress($raw_address ?: ($place['address'] ?? ''));
 
-        // 5. Dedup by name + city
-        if ($addr['city'] && Lead::existsByNameAndCity($name, $addr['city'])) return 'duplicate';
-
         // 6. Fetch business homepage
         $html = self::fetchHtml($website);
         if (!$html) return 'no_website';
@@ -281,7 +280,7 @@ final class LeadFinderEngine
         // 7. Extract phone from website if Maps didn't provide one
         if (!$phone) {
             $phone = self::extractPhoneFromHtml($html);
-            if (!$phone) return 'no_phone';
+            // No phone found — save anyway with blank phone rather than discarding the lead
         }
 
         // 8. Extract email and social links from homepage
@@ -313,6 +312,7 @@ final class LeadFinderEngine
             'seo_score'        => 0,
             'seo_issues'       => [],
             'status'           => 'new',
+            'notes'            => $temporarily_closed ? 'Temporarily closed per Google Maps' : '',
         ]);
 
         return 'saved';
