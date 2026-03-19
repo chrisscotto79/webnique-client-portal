@@ -691,7 +691,10 @@ final class LeadFinderAdmin
                 ciLog('Filter complete — '+total+' of '+(filtered.total_rows||0)+' rows passed. Starting website scrape…','#60a5fa');
 
                 // ── Phase 2: scrape one lead per request ─────────────────
-                let processed=0,lastStats=null,consec=0;
+                // Auto-stop is intentionally removed — bad sites (SSL errors,
+                // timeouts, PHP notices) should never kill a 200-lead run.
+                // The Stop button is there if the user wants to halt manually.
+                let processed=0,lastStats=null,networkFail=0;
                 while(processed<total&&!_ciStopped){
                     ciLabel('Scraping '+(processed+1)+' / '+total+'…');
                     let pr=null;
@@ -702,12 +705,25 @@ final class LeadFinderAdmin
                         fd2.append('nonce',<?php echo wp_json_encode($nonce); ?>);
                         fd2.append('batch_id',batch_id);
                         const r2=await fetch(ajaxurl,{method:'POST',body:fd2,signal:ctrl.signal});
-                        clearTimeout(tid);
+                        clearTimeout(tid);networkFail=0;
                         const raw2=await r2.text();
-                        try{pr=JSON.parse(raw2);}catch(je){ciLog('Row '+(processed+1)+' server error','#f87171');if(++consec>=5){ciErr('5 server errors — stopping.');_ciStopped=true;}processed++;ciProg(processed,total);continue;}
-                    }catch(e){ciLog('Row '+(processed+1)+' timed out.','#fb923c');if(++consec>=5){ciErr('5 timeouts — stopping.');_ciStopped=true;}processed++;ciProg(processed,total);continue;}
-                    if(!pr?.success){ciLog('Row '+(processed+1)+': '+(pr?.data?.message||'Error'),'#f87171');if(++consec>=5){ciErr('5 errors — stopping.');_ciStopped=true;}processed++;ciProg(processed,total);continue;}
-                    consec=0;
+                        try{pr=JSON.parse(raw2);}catch(je){
+                            // PHP produced non-JSON (notice/warning before output) — skip row, keep going
+                            ciLog('Row '+(processed+1)+' skipped (server output issue)','#fb923c');
+                            processed++;ciProg(processed,total);continue;
+                        }
+                    }catch(e){
+                        // True network failure (not an abort from our own timeout)
+                        if(++networkFail>=10){ciErr('10 consecutive network failures — the server may be unreachable.');_ciStopped=true;}
+                        ciLog('Row '+(processed+1)+' network error: '+e.message,'#fb923c');
+                        processed++;ciProg(processed,total);continue;
+                    }
+                    // Session expired — only hard-stop worth doing
+                    if(!pr?.success){
+                        if(pr?.data?.message?.includes('expired')){ciErr(pr.data.message);_ciStopped=true;}
+                        else{ciLog('Row '+(processed+1)+' skipped: '+(pr?.data?.message||'unknown error'),'#f87171');}
+                        processed++;ciProg(processed,total);continue;
+                    }
                     const d=pr.data;
                     processed=d.processed;lastStats=d.stats;
                     const name=d.name||('Row '+processed);
@@ -1313,8 +1329,7 @@ final class LeadFinderAdmin
 
             $business_name = sanitize_text_field($get($col_map['business_name']));
             if (!$business_name) {
-                $filtered['no_phone']++; // counted as "no phone" since we won't be able to act on it anyway
-                continue;
+                continue; // silently skip rows with no business name (not counted in any filter bucket)
             }
 
             // 1. Review count < 100
@@ -1403,6 +1418,8 @@ final class LeadFinderAdmin
             return;
         }
 
+        // Buffer all output so stray PHP notices/warnings never corrupt the JSON response
+        ob_start();
         @set_time_limit(0);
 
         $rows     = $state['rows'];
@@ -1413,6 +1430,7 @@ final class LeadFinderAdmin
         $fallback = $state['fallback_industry'];
 
         if ($offset >= $total) {
+            ob_end_clean();
             delete_transient('wnq_csv_' . $batch_id);
             wp_send_json_success(['processed' => $total, 'total' => $total, 'stats' => $stats, 'done' => true]);
             return;
@@ -1501,6 +1519,8 @@ final class LeadFinderAdmin
         } else {
             set_transient('wnq_csv_' . $batch_id, $state, 2 * HOUR_IN_SECONDS);
         }
+
+        ob_end_clean(); // discard any stray PHP output before sending JSON
 
         wp_send_json_success([
             'processed' => $new_offset,
