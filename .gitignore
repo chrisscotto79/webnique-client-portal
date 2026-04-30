@@ -1,0 +1,9 @@
+.DS_Store
+*.zip
+webnique-client-portal/wp-config.php
+webnique-client-portal/Test-Client-Debug.php
+webnique-client-portal/diagnose.php
+webnique-client-portal/seo-system-debugger.php
+webnique-client-portal/test-ajax-direct.php
+webnique-client-portal/scraper/node_modules/
+webnique-client-portal/scraper/.env
