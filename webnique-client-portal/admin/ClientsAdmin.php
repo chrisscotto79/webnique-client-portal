@@ -323,7 +323,9 @@ final class ClientsAdmin
                 { label: 'Net', values: data.net || data.afterFees || [], color: '#0d539e' }
             ];
             const values = series.flatMap(item => item.values);
-            const max = Math.max(100, ...values);
+            const maxValue = Math.max(100, ...values);
+            const minValue = Math.min(0, ...values);
+            const range = Math.max(1, maxValue - minValue);
             const chartWidth = width - padding.left - padding.right;
             const chartHeight = height - padding.top - padding.bottom;
             const labels = data.labels || [];
@@ -334,7 +336,7 @@ final class ClientsAdmin
 
             for (let i = 0; i <= 4; i++) {
                 const y = padding.top + (chartHeight / 4) * i;
-                const value = max - (max / 4) * i;
+                const value = maxValue - (range / 4) * i;
                 ctx.strokeStyle = '#e5e7eb';
                 ctx.lineWidth = 1;
                 ctx.beginPath();
@@ -351,7 +353,7 @@ final class ClientsAdmin
             }
 
             function yFor(value) {
-                return padding.top + chartHeight - ((value / max) * chartHeight);
+                return padding.top + chartHeight - (((value - minValue) / range) * chartHeight);
             }
 
             series.forEach(item => {
@@ -616,7 +618,7 @@ final class ClientsAdmin
         }
         .finance-grid {
             display: grid;
-            grid-template-columns: minmax(280px, 420px) 1fr;
+            grid-template-columns: minmax(320px, 440px) minmax(0, 1fr);
             gap: 20px;
             align-items: start;
         }
@@ -629,8 +631,41 @@ final class ClientsAdmin
         .finance-panel h2 {
             margin-top: 0;
         }
-        .finance-panel .form-table th {
-            width: 120px;
+        .finance-form {
+            display: grid;
+            gap: 16px;
+        }
+        .finance-field {
+            display: grid;
+            gap: 6px;
+        }
+        .finance-field label {
+            font-weight: 700;
+            color: #1f2937;
+        }
+        .finance-field input,
+        .finance-field select,
+        .finance-field textarea {
+            box-sizing: border-box;
+            width: 100%;
+            max-width: 100%;
+        }
+        .finance-field-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+        }
+        .amount-input {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .amount-input span {
+            flex: 0 0 auto;
+            font-weight: 700;
+        }
+        .amount-input input {
+            min-width: 0;
         }
         .finance-table .income {
             color: #059669;
@@ -640,8 +675,23 @@ final class ClientsAdmin
             color: #dc2626;
             font-weight: 700;
         }
+        .frequency-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 999px;
+            background: #eef2ff;
+            color: #3730a3;
+            font-size: 11px;
+            font-weight: 700;
+        }
+        .finance-table-wrap {
+            overflow-x: auto;
+        }
         @media (max-width: 1100px) {
             .finance-grid { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 640px) {
+            .finance-field-row { grid-template-columns: 1fr; }
         }
         </style>
         <?php
@@ -695,51 +745,57 @@ final class ClientsAdmin
         <div class="finance-grid">
             <div class="finance-panel">
                 <h2>Add Income or Expense</h2>
-                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="finance-form">
                     <?php wp_nonce_field('wnq_save_finance_entry'); ?>
                     <input type="hidden" name="action" value="wnq_save_finance_entry">
-                    <table class="form-table">
-                        <tr>
-                            <th><label for="finance_type">Type</label></th>
-                            <td>
-                                <select name="type" id="finance_type">
-                                    <option value="income">Income</option>
-                                    <option value="expense">Expense</option>
-                                </select>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th><label for="finance_amount">Amount</label></th>
-                            <td>$<input type="number" name="amount" id="finance_amount" min="0.01" step="0.01" required class="regular-text"></td>
-                        </tr>
-                        <tr>
-                            <th><label for="finance_date">Date</label></th>
-                            <td><input type="date" name="entry_date" id="finance_date" value="<?php echo esc_attr(current_time('Y-m-d')); ?>" required class="regular-text"></td>
-                        </tr>
-                        <tr>
-                            <th><label for="finance_category">Category</label></th>
-                            <td><input type="text" name="category" id="finance_category" value="" placeholder="Hosting, PPC, Client Payment" class="regular-text"></td>
-                        </tr>
-                        <tr>
-                            <th><label for="finance_client">Client</label></th>
-                            <td>
-                                <select name="client_id" id="finance_client">
-                                    <option value="">No client</option>
-                                    <?php foreach ($clients as $client): ?>
-                                        <option value="<?php echo esc_attr($client['id']); ?>"><?php echo esc_html($client['name']); ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th><label for="finance_method">Method</label></th>
-                            <td><input type="text" name="payment_method" id="finance_method" placeholder="Stripe, ACH, Card, Cash" class="regular-text"></td>
-                        </tr>
-                        <tr>
-                            <th><label for="finance_description">Notes</label></th>
-                            <td><textarea name="description" id="finance_description" rows="3" class="large-text"></textarea></td>
-                        </tr>
-                    </table>
+                    <div class="finance-field-row">
+                        <div class="finance-field">
+                            <label for="finance_type">Type</label>
+                            <select name="type" id="finance_type">
+                                <option value="income">Income</option>
+                                <option value="expense">Expense</option>
+                            </select>
+                        </div>
+                        <div class="finance-field">
+                            <label for="finance_recurrence">Frequency</label>
+                            <select name="recurrence" id="finance_recurrence">
+                                <option value="one_time">One time</option>
+                                <option value="monthly">Monthly</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="finance-field">
+                        <label for="finance_amount">Amount</label>
+                        <div class="amount-input">
+                            <span>$</span>
+                            <input type="number" name="amount" id="finance_amount" min="0.01" step="0.01" required>
+                        </div>
+                    </div>
+                    <div class="finance-field">
+                        <label for="finance_date">Start Date</label>
+                        <input type="date" name="entry_date" id="finance_date" value="<?php echo esc_attr(current_time('Y-m-d')); ?>" required>
+                    </div>
+                    <div class="finance-field">
+                        <label for="finance_category">Category</label>
+                        <input type="text" name="category" id="finance_category" value="" placeholder="Hosting, PPC, Client Payment">
+                    </div>
+                    <div class="finance-field">
+                        <label for="finance_client">Client</label>
+                        <select name="client_id" id="finance_client">
+                            <option value="">No client</option>
+                            <?php foreach ($clients as $client): ?>
+                                <option value="<?php echo esc_attr($client['id']); ?>"><?php echo esc_html($client['name']); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="finance-field">
+                        <label for="finance_method">Method</label>
+                        <input type="text" name="payment_method" id="finance_method" placeholder="Stripe, ACH, Card, Cash">
+                    </div>
+                    <div class="finance-field">
+                        <label for="finance_description">Notes</label>
+                        <textarea name="description" id="finance_description" rows="3"></textarea>
+                    </div>
                     <p class="submit">
                         <button type="submit" class="button button-primary">Save Entry</button>
                     </p>
@@ -751,11 +807,13 @@ final class ClientsAdmin
                 <?php if (empty($entries)): ?>
                     <p class="text-muted">No income or expenses have been tracked yet.</p>
                 <?php else: ?>
+                    <div class="finance-table-wrap">
                     <table class="wp-list-table widefat fixed striped finance-table">
                         <thead>
                             <tr>
                                 <th style="width: 110px;">Date</th>
                                 <th style="width: 90px;">Type</th>
+                                <th style="width: 110px;">Frequency</th>
                                 <th style="width: 130px;">Amount</th>
                                 <th>Category</th>
                                 <th>Client</th>
@@ -768,6 +826,7 @@ final class ClientsAdmin
                                 <tr>
                                     <td><?php echo esc_html(date('M j, Y', strtotime($entry['entry_date']))); ?></td>
                                     <td><?php echo esc_html(ucfirst($entry['type'])); ?></td>
+                                    <td><span class="frequency-badge"><?php echo ($entry['recurrence'] ?? 'one_time') === 'monthly' ? 'Monthly' : 'One time'; ?></span></td>
                                     <td class="<?php echo esc_attr($entry['type']); ?>">
                                         <?php echo $entry['type'] === 'expense' ? '-' : '+'; ?>$<?php echo number_format(floatval($entry['amount']), 2); ?>
                                     </td>
@@ -786,6 +845,7 @@ final class ClientsAdmin
                             <?php endforeach; ?>
                         </tbody>
                     </table>
+                    </div>
                 <?php endif; ?>
             </div>
         </div>
@@ -873,6 +933,7 @@ final class ClientsAdmin
                 'category' => 'Client Payment',
                 'amount' => floatval($client['after_fees'] ?? $client['monthly_rate'] ?? 0),
                 'entry_date' => current_time('Y-m-d'),
+                'recurrence' => 'one_time',
                 'client_id' => intval($client['id']),
                 'payment_method' => 'Marked Paid',
                 'description' => 'Payment marked paid for ' . ($client['name'] ?? 'client'),
@@ -899,6 +960,7 @@ final class ClientsAdmin
                 'type' => sanitize_key($_POST['type'] ?? 'income'),
                 'amount' => floatval($_POST['amount'] ?? 0),
                 'entry_date' => sanitize_text_field($_POST['entry_date'] ?? current_time('Y-m-d')),
+                'recurrence' => sanitize_key($_POST['recurrence'] ?? 'one_time'),
                 'category' => sanitize_text_field($_POST['category'] ?? ''),
                 'client_id' => intval($_POST['client_id'] ?? 0),
                 'payment_method' => sanitize_text_field($_POST['payment_method'] ?? ''),
