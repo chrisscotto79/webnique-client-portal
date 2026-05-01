@@ -41,8 +41,8 @@ final class ColdTrackerAdmin
         $cap = current_user_can('wnq_manage_portal') ? 'wnq_manage_portal' : 'manage_options';
         add_submenu_page(
             'wnq-portal',
-            'Website Sales',
-            'Website Sales',
+            'Cold Tracker',
+            'Cold Tracker',
             $cap,
             'wnq-cold-tracker',
             [self::class, 'renderPage']
@@ -225,8 +225,8 @@ final class ColdTrackerAdmin
         <div class="wrap cold-wrap">
             <div class="cold-header">
                 <div class="cold-header-left">
-                    <h1 class="cold-title">Website Sales Tracker</h1>
-                    <p class="cold-subtitle">Track cold calls, website pitches, and website sales performance over time</p>
+                    <h1 class="cold-title">Cold Tracker</h1>
+                    <p class="cold-subtitle">Track cold calls, pitches, meetings, and website sales performance over time</p>
                 </div>
                 <div class="cold-header-right">
                     <div class="cold-streak-badge" id="cold-streak-badge" title="Consecutive days with calls logged">
@@ -273,7 +273,7 @@ final class ColdTrackerAdmin
                     </div>
                     <div class="cold-month-stat">
                         <span class="cold-ms-val" id="mbar-pitches">0</span>
-                        <span class="cold-ms-label">Website Pitches</span>
+                        <span class="cold-ms-label">Pitches</span>
                     </div>
                     <div class="cold-month-stat">
                         <span class="cold-ms-val" id="mbar-meetings">0</span>
@@ -348,7 +348,7 @@ final class ColdTrackerAdmin
                             <input type="number" id="modal-answers" min="0" max="9999" placeholder="0">
                         </div>
                         <div class="cold-kpi-field cold-kpi-pitches">
-                            <label>Website Pitches</label>
+                            <label>Pitches</label>
                             <input type="number" id="modal-pitches" min="0" max="9999" placeholder="0">
                         </div>
                         <div class="cold-kpi-field cold-kpi-meetings">
@@ -940,7 +940,7 @@ CSS;
         charts.day = new Chart(ctx.getContext('2d'), {
             type: 'bar',
             data: {
-                labels: ['Calls Made', 'Answers', 'Website Pitches', 'Meetings', 'Website Sales'],
+                labels: ['Calls Made', 'Answers', 'Pitches', 'Meetings', 'Website Sales'],
                 datasets: [{
                     data: [
                         parseInt(row.num_calls)    || 0,
@@ -1052,7 +1052,7 @@ CSS;
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val amber">${s.pitches || 0}</div>
-                    <div class="cold-sc-key">Website Pitches</div>
+                    <div class="cold-sc-key">Pitches</div>
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val purple">${s.meetings || 0}</div>
@@ -1114,7 +1114,7 @@ CSS;
                     datasets: [
                         { label: 'Calls',    data: data.series.map(d => d.calls),    backgroundColor: '#3b82f6', borderRadius: 4 },
                         { label: 'Answers',  data: data.series.map(d => d.answers),  backgroundColor: '#10b981', borderRadius: 4 },
-                        { label: 'Website Pitches', data: data.series.map(d => d.pitches), backgroundColor: '#f59e0b', borderRadius: 4 },
+                        { label: 'Pitches', data: data.series.map(d => d.pitches), backgroundColor: '#f59e0b', borderRadius: 4 },
                         { label: 'Meetings', data: data.series.map(d => d.meetings), backgroundColor: '#8b5cf6', borderRadius: 4 },
                         { label: 'Website Sales', data: data.series.map(d => d.website_sales), backgroundColor: '#14b8a6', borderRadius: 4 },
                     ],
@@ -1195,7 +1195,7 @@ CSS;
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val amber">${(s.pitches || 0).toLocaleString()}</div>
-                    <div class="cold-sc-key">Website Pitches</div>
+                    <div class="cold-sc-key">Pitches</div>
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val purple">${(s.meetings || 0).toLocaleString()}</div>
@@ -1244,7 +1244,7 @@ CSS;
                     <thead>
                         <tr>
                             <th>Week</th><th>Dates</th>
-                            <th>Calls</th><th>Answers</th><th>Website Pitches</th><th>Meetings</th><th>Website Sales</th>
+                            <th>Calls</th><th>Answers</th><th>Pitches</th><th>Meetings</th><th>Website Sales</th>
                             <th>Ans%</th><th>Conv%</th>
                         </tr>
                     </thead>
