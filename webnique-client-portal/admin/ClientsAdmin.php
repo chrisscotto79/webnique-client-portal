@@ -38,7 +38,7 @@ final class ClientsAdmin
     public static function addSubmenu(): void
     {
         $capability = current_user_can('wnq_manage_portal') ? 'wnq_manage_portal' : 'manage_options';
-        add_submenu_page('wnq-portal', 'Clients', 'Clients', $capability, 'wnq-clients', [self::class, 'render']);
+        add_submenu_page('wnq-portal', 'Money Mangment', 'Money Mangment', $capability, 'wnq-clients', [self::class, 'render']);
     }
 
     private static function ensureFinanceModel(): void
@@ -117,7 +117,7 @@ final class ClientsAdmin
         <div class="wrap wnq-clients-admin">
             <div class="wnq-header">
                 <div>
-                    <h1>Clients & Revenue</h1>
+                    <h1>Money Mangment</h1>
                     <p class="subtitle">Manage clients, track payments, and view analytics</p>
                 </div>
                 <a href="<?php echo admin_url('admin.php?page=wnq-clients&action=add'); ?>" class="page-title-action">+ Add New Client</a>
