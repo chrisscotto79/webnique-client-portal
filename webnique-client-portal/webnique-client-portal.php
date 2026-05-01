@@ -17,6 +17,14 @@ define('WNQ_PORTAL_VERSION', '2.1.0');
 define('WNQ_PORTAL_PATH', plugin_dir_path(__FILE__));
 define('WNQ_PORTAL_URL', plugin_dir_url(__FILE__));
 
+if (!defined('WNQ_ENABLE_SEO_FEATURES')) {
+    define('WNQ_ENABLE_SEO_FEATURES', false);
+}
+
+function wnq_seo_features_enabled(): bool {
+    return defined('WNQ_ENABLE_SEO_FEATURES') && WNQ_ENABLE_SEO_FEATURES;
+}
+
 $plugin_file = WNQ_PORTAL_PATH . 'includes/Core/Plugin.php';
 
 if (!file_exists($plugin_file)) {
@@ -65,20 +73,22 @@ register_activation_hook(__FILE__, function() {
         }
     }
     
-    $seo_model = WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-    if (file_exists($seo_model)) {
-        require_once $seo_model;
-        if (class_exists('WNQ\\Models\\SEO')) {
-            \WNQ\Models\SEO::createTables();
+    if (wnq_seo_features_enabled()) {
+        $seo_model = WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+        if (file_exists($seo_model)) {
+            require_once $seo_model;
+            if (class_exists('WNQ\\Models\\SEO')) {
+                \WNQ\Models\SEO::createTables();
+            }
         }
-    }
 
-    // SEO OS Hub tables
-    $seoos_bootstrap = WNQ_PORTAL_PATH . 'includes/Core/SEOOSBootstrap.php';
-    if (file_exists($seoos_bootstrap)) {
-        require_once $seoos_bootstrap;
-        if (class_exists('WNQ\\Core\\SEOOSBootstrap')) {
-            \WNQ\Core\SEOOSBootstrap::createTables();
+        // SEO OS Hub tables
+        $seoos_bootstrap = WNQ_PORTAL_PATH . 'includes/Core/SEOOSBootstrap.php';
+        if (file_exists($seoos_bootstrap)) {
+            require_once $seoos_bootstrap;
+            if (class_exists('WNQ\\Core\\SEOOSBootstrap')) {
+                \WNQ\Core\SEOOSBootstrap::createTables();
+            }
         }
     }
 });
@@ -133,36 +143,38 @@ add_action('plugins_loaded', function() {
     }
 }, 10);
 
-// SEO OS — Initialize after portal is loaded
-add_action('plugins_loaded', function() {
-    $seoos = WNQ_PORTAL_PATH . 'includes/Core/SEOOSBootstrap.php';
-    if (file_exists($seoos)) {
-        require_once $seoos;
-        if (class_exists('WNQ\\Core\\SEOOSBootstrap')) {
-            try {
-                \WNQ\Core\SEOOSBootstrap::init();
-            } catch (Exception $e) {
-                error_log('WebNique SEO OS Init Error: ' . $e->getMessage());
+if (wnq_seo_features_enabled()) {
+    // SEO OS — Initialize after portal is loaded
+    add_action('plugins_loaded', function() {
+        $seoos = WNQ_PORTAL_PATH . 'includes/Core/SEOOSBootstrap.php';
+        if (file_exists($seoos)) {
+            require_once $seoos;
+            if (class_exists('WNQ\\Core\\SEOOSBootstrap')) {
+                try {
+                    \WNQ\Core\SEOOSBootstrap::init();
+                } catch (Exception $e) {
+                    error_log('WebNique SEO OS Init Error: ' . $e->getMessage());
+                }
             }
         }
-    }
-}, 15);
+    }, 15);
 
-// SEO OS — Auto-create tables on admin if version changed or tables missing
-add_action('admin_init', function() {
-    $installed = get_option('wnq_seoos_db_version', '');
-    if ($installed === WNQ_PORTAL_VERSION) {
-        return;
-    }
-    $seoos = WNQ_PORTAL_PATH . 'includes/Core/SEOOSBootstrap.php';
-    if (file_exists($seoos)) {
-        require_once $seoos;
-        if (class_exists('WNQ\\Core\\SEOOSBootstrap')) {
-            \WNQ\Core\SEOOSBootstrap::createTables();
-            update_option('wnq_seoos_db_version', WNQ_PORTAL_VERSION);
+    // SEO OS — Auto-create tables on admin if version changed or tables missing
+    add_action('admin_init', function() {
+        $installed = get_option('wnq_seoos_db_version', '');
+        if ($installed === WNQ_PORTAL_VERSION) {
+            return;
         }
-    }
-});
+        $seoos = WNQ_PORTAL_PATH . 'includes/Core/SEOOSBootstrap.php';
+        if (file_exists($seoos)) {
+            require_once $seoos;
+            if (class_exists('WNQ\\Core\\SEOOSBootstrap')) {
+                \WNQ\Core\SEOOSBootstrap::createTables();
+                update_option('wnq_seoos_db_version', WNQ_PORTAL_VERSION);
+            }
+        }
+    });
+}
 
 // CLIENT HANDLERS
 add_action('admin_post_wnq_save_client', function() {
@@ -293,24 +305,26 @@ add_action('admin_post_wnq_delete_analytics_client', function() {
     }
 });
 
-// SEO HANDLERS
-add_action('admin_post_wnq_init_seo_client', function() {
-    $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
-    if (file_exists($seo_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        require_once $seo_admin;
-        \WNQ\Admin\SEOAdmin::handleInitClient();
-    }
-});
+if (wnq_seo_features_enabled()) {
+    // SEO HANDLERS
+    add_action('admin_post_wnq_init_seo_client', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::handleInitClient();
+        }
+    });
 
-add_action('admin_post_wnq_init_monthly_tasks', function() {
-    $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
-    if (file_exists($seo_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        require_once $seo_admin;
-        \WNQ\Admin\SEOAdmin::handleInitMonthlyTasks();
-    }
-});
+    add_action('admin_post_wnq_init_monthly_tasks', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::handleInitMonthlyTasks();
+        }
+    });
+}
 
 // AJAX ANALYTICS HANDLERS - FOR CLIENT PORTAL
 add_action('wp_ajax_wnq_get_analytics_data', function() {
@@ -344,99 +358,72 @@ add_action('wp_ajax_wnq_get_analytics_data', function() {
     }
 });
 
-add_action('wp_ajax_nopriv_wnq_get_analytics_data', function() {
-    $nonce = $_POST['nonce'] ?? '';
-    $valid_nonce = false;
+if (wnq_seo_features_enabled()) {
+    add_action('admin_post_wnq_bulk_import_seo', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::handleBulkImport();
+        }
+    });
 
-    if (wp_verify_nonce($nonce, 'wp_rest')) {
-        $valid_nonce = true;
-        $_POST['nonce'] = wp_create_nonce('wnq_analytics_nonce');
-    } elseif (wp_verify_nonce($nonce, 'wnq_analytics_nonce')) {
-        $valid_nonce = true;
-    }
+    add_action('admin_post_wnq_complete_seo_task', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::handleCompleteTask();
+        }
+    });
 
-    if (!$valid_nonce) {
-        wp_send_json_error(['message' => 'Invalid security token']);
-        return;
-    }
+    add_action('admin_post_wnq_uncomplete_seo_task', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::handleUncompleteTask();
+        }
+    });
 
-    $analytics_admin = WNQ_PORTAL_PATH . 'admin/AnalyticsAdmin.php';
-    if (file_exists($analytics_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/AnalyticsConfig.php';
-        require_once WNQ_PORTAL_PATH . 'includes/API/GoogleAnalytics.php';
-        require_once WNQ_PORTAL_PATH . 'includes/API/GoogleSearchConsole.php';
-        require_once WNQ_PORTAL_PATH . 'includes/API/AnalyticsCache.php';
-        require_once $analytics_admin;
-        \WNQ\Admin\AnalyticsAdmin::ajaxGetAnalyticsData();
-    } else {
-        wp_send_json_error(['message' => 'Analytics handler not found']);
-    }
-});
+    add_action('admin_post_wnq_update_seo_task', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::handleUpdateTask();
+        }
+    });
 
-add_action('admin_post_wnq_bulk_import_seo', function() {
-    $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
-    if (file_exists($seo_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        require_once $seo_admin;
-        \WNQ\Admin\SEOAdmin::handleBulkImport();
-    }
-});
+    add_action('admin_post_wnq_add_seo_task', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once WNQ_PORTAL_PATH . 'includes/Models/Client.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::handleAddTask();
+        }
+    });
 
-add_action('admin_post_wnq_complete_seo_task', function() {
-    $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
-    if (file_exists($seo_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        require_once $seo_admin;
-        \WNQ\Admin\SEOAdmin::handleCompleteTask();
-    }
-});
+    add_action('admin_post_wnq_delete_seo_task', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once WNQ_PORTAL_PATH . 'includes/Models/Client.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::handleDeleteTask();
+        }
+    });
 
-add_action('admin_post_wnq_uncomplete_seo_task', function() {
-    $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
-    if (file_exists($seo_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        require_once $seo_admin;
-        \WNQ\Admin\SEOAdmin::handleUncompleteTask();
-    }
-});
-
-add_action('admin_post_wnq_update_seo_task', function() {
-    $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
-    if (file_exists($seo_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        require_once $seo_admin;
-        \WNQ\Admin\SEOAdmin::handleUpdateTask();
-    }
-});
-
-add_action('admin_post_wnq_add_seo_task', function() {
-    $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
-    if (file_exists($seo_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        require_once WNQ_PORTAL_PATH . 'includes/Models/Client.php';
-        require_once $seo_admin;
-        \WNQ\Admin\SEOAdmin::handleAddTask();
-    }
-});
-
-add_action('admin_post_wnq_delete_seo_task', function() {
-    $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
-    if (file_exists($seo_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        require_once WNQ_PORTAL_PATH . 'includes/Models/Client.php';
-        require_once $seo_admin;
-        \WNQ\Admin\SEOAdmin::handleDeleteTask();
-    }
-});
-
-add_action('admin_post_wnq_save_seo_report', function() {
-    $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
-    if (file_exists($seo_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        require_once $seo_admin;
-        \WNQ\Admin\SEOAdmin::handleSaveReport();
-    }
-});
+    add_action('admin_post_wnq_save_seo_report', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::handleSaveReport();
+        }
+    });
+}
 
 // OTHER AJAX HANDLERS
 add_action('wp_ajax_wnq_update_task_status', function() {
@@ -457,51 +444,53 @@ add_action('wp_ajax_wnq_get_client_analytics', function() {
     }
 });
 
-add_action('admin_post_wnq_csv_import_seo', function() {
-    $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
-    if (file_exists($seo_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        require_once WNQ_PORTAL_PATH . 'includes/Models/Client.php';
-        require_once $seo_admin;
-        \WNQ\Admin\SEOAdmin::handleCsvImport();
-    }
-});
+if (wnq_seo_features_enabled()) {
+    add_action('admin_post_wnq_csv_import_seo', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once WNQ_PORTAL_PATH . 'includes/Models/Client.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::handleCsvImport();
+        }
+    });
 
-add_action('admin_post_wnq_download_csv_template', function() {
-    $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
-    if (file_exists($seo_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        require_once $seo_admin;
-        \WNQ\Admin\SEOAdmin::handleDownloadCsvTemplate();
-    }
-});
+    add_action('admin_post_wnq_download_csv_template', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::handleDownloadCsvTemplate();
+        }
+    });
 
-add_action('admin_post_wnq_export_seo_csv', function() {
-    $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
-    if (file_exists($seo_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        require_once $seo_admin;
-        \WNQ\Admin\SEOAdmin::handleExportCsv();
-    }
-});
+    add_action('admin_post_wnq_export_seo_csv', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::handleExportCsv();
+        }
+    });
 
-add_action('admin_post_wnq_delete_all_seo_tasks', function() {
-    $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
-    if (file_exists($seo_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        require_once $seo_admin;
-        \WNQ\Admin\SEOAdmin::handleDeleteAllTasks();
-    }
-});
+    add_action('admin_post_wnq_delete_all_seo_tasks', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::handleDeleteAllTasks();
+        }
+    });
 
-add_action('wp_ajax_wnq_seo_toggle_task', function() {
-    $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
-    if (file_exists($seo_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        require_once $seo_admin;
-        \WNQ\Admin\SEOAdmin::ajaxToggleTask();
-    }
-});
+    add_action('wp_ajax_wnq_seo_toggle_task', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::ajaxToggleTask();
+        }
+    });
+}
 
 add_action('admin_post_wnq_toggle_recurring', function() {
     $tasks_admin = WNQ_PORTAL_PATH . 'admin/TasksAdmin.php';
@@ -512,23 +501,25 @@ add_action('admin_post_wnq_toggle_recurring', function() {
     }
 });
 
-add_action('wp_ajax_wnq_seo_update_task_status', function() {
-    $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
-    if (file_exists($seo_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        require_once $seo_admin;
-        \WNQ\Admin\SEOAdmin::ajaxUpdateTaskStatus();
-    }
-});
+if (wnq_seo_features_enabled()) {
+    add_action('wp_ajax_wnq_seo_update_task_status', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::ajaxUpdateTaskStatus();
+        }
+    });
 
-add_action('wp_ajax_wnq_seo_update_task_notes', function() {
-    $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
-    if (file_exists($seo_admin)) {
-        require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        require_once $seo_admin;
-        \WNQ\Admin\SEOAdmin::ajaxUpdateTaskNotes();
-    }
-});
+    add_action('wp_ajax_wnq_seo_update_task_notes', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::ajaxUpdateTaskNotes();
+        }
+    });
+}
 
 
 // ADMIN MENU
@@ -549,7 +540,9 @@ add_action('admin_menu', function() {
     add_submenu_page('wnq-portal', 'Clients', 'Clients', $capability, 'wnq-clients', 'wnq_render_clients_page');
     add_submenu_page('wnq-portal', 'Tasks', 'Tasks', $capability, 'wnq-tasks', 'wnq_render_tasks_page');
     add_submenu_page('wnq-portal', 'Analytics', 'Analytics', $capability, 'wnq-analytics', 'wnq_render_analytics_page');
-    add_submenu_page('wnq-portal', 'SEO Tracking', 'SEO Tracking', $capability, 'wnq-seo', 'wnq_render_seo_page');
+    if (wnq_seo_features_enabled()) {
+        add_submenu_page('wnq-portal', 'SEO Tracking', 'SEO Tracking', $capability, 'wnq-seo', 'wnq_render_seo_page');
+    }
     add_submenu_page('wnq-portal', 'Web Requests', 'Web Requests', $capability, 'wnq-web-requests', 'wnq_render_requests_page');
 }, 10);
 

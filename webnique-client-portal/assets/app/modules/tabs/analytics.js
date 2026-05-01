@@ -10,7 +10,6 @@ import { el, pill, button, escapeHtml } from "../ui.js";
 
 // State
 let currentPeriod = 30;
-let currentChart = null;
 let isLoading = false;
 
 export function renderAnalytics(main, side, state, shell) {
@@ -20,8 +19,10 @@ export function renderAnalytics(main, side, state, shell) {
     return;
   }
 
+  if (!main) return;
+
   main.innerHTML = "";
-  side.innerHTML = "";
+  if (side) side.innerHTML = "";
 
   // RESTORE SHELL'S RIGHT SIDEBAR
   if (side && side.parentElement) {
@@ -118,7 +119,7 @@ async function loadAnalytics(main, side, state, shell, period) {
  */
 function renderInterface(main, side, state, shell, data, period) {
   // Header
-  main.appendChild(createHeader(state, shell, period));
+  main.appendChild(createHeader(main, side, state, shell, period));
 
   // Overview stats
   main.appendChild(createOverviewCards(data.overview || {}));
@@ -157,7 +158,7 @@ function renderInterface(main, side, state, shell, data, period) {
 /**
  * Create header
  */
-function createHeader(state, shell, period) {
+function createHeader(main, side, state, shell, period) {
   const header = el("div", {
     style: {
       marginBottom: "24px",
@@ -224,13 +225,7 @@ function createHeader(state, shell, period) {
     });
 
     btn.addEventListener("click", () => {
-      loadAnalytics(
-        document.querySelector('[data-wnq-main]'),
-        document.querySelector('[data-wnq-side]'),
-        state,
-        shell,
-        p.value
-      );
+      loadAnalytics(main, side, state, shell, p.value);
     });
 
     controls.appendChild(btn);
@@ -408,55 +403,82 @@ function createVisitorsChart(data) {
 }
 
 /**
- * Render Chart.js chart
+ * Render a lightweight canvas chart without depending on a global chart library.
  */
 function renderChart(canvas, data) {
-  if (typeof Chart === "undefined") {
-    console.warn("[Analytics] Chart.js not loaded");
-    canvas.parentElement.appendChild(
-      el("p", {
-        text: "Chart library not loaded. Please refresh the page.",
-        style: { color: "#ef4444", textAlign: "center", padding: "20px" },
-      })
-    );
-    return;
-  }
-
-  if (currentChart) {
-    currentChart.destroy();
-  }
-
   const ctx = canvas.getContext("2d");
+  const rect = canvas.parentElement?.getBoundingClientRect();
+  const width = Math.max(320, Math.floor(rect?.width || 640));
+  const height = 280;
+  const dpr = window.devicePixelRatio || 1;
+  const values = data.map((d) => Number(d.users || 0));
+  const max = Math.max(1, ...values);
+  const pad = { top: 18, right: 18, bottom: 38, left: 46 };
+  const chartW = width - pad.left - pad.right;
+  const chartH = height - pad.top - pad.bottom;
 
-  currentChart = new Chart(ctx, {
-    type: "line",
-    data: {
-      labels: data.map((d) => d.date),
-      datasets: [
-        {
-          label: "Visitors",
-          data: data.map((d) => d.users),
-          borderColor: "#0d539e",
-          backgroundColor: "rgba(13, 83, 158, 0.1)",
-          tension: 0.4,
-          fill: true,
-        },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: true,
-      plugins: {
-        legend: { display: false },
-      },
-      scales: {
-        y: {
-          beginAtZero: true,
-          ticks: { precision: 0 },
-        },
-      },
-    },
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  ctx.strokeStyle = "#e5e7eb";
+  ctx.lineWidth = 1;
+  ctx.fillStyle = "#6b7280";
+  ctx.font = "12px system-ui, sans-serif";
+
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + chartH * (i / 4);
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(width - pad.right, y);
+    ctx.stroke();
+    const label = Math.round(max * (1 - i / 4)).toLocaleString();
+    ctx.fillText(label, 8, y + 4);
+  }
+
+  if (values.length === 0) return;
+
+  const points = values.map((value, i) => {
+    const x = pad.left + (values.length === 1 ? chartW / 2 : chartW * (i / (values.length - 1)));
+    const y = pad.top + chartH - (value / max) * chartH;
+    return { x, y, value, label: data[i]?.date || "" };
   });
+
+  ctx.beginPath();
+  points.forEach((p, i) => {
+    i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+  });
+  ctx.lineTo(points[points.length - 1].x, pad.top + chartH);
+  ctx.lineTo(points[0].x, pad.top + chartH);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(13,83,158,0.12)";
+  ctx.fill();
+
+  ctx.beginPath();
+  points.forEach((p, i) => {
+    i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+  });
+  ctx.strokeStyle = "#0d539e";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  points.forEach((p) => {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = "#0d539e";
+    ctx.fill();
+  });
+
+  const first = points[0];
+  const last = points[points.length - 1];
+  ctx.fillStyle = "#6b7280";
+  ctx.textAlign = "left";
+  ctx.fillText(first.label, pad.left, height - 12);
+  ctx.textAlign = "right";
+  ctx.fillText(last.label, width - pad.right, height - 12);
 }
 
 /**
