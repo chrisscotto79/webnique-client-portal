@@ -35,6 +35,7 @@ final class ColdTracker
             num_answers   int(11) NOT NULL DEFAULT 0,
             num_pitches   int(11) NOT NULL DEFAULT 0,
             num_meetings  int(11) NOT NULL DEFAULT 0,
+            num_website_sales int(11) NOT NULL DEFAULT 0,
             notes         text,
             created_at    datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at    datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -42,6 +43,22 @@ final class ColdTracker
             UNIQUE KEY call_date (call_date),
             KEY idx_date (call_date)
         ) $c;");
+
+        self::ensureSchema();
+    }
+
+    public static function ensureSchema(): void
+    {
+        global $wpdb;
+        $columns = $wpdb->get_col("DESCRIBE " . self::table(), 0);
+
+        if (empty($columns)) {
+            return;
+        }
+
+        if (!in_array('num_website_sales', $columns, true)) {
+            $wpdb->query("ALTER TABLE " . self::table() . " ADD COLUMN num_website_sales int(11) NOT NULL DEFAULT 0 AFTER num_meetings");
+        }
     }
 
     /**
@@ -62,6 +79,7 @@ final class ColdTracker
             'num_answers'  => max(0, (int)($data['num_answers']  ?? 0)),
             'num_pitches'  => max(0, (int)($data['num_pitches']  ?? 0)),
             'num_meetings' => max(0, (int)($data['num_meetings'] ?? 0)),
+            'num_website_sales' => max(0, (int)($data['num_website_sales'] ?? 0)),
             'notes'        => sanitize_textarea_field($data['notes'] ?? ''),
             'updated_at'   => current_time('mysql'),
         ];
@@ -130,6 +148,7 @@ final class ColdTracker
             'answers'     => 0,
             'pitches'     => 0,
             'meetings'    => 0,
+            'website_sales' => 0,
             'days_called' => 0,
         ];
 
@@ -138,6 +157,7 @@ final class ColdTracker
             $totals['answers']  += (int)$day['num_answers'];
             $totals['pitches']  += (int)$day['num_pitches'];
             $totals['meetings'] += (int)$day['num_meetings'];
+            $totals['website_sales'] += (int)($day['num_website_sales'] ?? 0);
             if ((int)$day['num_calls'] > 0) {
                 $totals['days_called']++;
             }
@@ -150,6 +170,8 @@ final class ColdTracker
         $totals['pitch_rate']    = $totals['answers'] > 0 ? round($totals['pitches']  / $totals['answers'] * 100, 1) : 0;
         $totals['meeting_rate']  = $totals['pitches'] > 0 ? round($totals['meetings'] / $totals['pitches'] * 100, 1) : 0;
         $totals['call_to_meet']  = $totals['calls']   > 0 ? round($totals['meetings'] / $totals['calls']   * 100, 2) : 0;
+        $totals['website_sale_rate'] = $totals['pitches'] > 0 ? round($totals['website_sales'] / $totals['pitches'] * 100, 1) : 0;
+        $totals['call_to_sale'] = $totals['calls'] > 0 ? round($totals['website_sales'] / $totals['calls'] * 100, 2) : 0;
 
         return $totals;
     }
@@ -167,8 +189,9 @@ final class ColdTracker
         $ar      = $stats['answer_rate']  ?? 0;
         $pr      = $stats['pitch_rate']   ?? 0;
         $mr      = $stats['meeting_rate'] ?? 0;
+        $wsr     = $stats['website_sale_rate'] ?? 0;
         $avg     = $stats['avg_calls']    ?? 0;
-        $c2m     = $stats['call_to_meet'] ?? 0;
+        $c2s     = $stats['call_to_sale'] ?? 0;
 
         if ($calls === 0) {
             $suggestions[] = [
@@ -235,30 +258,43 @@ final class ColdTracker
             ];
         }
 
-        // ── Website sales rate (of pitches) ──────────────────────────────
+        // ── Meeting Rate (of pitches) ────────────────────────────────────
         if ($mr < 10) {
             $suggestions[] = [
                 'type' => 'danger',
-                'msg'  => "Website sales conversion is {$mr}%. Make the offer concrete: focus on one website problem, one outcome, and one clear next step.",
+                'msg'  => "Meeting conversion is {$mr}%. Make the ask feel low-commitment and offer a specific time.",
             ];
         } elseif ($mr < 20) {
             $suggestions[] = [
                 'type' => 'warning',
-                'msg'  => "Website sales rate is {$mr}%. Try using a quick website teardown or before/after example before asking for the sale.",
+                'msg'  => "Meeting rate is {$mr}%. Try asking permission to send a quick website teardown before the meeting ask.",
             ];
         } elseif ($mr >= 25) {
             $suggestions[] = [
                 'type' => 'success',
-                'msg'  => "Great website sales conversion at {$mr}%! Your offer and close are working.",
+                'msg'  => "Great meeting conversion at {$mr}%. Your discovery ask is working.",
+            ];
+        }
+
+        // ── Website sales rate (of pitches) ──────────────────────────────
+        if ($wsr > 0 && $wsr < 5) {
+            $suggestions[] = [
+                'type' => 'warning',
+                'msg'  => "Website sales conversion is {$wsr}%. Make the offer concrete: focus on one website problem, one outcome, and one clear next step.",
+            ];
+        } elseif ($wsr >= 10) {
+            $suggestions[] = [
+                'type' => 'success',
+                'msg'  => "Great website sales conversion at {$wsr}%. Your website offer and close are working.",
             ];
         }
 
         // ── Overall Efficiency ───────────────────────────────────────────
-        if ($calls >= 100 && $c2m > 0) {
-            $calls_per_meeting = round(1 / ($c2m / 100));
+        if ($calls >= 100 && $c2s > 0) {
+            $calls_per_sale = round(1 / ($c2s / 100));
             $suggestions[] = [
                 'type' => 'info',
-                'msg'  => "You're closing 1 website sale every ~{$calls_per_meeting} dials. Increase call volume or improve any one stage to bring that number down.",
+                'msg'  => "You're closing 1 website sale every ~{$calls_per_sale} dials. Increase call volume or improve any one stage to bring that number down.",
             ];
         }
 

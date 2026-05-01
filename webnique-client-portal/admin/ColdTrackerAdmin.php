@@ -98,6 +98,7 @@ final class ColdTrackerAdmin
             'num_answers'  => (int)($_POST['num_answers']  ?? 0),
             'num_pitches'  => (int)($_POST['num_pitches']  ?? 0),
             'num_meetings' => (int)($_POST['num_meetings'] ?? 0),
+            'num_website_sales' => (int)($_POST['num_website_sales'] ?? 0),
             'notes'        => sanitize_textarea_field($_POST['notes'] ?? ''),
         ]);
 
@@ -160,6 +161,7 @@ final class ColdTrackerAdmin
                     'answers'  => isset($days[$d]) ? (int)$days[$d]['num_answers']  : 0,
                     'pitches'  => isset($days[$d]) ? (int)$days[$d]['num_pitches']  : 0,
                     'meetings' => isset($days[$d]) ? (int)$days[$d]['num_meetings'] : 0,
+                    'website_sales' => isset($days[$d]) ? (int)($days[$d]['num_website_sales'] ?? 0) : 0,
                 ];
             }
 
@@ -188,6 +190,7 @@ final class ColdTrackerAdmin
                     'date'  => $dateStr,
                     'day'   => $d,
                     'calls' => isset($rows[$dateStr]) ? (int)$rows[$dateStr]['num_calls'] : 0,
+                    'website_sales' => isset($rows[$dateStr]) ? (int)($rows[$dateStr]['num_website_sales'] ?? 0) : 0,
                 ];
             }
 
@@ -195,8 +198,8 @@ final class ColdTrackerAdmin
             $bestDay  = null;
             $bestMeet = -1;
             foreach ($rows as $row) {
-                if ((int)$row['num_meetings'] > $bestMeet) {
-                    $bestMeet = (int)$row['num_meetings'];
+                if ((int)($row['num_website_sales'] ?? 0) > $bestMeet) {
+                    $bestMeet = (int)($row['num_website_sales'] ?? 0);
                     $bestDay  = $row;
                 }
             }
@@ -274,6 +277,10 @@ final class ColdTrackerAdmin
                     </div>
                     <div class="cold-month-stat">
                         <span class="cold-ms-val" id="mbar-meetings">0</span>
+                        <span class="cold-ms-label">Meetings</span>
+                    </div>
+                    <div class="cold-month-stat">
+                        <span class="cold-ms-val" id="mbar-sales">0</span>
                         <span class="cold-ms-label">Website Sales</span>
                     </div>
                     <div class="cold-month-stat">
@@ -345,8 +352,12 @@ final class ColdTrackerAdmin
                             <input type="number" id="modal-pitches" min="0" max="9999" placeholder="0">
                         </div>
                         <div class="cold-kpi-field cold-kpi-meetings">
-                            <label>Website Sales</label>
+                            <label>Meetings Booked</label>
                             <input type="number" id="modal-meetings" min="0" max="9999" placeholder="0">
+                        </div>
+                        <div class="cold-kpi-field cold-kpi-sales">
+                            <label>Website Sales</label>
+                            <input type="number" id="modal-sales" min="0" max="9999" placeholder="0">
                         </div>
                     </div>
 
@@ -362,7 +373,7 @@ final class ColdTrackerAdmin
                         </div>
                         <div class="cold-rate-item">
                             <span class="cold-rate-val" id="modal-rate-meeting">0%</span>
-                            <span class="cold-rate-key">Website Sale Rate</span>
+                            <span class="cold-rate-key">Meeting Rate</span>
                         </div>
                         <div class="cold-rate-item cold-rate-highlight">
                             <span class="cold-rate-val" id="modal-rate-conv">0%</span>
@@ -506,6 +517,7 @@ final class ColdTrackerAdmin
 .cold-stat-answers  { background: rgba(16,185,129,.2);  color: #34d399; }
 .cold-stat-pitches  { background: rgba(245,158,11,.2);  color: #fbbf24; }
 .cold-stat-meetings { background: rgba(139,92,246,.2);  color: #a78bfa; }
+.cold-stat-sales    { background: rgba(20,184,166,.2);  color: #2dd4bf; }
 .cold-day-rate { font-size: 0.62rem; color: #64748b; }
 .cold-day-note-dot {
     position: absolute; top: 5px; right: 5px;
@@ -620,6 +632,7 @@ final class ColdTrackerAdmin
 .cold-kpi-answers label { color: #34d399; }
 .cold-kpi-pitches label { color: #fbbf24; }
 .cold-kpi-meetings label { color: #a78bfa; }
+.cold-kpi-sales label { color: #2dd4bf; }
 .cold-kpi-field input {
     width: 100%; background: #0f172a; border: 1px solid #334155;
     border-radius: 8px; padding: 10px 12px; color: #e2e8f0;
@@ -631,6 +644,7 @@ final class ColdTrackerAdmin
 .cold-kpi-answers input:focus { border-color: #10b981; }
 .cold-kpi-pitches input:focus { border-color: #f59e0b; }
 .cold-kpi-meetings input:focus { border-color: #8b5cf6; }
+.cold-kpi-sales input:focus { border-color: #14b8a6; }
 
 /* Live rate pills */
 .cold-rate-row {
@@ -829,10 +843,11 @@ CSS;
                     <span class="cold-stat-calls">${row.num_calls}c</span>
                     <span class="cold-stat-answers">${row.num_answers}a</span>
                     <span class="cold-stat-pitches">${row.num_pitches}p</span>
-                    <span class="cold-stat-meetings">${row.num_meetings}s</span>
+                    <span class="cold-stat-meetings">${row.num_meetings}m</span>
+                    <span class="cold-stat-sales">${row.num_website_sales || 0}s</span>
                 </div>`;
                 const conv = row.num_calls > 0
-                    ? Math.round(parseInt(row.num_meetings) / parseInt(row.num_calls) * 100)
+                    ? Math.round((parseInt(row.num_website_sales) || 0) / parseInt(row.num_calls) * 100)
                     : 0;
                 inner += `<div class="cold-day-rate">${conv}% sale</div>`;
             }
@@ -858,12 +873,13 @@ CSS;
             return;
         }
 
-        let calls = 0, answers = 0, pitches = 0, meetings = 0, days = 0;
+        let calls = 0, answers = 0, pitches = 0, meetings = 0, sales = 0, days = 0;
         rows.forEach(r => {
             calls    += parseInt(r.num_calls)    || 0;
             answers  += parseInt(r.num_answers)  || 0;
             pitches  += parseInt(r.num_pitches)  || 0;
             meetings += parseInt(r.num_meetings) || 0;
+            sales    += parseInt(r.num_website_sales) || 0;
             if (parseInt(r.num_calls) > 0) days++;
         });
 
@@ -871,15 +887,16 @@ CSS;
         document.getElementById('mbar-answers').textContent  = answers.toLocaleString();
         document.getElementById('mbar-pitches').textContent  = pitches.toLocaleString();
         document.getElementById('mbar-meetings').textContent = meetings.toLocaleString();
+        document.getElementById('mbar-sales').textContent    = sales.toLocaleString();
         document.getElementById('mbar-answer-rate').textContent = rate(answers, calls) + '%';
-        document.getElementById('mbar-conv').textContent    = rate(meetings, calls) + '%';
+        document.getElementById('mbar-conv').textContent    = rate(sales, calls) + '%';
         document.getElementById('mbar-days').textContent    = days;
         document.getElementById('cold-month-bar').style.display = 'flex';
     }
 
     /* ── Day Modal ──────────────────────────────────────────────────── */
     function openDayModal(ds) {
-        const row = monthData[ds] || { call_date: ds, num_calls: 0, num_answers: 0, num_pitches: 0, num_meetings: 0, notes: '' };
+        const row = monthData[ds] || { call_date: ds, num_calls: 0, num_answers: 0, num_pitches: 0, num_meetings: 0, num_website_sales: 0, notes: '' };
         const d   = new Date(ds + 'T12:00:00');
 
         document.getElementById('modal-date-title').textContent =
@@ -889,6 +906,7 @@ CSS;
         document.getElementById('modal-answers').value = row.num_answers  || 0;
         document.getElementById('modal-pitches').value = row.num_pitches  || 0;
         document.getElementById('modal-meetings').value= row.num_meetings || 0;
+        document.getElementById('modal-sales').value   = row.num_website_sales || 0;
         document.getElementById('modal-notes').value   = row.notes        || '';
 
         updateModalRates();
@@ -901,15 +919,16 @@ CSS;
         const answers  = parseInt(document.getElementById('modal-answers').value)  || 0;
         const pitches  = parseInt(document.getElementById('modal-pitches').value)  || 0;
         const meetings = parseInt(document.getElementById('modal-meetings').value) || 0;
+        const sales    = parseInt(document.getElementById('modal-sales').value) || 0;
 
         document.getElementById('modal-rate-answer').textContent  = rate(answers,  calls)   + '%';
         document.getElementById('modal-rate-pitch').textContent   = rate(pitches,  answers) + '%';
         document.getElementById('modal-rate-meeting').textContent = rate(meetings, pitches) + '%';
-        document.getElementById('modal-rate-conv').textContent    = rate(meetings, calls)   + '%';
+        document.getElementById('modal-rate-conv').textContent    = rate(sales, calls)   + '%';
 
         // Update live chart
         if (charts.day) {
-            charts.day.data.datasets[0].data = [calls, answers, pitches, meetings];
+            charts.day.data.datasets[0].data = [calls, answers, pitches, meetings, sales];
             charts.day.update('none');
         }
     }
@@ -921,15 +940,16 @@ CSS;
         charts.day = new Chart(ctx.getContext('2d'), {
             type: 'bar',
             data: {
-                labels: ['Calls Made', 'Answers', 'Website Pitches', 'Website Sales'],
+                labels: ['Calls Made', 'Answers', 'Website Pitches', 'Meetings', 'Website Sales'],
                 datasets: [{
                     data: [
                         parseInt(row.num_calls)    || 0,
                         parseInt(row.num_answers)  || 0,
                         parseInt(row.num_pitches)  || 0,
                         parseInt(row.num_meetings) || 0,
+                        parseInt(row.num_website_sales) || 0,
                     ],
-                    backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'],
+                    backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#14b8a6'],
                     borderRadius: 6,
                     borderSkipped: false,
                 }],
@@ -964,6 +984,7 @@ CSS;
             num_answers: document.getElementById('modal-answers').value,
             num_pitches: document.getElementById('modal-pitches').value,
             num_meetings:document.getElementById('modal-meetings').value,
+            num_website_sales: document.getElementById('modal-sales').value,
             notes:       document.getElementById('modal-notes').value,
         }, res => {
             btn.disabled = false;
@@ -976,6 +997,7 @@ CSS;
                     num_answers:  parseInt(document.getElementById('modal-answers').value) || 0,
                     num_pitches:  parseInt(document.getElementById('modal-pitches').value) || 0,
                     num_meetings: parseInt(document.getElementById('modal-meetings').value)|| 0,
+                    num_website_sales: parseInt(document.getElementById('modal-sales').value) || 0,
                     notes:        document.getElementById('modal-notes').value,
                 };
                 renderCalendar(calYear, calMonth);
@@ -1034,6 +1056,10 @@ CSS;
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val purple">${s.meetings || 0}</div>
+                    <div class="cold-sc-key">Meetings</div>
+                </div>
+                <div class="cold-stat-card">
+                    <div class="cold-sc-val green">${s.website_sales || 0}</div>
                     <div class="cold-sc-key">Website Sales</div>
                 </div>
                 <div class="cold-stat-card">
@@ -1046,10 +1072,10 @@ CSS;
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val rate">${s.meeting_rate || 0}%</div>
-                    <div class="cold-sc-key">Website Sale Rate</div>
+                    <div class="cold-sc-key">Meeting Rate</div>
                 </div>
                 <div class="cold-stat-card">
-                    <div class="cold-sc-val rate">${s.call_to_meet || 0}%</div>
+                    <div class="cold-sc-val rate">${s.call_to_sale || 0}%</div>
                     <div class="cold-sc-key">Call → Sale</div>
                 </div>
                 <div class="cold-stat-card">
@@ -1089,7 +1115,8 @@ CSS;
                         { label: 'Calls',    data: data.series.map(d => d.calls),    backgroundColor: '#3b82f6', borderRadius: 4 },
                         { label: 'Answers',  data: data.series.map(d => d.answers),  backgroundColor: '#10b981', borderRadius: 4 },
                         { label: 'Website Pitches', data: data.series.map(d => d.pitches), backgroundColor: '#f59e0b', borderRadius: 4 },
-                        { label: 'Website Sales', data: data.series.map(d => d.meetings), backgroundColor: '#8b5cf6', borderRadius: 4 },
+                        { label: 'Meetings', data: data.series.map(d => d.meetings), backgroundColor: '#8b5cf6', borderRadius: 4 },
+                        { label: 'Website Sales', data: data.series.map(d => d.website_sales), backgroundColor: '#14b8a6', borderRadius: 4 },
                     ],
                 },
                 options: {
@@ -1135,9 +1162,9 @@ CSS;
 
         // Weekly breakdown table rows
         let weekRows = '';
-        let bestWeekIdx = -1, bestWeekMeets = -1;
+        let bestWeekIdx = -1, bestWeekSales = -1;
         data.weeks.forEach((w, i) => {
-            if (w.stats.meetings > bestWeekMeets) { bestWeekMeets = w.stats.meetings; bestWeekIdx = i; }
+            if (w.stats.website_sales > bestWeekSales) { bestWeekSales = w.stats.website_sales; bestWeekIdx = i; }
         });
         data.weeks.forEach((w, i) => {
             const isBest = i === bestWeekIdx && w.stats.calls > 0;
@@ -1150,8 +1177,9 @@ CSS;
                 <td>${w.stats.answers || 0}</td>
                 <td>${w.stats.pitches || 0}</td>
                 <td>${w.stats.meetings || 0}</td>
+                <td>${w.stats.website_sales || 0}</td>
                 <td>${w.stats.answer_rate || 0}%</td>
-                <td>${w.stats.call_to_meet || 0}%</td>
+                <td>${w.stats.call_to_sale || 0}%</td>
             </tr>`;
         });
 
@@ -1171,6 +1199,10 @@ CSS;
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val purple">${(s.meetings || 0).toLocaleString()}</div>
+                    <div class="cold-sc-key">Meetings</div>
+                </div>
+                <div class="cold-stat-card">
+                    <div class="cold-sc-val green">${(s.website_sales || 0).toLocaleString()}</div>
                     <div class="cold-sc-key">Website Sales</div>
                 </div>
                 <div class="cold-stat-card">
@@ -1183,10 +1215,10 @@ CSS;
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val rate">${s.meeting_rate || 0}%</div>
-                    <div class="cold-sc-key">Website Sale Rate</div>
+                    <div class="cold-sc-key">Meeting Rate</div>
                 </div>
                 <div class="cold-stat-card">
-                    <div class="cold-sc-val rate">${s.call_to_meet || 0}%</div>
+                    <div class="cold-sc-val rate">${s.call_to_sale || 0}%</div>
                     <div class="cold-sc-key">Call → Sale</div>
                 </div>
                 <div class="cold-stat-card">
@@ -1212,7 +1244,7 @@ CSS;
                     <thead>
                         <tr>
                             <th>Week</th><th>Dates</th>
-                            <th>Calls</th><th>Answers</th><th>Website Pitches</th><th>Website Sales</th>
+                            <th>Calls</th><th>Answers</th><th>Website Pitches</th><th>Meetings</th><th>Website Sales</th>
                             <th>Ans%</th><th>Conv%</th>
                         </tr>
                     </thead>
@@ -1379,7 +1411,7 @@ CSS;
         });
 
         // Live rate updates
-        ['modal-calls','modal-answers','modal-pitches','modal-meetings'].forEach(id => {
+        ['modal-calls','modal-answers','modal-pitches','modal-meetings','modal-sales'].forEach(id => {
             document.getElementById(id)?.addEventListener('input', updateModalRates);
         });
     }
