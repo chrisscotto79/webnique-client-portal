@@ -41,8 +41,8 @@ final class ColdTrackerAdmin
         $cap = current_user_can('wnq_manage_portal') ? 'wnq_manage_portal' : 'manage_options';
         add_submenu_page(
             'wnq-portal',
-            'Cold Tracker',
-            'Cold Tracker',
+            'Website Sales',
+            'Website Sales',
             $cap,
             'wnq-cold-tracker',
             [self::class, 'renderPage']
@@ -222,8 +222,8 @@ final class ColdTrackerAdmin
         <div class="wrap cold-wrap">
             <div class="cold-header">
                 <div class="cold-header-left">
-                    <h1 class="cold-title">Cold Tracker</h1>
-                    <p class="cold-subtitle">Log your daily cold call KPIs and track performance over time</p>
+                    <h1 class="cold-title">Website Sales Tracker</h1>
+                    <p class="cold-subtitle">Track cold calls, website pitches, and website sales performance over time</p>
                 </div>
                 <div class="cold-header-right">
                     <div class="cold-streak-badge" id="cold-streak-badge" title="Consecutive days with calls logged">
@@ -270,11 +270,11 @@ final class ColdTrackerAdmin
                     </div>
                     <div class="cold-month-stat">
                         <span class="cold-ms-val" id="mbar-pitches">0</span>
-                        <span class="cold-ms-label">Pitches</span>
+                        <span class="cold-ms-label">Website Pitches</span>
                     </div>
                     <div class="cold-month-stat">
                         <span class="cold-ms-val" id="mbar-meetings">0</span>
-                        <span class="cold-ms-label">Meetings</span>
+                        <span class="cold-ms-label">Website Sales</span>
                     </div>
                     <div class="cold-month-stat">
                         <span class="cold-ms-val cold-rate" id="mbar-answer-rate">0%</span>
@@ -282,7 +282,7 @@ final class ColdTrackerAdmin
                     </div>
                     <div class="cold-month-stat">
                         <span class="cold-ms-val cold-rate" id="mbar-conv">0%</span>
-                        <span class="cold-ms-label">Call→Meeting</span>
+                        <span class="cold-ms-label">Call→Sale</span>
                     </div>
                     <div class="cold-month-stat">
                         <span class="cold-ms-val cold-days" id="mbar-days">0</span>
@@ -341,11 +341,11 @@ final class ColdTrackerAdmin
                             <input type="number" id="modal-answers" min="0" max="9999" placeholder="0">
                         </div>
                         <div class="cold-kpi-field cold-kpi-pitches">
-                            <label>Pitches</label>
+                            <label>Website Pitches</label>
                             <input type="number" id="modal-pitches" min="0" max="9999" placeholder="0">
                         </div>
                         <div class="cold-kpi-field cold-kpi-meetings">
-                            <label>Meetings Booked</label>
+                            <label>Website Sales</label>
                             <input type="number" id="modal-meetings" min="0" max="9999" placeholder="0">
                         </div>
                     </div>
@@ -362,11 +362,11 @@ final class ColdTrackerAdmin
                         </div>
                         <div class="cold-rate-item">
                             <span class="cold-rate-val" id="modal-rate-meeting">0%</span>
-                            <span class="cold-rate-key">Meeting Rate</span>
+                            <span class="cold-rate-key">Website Sale Rate</span>
                         </div>
                         <div class="cold-rate-item cold-rate-highlight">
                             <span class="cold-rate-val" id="modal-rate-conv">0%</span>
-                            <span class="cold-rate-key">Call→Meeting</span>
+                            <span class="cold-rate-key">Call→Sale</span>
                         </div>
                     </div>
 
@@ -707,8 +707,8 @@ CSS;
     if (!COLD) return;
 
     /* ── State ─────────────────────────────────────────────────────── */
-    let calYear  = COLD.initialYear;
-    let calMonth = COLD.initialMonth;
+    let calYear  = Number.parseInt(COLD.initialYear, 10) || new Date().getFullYear();
+    let calMonth = Number.parseInt(COLD.initialMonth, 10) || (new Date().getMonth() + 1);
     let monthData = {};   // date -> row
     let charts = {};      // chart instances
 
@@ -724,8 +724,8 @@ CSS;
     let weekStart = currentWeekMonday();
 
     // Monthly analytics state
-    let analyticsYear  = COLD.initialYear;
-    let analyticsMonth = COLD.initialMonth;
+    let analyticsYear  = Number.parseInt(COLD.initialYear, 10) || new Date().getFullYear();
+    let analyticsMonth = Number.parseInt(COLD.initialMonth, 10) || (new Date().getMonth() + 1);
 
     /* ── Helpers ────────────────────────────────────────────────────── */
     function dateStr(d) {
@@ -739,10 +739,10 @@ CSS;
         return dateStr(d);
     }
     function addMonths(y, m, delta) {
-        let nm = m - 1 + delta;
-        let ny = y + Math.floor(nm / 12);
-        nm = ((nm % 12) + 12) % 12;
-        return { year: ny, month: nm + 1 };
+        const year = Number.parseInt(y, 10) || new Date().getFullYear();
+        const month = Number.parseInt(m, 10) || 1;
+        const date = new Date(year, month - 1 + delta, 1);
+        return { year: date.getFullYear(), month: date.getMonth() + 1 };
     }
     const MONTH_NAMES = ['January','February','March','April','May','June',
                          'July','August','September','October','November','December'];
@@ -829,12 +829,12 @@ CSS;
                     <span class="cold-stat-calls">${row.num_calls}c</span>
                     <span class="cold-stat-answers">${row.num_answers}a</span>
                     <span class="cold-stat-pitches">${row.num_pitches}p</span>
-                    <span class="cold-stat-meetings">${row.num_meetings}m</span>
+                    <span class="cold-stat-meetings">${row.num_meetings}s</span>
                 </div>`;
                 const conv = row.num_calls > 0
                     ? Math.round(parseInt(row.num_meetings) / parseInt(row.num_calls) * 100)
                     : 0;
-                inner += `<div class="cold-day-rate">${conv}% conv</div>`;
+                inner += `<div class="cold-day-rate">${conv}% sale</div>`;
             }
 
             html += `<div class="${cls}" data-date="${ds}">${inner}</div>`;
@@ -921,7 +921,7 @@ CSS;
         charts.day = new Chart(ctx.getContext('2d'), {
             type: 'bar',
             data: {
-                labels: ['Calls Made', 'Answers', 'Pitches', 'Meetings'],
+                labels: ['Calls Made', 'Answers', 'Website Pitches', 'Website Sales'],
                 datasets: [{
                     data: [
                         parseInt(row.num_calls)    || 0,
@@ -1030,11 +1030,11 @@ CSS;
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val amber">${s.pitches || 0}</div>
-                    <div class="cold-sc-key">Pitches</div>
+                    <div class="cold-sc-key">Website Pitches</div>
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val purple">${s.meetings || 0}</div>
-                    <div class="cold-sc-key">Meetings</div>
+                    <div class="cold-sc-key">Website Sales</div>
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val rate">${s.answer_rate || 0}%</div>
@@ -1046,11 +1046,11 @@ CSS;
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val rate">${s.meeting_rate || 0}%</div>
-                    <div class="cold-sc-key">Meeting Rate</div>
+                    <div class="cold-sc-key">Website Sale Rate</div>
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val rate">${s.call_to_meet || 0}%</div>
-                    <div class="cold-sc-key">Call → Meeting</div>
+                    <div class="cold-sc-key">Call → Sale</div>
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val green">${s.days_called || 0} / 7</div>
@@ -1088,8 +1088,8 @@ CSS;
                     datasets: [
                         { label: 'Calls',    data: data.series.map(d => d.calls),    backgroundColor: '#3b82f6', borderRadius: 4 },
                         { label: 'Answers',  data: data.series.map(d => d.answers),  backgroundColor: '#10b981', borderRadius: 4 },
-                        { label: 'Pitches',  data: data.series.map(d => d.pitches),  backgroundColor: '#f59e0b', borderRadius: 4 },
-                        { label: 'Meetings', data: data.series.map(d => d.meetings), backgroundColor: '#8b5cf6', borderRadius: 4 },
+                        { label: 'Website Pitches', data: data.series.map(d => d.pitches), backgroundColor: '#f59e0b', borderRadius: 4 },
+                        { label: 'Website Sales', data: data.series.map(d => d.meetings), backgroundColor: '#8b5cf6', borderRadius: 4 },
                     ],
                 },
                 options: {
@@ -1167,11 +1167,11 @@ CSS;
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val amber">${(s.pitches || 0).toLocaleString()}</div>
-                    <div class="cold-sc-key">Total Pitches</div>
+                    <div class="cold-sc-key">Website Pitches</div>
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val purple">${(s.meetings || 0).toLocaleString()}</div>
-                    <div class="cold-sc-key">Meetings Booked</div>
+                    <div class="cold-sc-key">Website Sales</div>
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val rate">${s.answer_rate || 0}%</div>
@@ -1183,11 +1183,11 @@ CSS;
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val rate">${s.meeting_rate || 0}%</div>
-                    <div class="cold-sc-key">Meeting Rate</div>
+                    <div class="cold-sc-key">Website Sale Rate</div>
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val rate">${s.call_to_meet || 0}%</div>
-                    <div class="cold-sc-key">Call → Meeting</div>
+                    <div class="cold-sc-key">Call → Sale</div>
                 </div>
                 <div class="cold-stat-card">
                     <div class="cold-sc-val green">${s.days_called || 0}</div>
@@ -1212,7 +1212,7 @@ CSS;
                     <thead>
                         <tr>
                             <th>Week</th><th>Dates</th>
-                            <th>Calls</th><th>Answers</th><th>Pitches</th><th>Meetings</th>
+                            <th>Calls</th><th>Answers</th><th>Website Pitches</th><th>Website Sales</th>
                             <th>Ans%</th><th>Conv%</th>
                         </tr>
                     </thead>

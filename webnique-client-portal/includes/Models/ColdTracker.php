@@ -235,21 +235,21 @@ final class ColdTracker
             ];
         }
 
-        // ── Meeting Rate (of pitches) ────────────────────────────────────
+        // ── Website sales rate (of pitches) ──────────────────────────────
         if ($mr < 10) {
             $suggestions[] = [
                 'type' => 'danger',
-                'msg'  => "Meeting conversion is {$mr}%. Make the ask feel low-commitment: offer a 15-minute call (not a demo) and give a specific time — 'Tuesday at 2pm or Thursday at 10am?'",
+                'msg'  => "Website sales conversion is {$mr}%. Make the offer concrete: focus on one website problem, one outcome, and one clear next step.",
             ];
         } elseif ($mr < 20) {
             $suggestions[] = [
                 'type' => 'warning',
-                'msg'  => "Meeting rate is {$mr}%. Try asking for permission to send a quick case study before the close — warms them up for the meeting ask.",
+                'msg'  => "Website sales rate is {$mr}%. Try using a quick website teardown or before/after example before asking for the sale.",
             ];
         } elseif ($mr >= 25) {
             $suggestions[] = [
                 'type' => 'success',
-                'msg'  => "Great meeting conversion at {$mr}%! Your value proposition is clear and your close is working.",
+                'msg'  => "Great website sales conversion at {$mr}%! Your offer and close are working.",
             ];
         }
 
@@ -258,7 +258,7 @@ final class ColdTracker
             $calls_per_meeting = round(1 / ($c2m / 100));
             $suggestions[] = [
                 'type' => 'info',
-                'msg'  => "You're booking 1 meeting every ~{$calls_per_meeting} dials. Increase call volume or improve any one stage to bring that number down.",
+                'msg'  => "You're closing 1 website sale every ~{$calls_per_meeting} dials. Increase call volume or improve any one stage to bring that number down.",
             ];
         }
 
