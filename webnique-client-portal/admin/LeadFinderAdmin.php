@@ -22,8 +22,15 @@ use WNQ\Services\LeadFinderEngine;
 
 final class LeadFinderAdmin
 {
+    private static bool $registered = false;
+
     public static function register(): void
     {
+        if (self::$registered) {
+            return;
+        }
+        self::$registered = true;
+
         // Priority 22 — must run AFTER SEOHubAdmin::addMenuPages() (priority 20)
         add_action('admin_menu', [self::class, 'addMenuPage'], 22);
 
@@ -59,7 +66,7 @@ final class LeadFinderAdmin
     {
         $cap = current_user_can('wnq_manage_portal') ? 'wnq_manage_portal' : 'manage_options';
         add_submenu_page(
-            'wnq-seo-hub',
+            'wnq-portal',
             'Lead Finder',
             'Lead Finder',
             $cap,

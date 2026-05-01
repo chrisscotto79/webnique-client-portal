@@ -18,10 +18,17 @@ use WNQ\Models\ColdTracker;
 
 final class ColdTrackerAdmin
 {
+    private static bool $registered = false;
+
     // ── Registration ──────────────────────────────────────────────────────
 
     public static function register(): void
     {
+        if (self::$registered) {
+            return;
+        }
+        self::$registered = true;
+
         add_action('admin_menu',            [self::class, 'addMenuPage'], 24);
         add_action('admin_enqueue_scripts', [self::class, 'enqueueAssets']);
         add_action('wp_ajax_wnq_cold_save_day',      [self::class, 'ajaxSaveDay']);
@@ -33,7 +40,7 @@ final class ColdTrackerAdmin
     {
         $cap = current_user_can('wnq_manage_portal') ? 'wnq_manage_portal' : 'manage_options';
         add_submenu_page(
-            'wnq-seo-hub',
+            'wnq-portal',
             'Cold Tracker',
             'Cold Tracker',
             $cap,
