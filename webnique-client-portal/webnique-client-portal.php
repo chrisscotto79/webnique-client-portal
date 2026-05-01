@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WebNique Client Portal
  * Description: Complete client management with portal, analytics, billing, tasks, SEO tracking, and messaging
- * Version: 2.1.0
+ * Version: 2.2.0
  * Author: WebNique
  * Requires at least: 6.0
  * Requires PHP: 8.0
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WNQ_PORTAL_VERSION', '2.1.0');
+define('WNQ_PORTAL_VERSION', '2.2.0');
 define('WNQ_PORTAL_PATH', plugin_dir_path(__FILE__));
 define('WNQ_PORTAL_URL', plugin_dir_url(__FILE__));
 
@@ -54,6 +54,15 @@ register_activation_hook(__FILE__, function() {
         require_once $client_model;
         if (class_exists('WNQ\\Models\\Client')) {
             \WNQ\Models\Client::createTable();
+        }
+    }
+
+    $finance_model = WNQ_PORTAL_PATH . 'includes/Models/FinanceEntry.php';
+    if (file_exists($finance_model)) {
+        require_once $finance_model;
+        if (class_exists('WNQ\\Models\\FinanceEntry')) {
+            \WNQ\Models\FinanceEntry::createTable();
+            update_option('wnq_finance_db_version', WNQ_PORTAL_VERSION);
         }
     }
     
@@ -176,6 +185,22 @@ if (wnq_seo_features_enabled()) {
     });
 }
 
+add_action('admin_init', function() {
+    $installed = get_option('wnq_finance_db_version', '');
+    if ($installed === WNQ_PORTAL_VERSION) {
+        return;
+    }
+
+    $finance_model = WNQ_PORTAL_PATH . 'includes/Models/FinanceEntry.php';
+    if (file_exists($finance_model)) {
+        require_once $finance_model;
+        if (class_exists('WNQ\\Models\\FinanceEntry')) {
+            \WNQ\Models\FinanceEntry::createTable();
+            update_option('wnq_finance_db_version', WNQ_PORTAL_VERSION);
+        }
+    }
+});
+
 // CLIENT HANDLERS
 add_action('admin_post_wnq_save_client', function() {
     $clients_admin = WNQ_PORTAL_PATH . 'admin/ClientsAdmin.php';
@@ -199,8 +224,36 @@ add_action('admin_post_wnq_mark_paid', function() {
     $clients_admin = WNQ_PORTAL_PATH . 'admin/ClientsAdmin.php';
     if (file_exists($clients_admin)) {
         require_once WNQ_PORTAL_PATH . 'includes/Models/Client.php';
+        require_once WNQ_PORTAL_PATH . 'includes/Models/FinanceEntry.php';
         require_once $clients_admin;
         \WNQ\Admin\ClientsAdmin::handleMarkPaid();
+    }
+});
+
+add_action('admin_post_wnq_save_finance_entry', function() {
+    $clients_admin = WNQ_PORTAL_PATH . 'admin/ClientsAdmin.php';
+    if (file_exists($clients_admin)) {
+        require_once WNQ_PORTAL_PATH . 'includes/Models/Client.php';
+        require_once WNQ_PORTAL_PATH . 'includes/Models/FinanceEntry.php';
+        require_once $clients_admin;
+        \WNQ\Admin\ClientsAdmin::handleSaveFinanceEntry();
+    }
+});
+
+add_action('admin_post_wnq_delete_finance_entry', function() {
+    $clients_admin = WNQ_PORTAL_PATH . 'admin/ClientsAdmin.php';
+    if (file_exists($clients_admin)) {
+        require_once WNQ_PORTAL_PATH . 'includes/Models/FinanceEntry.php';
+        require_once $clients_admin;
+        \WNQ\Admin\ClientsAdmin::handleDeleteFinanceEntry();
+    }
+});
+
+add_action('admin_post_wnq_save_portal_settings', function() {
+    $settings_admin = WNQ_PORTAL_PATH . 'admin/AdminSettings.php';
+    if (file_exists($settings_admin)) {
+        require_once $settings_admin;
+        \WNQ\Admin\AdminSettings::handleSaveSettings();
     }
 });
 
@@ -552,29 +605,15 @@ function wnq_render_settings_page() {
     if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
         wp_die(__('You do not have sufficient permissions to access this page.'));
     }
-    
-    $version = WNQ_PORTAL_VERSION;
-    wp_enqueue_style('wnq-admin-settings', WNQ_PORTAL_URL . 'assets/app/app.css', [], $version);
-    wp_enqueue_script('wnq-admin-settings', WNQ_PORTAL_URL . 'assets/app/app.js', [], $version, true);
-    
-    add_filter('script_loader_tag', function ($tag, $handle, $src) {
-        if ($handle !== 'wnq-admin-settings') return $tag;
-        return '<script type="module" src="' . esc_url($src) . '"></script>';
-    }, 10, 3);
-    
-    wp_localize_script('wnq-admin-settings', 'WNQ_ADMIN', [
-        'restUrl' => esc_url_raw(rest_url('wnq/v1')),
-        'nonce' => wp_create_nonce('wp_rest'),
-        'isAdmin' => true,
-        'ajaxUrl' => admin_url('admin-ajax.php'),
-    ]);
-    
-    ?>
-    <div class="wrap">
-        <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
-        <div id="wnq-admin-settings-root"></div>
-    </div>
-    <?php
+
+    $settings_admin = WNQ_PORTAL_PATH . 'admin/AdminSettings.php';
+    if (!file_exists($settings_admin)) {
+        echo '<div class="wrap"><div class="notice notice-error"><p><strong>Error:</strong> AdminSettings not found.</p></div></div>';
+        return;
+    }
+
+    require_once $settings_admin;
+    \WNQ\Admin\AdminSettings::render();
 }
 
 function wnq_render_clients_page() {

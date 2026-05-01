@@ -17,6 +17,7 @@
 namespace WNQ\Admin;
 
 use WNQ\Models\Client;
+use WNQ\Models\FinanceEntry;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -30,12 +31,24 @@ final class ClientsAdmin
         add_action('admin_post_wnq_save_client', [self::class, 'handleSaveClient']);
         add_action('admin_post_wnq_delete_client_from_clients', [self::class, 'handleDeleteClient']);
         add_action('admin_post_wnq_mark_paid', [self::class, 'handleMarkPaid']);
+        add_action('admin_post_wnq_save_finance_entry', [self::class, 'handleSaveFinanceEntry']);
+        add_action('admin_post_wnq_delete_finance_entry', [self::class, 'handleDeleteFinanceEntry']);
     }
 
     public static function addSubmenu(): void
     {
         $capability = current_user_can('wnq_manage_portal') ? 'wnq_manage_portal' : 'manage_options';
         add_submenu_page('wnq-portal', 'Clients', 'Clients', $capability, 'wnq-clients', [self::class, 'render']);
+    }
+
+    private static function ensureFinanceModel(): void
+    {
+        if (!class_exists('WNQ\\Models\\FinanceEntry') && defined('WNQ_PORTAL_PATH')) {
+            $finance_model = WNQ_PORTAL_PATH . 'includes/Models/FinanceEntry.php';
+            if (file_exists($finance_model)) {
+                require_once $finance_model;
+            }
+        }
     }
 
     public static function render(): void
@@ -62,9 +75,12 @@ final class ClientsAdmin
 
     private static function renderClientsList(): void
     {
+        self::ensureFinanceModel();
+
         $clients = Client::getAll();
         $total_count = Client::getCount();
         $active_count = Client::getCountByStatus('active');
+        $active_tab = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'overview';
         
         // Safely load AnalyticsConfig if it exists
         $analytics_clients = [];
@@ -106,6 +122,15 @@ final class ClientsAdmin
                 </div>
                 <a href="<?php echo admin_url('admin.php?page=wnq-clients&action=add'); ?>" class="page-title-action">+ Add New Client</a>
             </div>
+
+            <nav class="nav-tab-wrapper wnq-subtabs">
+                <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-clients')); ?>" class="nav-tab <?php echo $active_tab === 'overview' ? 'nav-tab-active' : ''; ?>">Overview</a>
+                <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-clients&tab=finance')); ?>" class="nav-tab <?php echo $active_tab === 'finance' ? 'nav-tab-active' : ''; ?>">Income & Expenses</a>
+            </nav>
+
+            <?php if ($active_tab === 'finance'): ?>
+                <?php self::renderFinanceTab($clients); ?>
+            <?php else: ?>
 
             <!-- Stats Cards -->
             <div class="wnq-stats-grid">
@@ -274,84 +299,100 @@ final class ClientsAdmin
                     </table>
                 </div>
             <?php endif; ?>
+            <?php endif; ?>
         </div>
 
-        <!-- Chart.js -->
-        <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
         <script>
         document.addEventListener('DOMContentLoaded', function() {
-            const ctx = document.getElementById('revenueChart');
-            if (!ctx) return;
-
+            const canvas = document.getElementById('revenueChart');
+            if (!canvas) return;
             const data = <?php echo json_encode($graph_data); ?>;
+            const ctx = canvas.getContext('2d');
+            const ratio = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * ratio;
+            canvas.height = 320 * ratio;
+            ctx.scale(ratio, ratio);
 
-            new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: data.labels,
-                    datasets: [{
-                        label: 'Monthly Revenue',
-                        data: data.revenue,
-                        borderColor: '#059669',
-                        backgroundColor: 'rgba(5, 150, 105, 0.1)',
-                        tension: 0.4,
-                        fill: true,
-                        borderWidth: 3
-                    }, {
-                        label: 'After Fees',
-                        data: data.afterFees,
-                        borderColor: '#0d539e',
-                        backgroundColor: 'rgba(13, 83, 158, 0.1)',
-                        tension: 0.4,
-                        fill: true,
-                        borderWidth: 3
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: true,
-                    aspectRatio: 3,
-                    plugins: {
-                        legend: {
-                            display: true,
-                            position: 'top',
-                            labels: {
-                                usePointStyle: true,
-                                padding: 20,
-                                font: { size: 13, weight: '600' }
-                            }
-                        },
-                        tooltip: {
-                            mode: 'index',
-                            intersect: false,
-                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                            padding: 12,
-                            titleFont: { size: 14, weight: '600' },
-                            bodyFont: { size: 13 },
-                            callbacks: {
-                                label: function(context) {
-                                    return context.dataset.label + ': $' + context.parsed.y.toFixed(2);
-                                }
-                            }
-                        }
-                    },
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            grid: { color: '#f0f0f0' },
-                            ticks: {
-                                callback: function(value) {
-                                    return '$' + value.toLocaleString();
-                                },
-                                font: { size: 12 }
-                            }
-                        },
-                        x: {
-                            grid: { display: false },
-                            ticks: { font: { size: 12 } }
-                        }
+            const width = rect.width;
+            const height = 320;
+            const padding = { top: 24, right: 24, bottom: 48, left: 76 };
+            const series = [
+                { label: 'Income', values: data.income || data.revenue || [], color: '#059669' },
+                { label: 'Expenses', values: data.expenses || [], color: '#dc2626' },
+                { label: 'Net', values: data.net || data.afterFees || [], color: '#0d539e' }
+            ];
+            const values = series.flatMap(item => item.values);
+            const max = Math.max(100, ...values);
+            const chartWidth = width - padding.left - padding.right;
+            const chartHeight = height - padding.top - padding.bottom;
+            const labels = data.labels || [];
+
+            ctx.clearRect(0, 0, width, height);
+            ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+            ctx.textBaseline = 'middle';
+
+            for (let i = 0; i <= 4; i++) {
+                const y = padding.top + (chartHeight / 4) * i;
+                const value = max - (max / 4) * i;
+                ctx.strokeStyle = '#e5e7eb';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(padding.left, y);
+                ctx.lineTo(width - padding.right, y);
+                ctx.stroke();
+                ctx.fillStyle = '#6b7280';
+                ctx.textAlign = 'right';
+                ctx.fillText('$' + Math.round(value).toLocaleString(), padding.left - 12, y);
+            }
+
+            function xFor(index) {
+                return padding.left + (labels.length <= 1 ? chartWidth : (chartWidth / (labels.length - 1)) * index);
+            }
+
+            function yFor(value) {
+                return padding.top + chartHeight - ((value / max) * chartHeight);
+            }
+
+            series.forEach(item => {
+                if (!item.values.length) return;
+                ctx.strokeStyle = item.color;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                item.values.forEach((value, index) => {
+                    const x = xFor(index);
+                    const y = yFor(value);
+                    if (index === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
                     }
-                }
+                });
+                ctx.stroke();
+
+                ctx.fillStyle = item.color;
+                item.values.forEach((value, index) => {
+                    ctx.beginPath();
+                    ctx.arc(xFor(index), yFor(value), 3.5, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            });
+
+            ctx.fillStyle = '#6b7280';
+            ctx.textAlign = 'center';
+            labels.forEach((label, index) => {
+                if (index % 2 !== labels.length % 2 && labels.length > 8) return;
+                ctx.fillText(label, xFor(index), height - 24);
+            });
+
+            let legendX = padding.left;
+            series.forEach(item => {
+                ctx.fillStyle = item.color;
+                ctx.fillRect(legendX, 8, 10, 10);
+                ctx.fillStyle = '#374151';
+                ctx.textAlign = 'left';
+                ctx.fillText(item.label, legendX + 16, 13);
+                legendX += 98;
             });
         });
         </script>
@@ -372,6 +413,9 @@ final class ClientsAdmin
             color: #6b7280;
             font-size: 14px;
             margin: 0;
+        }
+        .wnq-subtabs {
+            margin-bottom: 20px;
         }
 
         /* Stats Grid */
@@ -432,6 +476,11 @@ final class ClientsAdmin
             font-size: 18px;
             font-weight: 700;
             margin: 0 0 20px;
+        }
+        #revenueChart {
+            display: block;
+            width: 100%;
+            height: 320px;
         }
 
         /* Table */
@@ -565,15 +614,200 @@ final class ClientsAdmin
             color: #6b7280;
             margin-bottom: 24px;
         }
+        .finance-grid {
+            display: grid;
+            grid-template-columns: minmax(280px, 420px) 1fr;
+            gap: 20px;
+            align-items: start;
+        }
+        .finance-panel {
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        .finance-panel h2 {
+            margin-top: 0;
+        }
+        .finance-panel .form-table th {
+            width: 120px;
+        }
+        .finance-table .income {
+            color: #059669;
+            font-weight: 700;
+        }
+        .finance-table .expense {
+            color: #dc2626;
+            font-weight: 700;
+        }
+        @media (max-width: 1100px) {
+            .finance-grid { grid-template-columns: 1fr; }
+        }
         </style>
+        <?php
+    }
+
+    private static function renderFinanceTab(array $clients): void
+    {
+        self::ensureFinanceModel();
+
+        $summary = class_exists('WNQ\\Models\\FinanceEntry') ? FinanceEntry::getSummary() : [];
+        $entries = class_exists('WNQ\\Models\\FinanceEntry') ? FinanceEntry::getAll(150) : [];
+        $message = isset($_GET['message']) ? sanitize_key($_GET['message']) : '';
+
+        ?>
+        <?php if ($message === 'finance_saved'): ?>
+            <div class="notice notice-success is-dismissible"><p>Finance entry saved.</p></div>
+        <?php elseif ($message === 'finance_deleted'): ?>
+            <div class="notice notice-success is-dismissible"><p>Finance entry deleted.</p></div>
+        <?php elseif ($message === 'finance_error'): ?>
+            <div class="notice notice-error is-dismissible"><p>Could not save the finance entry. Add an amount greater than $0.</p></div>
+        <?php endif; ?>
+
+        <div class="wnq-stats-grid">
+            <div class="stat-card revenue">
+                <div class="stat-label">Income This Month</div>
+                <div class="stat-value">$<?php echo number_format($summary['month_income'] ?? 0, 2); ?></div>
+                <div class="stat-subtitle">Recorded payments</div>
+            </div>
+            <div class="stat-card fees">
+                <div class="stat-label">Expenses This Month</div>
+                <div class="stat-value">$<?php echo number_format($summary['month_expense'] ?? 0, 2); ?></div>
+                <div class="stat-subtitle">Recorded costs</div>
+            </div>
+            <div class="stat-card profit">
+                <div class="stat-label">Net This Month</div>
+                <div class="stat-value">$<?php echo number_format($summary['month_net'] ?? 0, 2); ?></div>
+                <div class="stat-subtitle">Income minus expenses</div>
+            </div>
+            <div class="stat-card collected">
+                <div class="stat-label">All-Time Net</div>
+                <div class="stat-value">$<?php echo number_format($summary['net'] ?? 0, 2); ?></div>
+                <div class="stat-subtitle">Tracked ledger total</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Entries</div>
+                <div class="stat-value"><?php echo count($entries); ?></div>
+                <div class="stat-subtitle">Latest 150 shown</div>
+            </div>
+        </div>
+
+        <div class="finance-grid">
+            <div class="finance-panel">
+                <h2>Add Income or Expense</h2>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <?php wp_nonce_field('wnq_save_finance_entry'); ?>
+                    <input type="hidden" name="action" value="wnq_save_finance_entry">
+                    <table class="form-table">
+                        <tr>
+                            <th><label for="finance_type">Type</label></th>
+                            <td>
+                                <select name="type" id="finance_type">
+                                    <option value="income">Income</option>
+                                    <option value="expense">Expense</option>
+                                </select>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th><label for="finance_amount">Amount</label></th>
+                            <td>$<input type="number" name="amount" id="finance_amount" min="0.01" step="0.01" required class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th><label for="finance_date">Date</label></th>
+                            <td><input type="date" name="entry_date" id="finance_date" value="<?php echo esc_attr(current_time('Y-m-d')); ?>" required class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th><label for="finance_category">Category</label></th>
+                            <td><input type="text" name="category" id="finance_category" value="" placeholder="Hosting, PPC, Client Payment" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th><label for="finance_client">Client</label></th>
+                            <td>
+                                <select name="client_id" id="finance_client">
+                                    <option value="">No client</option>
+                                    <?php foreach ($clients as $client): ?>
+                                        <option value="<?php echo esc_attr($client['id']); ?>"><?php echo esc_html($client['name']); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th><label for="finance_method">Method</label></th>
+                            <td><input type="text" name="payment_method" id="finance_method" placeholder="Stripe, ACH, Card, Cash" class="regular-text"></td>
+                        </tr>
+                        <tr>
+                            <th><label for="finance_description">Notes</label></th>
+                            <td><textarea name="description" id="finance_description" rows="3" class="large-text"></textarea></td>
+                        </tr>
+                    </table>
+                    <p class="submit">
+                        <button type="submit" class="button button-primary">Save Entry</button>
+                    </p>
+                </form>
+            </div>
+
+            <div class="finance-panel">
+                <h2>Ledger</h2>
+                <?php if (empty($entries)): ?>
+                    <p class="text-muted">No income or expenses have been tracked yet.</p>
+                <?php else: ?>
+                    <table class="wp-list-table widefat fixed striped finance-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 110px;">Date</th>
+                                <th style="width: 90px;">Type</th>
+                                <th style="width: 130px;">Amount</th>
+                                <th>Category</th>
+                                <th>Client</th>
+                                <th>Notes</th>
+                                <th style="width: 80px;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($entries as $entry): ?>
+                                <tr>
+                                    <td><?php echo esc_html(date('M j, Y', strtotime($entry['entry_date']))); ?></td>
+                                    <td><?php echo esc_html(ucfirst($entry['type'])); ?></td>
+                                    <td class="<?php echo esc_attr($entry['type']); ?>">
+                                        <?php echo $entry['type'] === 'expense' ? '-' : '+'; ?>$<?php echo number_format(floatval($entry['amount']), 2); ?>
+                                    </td>
+                                    <td><?php echo esc_html($entry['category'] ?: 'Uncategorized'); ?></td>
+                                    <td><?php echo esc_html($entry['client_name'] ?: ''); ?></td>
+                                    <td><?php echo esc_html(wp_trim_words($entry['description'] ?? '', 12)); ?></td>
+                                    <td>
+                                        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="inline-form">
+                                            <?php wp_nonce_field('wnq_delete_finance_entry'); ?>
+                                            <input type="hidden" name="action" value="wnq_delete_finance_entry">
+                                            <input type="hidden" name="id" value="<?php echo esc_attr($entry['id']); ?>">
+                                            <button type="submit" class="button button-small button-link-delete" onclick="return confirm('Delete this finance entry?');">Delete</button>
+                                        </form>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                <?php endif; ?>
+            </div>
+        </div>
         <?php
     }
 
     private static function getGraphData(array $clients): array
     {
+        self::ensureFinanceModel();
+
+        if (class_exists('WNQ\\Models\\FinanceEntry')) {
+            $finance_data = FinanceEntry::getMonthlyTotals(12);
+            $has_entries = array_sum($finance_data['income']) + array_sum($finance_data['expenses']);
+            if ($has_entries > 0) {
+                return $finance_data;
+            }
+        }
+
         $labels = [];
-        $revenue = [];
-        $afterFees = [];
+        $income = [];
+        $expenses = [];
+        $net = [];
 
         for ($i = 11; $i >= 0; $i--) {
             $labels[] = date('M Y', strtotime("-$i months"));
@@ -588,14 +822,16 @@ final class ClientsAdmin
                 }
             }
             
-            $revenue[] = $monthRevenue;
-            $afterFees[] = $monthAfterFees;
+            $income[] = $monthRevenue;
+            $expenses[] = max(0, $monthRevenue - $monthAfterFees);
+            $net[] = $monthAfterFees;
         }
 
         return [
             'labels' => $labels,
-            'revenue' => $revenue,
-            'afterFees' => $afterFees,
+            'income' => $income,
+            'expenses' => $expenses,
+            'net' => $net,
         ];
     }
 
@@ -603,7 +839,7 @@ final class ClientsAdmin
     {
         check_admin_referer('wnq_mark_paid');
 
-        if (!current_user_can('manage_options')) {
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
             wp_die('Insufficient permissions');
         }
 
@@ -630,7 +866,74 @@ final class ClientsAdmin
             wp_die('Failed to update client payment');
         }
 
+        self::ensureFinanceModel();
+        if (class_exists('WNQ\\Models\\FinanceEntry')) {
+            FinanceEntry::create([
+                'type' => 'income',
+                'category' => 'Client Payment',
+                'amount' => floatval($client['after_fees'] ?? $client['monthly_rate'] ?? 0),
+                'entry_date' => current_time('Y-m-d'),
+                'client_id' => intval($client['id']),
+                'payment_method' => 'Marked Paid',
+                'description' => 'Payment marked paid for ' . ($client['name'] ?? 'client'),
+            ]);
+        }
+
         wp_redirect(admin_url('admin.php?page=wnq-clients'));
+        exit;
+    }
+
+    public static function handleSaveFinanceEntry(): void
+    {
+        check_admin_referer('wnq_save_finance_entry');
+
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
+            wp_die('Insufficient permissions');
+        }
+
+        self::ensureFinanceModel();
+        $success = false;
+
+        if (class_exists('WNQ\\Models\\FinanceEntry')) {
+            $success = FinanceEntry::create([
+                'type' => sanitize_key($_POST['type'] ?? 'income'),
+                'amount' => floatval($_POST['amount'] ?? 0),
+                'entry_date' => sanitize_text_field($_POST['entry_date'] ?? current_time('Y-m-d')),
+                'category' => sanitize_text_field($_POST['category'] ?? ''),
+                'client_id' => intval($_POST['client_id'] ?? 0),
+                'payment_method' => sanitize_text_field($_POST['payment_method'] ?? ''),
+                'description' => sanitize_textarea_field($_POST['description'] ?? ''),
+            ]);
+        }
+
+        wp_redirect(add_query_arg([
+            'page' => 'wnq-clients',
+            'tab' => 'finance',
+            'message' => $success ? 'finance_saved' : 'finance_error',
+        ], admin_url('admin.php')));
+        exit;
+    }
+
+    public static function handleDeleteFinanceEntry(): void
+    {
+        check_admin_referer('wnq_delete_finance_entry');
+
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
+            wp_die('Insufficient permissions');
+        }
+
+        self::ensureFinanceModel();
+        $id = isset($_POST['id']) ? intval($_POST['id']) : 0;
+
+        if (class_exists('WNQ\\Models\\FinanceEntry') && $id > 0) {
+            FinanceEntry::delete($id);
+        }
+
+        wp_redirect(add_query_arg([
+            'page' => 'wnq-clients',
+            'tab' => 'finance',
+            'message' => 'finance_deleted',
+        ], admin_url('admin.php')));
         exit;
     }
 
@@ -790,9 +1093,10 @@ final class ClientsAdmin
                         <th><label for="billing_cycle">Billing Cycle</label></th>
                         <td>
                             <select name="billing_cycle" id="billing_cycle">
-                                <option value="monthly" <?php selected($client['billing_cycle'] ?? 'monthly', 'monthly'); ?>>Monthly</option>
-                                <option value="quarterly" <?php selected($client['billing_cycle'] ?? '', 'quarterly'); ?>>Quarterly</option>
-                                <option value="annually" <?php selected($client['billing_cycle'] ?? '', 'annually'); ?>>Annually</option>
+                                <?php $selected_cycle = $client['billing_cycle'] ?? get_option('wnq_default_billing_cycle', 'monthly'); ?>
+                                <option value="monthly" <?php selected($selected_cycle, 'monthly'); ?>>Monthly</option>
+                                <option value="quarterly" <?php selected($selected_cycle, 'quarterly'); ?>>Quarterly</option>
+                                <option value="annually" <?php selected($selected_cycle, 'annually'); ?>>Annually</option>
                             </select>
                         </td>
                     </tr>
@@ -923,7 +1227,7 @@ final class ClientsAdmin
     {
         check_admin_referer('wnq_save_client');
 
-        if (!current_user_can('manage_options')) {
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
             wp_die('Insufficient permissions');
         }
 
@@ -938,7 +1242,7 @@ final class ClientsAdmin
             'status' => sanitize_text_field($_POST['status'] ?? 'active'),
             'tier' => sanitize_text_field($_POST['tier'] ?? 'website'),
             'billing_email' => sanitize_email($_POST['billing_email'] ?? ''),
-            'billing_cycle' => sanitize_text_field($_POST['billing_cycle'] ?? 'monthly'),
+            'billing_cycle' => sanitize_text_field($_POST['billing_cycle'] ?? get_option('wnq_default_billing_cycle', 'monthly')),
             'monthly_rate' => floatval($_POST['monthly_rate'] ?? 0),
             'stripe_fee_percent' => floatval($_POST['stripe_fee_percent'] ?? 2.90),
             'stripe_fee_flat' => floatval($_POST['stripe_fee_flat'] ?? 0.30),
@@ -967,7 +1271,7 @@ final class ClientsAdmin
     {
         check_admin_referer('wnq_delete_client_from_clients');
 
-        if (!current_user_can('manage_options')) {
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
             wp_die('Insufficient permissions');
         }
 
