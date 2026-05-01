@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 0.1.0
+Stable tag: 2.2.0
 License: Proprietary
 License URI: https://web-nique.com
 

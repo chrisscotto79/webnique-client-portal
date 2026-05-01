@@ -72,6 +72,7 @@ final class Plugin
         // Load models if they exist
         $models = [
             'Client.php',
+            'FinanceEntry.php',
             'Task.php',
         ];
 
