@@ -44,6 +44,22 @@ final class FinanceEntry
 
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
         dbDelta($sql);
+        self::ensureSchema();
+    }
+
+    public static function ensureSchema(): void
+    {
+        global $wpdb;
+        $table_name = $wpdb->prefix . self::$table;
+        $columns = $wpdb->get_col("DESCRIBE $table_name", 0);
+
+        if (empty($columns)) {
+            return;
+        }
+
+        if (!in_array('recurrence', $columns, true)) {
+            $wpdb->query("ALTER TABLE $table_name ADD COLUMN recurrence varchar(20) NOT NULL DEFAULT 'one_time' AFTER entry_date");
+        }
     }
 
     public static function create(array $data): int|false

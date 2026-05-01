@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WebNique Client Portal
  * Description: Complete client management with portal, analytics, billing, tasks, SEO tracking, and messaging
- * Version: 2.2.1
+ * Version: 2.2.2
  * Author: WebNique
  * Requires at least: 6.0
  * Requires PHP: 8.0
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WNQ_PORTAL_VERSION', '2.2.1');
+define('WNQ_PORTAL_VERSION', '2.2.2');
 define('WNQ_PORTAL_PATH', plugin_dir_path(__FILE__));
 define('WNQ_PORTAL_URL', plugin_dir_url(__FILE__));
 
@@ -23,6 +23,28 @@ if (!defined('WNQ_ENABLE_SEO_FEATURES')) {
 
 function wnq_seo_features_enabled(): bool {
     return defined('WNQ_ENABLE_SEO_FEATURES') && WNQ_ENABLE_SEO_FEATURES;
+}
+
+function wnq_load_portal_sales_tools(): void {
+    $files = [
+        'includes/Models/Lead.php',
+        'includes/Data/FloridaZips.php',
+        'includes/Services/GoogleMapsClient.php',
+        'includes/Services/LeadSEOScorer.php',
+        'includes/Services/LeadEmailExtractor.php',
+        'includes/Services/LeadEnrichmentService.php',
+        'includes/Services/LeadFinderEngine.php',
+        'admin/LeadFinderAdmin.php',
+        'includes/Models/ColdTracker.php',
+        'admin/ColdTrackerAdmin.php',
+    ];
+
+    foreach ($files as $file) {
+        $path = WNQ_PORTAL_PATH . $file;
+        if (file_exists($path)) {
+            require_once $path;
+        }
+    }
 }
 
 $plugin_file = WNQ_PORTAL_PATH . 'includes/Core/Plugin.php';
@@ -64,6 +86,17 @@ register_activation_hook(__FILE__, function() {
             \WNQ\Models\FinanceEntry::createTable();
             update_option('wnq_finance_db_version', WNQ_PORTAL_VERSION);
         }
+    }
+
+    wnq_load_portal_sales_tools();
+    if (class_exists('WNQ\\Models\\Lead')) {
+        \WNQ\Models\Lead::createTable();
+        if (\WNQ\Models\Lead::tableNeedsMigration()) {
+            \WNQ\Models\Lead::runMigration();
+        }
+    }
+    if (class_exists('WNQ\\Models\\ColdTracker')) {
+        \WNQ\Models\ColdTracker::createTable();
     }
     
     $task_model = WNQ_PORTAL_PATH . 'includes/Models/Task.php';
@@ -188,6 +221,13 @@ if (wnq_seo_features_enabled()) {
 add_action('admin_init', function() {
     $installed = get_option('wnq_finance_db_version', '');
     if ($installed === WNQ_PORTAL_VERSION) {
+        $finance_model = WNQ_PORTAL_PATH . 'includes/Models/FinanceEntry.php';
+        if (file_exists($finance_model)) {
+            require_once $finance_model;
+            if (class_exists('WNQ\\Models\\FinanceEntry')) {
+                \WNQ\Models\FinanceEntry::ensureSchema();
+            }
+        }
         return;
     }
 
@@ -200,6 +240,39 @@ add_action('admin_init', function() {
         }
     }
 });
+
+add_action('admin_init', function() {
+    $installed = get_option('wnq_sales_tools_db_version', '');
+    if ($installed === WNQ_PORTAL_VERSION) {
+        return;
+    }
+
+    wnq_load_portal_sales_tools();
+    if (class_exists('WNQ\\Models\\Lead')) {
+        \WNQ\Models\Lead::createTable();
+        if (\WNQ\Models\Lead::tableNeedsMigration()) {
+            \WNQ\Models\Lead::runMigration();
+        }
+    }
+    if (class_exists('WNQ\\Models\\ColdTracker')) {
+        \WNQ\Models\ColdTracker::createTable();
+    }
+    update_option('wnq_sales_tools_db_version', WNQ_PORTAL_VERSION);
+});
+
+add_action('plugins_loaded', function() {
+    if (!is_admin()) {
+        return;
+    }
+
+    wnq_load_portal_sales_tools();
+    if (class_exists('WNQ\\Admin\\LeadFinderAdmin')) {
+        \WNQ\Admin\LeadFinderAdmin::register();
+    }
+    if (class_exists('WNQ\\Admin\\ColdTrackerAdmin')) {
+        \WNQ\Admin\ColdTrackerAdmin::register();
+    }
+}, 20);
 
 // CLIENT HANDLERS
 add_action('admin_post_wnq_save_client', function() {
