@@ -258,7 +258,12 @@ export function subscribeToThreads(clientId, callback) {
     return () => {};
   }
 
+  let active = true;
+  let unsubscribe = () => {};
+
   getFirestoreModules().then(({ collection, query, where, orderBy, onSnapshot }) => {
+    if (!active) return;
+
     const threadsRef = collection(db, 'threads');
     const q = query(
       threadsRef,
@@ -266,9 +271,10 @@ export function subscribeToThreads(clientId, callback) {
       orderBy('last_updated', 'desc')
     );
 
-    const unsubscribe = onSnapshot(
+    const liveUnsubscribe = onSnapshot(
       q,
       (snapshot) => {
+        if (!active) return;
         const threads = [];
         snapshot.forEach((doc) => {
           const data = doc.data();
@@ -286,11 +292,18 @@ export function subscribeToThreads(clientId, callback) {
       }
     );
 
-    return unsubscribe;
+    unsubscribe = liveUnsubscribe;
+    if (!active) {
+      unsubscribe();
+    }
+  }).catch((error) => {
+    console.error("[Firebase] Subscribe setup error:", error);
   });
 
-  // Return dummy unsubscribe for now
-  return () => {};
+  return () => {
+    active = false;
+    unsubscribe();
+  };
 }
 
 /**
@@ -302,13 +315,19 @@ export function subscribeToMessages(threadId, callback) {
     return () => {};
   }
 
+  let active = true;
+  let unsubscribe = () => {};
+
   getFirestoreModules().then(({ collection, query, orderBy, onSnapshot }) => {
+    if (!active) return;
+
     const messagesRef = collection(db, 'threads', threadId, 'messages');
     const q = query(messagesRef, orderBy('timestamp', 'asc'));
 
-    const unsubscribe = onSnapshot(
+    const liveUnsubscribe = onSnapshot(
       q,
       (snapshot) => {
+        if (!active) return;
         const messages = [];
         snapshot.forEach((doc) => {
           const data = doc.data();
@@ -325,11 +344,18 @@ export function subscribeToMessages(threadId, callback) {
       }
     );
 
-    return unsubscribe;
+    unsubscribe = liveUnsubscribe;
+    if (!active) {
+      unsubscribe();
+    }
+  }).catch((error) => {
+    console.error("[Firebase] Message subscribe setup error:", error);
   });
 
-  // Return dummy unsubscribe for now
-  return () => {};
+  return () => {
+    active = false;
+    unsubscribe();
+  };
 }
 
 /**

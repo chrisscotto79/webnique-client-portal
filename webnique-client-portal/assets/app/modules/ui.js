@@ -342,7 +342,6 @@ export function mountShell(root, state, { onTabChange }) {
 
   const tabs = [
     ["dashboard", "Dashboard"],
-    ["audit", "SEO Audit"],
     ["subscription", "Subscription"],
     ["analytics", "Analytics"],
     ["requests", "Web Requests"],
