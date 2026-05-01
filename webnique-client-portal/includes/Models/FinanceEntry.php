@@ -29,6 +29,7 @@ final class FinanceEntry
             category varchar(100) NOT NULL DEFAULT '',
             amount decimal(10,2) NOT NULL DEFAULT 0.00,
             entry_date date NOT NULL,
+            recurrence varchar(20) NOT NULL DEFAULT 'one_time',
             client_id bigint(20) UNSIGNED DEFAULT NULL,
             payment_method varchar(100) DEFAULT '',
             description text DEFAULT NULL,
@@ -37,6 +38,7 @@ final class FinanceEntry
             PRIMARY KEY (id),
             KEY type (type),
             KEY entry_date (entry_date),
+            KEY recurrence (recurrence),
             KEY client_id (client_id)
         ) $charset_collate;";
 
@@ -64,6 +66,11 @@ final class FinanceEntry
             $entry_date = current_time('Y-m-d');
         }
 
+        $recurrence = sanitize_key($data['recurrence'] ?? 'one_time');
+        if (!in_array($recurrence, ['one_time', 'monthly'], true)) {
+            $recurrence = 'one_time';
+        }
+
         $result = $wpdb->insert(
             $table_name,
             [
@@ -71,11 +78,12 @@ final class FinanceEntry
                 'category' => sanitize_text_field($data['category'] ?? ''),
                 'amount' => $amount,
                 'entry_date' => $entry_date,
+                'recurrence' => $recurrence,
                 'client_id' => !empty($data['client_id']) ? intval($data['client_id']) : null,
                 'payment_method' => sanitize_text_field($data['payment_method'] ?? ''),
                 'description' => sanitize_textarea_field($data['description'] ?? ''),
             ],
-            ['%s', '%s', '%f', '%s', '%d', '%s', '%s']
+            ['%s', '%s', '%f', '%s', '%s', '%d', '%s', '%s']
         );
 
         return $result === false ? false : (int) $wpdb->insert_id;
@@ -116,24 +124,6 @@ final class FinanceEntry
 
     public static function getSummary(): array
     {
-        global $wpdb;
-        $table_name = $wpdb->prefix . self::$table;
-        $month_start = gmdate('Y-m-01', current_time('timestamp'));
-        $month_end = gmdate('Y-m-t', current_time('timestamp'));
-
-        $rows = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT type,
-                    SUM(amount) AS total,
-                    SUM(CASE WHEN entry_date BETWEEN %s AND %s THEN amount ELSE 0 END) AS month_total
-                FROM $table_name
-                GROUP BY type",
-                $month_start,
-                $month_end
-            ),
-            ARRAY_A
-        );
-
         $summary = [
             'income' => 0.0,
             'expense' => 0.0,
@@ -143,10 +133,23 @@ final class FinanceEntry
             'month_net' => 0.0,
         ];
 
-        foreach ($rows ?: [] as $row) {
-            $type = $row['type'] === 'expense' ? 'expense' : 'income';
-            $summary[$type] = floatval($row['total']);
-            $summary['month_' . $type] = floatval($row['month_total']);
+        $month_start = gmdate('Y-m-01', current_time('timestamp'));
+        $month_end = gmdate('Y-m-t', current_time('timestamp'));
+
+        foreach (self::getAll(500) as $entry) {
+            $type = $entry['type'] === 'expense' ? 'expense' : 'income';
+            $amount = floatval($entry['amount']);
+            $is_monthly = ($entry['recurrence'] ?? 'one_time') === 'monthly';
+            $is_this_month = $entry['entry_date'] >= $month_start && $entry['entry_date'] <= $month_end;
+            $is_active_monthly = $is_monthly && $entry['entry_date'] <= $month_end;
+
+            if (!$is_monthly || $is_active_monthly) {
+                $summary[$type] += $amount;
+            }
+
+            if ($is_this_month || $is_active_monthly) {
+                $summary['month_' . $type] += $amount;
+            }
         }
 
         $summary['net'] = $summary['income'] - $summary['expense'];
@@ -161,43 +164,60 @@ final class FinanceEntry
         $table_name = $wpdb->prefix . self::$table;
         $months = max(1, min(36, $months));
         $start = gmdate('Y-m-01', strtotime('-' . ($months - 1) . ' months', current_time('timestamp')));
+        $end = gmdate('Y-m-t', current_time('timestamp'));
 
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT DATE_FORMAT(entry_date, '%%Y-%%m') AS month_key,
-                    SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) AS income,
-                    SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) AS expenses
+                "SELECT type, amount, entry_date, recurrence
                 FROM $table_name
-                WHERE entry_date >= %s
-                GROUP BY month_key
-                ORDER BY month_key ASC",
+                WHERE entry_date <= %s
+                    AND (entry_date >= %s OR recurrence = 'monthly')
+                ORDER BY entry_date ASC",
+                $end,
                 $start
             ),
             ARRAY_A
         );
 
-        $by_month = [];
-        foreach ($rows ?: [] as $row) {
-            $by_month[$row['month_key']] = [
-                'income' => floatval($row['income']),
-                'expenses' => floatval($row['expenses']),
-            ];
-        }
-
         $labels = [];
         $income = [];
         $expenses = [];
         $net = [];
+        $month_ranges = [];
 
         for ($i = $months - 1; $i >= 0; $i--) {
             $timestamp = strtotime("-$i months", current_time('timestamp'));
             $key = gmdate('Y-m', $timestamp);
             $labels[] = gmdate('M Y', $timestamp);
-            $month_income = $by_month[$key]['income'] ?? 0.0;
-            $month_expenses = $by_month[$key]['expenses'] ?? 0.0;
-            $income[] = $month_income;
-            $expenses[] = $month_expenses;
-            $net[] = $month_income - $month_expenses;
+            $month_ranges[$key] = [
+                'start' => gmdate('Y-m-01', $timestamp),
+                'end' => gmdate('Y-m-t', $timestamp),
+                'income' => 0.0,
+                'expenses' => 0.0,
+            ];
+        }
+
+        foreach ($rows ?: [] as $row) {
+            $amount = floatval($row['amount']);
+            $field = $row['type'] === 'expense' ? 'expenses' : 'income';
+            $is_monthly = ($row['recurrence'] ?? 'one_time') === 'monthly';
+
+            foreach ($month_ranges as $key => $range) {
+                if ($is_monthly && $row['entry_date'] <= $range['end']) {
+                    $month_ranges[$key][$field] += $amount;
+                    continue;
+                }
+
+                if (!$is_monthly && $row['entry_date'] >= $range['start'] && $row['entry_date'] <= $range['end']) {
+                    $month_ranges[$key][$field] += $amount;
+                }
+            }
+        }
+
+        foreach ($month_ranges as $range) {
+            $income[] = $range['income'];
+            $expenses[] = $range['expenses'];
+            $net[] = $range['income'] - $range['expenses'];
         }
 
         return [
