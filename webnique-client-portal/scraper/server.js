@@ -83,6 +83,33 @@ function fmtPhone(raw) {
     return raw.trim();
 }
 
+async function scrollMapsFeed(page) {
+    await page.evaluate(async () => {
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+        const feed = document.querySelector('[role="feed"]');
+        if (!feed) return;
+
+        let lastCount = 0;
+        let stableRounds = 0;
+
+        for (let i = 0; i < 45; i++) {
+            feed.scrollTo(0, feed.scrollHeight);
+            await sleep(900);
+
+            const count = feed.querySelectorAll('a[href*="/maps/place/"]').length;
+            const text = (feed.innerText || feed.textContent || '').toLowerCase();
+            const reachedEnd = text.includes("you've reached the end of the list")
+                || text.includes('you have reached the end of the list');
+
+            if (count <= lastCount) stableRounds++;
+            else stableRounds = 0;
+
+            lastCount = count;
+            if (reachedEnd || stableRounds >= 6) break;
+        }
+    });
+}
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
@@ -99,8 +126,9 @@ app.get('/search', async (req, res) => {
     try {
         page = await newPage();
 
-        const url = 'https://www.google.com/maps/search/' +
-                    encodeURIComponent(query) + '?hl=en';
+        const url = query.startsWith('https://www.google.com/maps/search/')
+            ? query
+            : 'https://www.google.com/maps/search/' + encodeURIComponent(query) + '?hl=en';
 
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
 
@@ -108,15 +136,7 @@ app.get('/search', async (req, res) => {
         await page.waitForSelector('[role="feed"]', { timeout: 12000 }).catch(() => {});
         await sleep(1500);
 
-        // Scroll the left panel to load more results (Google Maps lazy-loads)
-        await page.evaluate(async () => {
-            const feed = document.querySelector('[role="feed"]');
-            if (!feed) return;
-            for (let i = 0; i < 6; i++) {
-                feed.scrollBy(0, 600);
-                await new Promise(r => setTimeout(r, 600));
-            }
-        });
+        await scrollMapsFeed(page);
         await sleep(1000);
 
         // Extract all business listings
@@ -130,11 +150,10 @@ app.get('/search', async (req, res) => {
                 'search','nearby','maps','error','login','signin','share',
             ]);
 
-            // Every clickable place result has an <a href="/maps/place/…">
-            document.querySelectorAll('a[href*="/maps/place/"]').forEach(link => {
+            // Every result card has a place link inside the Maps feed.
+            document.querySelectorAll('[role="feed"] a[href*="/maps/place/"]').forEach(link => {
                 const href = link.href || '';
                 if (!href || seenUrls.has(href)) return;
-                seenUrls.add(href);
 
                 // Name is encoded in the URL path — most reliable source
                 const m = href.match(/\/maps\/place\/([^/@?&]+)/);
@@ -144,44 +163,50 @@ app.get('/search', async (req, res) => {
                     .trim();
 
                 if (!name || name.length < 3 || BLOCKED.has(name.toLowerCase())) return;
+                if (/^(feedback|report|contribute|about|help|directions|share)$/i.test(name)) return;
                 if (seenNames.has(name.toLowerCase())) return;
-                seenNames.add(name.toLowerCase());
 
                 // Walk up to the article card for extra data
-                const card = link.closest('[role="article"]') ||
-                             link.closest('li') ||
-                             link.parentElement;
+                const card = link.closest('[jsaction*="mouseover:pane"]') ||
+                             link.closest('[role="article"]');
+                if (!card) return;
 
-                let rating = 0, review_count = 0, address = '';
+                seenUrls.add(href);
+                seenNames.add(name.toLowerCase());
 
-                if (card) {
-                    // Rating — try aria-label="4.5 stars" or aria-label="Rated 4.5"
-                    const rEl = card.querySelector('[aria-label*="star" i], [aria-label*="rated" i]');
-                    if (rEl) {
-                        const rm = (rEl.getAttribute('aria-label') || '').match(/([0-9]+\.?[0-9]*)/);
-                        if (rm) rating = parseFloat(rm[1]);
-                    }
-                    // Review count: try multiple formats Google uses:
-                    //   "(123)"  ·  "123 reviews"  ·  "4.5 stars 123 reviews"
-                    const cardText = card.innerText || card.textContent || '';
-                    const countPatterns = [
-                        /\(([0-9,]+)\s*(?:reviews?)?\)/i,   // (123) or (123 reviews)
-                        /([0-9,]+)\s+reviews?/i,              // 123 reviews
-                    ];
-                    for (const pat of countPatterns) {
-                        const m = cardText.match(pat);
-                        if (m) { review_count = parseInt(m[1].replace(/,/g, ''), 10); break; }
-                    }
+                let rating = 0, review_count = 0, address = '', phone = '', website = '';
 
-                    // Address: first span whose text looks like a street address
-                    card.querySelectorAll('span').forEach(s => {
-                        if (address) return;
-                        const t = (s.textContent || '').trim();
-                        if (/^\d+\s+\w/.test(t) && t.length > 8 && t.length < 100) {
-                            address = t;
-                        }
-                    });
+                // Rating — try aria-label="4.5 stars" or aria-label="Rated 4.5"
+                const rEl = card.querySelector('[role="img"][aria-label*="star" i], [aria-label*="rated" i]');
+                if (rEl) {
+                    const rm = (rEl.getAttribute('aria-label') || '').match(/([0-9]+\.?[0-9]*)/);
+                    if (rm) rating = parseFloat(rm[1]);
                 }
+
+                const cardText = card.innerText || card.textContent || '';
+                const countPatterns = [
+                    /\(([0-9,]+)\s*(?:reviews?)?\)/i,
+                    /([0-9,]+)\s+reviews?/i,
+                ];
+                for (const pat of countPatterns) {
+                    const m = cardText.match(pat);
+                    if (m) { review_count = parseInt(m[1].replace(/,/g, ''), 10); break; }
+                }
+
+                const phoneMatch = cardText.match(/\(?\b(\d{3})\)?[\s.\-](\d{3})[\s.\-](\d{4})\b/);
+                if (phoneMatch) phone = `(${phoneMatch[1]}) ${phoneMatch[2]}-${phoneMatch[3]}`;
+
+                const external = Array.from(card.querySelectorAll('a[href^="http"]'))
+                    .find(a => !a.href.includes('google.com/maps/place/'));
+                if (external) website = external.href;
+
+                card.querySelectorAll('span').forEach(s => {
+                    if (address) return;
+                    const t = (s.textContent || '').trim();
+                    if (/^\d+\s+\w/.test(t) && t.length > 8 && t.length < 120) {
+                        address = t.replace(/\b(Open|Closed|Open 24 hours|24 hours)\b/gi, '').trim();
+                    }
+                });
 
                 items.push({
                     name,
@@ -189,8 +214,8 @@ app.get('/search', async (req, res) => {
                     rating,
                     review_count,
                     address,
-                    phone:   '',
-                    website: '',
+                    phone,
+                    website,
                 });
             });
 
