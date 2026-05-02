@@ -279,6 +279,10 @@ final class LeadFinderAdmin
                         wnqSetStatus('ZIP '+zipIdx+' of '+total+' ('+d.zip+')');
                         wnqLog('🗺  Google Maps ZIP '+d.zip+' → '+(d.found||0)+' businesses found','#60a5fa');
                         if(!d.done&&!stopFlag)await delay(zipDelayMs);
+                    } else if(d.action==='backend_status'){
+                        wnqSetStatus('Backend job '+(d.state||'running')+' — '+zipIdx+' of '+total+' ZIPs');
+                        wnqLog('Backend: '+zipIdx+'/'+total+' ZIPs | found '+(d.found||0)+' | saved '+((d.stats&&d.stats.saved)||0)+(d.imported?' | imported '+d.imported:''),'#60a5fa');
+                        if(!d.done&&!stopFlag)await delay(3000);
                     } else if(d.action==='candidate'){
                         wnqSetStatus('ZIP '+zipIdx+' of '+total+' — scraping website…');
                         const name=d.name||'unknown';
@@ -894,10 +898,39 @@ final class LeadFinderAdmin
         ?>
         <div class="wnq-card" style="max-width:680px">
             <h3>Lead Finder Settings</h3>
-            <p style="color:#6b7280;font-size:13px;margin:0 0 16px">No API key required — leads are discovered by scraping Google Maps.</p>
+            <p style="color:#6b7280;font-size:13px;margin:0 0 16px">Configure the scalable Node backend for ZIP sweeps, or leave it blank to use the legacy local fallback.</p>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php'));?>">
                 <?php wp_nonce_field('wnq_lead_save_settings','wnq_nonce');?>
                 <input type="hidden" name="action" value="wnq_lead_save_settings">
+                <div class="wnq-card" style="background:#f8fafc;margin:-4px 0 16px;padding:14px">
+                    <h3 style="margin-bottom:10px">Scalable Backend</h3>
+                    <div class="wnq-row2">
+                        <div class="wnq-field">
+                            <label>Backend API URL</label>
+                            <input type="url" name="backend_api_url" value="<?php echo esc_attr($settings['backend_api_url']??'');?>" placeholder="https://lead-api.webnique.com">
+                            <small>When set, ZIP Sweep runs in the Node backend instead of WordPress.</small>
+                        </div>
+                        <div class="wnq-field">
+                            <label>Backend API Key</label>
+                            <input type="password" name="backend_api_key" value="<?php echo esc_attr($settings['backend_api_key']??'');?>" placeholder="Bearer token">
+                            <small>Stored in WordPress options and sent as Authorization: Bearer.</small>
+                        </div>
+                    </div>
+                    <div class="wnq-row2">
+                        <div class="wnq-field">
+                            <label>Backend Source</label>
+                            <select name="backend_source">
+                                <option value="outscraper"<?php selected($settings['backend_source']??'outscraper','outscraper');?>>Outscraper</option>
+                            </select>
+                            <small>Phase 1 uses Outscraper for Maps discovery.</small>
+                        </div>
+                        <div class="wnq-field">
+                            <label>Max Reviews</label>
+                            <input type="number" name="max_reviews" value="<?php echo esc_attr($settings['max_reviews']??50);?>" min="0" max="500">
+                            <small>Businesses above this review count are filtered out.</small>
+                        </div>
+                    </div>
+                </div>
                 <div class="wnq-row2">
                     <div class="wnq-field">
                         <label>Default Keyword</label>
@@ -947,9 +980,17 @@ final class LeadFinderAdmin
     {
         if (!check_ajax_referer('wnq_lead_nonce', 'nonce', false)) { wp_send_json_error(['error' => 'Security check failed'], 403); return; }
         self::requireCap();
+        $keyword = sanitize_text_field($_POST['keyword'] ?? '');
+        if (self::backendEnabled()) {
+            $result = self::startBackendJob($keyword);
+            $result['ok']
+                ? wp_send_json_success($result)
+                : wp_send_json_error(['error' => $result['error'] ?? 'Backend job failed']);
+            return;
+        }
         ob_start();
         try {
-            $result = LeadFinderEngine::startSearch(sanitize_text_field($_POST['keyword'] ?? ''));
+            $result = LeadFinderEngine::startSearch($keyword);
         } catch (\Throwable $e) {
             ob_end_clean();
             wp_send_json_error(['error' => $e->getMessage()]);
@@ -967,6 +1008,14 @@ final class LeadFinderAdmin
         self::requireCap();
         $batch_id = sanitize_text_field($_POST['batch_id'] ?? '');
         if (!$batch_id) { wp_send_json_error(['error' => 'Missing batch_id']); return; }
+        $backend_batch = get_transient('wnq_backend_lead_batch_' . $batch_id);
+        if ($backend_batch) {
+            $result = self::pollBackendJob($batch_id, $backend_batch);
+            $result['ok']
+                ? wp_send_json_success($result)
+                : wp_send_json_error(['error' => $result['error'] ?? 'Backend polling failed']);
+            return;
+        }
         @set_time_limit(0);
         ob_start();
         try {
@@ -1132,6 +1181,10 @@ final class LeadFinderAdmin
             [
                 'default_keyword' => sanitize_text_field($_POST['default_keyword'] ?? ''),
                 'min_seo_score'   => max(0, min(7, (int)($_POST['min_seo_score'] ?? 2))),
+                'backend_api_url'  => esc_url_raw(untrailingslashit($_POST['backend_api_url'] ?? '')),
+                'backend_api_key'  => sanitize_text_field($_POST['backend_api_key'] ?? ''),
+                'backend_source'   => sanitize_key($_POST['backend_source'] ?? 'outscraper'),
+                'max_reviews'      => max(0, min(500, (int)($_POST['max_reviews'] ?? 50))),
             ]
         ));
         wp_redirect(admin_url('admin.php?page=wnq-lead-finder&tab=settings&settings_saved=1'));
@@ -1531,5 +1584,190 @@ final class LeadFinderAdmin
             wp_send_json_error(['error' => 'Access denied'], 403);
             exit;
         }
+    }
+
+    private static function backendEnabled(): bool
+    {
+        $settings = get_option('wnq_lead_finder_settings', []);
+        return !empty($settings['backend_api_url']) && !empty($settings['backend_api_key']);
+    }
+
+    private static function startBackendJob(string $keyword): array
+    {
+        if (!$keyword) {
+            return ['ok' => false, 'error' => 'Keyword is required'];
+        }
+
+        $settings = get_option('wnq_lead_finder_settings', []);
+        $zips = array_values(array_unique(\WNQ\Data\FloridaZips::getAll()));
+        $response = self::backendRequest('POST', '/v1/jobs', [
+            'keyword' => $keyword,
+            'zips' => $zips,
+            'source' => $settings['backend_source'] ?? 'outscraper',
+            'createdBy' => wp_get_current_user()->user_login ?: 'wordpress',
+            'filters' => [
+                'maxReviews' => (int)($settings['max_reviews'] ?? 50),
+                'requireWebsite' => true,
+                'requirePhone' => false,
+            ],
+        ]);
+
+        if (empty($response['ok'])) {
+            return $response;
+        }
+
+        $batch_id = wp_generate_uuid4();
+        set_transient('wnq_backend_lead_batch_' . $batch_id, [
+            'job_id' => $response['data']['jobId'] ?? '',
+            'imported' => false,
+            'keyword' => $keyword,
+            'stats' => self::emptyBackendStats(),
+        ], DAY_IN_SECONDS);
+
+        return [
+            'ok' => true,
+            'mode' => 'backend',
+            'batch_id' => $batch_id,
+            'backend_job_id' => $response['data']['jobId'] ?? '',
+            'total_zips' => count($zips),
+        ];
+    }
+
+    private static function pollBackendJob(string $batch_id, array $batch): array
+    {
+        $job_id = sanitize_text_field($batch['job_id'] ?? '');
+        if (!$job_id) {
+            delete_transient('wnq_backend_lead_batch_' . $batch_id);
+            return ['ok' => false, 'error' => 'Backend job id missing'];
+        }
+
+        $response = self::backendRequest('GET', '/v1/jobs/' . rawurlencode($job_id));
+        if (empty($response['ok'])) {
+            return $response;
+        }
+
+        $job = $response['data']['job'] ?? [];
+        $stats = [
+            'zips_searched' => (int)($job['completed_zips'] ?? 0),
+            'saved' => (int)($job['total_saved'] ?? 0),
+            'duplicate' => 0,
+            'no_phone' => 0,
+            'no_website' => 0,
+            'errors' => (int)($job['error_count'] ?? 0),
+        ];
+
+        $done = in_array($job['state'] ?? '', ['completed', 'completed_with_errors', 'failed', 'canceled'], true);
+        $imported = 0;
+
+        if ($done && empty($batch['imported']) && in_array($job['state'] ?? '', ['completed', 'completed_with_errors'], true)) {
+            $imported = self::importBackendLeads($job_id);
+            $batch['imported'] = true;
+            $batch['stats'] = $stats;
+            set_transient('wnq_backend_lead_batch_' . $batch_id, $batch, DAY_IN_SECONDS);
+        }
+
+        if ($done) {
+            delete_transient('wnq_backend_lead_batch_' . $batch_id);
+        }
+
+        return [
+            'ok' => true,
+            'done' => $done,
+            'action' => 'backend_status',
+            'zip_index' => (int)($job['completed_zips'] ?? 0),
+            'total_zips' => (int)($job['total_zips'] ?? 0),
+            'stats' => $stats,
+            'state' => sanitize_text_field($job['state'] ?? 'queued'),
+            'found' => (int)($job['total_found'] ?? 0),
+            'imported' => $imported,
+        ];
+    }
+
+    private static function importBackendLeads(string $job_id): int
+    {
+        $response = self::backendRequest('GET', '/v1/jobs/' . rawurlencode($job_id) . '/leads');
+        if (empty($response['ok'])) {
+            return 0;
+        }
+
+        $count = 0;
+        foreach (($response['data']['leads'] ?? []) as $lead) {
+            $place_id = sanitize_text_field($lead['source_place_id'] ?? '');
+            if (!$place_id) {
+                $place_id = 'backend_' . md5(($lead['website'] ?? '') . '|' . ($lead['business_name'] ?? ''));
+            }
+            if (Lead::findByPlaceId($place_id)) {
+                continue;
+            }
+            $id = Lead::insert([
+                'place_id' => $place_id,
+                'business_name' => sanitize_text_field($lead['business_name'] ?? ''),
+                'industry' => sanitize_text_field($lead['industry'] ?? ''),
+                'website' => esc_url_raw($lead['website'] ?? ''),
+                'address' => sanitize_text_field($lead['address'] ?? ''),
+                'city' => sanitize_text_field($lead['city'] ?? ''),
+                'state' => sanitize_text_field($lead['state'] ?? ''),
+                'zip' => sanitize_text_field($lead['zip'] ?? ''),
+                'phone' => sanitize_text_field($lead['phone'] ?? ''),
+                'email' => sanitize_email($lead['email'] ?? ''),
+                'email_source' => esc_url_raw($lead['email_source'] ?? ''),
+                'rating' => (float)($lead['rating'] ?? 0),
+                'review_count' => (int)($lead['review_count'] ?? 0),
+                'social_facebook' => esc_url_raw($lead['facebook'] ?? ''),
+                'social_instagram' => esc_url_raw($lead['instagram'] ?? ''),
+                'social_linkedin' => esc_url_raw($lead['linkedin'] ?? ''),
+                'social_youtube' => esc_url_raw($lead['youtube'] ?? ''),
+                'social_tiktok' => esc_url_raw($lead['tiktok'] ?? ''),
+                'seo_score' => (int)($lead['lead_score'] ?? 0),
+                'seo_issues' => [],
+                'status' => 'new',
+                'notes' => 'Imported from Lead Backend job ' . $job_id,
+            ]);
+            if ($id > 0) {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    private static function backendRequest(string $method, string $path, array $body = []): array
+    {
+        $settings = get_option('wnq_lead_finder_settings', []);
+        $base = untrailingslashit($settings['backend_api_url'] ?? '');
+        $key = $settings['backend_api_key'] ?? '';
+        if (!$base || !$key) {
+            return ['ok' => false, 'error' => 'Lead backend is not configured'];
+        }
+
+        $args = [
+            'method' => $method,
+            'timeout' => 30,
+            'headers' => [
+                'Authorization' => 'Bearer ' . $key,
+                'Content-Type' => 'application/json',
+            ],
+        ];
+        if ($method !== 'GET') {
+            $args['body'] = wp_json_encode($body);
+        }
+
+        $response = wp_remote_request($base . $path, $args);
+        if (is_wp_error($response)) {
+            return ['ok' => false, 'error' => $response->get_error_message()];
+        }
+
+        $code = (int)wp_remote_retrieve_response_code($response);
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        if ($code < 200 || $code >= 300) {
+            return ['ok' => false, 'error' => $data['error'] ?? ('Backend HTTP ' . $code)];
+        }
+
+        return ['ok' => true, 'data' => is_array($data) ? $data : []];
+    }
+
+    private static function emptyBackendStats(): array
+    {
+        return ['zips_searched' => 0, 'saved' => 0, 'duplicate' => 0, 'no_phone' => 0, 'no_website' => 0, 'errors' => 0];
     }
 }
