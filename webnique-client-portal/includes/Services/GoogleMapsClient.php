@@ -32,6 +32,7 @@ final class GoogleMapsClient
     /** Persistent Puppeteer scraper server (started on-demand by the plugin) */
     private const SCRAPER_PORT = 3099;
     private const SCRAPER_URL  = 'http://127.0.0.1:3099';
+    private const SCRAPER_VERSION = '2.2.9';
 
     /** Realistic Chrome User-Agent */
     private const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
@@ -179,7 +180,11 @@ final class GoogleMapsClient
         // Quick health check
         $h = wp_remote_get(self::SCRAPER_URL . '/health', ['timeout' => 2, 'sslverify' => false]);
         if (!is_wp_error($h) && (int)wp_remote_retrieve_response_code($h) === 200) {
-            return ($state = true);
+            $data = json_decode(wp_remote_retrieve_body($h), true);
+            if (($data['version'] ?? '') === self::SCRAPER_VERSION) {
+                return ($state = true);
+            }
+            self::stopStaleScraper();
         }
 
         // Locate node binary and server script
@@ -230,6 +235,18 @@ final class GoogleMapsClient
         }
         $disabled = array_map('trim', explode(',', (string)ini_get('disable_functions')));
         return in_array('shell_exec', $disabled, true);
+    }
+
+    private static function stopStaleScraper(): void
+    {
+        wp_remote_post(self::SCRAPER_URL . '/shutdown', ['timeout' => 1, 'sslverify' => false]);
+
+        if (self::shellExecDisabled()) {
+            return;
+        }
+
+        @shell_exec("(command -v lsof >/dev/null 2>&1 && lsof -tiTCP:" . self::SCRAPER_PORT . " -sTCP:LISTEN | xargs kill 2>/dev/null) || true");
+        usleep(500000);
     }
 
     // ── Private: HTTP ────────────────────────────────────────────────────────

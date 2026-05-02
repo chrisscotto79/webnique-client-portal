@@ -17,6 +17,7 @@ const chromium  = require('@sparticuz/chromium');
 const puppeteer = require('puppeteer-core');
 
 const PORT = parseInt(process.env.WNQ_SCRAPER_PORT || '3099', 10);
+const SCRAPER_VERSION = '2.2.9';
 const app  = express();
 
 // ── Browser lifecycle ────────────────────────────────────────────────────────
@@ -86,18 +87,21 @@ function fmtPhone(raw) {
 async function scrollMapsFeed(page) {
     await page.evaluate(async () => {
         const sleep = ms => new Promise(r => setTimeout(r, ms));
-        const feed = document.querySelector('[role="feed"]');
-        if (!feed) return;
+        const feed = document.querySelector('[role="feed"]') ||
+            document.querySelector('div[aria-label*="Results" i]') ||
+            document.scrollingElement ||
+            document.documentElement;
 
         let lastCount = 0;
         let stableRounds = 0;
 
         for (let i = 0; i < 45; i++) {
-            feed.scrollTo(0, feed.scrollHeight);
+            feed.scrollTo(0, feed.scrollHeight || document.body.scrollHeight);
             await sleep(900);
 
-            const count = feed.querySelectorAll('a[href*="/maps/place/"]').length;
-            const text = (feed.innerText || feed.textContent || '').toLowerCase();
+            const root = document.querySelector('[role="feed"]') || document;
+            const count = root.querySelectorAll('a[href*="/maps/place/"]').length;
+            const text = (root.innerText || root.textContent || '').toLowerCase();
             const reachedEnd = text.includes("you've reached the end of the list")
                 || text.includes('you have reached the end of the list');
 
@@ -112,7 +116,15 @@ async function scrollMapsFeed(page) {
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
-app.get('/health', (_req, res) => res.json({ ok: true }));
+app.get('/health', (_req, res) => res.json({ ok: true, version: SCRAPER_VERSION }));
+
+app.post('/shutdown', async (_req, res) => {
+    res.json({ ok: true, shutting_down: true, version: SCRAPER_VERSION });
+    setTimeout(async () => {
+        if (browser) await browser.close().catch(() => {});
+        process.exit(0);
+    }, 150);
+});
 
 /**
  * GET /search?q=plumbers+34211
@@ -150,26 +162,40 @@ app.get('/search', async (req, res) => {
                 'search','nearby','maps','error','login','signin','share',
             ]);
 
-            // Every result card has a place link inside the Maps feed.
-            document.querySelectorAll('[role="feed"] a[href*="/maps/place/"]').forEach(link => {
+            const roots = Array.from(document.querySelectorAll(
+                '[role="feed"] [jsaction*="mouseover:pane"], ' +
+                '[role="feed"] [role="article"], ' +
+                '[jsaction*="mouseover:pane"], ' +
+                '[role="article"]'
+            ));
+
+            if (!roots.length) {
+                document.querySelectorAll('a[href*="/maps/place/"]').forEach(link => {
+                    const card = link.closest('[jsaction*="mouseover:pane"]') ||
+                        link.closest('[role="article"]') ||
+                        link.parentElement;
+                    if (card) roots.push(card);
+                });
+            }
+
+            roots.forEach(card => {
+                const link = card.querySelector('a[href*="/maps/place/"]');
+                if (!link) return;
                 const href = link.href || '';
                 if (!href || seenUrls.has(href)) return;
 
-                // Name is encoded in the URL path — most reliable source
                 const m = href.match(/\/maps\/place\/([^/@?&]+)/);
-                if (!m) return;
-                let name = decodeURIComponent(m[1].replace(/\+/g, ' '))
-                    .replace(/,.*$/, '')
-                    .trim();
+                const headline = card.querySelector('.fontHeadlineSmall');
+                let name = headline ? (headline.textContent || '').trim() : '';
+                if (!name && m) {
+                    name = decodeURIComponent(m[1].replace(/\+/g, ' '))
+                        .replace(/,.*$/, '')
+                        .trim();
+                }
 
                 if (!name || name.length < 3 || BLOCKED.has(name.toLowerCase())) return;
                 if (/^(feedback|report|contribute|about|help|directions|share)$/i.test(name)) return;
                 if (seenNames.has(name.toLowerCase())) return;
-
-                // Walk up to the article card for extra data
-                const card = link.closest('[jsaction*="mouseover:pane"]') ||
-                             link.closest('[role="article"]');
-                if (!card) return;
 
                 seenUrls.add(href);
                 seenNames.add(name.toLowerCase());
