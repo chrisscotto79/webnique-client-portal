@@ -206,7 +206,7 @@ final class LeadFinderAdmin
                 <div class="wnq-field">
                     <label for="lf-keyword">Industry / Keyword</label>
                     <input type="text" id="lf-keyword" placeholder="e.g. pressure washing" value="<?php echo esc_attr($settings['default_keyword'] ?? ''); ?>">
-                    <small>Used as: <code>pressure washing 34211</code></small>
+                    <small>Used as: <code id="lf-used-as"><?php echo esc_html(($settings['default_keyword'] ?? 'plumbing') . ' 34211'); ?></code></small>
                 </div>
                 <div class="wnq-field">
                     <label for="lf-delay">Delay between ZIPs (seconds)</label>
@@ -263,6 +263,8 @@ final class LeadFinderAdmin
                     await wnqLoop();
                 }catch(err){wnqShowResult(false,'Fatal: '+err.message);wnqDone();}
             };
+            const keywordInput=document.getElementById('lf-keyword'),usedAs=document.getElementById('lf-used-as');
+            if(keywordInput&&usedAs){const sync=()=>{usedAs.textContent=(keywordInput.value.trim()||'plumbing')+' 34211';};keywordInput.addEventListener('input',sync);sync();}
             window.wnqZipStop=function(){stopFlag=true;wnqSetStatus('Stopping…');};
             async function wnqLoop(){
                 while(running&&!stopFlag){
