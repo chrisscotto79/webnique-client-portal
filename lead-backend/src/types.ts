@@ -1,7 +1,7 @@
 export type CreateJobInput = {
   keyword: string;
   zips: string[];
-  source?: 'outscraper';
+  source?: 'puppeteer';
   createdBy?: string;
   filters?: {
     maxReviews?: number;

@@ -1,6 +1,6 @@
 # WebNique Lead Backend
 
-Phase 1 backend for scalable ZIP sweeps.
+Backend for scalable ZIP sweeps. Maps discovery is self-hosted through Puppeteer and website parsing uses Cheerio; no paid scraper API is required.
 
 ## Run Locally
 
@@ -17,9 +17,13 @@ Existing Phase 1 database:
 
 ```bash
 psql "$DATABASE_URL" -f db/migrations/002_phase2_operations.sql
+psql "$DATABASE_URL" -f db/migrations/003_no_paid_maps_provider.sql
+psql "$DATABASE_URL" -f db/migrations/004_use_puppeteer_cheerio.sql
 ```
 
 WordPress should call this service over REST. WordPress starts jobs, polls progress, and imports completed leads. This backend owns Maps discovery, queueing, retries, enrichment, and storage.
+
+For scale, keep `MAX_ZIP_CONCURRENCY` conservative and increase slowly. Self-hosted Google Maps scraping is cheaper than paid APIs, but it can still be rate limited; run the worker on infrastructure where you can control browser dependencies, outbound IPs, and job concurrency.
 
 ## API
 
@@ -29,7 +33,7 @@ WordPress should call this service over REST. WordPress starts jobs, polls progr
 {
   "keyword": "plumbing",
   "zips": ["32825", "32202"],
-  "source": "outscraper",
+  "source": "puppeteer",
   "filters": {
     "maxReviews": 50,
     "requireWebsite": true,
@@ -49,6 +53,16 @@ WordPress should call this service over REST. WordPress starts jobs, polls progr
 `POST /v1/jobs/:jobId/mark-imported`
 
 `GET /v1/jobs/:jobId/export.csv`
+
+## Standalone Scraper Script
+
+Run one ZIP outside WordPress:
+
+```bash
+npm run scrape:zip -- --keyword "plumbing" --zip 32825 --max-reviews 50
+```
+
+This uses Puppeteer for Google Maps scrolling and Cheerio for homepage/contact-page parsing.
 
 All routes require:
 

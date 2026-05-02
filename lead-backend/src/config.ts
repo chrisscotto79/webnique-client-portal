@@ -5,9 +5,12 @@ export const config = {
   apiKey: process.env.API_KEY || '',
   databaseUrl: process.env.DATABASE_URL || '',
   redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
-  outscraperApiKey: process.env.OUTSCRAPER_API_KEY || '',
-  mapsProvider: process.env.MAPS_PROVIDER || 'outscraper',
-  maxZipConcurrency: Number(process.env.MAX_ZIP_CONCURRENCY || 4),
+  puppeteerHeadless: process.env.PUPPETEER_HEADLESS !== 'false',
+  puppeteerExecutablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '',
+  mapsResultsLimit: Number(process.env.MAPS_RESULTS_LIMIT || 40),
+  mapsScrollRounds: Number(process.env.MAPS_SCROLL_ROUNDS || 30),
+  mapsScrollDelayMs: Number(process.env.MAPS_SCROLL_DELAY_MS || 1200),
+  maxZipConcurrency: Number(process.env.MAX_ZIP_CONCURRENCY || 2),
   maxEnrichConcurrency: Number(process.env.MAX_ENRICH_CONCURRENCY || 20)
 };
 
