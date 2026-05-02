@@ -287,8 +287,13 @@ final class LeadFinderEngine
         $email  = self::extractEmail($html);
         $social = self::extractSocials($html);
 
-        Lead::insert([
-            'place_id'         => md5($website ?: $name . $raw_address),
+        $place_id = md5($website ?: $name . $raw_address);
+        if (Lead::findByPlaceId($place_id)) {
+            return 'duplicate';
+        }
+
+        $insert_id = Lead::insert([
+            'place_id'         => $place_id,
             'business_name'    => $name,
             'industry'         => $keyword,
             'owner_first'      => '',
@@ -315,7 +320,7 @@ final class LeadFinderEngine
             'notes'            => $temporarily_closed ? 'Temporarily closed per Google Maps' : '',
         ]);
 
-        return 'saved';
+        return $insert_id > 0 ? 'saved' : 'skipped';
     }
 
     // ── Mode C Phase 1: Queue Bulk Google Maps import ────────────────────────
