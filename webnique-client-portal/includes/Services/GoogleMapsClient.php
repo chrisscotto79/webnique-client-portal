@@ -189,6 +189,9 @@ final class GoogleMapsClient
         if (!$node || !$server || !is_dir($node_modules)) return ($state = false);
 
         // Spawn server as background process
+        if (self::shellExecDisabled()) {
+            return ($state = false);
+        }
         $log = sys_get_temp_dir() . '/wnq-scraper.log';
         @shell_exec(
             escapeshellarg($node) . ' ' . escapeshellarg($server) .
@@ -213,8 +216,20 @@ final class GoogleMapsClient
         foreach (['/opt/node22/bin/node', '/usr/local/bin/node', '/usr/bin/node'] as $p) {
             if (file_exists($p) && is_executable($p)) return $p;
         }
+        if (self::shellExecDisabled()) {
+            return '';
+        }
         $which = trim((string)@shell_exec('which node 2>/dev/null'));
         return $which ?: '';
+    }
+
+    private static function shellExecDisabled(): bool
+    {
+        if (!function_exists('shell_exec')) {
+            return true;
+        }
+        $disabled = array_map('trim', explode(',', (string)ini_get('disable_functions')));
+        return in_array('shell_exec', $disabled, true);
     }
 
     // ── Private: HTTP ────────────────────────────────────────────────────────

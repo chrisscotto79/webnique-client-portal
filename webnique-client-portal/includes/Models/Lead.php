@@ -230,6 +230,14 @@ final class Lead
         $wpdb->query("DELETE FROM {$wpdb->prefix}wnq_leads WHERE id IN ({$in})");
     }
 
+    public static function deleteAll(): int
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'wnq_leads';
+        $deleted = $wpdb->query("DELETE FROM {$table}");
+        return is_numeric($deleted) ? (int)$deleted : 0;
+    }
+
     /**
      * Stamp a batch of lead IDs as exported (sets exported_at to now).
      * Only stamps leads that haven't been exported yet so the first-export date is preserved.

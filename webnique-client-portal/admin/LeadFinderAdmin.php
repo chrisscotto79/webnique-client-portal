@@ -56,7 +56,7 @@ final class LeadFinderAdmin
         add_action('wp_ajax_wnq_lead_delete',        [self::class, 'ajaxDelete']);
         add_action('wp_ajax_wnq_lead_bulk_action',   [self::class, 'ajaxBulkAction']);
         add_action('wp_ajax_wnq_lead_run_migration', [self::class, 'ajaxRunMigration']);
-        add_action('wp_ajax_wnq_npm_install',        [self::class, 'ajaxNpmInstall']);
+        add_action('wp_ajax_wnq_lead_delete_all',    [self::class, 'ajaxDeleteAll']);
 
         add_action('admin_post_wnq_lead_export_csv',    [self::class, 'handleExportCsv']);
         add_action('admin_post_wnq_lead_save_settings', [self::class, 'handleSaveSettings']);
@@ -199,7 +199,7 @@ final class LeadFinderAdmin
             <h3>Florida ZIP Code Sweep</h3>
             <p style="color:#6b7280;font-size:13px;margin:0 0 16px">
                 Searches all <?php echo esc_html(number_format($total_zips)); ?> Florida ZIP codes on Google Maps.
-                Saves leads with <strong>&lt; 50 reviews</strong> that have a phone number.
+                Saves leads with <strong>&lt; 50 reviews</strong> and a website, then scrapes for phone, email, and social links.
                 Scrapes homepage for email + social links. <strong>Zero API cost.</strong>
             </p>
             <div class="wnq-row2" style="max-width:600px">
@@ -807,6 +807,7 @@ final class LeadFinderAdmin
             <label style="font-size:12px;display:flex;align-items:center;gap:4px;white-space:nowrap"><input type="checkbox" name="has_email" value="1"<?php checked($f_email);?>> Email</label>
             <button type="submit" class="wnq-btn wnq-btn-secondary wnq-btn-sm">Filter</button>
             <a href="<?php echo esc_url($base_url);?>" class="wnq-btn wnq-btn-secondary wnq-btn-sm">Reset</a>
+            <button type="button" class="wnq-btn wnq-btn-danger wnq-btn-sm" onclick="wnqDeleteAllLeads()">Delete All Leads</button>
             <a href="<?php echo esc_url($export_url);?>" class="wnq-btn wnq-btn-primary wnq-btn-sm" style="margin-left:auto">Export GHL CSV (<?php echo esc_html($total);?>)</a>
         </form>
         <div class="wnq-bulk-bar" id="wnq-bulk-bar">
@@ -878,6 +879,7 @@ final class LeadFinderAdmin
             window.wnqBulkClear=function(){document.querySelectorAll('.wnq-sel').forEach(c=>c.checked=false);if(selAll)selAll.checked=false;upd();};
             window.wnqBulkApply=function(){const status=document.getElementById('wnq-bulk-status').value;if(!status){alert('Select a status.');return;}const ids=[...document.querySelectorAll('.wnq-sel:checked')].map(c=>c.value);if(!ids.length)return;const b=new FormData();b.append('action','wnq_lead_bulk_action');b.append('nonce',nonce);b.append('bulk_action',status);ids.forEach(id=>b.append('ids[]',id));fetch(ajaxurl,{method:'POST',body:b}).then(r=>r.json()).then(d=>{if(!d.success){alert('Error: '+(d.data?.message||'?'));return;}document.querySelectorAll('.wnq-sel:checked').forEach(c=>{const s=c.closest('tr').querySelector('.wnq-status-sel');if(s)s.value=status;});wnqBulkClear();});};
             window.wnqBulkDelete=function(){const ids=[...document.querySelectorAll('.wnq-sel:checked')].map(c=>c.value);if(!ids.length||!confirm('Delete '+ids.length+' lead(s)?'))return;const b=new FormData();b.append('action','wnq_lead_bulk_action');b.append('nonce',nonce);b.append('bulk_action','delete');ids.forEach(id=>b.append('ids[]',id));fetch(ajaxurl,{method:'POST',body:b}).then(r=>r.json()).then(d=>{if(!d.success){alert('Error: '+(d.data?.message||'?'));return;}document.querySelectorAll('.wnq-sel:checked').forEach(c=>{const r=c.closest('tr');if(r)r.remove();});wnqBulkClear();});};
+            window.wnqDeleteAllLeads=function(){const typed=prompt('This permanently deletes every saved lead. Type DELETE ALL to confirm.');if(typed!=='DELETE ALL')return;const b=new FormData();b.append('action','wnq_lead_delete_all');b.append('nonce',nonce);fetch(ajaxurl,{method:'POST',body:b}).then(r=>r.json()).then(d=>{if(!d.success){alert('Error: '+(d.data?.message||'?'));return;}alert('Deleted '+(d.data?.deleted||0)+' lead(s).');window.location.href=<?php echo wp_json_encode($base_url);?>;});};
         })();
         </script>
         <?php
@@ -915,13 +917,12 @@ final class LeadFinderAdmin
         $scraper_dir   = WNQ_PORTAL_PATH . 'scraper';
         $npm_installed = is_dir($scraper_dir . '/node_modules/puppeteer-core')
                       || is_dir($scraper_dir . '/node_modules/puppeteer');
-        $nonce         = wp_create_nonce('wnq_lead_nonce');
         ?>
         <div class="wnq-card" style="max-width:680px">
             <h3>Scraper Setup (Puppeteer / Node.js)</h3>
             <p style="color:#6b7280;font-size:13px;margin:0 0 12px">
-                The ZIP Sweep uses a local Puppeteer server to scrape Google Maps results.
-                Run <strong>npm install</strong> once to install the dependencies.
+                The ZIP Sweep uses the bundled local Puppeteer server to scrape Google Maps results.
+                Install dependencies during deploy or via SSH; WordPress admin no longer runs shell installs.
             </p>
             <p style="margin:0 0 14px">
                 Status: <?php if($npm_installed):?>
@@ -930,60 +931,10 @@ final class LeadFinderAdmin
                     <strong style="color:#dc2626">✗ Not installed</strong> — ZIP Sweep will use fallback HTTP (fewer results)
                 <?php endif;?>
             </p>
-            <button id="wnq-npm-btn" class="wnq-btn wnq-btn-primary" onclick="wnqNpmInstall()">
-                <?php echo $npm_installed ? 'Re-run npm install' : 'Install Node Dependencies'; ?>
-            </button>
-            <div id="wnq-npm-out" style="display:none;margin-top:14px;background:#0f172a;color:#e2e8f0;padding:14px 16px;border-radius:8px;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:260px;overflow-y:auto"></div>
             <div style="margin-top:16px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:12px">
                 <strong>Manual install (SSH):</strong><br>
                 <code style="display:block;margin-top:6px;font-size:11px;word-break:break-all">cd <?php echo esc_html($scraper_dir); ?> &amp;&amp; npm install</code>
             </div>
-            <script>
-            function wnqNpmInstall(){
-                const btn=document.getElementById('wnq-npm-btn');
-                const out=document.getElementById('wnq-npm-out');
-                btn.disabled=true; btn.textContent='Running npm install…';
-                out.style.display='block'; out.textContent='Starting…\n';
-                const fd=new FormData();
-                fd.append('action','wnq_npm_install');
-                fd.append('nonce',<?php echo wp_json_encode($nonce);?>);
-                fetch(ajaxurl,{method:'POST',body:fd})
-                    .then(function(r){return r.text();})
-                    .then(function(text){
-                        var d;
-                        try{ d=JSON.parse(text); }
-                        catch(e){
-                            out.textContent='Server returned an unexpected response:\n\n'+text.slice(0,800);
-                            btn.textContent='<?php echo $npm_installed ? 'Re-run npm install' : 'Install Node Dependencies'; ?>';
-                            btn.disabled=false;
-                            return;
-                        }
-                        if(d.shell_exec_disabled){
-                            out.textContent='Automated install is not available on this server (shell_exec is disabled).\n\nRun the command in the "Manual install" box below via SSH instead.';
-                            btn.textContent='<?php echo $npm_installed ? 'Re-run npm install' : 'Install Node Dependencies'; ?>';
-                            btn.disabled=false;
-                            return;
-                        }
-                        out.textContent = d.data ? (d.data.output||'(no output)') : (d.output||text);
-                        if(d.installed||(d.data&&d.data.installed)){
-                            btn.textContent='✓ Installed — Re-run npm install';
-                            btn.disabled=false;
-                        } else if(!d.success&&d.data&&d.data.message){
-                            out.textContent=d.data.message;
-                            btn.textContent='Install failed — try again';
-                            btn.disabled=false;
-                        } else {
-                            btn.textContent='Install failed — try again';
-                            btn.disabled=false;
-                        }
-                    })
-                    .catch(function(e){
-                        out.textContent='Network error: '+e.message;
-                        btn.textContent='<?php echo $npm_installed ? 'Re-run npm install' : 'Install Node Dependencies'; ?>';
-                        btn.disabled=false;
-                    });
-            }
-            </script>
         </div>
         <?php
     }
@@ -1121,6 +1072,14 @@ final class LeadFinderAdmin
         wp_send_json_success();
     }
 
+    public static function ajaxDeleteAll(): void
+    {
+        check_ajax_referer('wnq_lead_actions', 'nonce');
+        self::requireCap();
+        $deleted = Lead::deleteAll();
+        wp_send_json_success(['deleted' => $deleted]);
+    }
+
     public static function ajaxBulkAction(): void
     {
         check_ajax_referer('wnq_lead_actions', 'nonce');
@@ -1145,73 +1104,6 @@ final class LeadFinderAdmin
         self::requireCap();
         Lead::runMigration();
         wp_send_json(['ok' => true]);
-    }
-
-    // ── AJAX: npm install ─────────────────────────────────────────────────────
-
-    public static function ajaxNpmInstall(): void
-    {
-        if (!check_ajax_referer('wnq_lead_nonce', 'nonce', false)) {
-            wp_send_json_error(['message' => 'Security check failed — refresh and try again.']);
-            return;
-        }
-        self::requireCap();
-
-        // Capture any stray output (PHP notices, warnings) so nothing corrupts the JSON.
-        ob_start();
-
-        $scraper_dir = WNQ_PORTAL_PATH . 'scraper';
-        if (!is_dir($scraper_dir)) {
-            ob_end_clean();
-            wp_send_json_error(['message' => 'Scraper directory not found at: ' . $scraper_dir]);
-            return;
-        }
-
-        // Check whether shell_exec is actually usable on this server.
-        $shell_exec_disabled = !function_exists('shell_exec')
-            || in_array('shell_exec', array_map('trim', explode(',', (string)ini_get('disable_functions'))), true);
-
-        if ($shell_exec_disabled) {
-            ob_end_clean();
-            wp_send_json([
-                'success'             => false,
-                'installed'           => false,
-                'shell_exec_disabled' => true,
-                'output'              => 'shell_exec is disabled on this server. Run npm install manually via SSH.',
-            ]);
-            return;
-        }
-
-        // npm install can download ~300 MB — remove the PHP time and memory limits.
-        @set_time_limit(0);
-        @ini_set('memory_limit', '512M');
-
-        // Find npm binary.
-        $npm = trim((string)shell_exec('which npm 2>/dev/null'));
-        if (!$npm) {
-            foreach (['/opt/node22/bin/npm', '/usr/local/bin/npm', '/usr/bin/npm'] as $p) {
-                if (file_exists($p) && is_executable($p)) { $npm = $p; break; }
-            }
-        }
-        if (!$npm) {
-            ob_end_clean();
-            wp_send_json_error(['message' => 'npm not found. Please install Node.js on your server first.']);
-            return;
-        }
-
-        $cmd    = 'cd ' . escapeshellarg($scraper_dir) . ' && ' . escapeshellarg($npm) . ' install 2>&1';
-        $output = shell_exec($cmd);
-
-        ob_end_clean();
-
-        $installed = is_dir($scraper_dir . '/node_modules/puppeteer-core')
-                  || is_dir($scraper_dir . '/node_modules/puppeteer');
-
-        wp_send_json([
-            'success'   => $installed,
-            'installed' => $installed,
-            'output'    => $output ?: '(no output)',
-        ]);
     }
 
     // ── Admin POST Handlers ───────────────────────────────────────────────────
