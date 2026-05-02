@@ -58,6 +58,7 @@ final class LeadFinderAdmin
         add_action('wp_ajax_wnq_lead_run_migration', [self::class, 'ajaxRunMigration']);
         add_action('wp_ajax_wnq_lead_delete_all',    [self::class, 'ajaxDeleteAll']);
         add_action('wp_ajax_wnq_backend_job_action', [self::class, 'ajaxBackendJobAction']);
+        add_action('wp_ajax_wnq_backend_health',     [self::class, 'ajaxBackendHealth']);
 
         add_action('admin_post_wnq_lead_export_csv',    [self::class, 'handleExportCsv']);
         add_action('admin_post_wnq_lead_save_settings', [self::class, 'handleSaveSettings']);
@@ -198,22 +199,23 @@ final class LeadFinderAdmin
     {
         $nonce      = wp_create_nonce('wnq_lead_nonce');
         $total_zips = count(\WNQ\Data\FloridaZips::getAll());
+        $backend_enabled = self::backendEnabled();
         ?>
         <div class="wnq-card">
             <h3>Florida ZIP Code Sweep</h3>
-            <?php if (self::backendEnabled()): ?>
+            <?php if ($backend_enabled): ?>
                 <div style="background:#ecfdf5;border:1px solid #86efac;color:#166534;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px">
                     Backend mode is active. ZIP sweeps will run asynchronously in the Node lead backend.
                 </div>
             <?php else: ?>
                 <div style="background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px">
-                    Legacy fallback mode is active. Configure the backend in Settings to use scalable queued ZIP sweeps.
+                    ZIP Sweep now requires the scalable backend. Configure the Backend API URL and API key in Settings before running a sweep.
                 </div>
             <?php endif; ?>
             <p style="color:#6b7280;font-size:13px;margin:0 0 16px">
-                Searches all <?php echo esc_html(number_format($total_zips)); ?> Florida ZIP codes on Google Maps.
+                Queues all <?php echo esc_html(number_format($total_zips)); ?> Florida ZIP codes in the Lead Backend.
                 Saves leads with <strong>&lt; 50 reviews</strong> and a website, then scrapes for phone, email, and social links.
-                Scrapes homepage for email + social links. <strong>Zero API cost.</strong>
+                Scrapes homepage for email + social links.
             </p>
             <div class="wnq-row2" style="max-width:600px">
                 <div class="wnq-field">
@@ -228,7 +230,10 @@ final class LeadFinderAdmin
                 </div>
             </div>
             <div style="display:flex;gap:10px;align-items:center;margin-top:4px">
-                <button class="wnq-btn wnq-btn-primary" id="lf-start-btn" onclick="wnqZipStart()">&#9654; Start ZIP Sweep</button>
+                <button class="wnq-btn wnq-btn-primary" id="lf-start-btn" onclick="wnqZipStart()" <?php disabled(!$backend_enabled); ?>>&#9654; Start ZIP Sweep</button>
+                <?php if (!$backend_enabled): ?>
+                    <a class="wnq-btn wnq-btn-secondary" href="<?php echo esc_url(admin_url('admin.php?page=wnq-lead-finder&tab=settings')); ?>">Configure Backend</a>
+                <?php endif; ?>
                 <button class="wnq-btn wnq-btn-secondary" id="lf-stop-btn" style="display:none" onclick="wnqZipStop()">&#9646;&#9646; Stop</button>
             </div>
             <div class="wnq-progress" id="lf-progress">
@@ -258,6 +263,8 @@ final class LeadFinderAdmin
                 el.appendChild(line);el.scrollTop=el.scrollHeight;
             }
             window.wnqZipStart=async function(){
+                const backendEnabled=<?php echo wp_json_encode($backend_enabled); ?>;
+                if(!backendEnabled){wnqShowResult(false,'Backend is not configured. Open Settings and add the Lead Backend API URL and API key.');return;}
                 const keyword=document.getElementById('lf-keyword').value.trim();
                 if(!keyword){alert('Please enter a keyword.');return;}
                 zipDelayMs=Math.max(1000,(parseInt(document.getElementById('lf-delay').value,10)||3)*1000);
@@ -1020,6 +1027,8 @@ final class LeadFinderAdmin
                             <small>Businesses above this review count are filtered out.</small>
                         </div>
                     </div>
+                    <button type="button" class="wnq-btn wnq-btn-secondary" onclick="wnqTestLeadBackend()">Test Backend Connection</button>
+                    <span id="wnq-backend-test-result" style="margin-left:10px;font-size:12px"></span>
                 </div>
                 <div class="wnq-row2">
                     <div class="wnq-field">
@@ -1061,6 +1070,20 @@ final class LeadFinderAdmin
                 <code style="display:block;margin-top:6px;font-size:11px;word-break:break-all">cd <?php echo esc_html($scraper_dir); ?> &amp;&amp; npm install</code>
             </div>
         </div>
+        <script>
+        function wnqTestLeadBackend(){
+            const out=document.getElementById('wnq-backend-test-result');
+            if(out)out.textContent='Testing...';
+            const fd=new FormData();
+            fd.append('action','wnq_backend_health');
+            fd.append('nonce',<?php echo wp_json_encode(wp_create_nonce('wnq_backend_health')); ?>);
+            fetch(ajaxurl,{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
+                if(!out)return;
+                if(d.success){out.style.color='#166534';out.textContent='Connected';}
+                else{out.style.color='#b91c1c';out.textContent=d.data?.message||'Connection failed';}
+            }).catch(e=>{if(out){out.style.color='#b91c1c';out.textContent=e.message;}});
+        }
+        </script>
         <?php
     }
 
@@ -1071,25 +1094,14 @@ final class LeadFinderAdmin
         if (!check_ajax_referer('wnq_lead_nonce', 'nonce', false)) { wp_send_json_error(['error' => 'Security check failed'], 403); return; }
         self::requireCap();
         $keyword = sanitize_text_field($_POST['keyword'] ?? '');
-        if (self::backendEnabled()) {
-            $result = self::startBackendJob($keyword);
-            $result['ok']
-                ? wp_send_json_success($result)
-                : wp_send_json_error(['error' => $result['error'] ?? 'Backend job failed']);
+        if (!self::backendEnabled()) {
+            wp_send_json_error(['error' => 'Lead Backend is required for ZIP Sweep. Configure it in Lead Finder settings.']);
             return;
         }
-        ob_start();
-        try {
-            $result = LeadFinderEngine::startSearch($keyword);
-        } catch (\Throwable $e) {
-            ob_end_clean();
-            wp_send_json_error(['error' => $e->getMessage()]);
-            return;
-        }
-        ob_end_clean();
+        $result = self::startBackendJob($keyword);
         $result['ok']
-            ? wp_send_json_success(['batch_id' => $result['batch_id'], 'total_zips' => $result['total_zips']])
-            : wp_send_json_error(['error' => $result['error'] ?? 'Unknown error']);
+            ? wp_send_json_success($result)
+            : wp_send_json_error(['error' => $result['error'] ?? 'Backend job failed']);
     }
 
     public static function ajaxZipProcess(): void
@@ -1244,6 +1256,16 @@ final class LeadFinderAdmin
         }
 
         wp_send_json_error(['message' => 'Invalid backend action']);
+    }
+
+    public static function ajaxBackendHealth(): void
+    {
+        check_ajax_referer('wnq_backend_health', 'nonce');
+        self::requireCap();
+        $response = self::backendRequest('GET', '/v1/health');
+        $response['ok']
+            ? wp_send_json_success(['message' => 'Connected'])
+            : wp_send_json_error(['message' => $response['error'] ?? 'Connection failed']);
     }
 
     public static function ajaxBulkAction(): void
