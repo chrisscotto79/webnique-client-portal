@@ -1052,11 +1052,28 @@ final class LeadFinderAdmin
             </p>
             <div style="margin-top:16px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:12px">
                 <strong>Backend commands:</strong><br>
-                <code style="display:block;margin-top:6px;font-size:11px;word-break:break-all">cd lead-backend &amp;&amp; npm install &amp;&amp; npm run worker</code>
-                <code style="display:block;margin-top:6px;font-size:11px;word-break:break-all">npm run scrape:zip -- --keyword "plumbing" --zip 32825</code>
+                <textarea id="wnq-node-command-box" readonly style="width:100%;min-height:112px;margin-top:8px;padding:12px;border:1px solid #cbd5e1;border-radius:6px;background:#0f172a;color:#dbeafe;font-family:Menlo,Consolas,monospace;font-size:12px;line-height:1.5;box-sizing:border-box">cd lead-backend && npm install && npm run worker
+npm run scrape:zip -- --keyword "plumbing" --zip 32825</textarea>
+                <button type="button" class="wnq-btn wnq-btn-secondary" style="margin-top:10px" onclick="wnqCopyNodeCommands()">Copy Commands</button>
+                <span id="wnq-node-command-copy-result" style="margin-left:10px;color:#16a34a;font-size:12px"></span>
+                <small style="display:block;margin-top:10px;color:#64748b">Paste these into SSH, your hosting terminal, or your deployment shell. WordPress does not execute terminal commands.</small>
             </div>
         </div>
         <script>
+        function wnqCopyNodeCommands(){
+            const box=document.getElementById('wnq-node-command-box');
+            const out=document.getElementById('wnq-node-command-copy-result');
+            if(!box)return;
+            box.select();
+            box.setSelectionRange(0,99999);
+            const done=function(){if(out){out.textContent='Copied';setTimeout(()=>out.textContent='',1800);}};
+            if(navigator.clipboard&&navigator.clipboard.writeText){
+                navigator.clipboard.writeText(box.value).then(done).catch(()=>{document.execCommand('copy');done();});
+            }else{
+                document.execCommand('copy');
+                done();
+            }
+        }
         function wnqTestLeadBackend(){
             const out=document.getElementById('wnq-backend-test-result');
             if(out)out.textContent='Testing...';
