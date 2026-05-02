@@ -1,0 +1,2 @@
+ALTER TABLE leads
+ADD COLUMN IF NOT EXISTS score_reasons JSONB NOT NULL DEFAULT '[]'::jsonb;

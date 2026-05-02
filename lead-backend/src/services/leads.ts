@@ -8,15 +8,15 @@ export async function upsertLead(input: {
   business: MapsBusiness;
 }) {
   const b = input.business;
-  const score = scoreLead(b);
+  const scored = scoreLead(b);
   const sourcePlaceId = b.sourcePlaceId || b.googleMapsUrl || b.website || `${b.name}|${b.phone || ''}|${b.address || ''}`;
 
   return one(
     `INSERT INTO leads (
       job_id, source, source_place_id, business_name, industry, phone, website,
-      address, city, state, zip, rating, review_count, google_maps_url, lead_score, raw
+      address, city, state, zip, rating, review_count, google_maps_url, lead_score, score_reasons, raw
     ) VALUES (
-      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17
     )
     ON CONFLICT (source, source_place_id) WHERE source_place_id IS NOT NULL AND source_place_id <> ''
     DO UPDATE SET
@@ -41,7 +41,8 @@ export async function upsertLead(input: {
       b.rating || 0,
       b.reviewCount || 0,
       b.googleMapsUrl || '',
-      score,
+      scored.score,
+      JSON.stringify(scored.reasons),
       JSON.stringify(b.raw || {})
     ]
   );
@@ -79,12 +80,14 @@ export async function updateLeadEnrichment(leadId: string, data: {
   );
 }
 
-function scoreLead(b: MapsBusiness): number {
+function scoreLead(b: MapsBusiness): { score: number; reasons: string[] } {
   let score = 0;
-  if ((b.reviewCount || 0) < 10) score += 25;
-  if ((b.reviewCount || 0) < 50) score += 15;
-  if (!b.website) score += 20;
-  if (!b.phone) score += 10;
-  if ((b.rating || 5) < 4) score += 10;
-  return Math.min(score, 100);
+  const reasons: string[] = [];
+  if ((b.reviewCount || 0) < 10) { score += 25; reasons.push('Very low review count'); }
+  if ((b.reviewCount || 0) < 50) { score += 15; reasons.push('Under 50 reviews'); }
+  if (!b.website) { score += 20; reasons.push('No website listed'); }
+  if (!b.phone) { score += 10; reasons.push('No phone found'); }
+  if ((b.rating || 5) < 4) { score += 10; reasons.push('Rating below 4.0'); }
+  if (!b.googleMapsUrl) { score += 5; reasons.push('Missing Google Maps URL'); }
+  return { score: Math.min(score, 100), reasons };
 }
