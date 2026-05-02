@@ -41,7 +41,7 @@ final class GoogleMapsClient
     /**
      * Search for businesses matching the query.
      *
-     * Primary: Puppeteer scraper server (JS-rendered, 10–20 real results).
+     * Primary: Puppeteer scraper server (JS-rendered, scrolls the Maps feed).
      * Fallback: direct HTTP scraping of Maps + Google Search (limited).
      *
      * @param  string $query  e.g. "pressure washing 34211"
@@ -57,7 +57,7 @@ final class GoogleMapsClient
         $scraped = self::scraperSearch($query);
         foreach ($scraped['results'] ?? [] as $p) {
             $key = strtolower($p['name'] ?? '');
-            if ($key && !isset($seen[$key])) {
+            if ($key && !self::isBlockedPlaceName($key) && !isset($seen[$key])) {
                 $seen[$key] = true;
                 $all[] = $p;
             }
@@ -70,7 +70,7 @@ final class GoogleMapsClient
             if ($maps_html) {
                 foreach (self::parseSearchResults($maps_html) as $p) {
                     $key = strtolower($p['name']);
-                    if ($key && !isset($seen[$key])) { $seen[$key] = true; $all[] = $p; }
+                    if ($key && !self::isBlockedPlaceName($key) && !isset($seen[$key])) { $seen[$key] = true; $all[] = $p; }
                 }
             }
             // Google Search local pack
@@ -80,7 +80,7 @@ final class GoogleMapsClient
             if ($search_html) {
                 foreach (self::parseGoogleSearchResults($search_html, $query) as $p) {
                     $key = strtolower($p['name']);
-                    if ($key && !isset($seen[$key])) { $seen[$key] = true; $all[] = $p; }
+                    if ($key && !self::isBlockedPlaceName($key) && !isset($seen[$key])) { $seen[$key] = true; $all[] = $p; }
                 }
             }
         }
@@ -131,7 +131,7 @@ final class GoogleMapsClient
 
         $response = wp_remote_get(
             self::SCRAPER_URL . '/search?' . http_build_query(['q' => $query]),
-            ['timeout' => 35, 'sslverify' => false]
+            ['timeout' => 55, 'sslverify' => false]
         );
         if (is_wp_error($response)) return ['results' => []];
 
@@ -315,7 +315,7 @@ final class GoogleMapsClient
             foreach ($m2 as $m) {
                 $name     = trim($m[1]);
                 $full_url = self::MAPS_HOST . $m[2];
-                if (isset($seen[$full_url]) || !$name) continue;
+                if (isset($seen[$full_url]) || !$name || self::isBlockedPlaceName($name)) continue;
                 $seen[$full_url] = true;
                 $results[] = [
                     'name'         => $name,
@@ -459,12 +459,22 @@ final class GoogleMapsClient
 
             // Filter out Google UI link segments that are not business names
             static $blocked = ['feedback','report','contribute','about','help','directions','search','nearby','maps','error','login','signin'];
-            if (in_array(strtolower($name), $blocked, true) || strlen($name) < 3) return '';
+            if (self::isBlockedPlaceName($name) || strlen($name) < 3) return '';
 
             return $name;
         }
 
         return '';
+    }
+
+    private static function isBlockedPlaceName(string $name): bool
+    {
+        $name = strtolower(trim($name));
+        $name = preg_replace('/\s+/', ' ', $name);
+        $blocked = ['feedback','report','contribute','about','help','directions','search','nearby','maps','error','login','signin','share'];
+        return in_array($name, $blocked, true)
+            || str_starts_with($name, 'feedback ')
+            || str_starts_with($name, 'report ');
     }
 
     /**
