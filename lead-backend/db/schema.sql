@@ -2,7 +2,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 CREATE TABLE IF NOT EXISTS lead_jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  source VARCHAR(50) NOT NULL DEFAULT 'playwright',
+  source VARCHAR(50) NOT NULL DEFAULT 'puppeteer',
   keyword VARCHAR(255) NOT NULL,
   state VARCHAR(50) NOT NULL DEFAULT 'queued',
   total_zips INT NOT NULL DEFAULT 0,

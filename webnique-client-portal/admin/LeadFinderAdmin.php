@@ -1016,8 +1016,8 @@ final class LeadFinderAdmin
                     <div class="wnq-row2">
                         <div class="wnq-field">
                             <label>Maps Discovery</label>
-                            <input type="text" value="Self-hosted Playwright" readonly>
-                            <small>No paid scraper API. The backend runs its own browser worker.</small>
+                            <input type="text" value="Node Puppeteer + Cheerio" readonly>
+                            <small>No paid scraper API. The backend runs Puppeteer for Maps and Cheerio for website parsing.</small>
                         </div>
                         <div class="wnq-field">
                             <label>Max Reviews</label>
@@ -1045,27 +1045,15 @@ final class LeadFinderAdmin
             </form>
         </div>
 
-        <?php
-        $scraper_dir   = WNQ_PORTAL_PATH . 'scraper';
-        $npm_installed = is_dir($scraper_dir . '/node_modules/puppeteer-core')
-                      || is_dir($scraper_dir . '/node_modules/puppeteer');
-        ?>
         <div class="wnq-card" style="max-width:680px">
-            <h3>Scraper Setup (Puppeteer / Node.js)</h3>
+            <h3>Node Scraper Setup</h3>
             <p style="color:#6b7280;font-size:13px;margin:0 0 12px">
-                The ZIP Sweep uses the bundled local Puppeteer server to scrape Google Maps results.
-                Install dependencies during deploy or via SSH; WordPress admin no longer runs shell installs.
-            </p>
-            <p style="margin:0 0 14px">
-                Status: <?php if($npm_installed):?>
-                    <strong style="color:#16a34a">✓ Installed</strong>
-                <?php else:?>
-                    <strong style="color:#dc2626">✗ Not installed</strong> — ZIP Sweep will use fallback HTTP (fewer results)
-                <?php endif;?>
+                Run the lead backend as a separate Node process. WordPress starts and imports jobs through REST; Node handles Puppeteer scrolling and Cheerio parsing.
             </p>
             <div style="margin-top:16px;padding:12px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:12px">
-                <strong>Manual install (SSH):</strong><br>
-                <code style="display:block;margin-top:6px;font-size:11px;word-break:break-all">cd <?php echo esc_html($scraper_dir); ?> &amp;&amp; npm install</code>
+                <strong>Backend commands:</strong><br>
+                <code style="display:block;margin-top:6px;font-size:11px;word-break:break-all">cd lead-backend &amp;&amp; npm install &amp;&amp; npm run worker</code>
+                <code style="display:block;margin-top:6px;font-size:11px;word-break:break-all">npm run scrape:zip -- --keyword "plumbing" --zip 32825</code>
             </div>
         </div>
         <script>
@@ -1318,7 +1306,7 @@ final class LeadFinderAdmin
                 'min_seo_score'   => max(0, min(7, (int)($_POST['min_seo_score'] ?? 2))),
                 'backend_api_url'  => esc_url_raw(untrailingslashit($_POST['backend_api_url'] ?? '')),
                 'backend_api_key'  => sanitize_text_field($_POST['backend_api_key'] ?? ''),
-                'backend_source'   => 'playwright',
+                'backend_source'   => 'puppeteer',
                 'max_reviews'      => max(0, min(500, (int)($_POST['max_reviews'] ?? 50))),
             ]
         ));
@@ -1758,7 +1746,7 @@ final class LeadFinderAdmin
         $response = self::backendRequest('POST', '/v1/jobs', [
             'keyword' => $keyword,
             'zips' => $zips,
-            'source' => 'playwright',
+            'source' => 'puppeteer',
             'createdBy' => wp_get_current_user()->user_login ?: 'wordpress',
             'filters' => [
                 'maxReviews' => (int)($settings['max_reviews'] ?? 50),

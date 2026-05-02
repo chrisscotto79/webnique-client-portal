@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chromium } from 'playwright';
+import puppeteer, { type Browser, type Page } from 'puppeteer';
 import { config } from '../config.js';
 import type { MapsBusiness } from '../types.js';
 
@@ -7,30 +7,19 @@ type BrowserBusiness = Omit<MapsBusiness, 'sourcePlaceId' | 'raw'> & {
   rawText?: string;
 };
 
-export async function searchGoogleMapsWithPlaywright(query: string, maxReviews: number): Promise<MapsBusiness[]> {
-  const browser = await chromium.launch({
-    headless: config.playwrightHeadless,
-    args: ['--disable-blink-features=AutomationControlled', '--no-sandbox']
-  });
+export async function searchGoogleMapsWithPuppeteer(query: string, maxReviews: number): Promise<MapsBusiness[]> {
+  const browser = await launchBrowser();
 
   try {
-    const context = await browser.newContext({
-      locale: 'en-US',
-      viewport: { width: 1365, height: 900 },
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
-    });
-    const page = await context.newPage();
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1365, height: 900, deviceScaleFactor: 1 });
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36');
+    await page.setExtraHTTPHeaders({ 'accept-language': 'en-US,en;q=0.9' });
+
     const url = `https://www.google.com/maps/search/${encodeURIComponent(query)}?hl=en`;
-
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(2500);
-
-    const consent = page.getByRole('button', { name: /accept all|reject all|i agree/i }).first();
-    if (await consent.isVisible().catch(() => false)) {
-      await consent.click({ timeout: 3000 }).catch(() => undefined);
-      await page.waitForTimeout(1000);
-    }
-
+    await wait(2500);
+    await acceptConsent(page);
     await page.waitForSelector('[role="feed"], a[href*="/maps/place/"], [jsaction*="mouseover:pane"]', { timeout: 30000 });
     await scrollResults(page);
 
@@ -90,12 +79,32 @@ export async function searchGoogleMapsWithPlaywright(query: string, maxReviews: 
   }
 }
 
-async function scrollResults(page: import('playwright').Page): Promise<void> {
+async function launchBrowser(): Promise<Browser> {
+  return puppeteer.launch({
+    headless: config.puppeteerHeadless,
+    executablePath: config.puppeteerExecutablePath || undefined,
+    args: ['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-setuid-sandbox']
+  });
+}
+
+async function acceptConsent(page: Page): Promise<void> {
+  const buttons = await page.$$('button');
+  for (const button of buttons) {
+    const label = await page.evaluate(element => element.textContent || '', button);
+    if (/accept all|reject all|i agree/i.test(label)) {
+      await button.click().catch(() => undefined);
+      await wait(1000);
+      return;
+    }
+  }
+}
+
+async function scrollResults(page: Page): Promise<void> {
   let lastCount = 0;
   let stableRounds = 0;
 
   for (let i = 0; i < config.mapsScrollRounds; i++) {
-    const count = await page.locator('a[href*="/maps/place/"]').count().catch(() => 0);
+    const count = await page.$$eval('a[href*="/maps/place/"]', links => links.length).catch(() => 0);
     if (count >= config.mapsResultsLimit) break;
 
     if (count === lastCount) stableRounds++;
@@ -103,14 +112,15 @@ async function scrollResults(page: import('playwright').Page): Promise<void> {
     if (stableRounds >= 4) break;
     lastCount = count;
 
-    const feed = page.locator('[role="feed"]').first();
-    if (await feed.isVisible().catch(() => false)) {
-      await feed.evaluate(element => element.scrollBy(0, element.scrollHeight)).catch(() => undefined);
-    } else {
-      await page.mouse.wheel(0, 2500);
-    }
+    const scrolled = await page.evaluate(() => {
+      const feed = document.querySelector<HTMLElement>('[role="feed"]');
+      if (!feed) return false;
+      feed.scrollBy(0, feed.scrollHeight);
+      return true;
+    });
 
-    await page.waitForTimeout(config.mapsScrollDelayMs);
+    if (!scrolled) await page.mouse.wheel({ deltaY: 2500 });
+    await wait(config.mapsScrollDelayMs);
   }
 }
 
@@ -124,4 +134,8 @@ function stableId(row: BrowserBusiness): string {
   return createHash('sha1')
     .update([row.name, row.phone, row.website, row.address, row.googleMapsUrl].filter(Boolean).join('|'))
     .digest('hex');
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

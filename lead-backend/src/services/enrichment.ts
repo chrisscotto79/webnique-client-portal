@@ -1,3 +1,5 @@
+import * as cheerio from 'cheerio';
+
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/i;
 const PHONE_RE = /\(?\b(\d{3})\)?[\s.-](\d{3})[\s.-](\d{4})\b/;
 
@@ -42,16 +44,18 @@ async function fetchHtml(url: string): Promise<{ html: string; url: string }> {
 }
 
 function extractEmail(html: string): string {
-  const mailto = html.match(/mailto:([^"'? >]+)/i)?.[1] || '';
-  const candidate = mailto || html.replace(/<[^>]+>/g, ' ').match(EMAIL_RE)?.[0] || '';
+  const $ = cheerio.load(html);
+  const mailto = $('a[href^="mailto:"]').first().attr('href')?.replace(/^mailto:/i, '').split('?')[0] || '';
+  const candidate = mailto || $.root().text().match(EMAIL_RE)?.[0] || '';
   const email = candidate.toLowerCase().trim();
   if (!email || email.includes('example.com') || /\.(png|jpe?g|gif|webp|svg|pdf)$/i.test(email)) return '';
   return email;
 }
 
 function extractPhone(html: string): string {
-  const tel = html.match(/href=["']tel:([^"']+)/i)?.[1] || '';
-  const source = tel || html.replace(/<[^>]+>/g, ' ');
+  const $ = cheerio.load(html);
+  const tel = $('a[href^="tel:"]').first().attr('href')?.replace(/^tel:/i, '') || '';
+  const source = tel || $.root().text();
   const match = source.match(PHONE_RE);
   if (!match) return '';
   return `(${match[1]}) ${match[2]}-${match[3]}`;
@@ -59,24 +63,29 @@ function extractPhone(html: string): string {
 
 function extractSocials(html: string): Record<string, string> {
   const socials: Record<string, string> = {};
-  const patterns: Record<string, RegExp> = {
-    facebook: /https?:\/\/(?:www\.)?facebook\.com\/(?!sharer)[a-zA-Z0-9._/-]+/i,
-    instagram: /https?:\/\/(?:www\.)?instagram\.com\/[a-zA-Z0-9._-]+/i,
-    linkedin: /https?:\/\/(?:www\.)?linkedin\.com\/(?:company|in)\/[a-zA-Z0-9._-]+/i,
-    youtube: /https?:\/\/(?:www\.)?youtube\.com\/(?:channel\/|c\/|user\/|@)[a-zA-Z0-9._-]+/i,
-    tiktok: /https?:\/\/(?:www\.)?tiktok\.com\/@[a-zA-Z0-9._-]+/i
+  const $ = cheerio.load(html);
+  const patterns: Record<string, (href: string) => boolean> = {
+    facebook: href => /facebook\.com\/(?!sharer)/i.test(href),
+    instagram: href => /instagram\.com\//i.test(href),
+    linkedin: href => /linkedin\.com\/(?:company|in)\//i.test(href),
+    youtube: href => /youtube\.com\/(?:channel\/|c\/|user\/|@)/i.test(href),
+    tiktok: href => /tiktok\.com\/@/i.test(href)
   };
 
-  for (const [network, pattern] of Object.entries(patterns)) {
-    const found = html.match(pattern)?.[0] || '';
-    if (found) socials[network] = found.replace(/[)"'.,;]+$/, '');
-  }
+  $('a[href]').each((_, element) => {
+    const href = $(element).attr('href') || '';
+    if (!href.startsWith('http')) return;
+    for (const [network, matches] of Object.entries(patterns)) {
+      if (!socials[network] && matches(href)) socials[network] = href.replace(/[)"'.,;]+$/, '');
+    }
+  });
 
   return socials;
 }
 
 function findContactUrl(baseUrl: string, html: string): string {
-  const hrefs = Array.from(html.matchAll(/href=["']([^"']+)["']/gi)).map(match => match[1]);
+  const $ = cheerio.load(html);
+  const hrefs = $('a[href]').map((_, element) => $(element).attr('href') || '').get();
   const contact = hrefs.find(href => /contact|about|get-in-touch/i.test(href));
   if (!contact) return '';
   try {

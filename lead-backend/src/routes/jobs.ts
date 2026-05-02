@@ -23,7 +23,7 @@ export async function jobRoutes(app: FastifyInstance) {
     const body = req.body as CreateJobInput;
     const keyword = String(body.keyword || '').trim();
     const zips = Array.from(new Set((body.zips || []).map(zip => String(zip).trim()).filter(Boolean)));
-    const source = 'playwright';
+    const source = 'puppeteer';
     const filters = {
       maxReviews: body.filters?.maxReviews ?? 50,
       requireWebsite: body.filters?.requireWebsite ?? true,

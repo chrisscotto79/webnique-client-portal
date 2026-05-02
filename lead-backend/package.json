@@ -1,22 +1,25 @@
 {
   "name": "webnique-lead-backend",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/app.ts",
     "worker": "tsx src/workers/index.ts",
     "build": "tsc",
+    "scrape:zip": "tsx src/scripts/scrapeZip.ts",
     "start": "node dist/app.js",
-    "start:worker": "node dist/workers/index.js"
+    "start:worker": "node dist/workers/index.js",
+    "start:scrape:zip": "node dist/scripts/scrapeZip.js"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
     "bullmq": "^5.34.5",
+    "cheerio": "^1.0.0",
     "dotenv": "^16.4.7",
     "fastify": "^5.2.1",
     "ioredis": "^5.4.2",
-    "playwright": "^1.49.1",
+    "puppeteer": "^24.1.0",
     "pg": "^8.13.1"
   },
   "devDependencies": {

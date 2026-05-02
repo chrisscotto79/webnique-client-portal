@@ -3,7 +3,7 @@ import { config, requireEnv } from '../config.js';
 import { query, one } from '../db.js';
 import { redis } from '../redis.js';
 import { zipQueue, enrichQueue } from '../queues.js';
-import { searchGoogleMapsWithPlaywright } from '../providers/playwrightMaps.js';
+import { searchGoogleMapsWithPuppeteer } from '../providers/puppeteerMaps.js';
 import { upsertLead, updateLeadEnrichment } from '../services/leads.js';
 import { enrichWebsite } from '../services/enrichment.js';
 
@@ -34,7 +34,7 @@ const zipWorker = new Worker('zip-search', async job => {
     [zipJobId]
   );
 
-  const businesses = await searchGoogleMapsWithPlaywright(`${parent.keyword} in ${zip}`, maxReviews);
+  const businesses = await searchGoogleMapsWithPuppeteer(`${parent.keyword} in ${zip}`, maxReviews);
   let saved = 0;
 
   for (const business of businesses) {
