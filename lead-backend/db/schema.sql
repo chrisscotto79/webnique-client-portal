@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS leads (
   youtube TEXT,
   tiktok TEXT,
   lead_score INT NOT NULL DEFAULT 0,
+  score_reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
   status VARCHAR(50) NOT NULL DEFAULT 'new',
   raw JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),

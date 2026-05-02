@@ -57,9 +57,11 @@ final class LeadFinderAdmin
         add_action('wp_ajax_wnq_lead_bulk_action',   [self::class, 'ajaxBulkAction']);
         add_action('wp_ajax_wnq_lead_run_migration', [self::class, 'ajaxRunMigration']);
         add_action('wp_ajax_wnq_lead_delete_all',    [self::class, 'ajaxDeleteAll']);
+        add_action('wp_ajax_wnq_backend_job_action', [self::class, 'ajaxBackendJobAction']);
 
         add_action('admin_post_wnq_lead_export_csv',    [self::class, 'handleExportCsv']);
         add_action('admin_post_wnq_lead_save_settings', [self::class, 'handleSaveSettings']);
+        add_action('admin_post_wnq_backend_job_export', [self::class, 'handleBackendJobExport']);
     }
 
     public static function addMenuPage(): void
@@ -82,6 +84,7 @@ final class LeadFinderAdmin
         }
         $tab      = sanitize_key($_GET['tab'] ?? 'search');
         $settings = get_option('wnq_lead_finder_settings', []);
+        $backend_enabled = self::backendEnabled();
         $stats    = Lead::getStats();
         ?>
         <div class="wrap wnq-lf">
@@ -160,7 +163,7 @@ final class LeadFinderAdmin
 
         <div class="wnq-lf-header">
             <h1>Lead Finder</h1>
-            <span class="wnq-lf-badge">No API Key Required</span>
+            <span class="wnq-lf-badge"><?php echo $backend_enabled ? 'Backend Active' : 'Legacy Fallback'; ?></span>
         </div>
 
         <div class="wnq-lf-stats">
@@ -170,7 +173,7 @@ final class LeadFinderAdmin
         </div>
 
         <div class="wnq-lf-tabs">
-            <?php foreach (['search'=>'ZIP Sweep','manual'=>'Manual URLs','csv_import'=>'CSV Import','leads'=>'All Leads','settings'=>'Settings'] as $t=>$label): ?>
+            <?php foreach (['search'=>'ZIP Sweep','backend_jobs'=>'Backend Jobs','manual'=>'Manual URLs','csv_import'=>'CSV Import','leads'=>'All Leads','settings'=>'Settings'] as $t=>$label): ?>
                 <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-lead-finder&tab='.$t)); ?>" class="wnq-lf-tab <?php echo $tab===$t?'active':''; ?>"><?php echo esc_html($label); ?></a>
             <?php endforeach; ?>
         </div>
@@ -178,6 +181,7 @@ final class LeadFinderAdmin
         <?php
         match ($tab) {
             'leads'      => self::renderLeadsTab(),
+            'backend_jobs' => self::renderBackendJobsTab(),
             'settings'   => self::renderSettingsTab($settings),
             'manual'     => self::renderManualTab($settings),
             'csv_import' => self::renderCsvImportTab($settings),
@@ -197,6 +201,15 @@ final class LeadFinderAdmin
         ?>
         <div class="wnq-card">
             <h3>Florida ZIP Code Sweep</h3>
+            <?php if (self::backendEnabled()): ?>
+                <div style="background:#ecfdf5;border:1px solid #86efac;color:#166534;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px">
+                    Backend mode is active. ZIP sweeps will run asynchronously in the Node lead backend.
+                </div>
+            <?php else: ?>
+                <div style="background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px">
+                    Legacy fallback mode is active. Configure the backend in Settings to use scalable queued ZIP sweeps.
+                </div>
+            <?php endif; ?>
             <p style="color:#6b7280;font-size:13px;margin:0 0 16px">
                 Searches all <?php echo esc_html(number_format($total_zips)); ?> Florida ZIP codes on Google Maps.
                 Saves leads with <strong>&lt; 50 reviews</strong> and a website, then scrapes for phone, email, and social links.
@@ -311,6 +324,83 @@ final class LeadFinderAdmin
             function wnqShowResult(ok,html){const el=document.getElementById('lf-result');el.className='wnq-result '+(ok?'wnq-result-ok':'wnq-result-err');el.innerHTML=html;el.style.display='';}
             function wnqDone(){running=false;document.getElementById('lf-start-btn').style.display='';document.getElementById('lf-stop-btn').style.display='none';wnqShowProgress(false);}
         }());
+        </script>
+        <?php
+    }
+
+    private static function renderBackendJobsTab(): void
+    {
+        $nonce = wp_create_nonce('wnq_backend_job_actions');
+        if (!self::backendEnabled()) {
+            ?>
+            <div class="wnq-card">
+                <h3>Backend Jobs</h3>
+                <p style="color:#6b7280;font-size:13px;margin:0 0 14px">The scalable backend is not configured yet. Add your Backend API URL and API key in settings.</p>
+                <a class="wnq-btn wnq-btn-primary" href="<?php echo esc_url(admin_url('admin.php?page=wnq-lead-finder&tab=settings')); ?>">Open Settings</a>
+            </div>
+            <?php
+            return;
+        }
+
+        $response = self::backendRequest('GET', '/v1/jobs?limit=25');
+        $jobs = $response['ok'] ? ($response['data']['jobs'] ?? []) : [];
+        ?>
+        <div class="wnq-card">
+            <h3>Backend Jobs</h3>
+            <?php if (!$response['ok']): ?>
+                <div class="wnq-result wnq-result-err"><strong>Backend unavailable</strong><p><?php echo esc_html($response['error'] ?? 'Unknown backend error'); ?></p></div>
+            <?php elseif (empty($jobs)): ?>
+                <div style="padding:24px;color:#6b7280">No backend jobs yet. Start a ZIP Sweep to create one.</div>
+            <?php else: ?>
+                <div class="wnq-tbl-wrap">
+                <table class="wnq-tbl">
+                    <thead><tr>
+                        <th>Keyword</th><th>State</th><th>Progress</th><th>Found</th><th>Saved</th><th>Errors</th><th>Created</th><th>Actions</th>
+                    </tr></thead>
+                    <tbody>
+                    <?php foreach ($jobs as $job): ?>
+                        <?php
+                        $job_id = sanitize_text_field($job['id'] ?? '');
+                        $export_url = wp_nonce_url(
+                            admin_url('admin-post.php?action=wnq_backend_job_export&job_id=' . rawurlencode($job_id)),
+                            'wnq_backend_job_export_' . $job_id
+                        );
+                        ?>
+                        <tr>
+                            <td><strong><?php echo esc_html($job['keyword'] ?? ''); ?></strong><br><small><?php echo esc_html($job_id); ?></small></td>
+                            <td><?php echo esc_html($job['state'] ?? ''); ?><?php echo !empty($job['imported_to_wordpress']) ? '<br><small>Imported</small>' : ''; ?></td>
+                            <td><?php echo esc_html((int)($job['completed_zips'] ?? 0)); ?> / <?php echo esc_html((int)($job['total_zips'] ?? 0)); ?></td>
+                            <td><?php echo esc_html(number_format((int)($job['total_found'] ?? 0))); ?></td>
+                            <td><?php echo esc_html(number_format((int)($job['total_saved'] ?? 0))); ?></td>
+                            <td><?php echo esc_html(number_format((int)($job['error_count'] ?? 0))); ?></td>
+                            <td><?php echo esc_html($job['created_at'] ?? ''); ?></td>
+                            <td style="white-space:nowrap">
+                                <button class="wnq-btn wnq-btn-secondary wnq-btn-sm" onclick="wnqBackendAction('<?php echo esc_js($job_id); ?>','import')">Import</button>
+                                <button class="wnq-btn wnq-btn-secondary wnq-btn-sm" onclick="wnqBackendAction('<?php echo esc_js($job_id); ?>','retry')">Retry Failed</button>
+                                <a class="wnq-btn wnq-btn-secondary wnq-btn-sm" href="<?php echo esc_url($export_url); ?>">CSV</a>
+                                <button class="wnq-btn wnq-btn-danger wnq-btn-sm" onclick="wnqBackendAction('<?php echo esc_js($job_id); ?>','cancel')">Cancel</button>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+                </div>
+            <?php endif; ?>
+        </div>
+        <script>
+        function wnqBackendAction(jobId,actionType){
+            if(actionType==='cancel'&&!confirm('Cancel this backend job?'))return;
+            const fd=new FormData();
+            fd.append('action','wnq_backend_job_action');
+            fd.append('nonce',<?php echo wp_json_encode($nonce); ?>);
+            fd.append('job_id',jobId);
+            fd.append('job_action',actionType);
+            fetch(ajaxurl,{method:'POST',body:fd}).then(r=>r.json()).then(d=>{
+                if(!d.success){alert('Error: '+(d.data?.message||'?'));return;}
+                alert(d.data?.message||'Done');
+                window.location.reload();
+            });
+        }
         </script>
         <?php
     }
@@ -1131,6 +1221,31 @@ final class LeadFinderAdmin
         wp_send_json_success(['deleted' => $deleted]);
     }
 
+    public static function ajaxBackendJobAction(): void
+    {
+        check_ajax_referer('wnq_backend_job_actions', 'nonce');
+        self::requireCap();
+        $job_id = sanitize_text_field($_POST['job_id'] ?? '');
+        $job_action = sanitize_key($_POST['job_action'] ?? '');
+        if (!$job_id) {
+            wp_send_json_error(['message' => 'Missing job id']);
+        }
+
+        if ($job_action === 'cancel') {
+            $response = self::backendRequest('POST', '/v1/jobs/' . rawurlencode($job_id) . '/cancel');
+            $response['ok'] ? wp_send_json_success(['message' => 'Job canceled']) : wp_send_json_error(['message' => $response['error'] ?? 'Cancel failed']);
+        } elseif ($job_action === 'retry') {
+            $response = self::backendRequest('POST', '/v1/jobs/' . rawurlencode($job_id) . '/retry-failed');
+            $retried = (int)($response['data']['retried'] ?? 0);
+            $response['ok'] ? wp_send_json_success(['message' => 'Retried ' . $retried . ' failed ZIP(s)']) : wp_send_json_error(['message' => $response['error'] ?? 'Retry failed']);
+        } elseif ($job_action === 'import') {
+            $imported = self::importBackendLeads($job_id);
+            wp_send_json_success(['message' => 'Imported ' . $imported . ' lead(s)']);
+        }
+
+        wp_send_json_error(['message' => 'Invalid backend action']);
+    }
+
     public static function ajaxBulkAction(): void
     {
         check_ajax_referer('wnq_lead_actions', 'nonce');
@@ -1188,6 +1303,26 @@ final class LeadFinderAdmin
             ]
         ));
         wp_redirect(admin_url('admin.php?page=wnq-lead-finder&tab=settings&settings_saved=1'));
+        exit;
+    }
+
+    public static function handleBackendJobExport(): void
+    {
+        $job_id = sanitize_text_field($_GET['job_id'] ?? '');
+        if (!$job_id) {
+            wp_die('Missing job id');
+        }
+        check_admin_referer('wnq_backend_job_export_' . $job_id);
+        self::requireCap();
+
+        $response = self::backendRawRequest('GET', '/v1/jobs/' . rawurlencode($job_id) . '/export.csv');
+        if (empty($response['ok'])) {
+            wp_die(esc_html($response['error'] ?? 'Export failed'));
+        }
+
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="webnique-backend-leads-' . $job_id . '.csv"');
+        echo $response['body'];
         exit;
     }
 
@@ -1728,6 +1863,8 @@ final class LeadFinderAdmin
             }
         }
 
+        self::backendRequest('POST', '/v1/jobs/' . rawurlencode($job_id) . '/mark-imported');
+
         return $count;
     }
 
@@ -1764,6 +1901,29 @@ final class LeadFinderAdmin
         }
 
         return ['ok' => true, 'data' => is_array($data) ? $data : []];
+    }
+
+    private static function backendRawRequest(string $method, string $path): array
+    {
+        $settings = get_option('wnq_lead_finder_settings', []);
+        $base = untrailingslashit($settings['backend_api_url'] ?? '');
+        $key = $settings['backend_api_key'] ?? '';
+        if (!$base || !$key) {
+            return ['ok' => false, 'error' => 'Lead backend is not configured'];
+        }
+        $response = wp_remote_request($base . $path, [
+            'method' => $method,
+            'timeout' => 30,
+            'headers' => ['Authorization' => 'Bearer ' . $key],
+        ]);
+        if (is_wp_error($response)) {
+            return ['ok' => false, 'error' => $response->get_error_message()];
+        }
+        $code = (int)wp_remote_retrieve_response_code($response);
+        if ($code < 200 || $code >= 300) {
+            return ['ok' => false, 'error' => 'Backend HTTP ' . $code];
+        }
+        return ['ok' => true, 'body' => wp_remote_retrieve_body($response)];
     }
 
     private static function emptyBackendStats(): array
