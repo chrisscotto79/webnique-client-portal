@@ -995,7 +995,7 @@ final class LeadFinderAdmin
         ?>
         <div class="wnq-card" style="max-width:680px">
             <h3>Lead Finder Settings</h3>
-            <p style="color:#6b7280;font-size:13px;margin:0 0 16px">Configure the scalable Node backend for ZIP sweeps, or leave it blank to use the legacy local fallback.</p>
+            <p style="color:#6b7280;font-size:13px;margin:0 0 16px">Configure the scalable Node backend for ZIP sweeps. ZIP Sweep requires this backend so long jobs do not run inside WordPress.</p>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php'));?>">
                 <?php wp_nonce_field('wnq_lead_save_settings','wnq_nonce');?>
                 <input type="hidden" name="action" value="wnq_lead_save_settings">
@@ -1008,18 +1008,16 @@ final class LeadFinderAdmin
                             <small>When set, ZIP Sweep runs in the Node backend instead of WordPress.</small>
                         </div>
                         <div class="wnq-field">
-                            <label>Backend API Key</label>
-                            <input type="password" name="backend_api_key" value="<?php echo esc_attr($settings['backend_api_key']??'');?>" placeholder="Bearer token">
-                            <small>Stored in WordPress options and sent as Authorization: Bearer.</small>
+                            <label>Backend Auth Token</label>
+                            <input type="password" name="backend_api_key" value="<?php echo esc_attr($settings['backend_api_key']??'');?>" placeholder="Internal backend token">
+                            <small>This protects your own backend. It is not a scraper API key.</small>
                         </div>
                     </div>
                     <div class="wnq-row2">
                         <div class="wnq-field">
-                            <label>Backend Source</label>
-                            <select name="backend_source">
-                                <option value="outscraper"<?php selected($settings['backend_source']??'outscraper','outscraper');?>>Outscraper</option>
-                            </select>
-                            <small>Phase 1 uses Outscraper for Maps discovery.</small>
+                            <label>Maps Discovery</label>
+                            <input type="text" value="Self-hosted Playwright" readonly>
+                            <small>No paid scraper API. The backend runs its own browser worker.</small>
                         </div>
                         <div class="wnq-field">
                             <label>Max Reviews</label>
@@ -1320,7 +1318,7 @@ final class LeadFinderAdmin
                 'min_seo_score'   => max(0, min(7, (int)($_POST['min_seo_score'] ?? 2))),
                 'backend_api_url'  => esc_url_raw(untrailingslashit($_POST['backend_api_url'] ?? '')),
                 'backend_api_key'  => sanitize_text_field($_POST['backend_api_key'] ?? ''),
-                'backend_source'   => sanitize_key($_POST['backend_source'] ?? 'outscraper'),
+                'backend_source'   => 'playwright',
                 'max_reviews'      => max(0, min(500, (int)($_POST['max_reviews'] ?? 50))),
             ]
         ));
@@ -1760,7 +1758,7 @@ final class LeadFinderAdmin
         $response = self::backendRequest('POST', '/v1/jobs', [
             'keyword' => $keyword,
             'zips' => $zips,
-            'source' => $settings['backend_source'] ?? 'outscraper',
+            'source' => 'playwright',
             'createdBy' => wp_get_current_user()->user_login ?: 'wordpress',
             'filters' => [
                 'maxReviews' => (int)($settings['max_reviews'] ?? 50),

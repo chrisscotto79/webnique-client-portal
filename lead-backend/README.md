@@ -1,6 +1,6 @@
 # WebNique Lead Backend
 
-Phase 1 backend for scalable ZIP sweeps.
+Backend for scalable ZIP sweeps. Maps discovery is self-hosted through Playwright; no paid scraper API is required.
 
 ## Run Locally
 
@@ -9,6 +9,7 @@ cp .env.example .env
 docker compose up -d
 psql "$DATABASE_URL" -f db/schema.sql
 npm install
+npx playwright install chromium
 npm run dev
 npm run worker
 ```
@@ -17,9 +18,12 @@ Existing Phase 1 database:
 
 ```bash
 psql "$DATABASE_URL" -f db/migrations/002_phase2_operations.sql
+psql "$DATABASE_URL" -f db/migrations/003_no_paid_maps_provider.sql
 ```
 
 WordPress should call this service over REST. WordPress starts jobs, polls progress, and imports completed leads. This backend owns Maps discovery, queueing, retries, enrichment, and storage.
+
+For scale, keep `MAX_ZIP_CONCURRENCY` conservative and increase slowly. Self-hosted Google Maps scraping is cheaper than paid APIs, but it can still be rate limited; run the worker on infrastructure where you can control browser dependencies, outbound IPs, and job concurrency.
 
 ## API
 
@@ -29,7 +33,7 @@ WordPress should call this service over REST. WordPress starts jobs, polls progr
 {
   "keyword": "plumbing",
   "zips": ["32825", "32202"],
-  "source": "outscraper",
+  "source": "playwright",
   "filters": {
     "maxReviews": 50,
     "requireWebsite": true,
