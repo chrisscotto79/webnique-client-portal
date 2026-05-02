@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WebNique Client Portal
  * Description: Complete client management with portal, analytics, billing, tasks, SEO tracking, and messaging
- * Version: 2.3.1
+ * Version: 2.3.2
  * Author: WebNique
  * Requires at least: 6.0
  * Requires PHP: 8.0
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WNQ_PORTAL_VERSION', '2.3.1');
+define('WNQ_PORTAL_VERSION', '2.3.2');
 define('WNQ_PORTAL_PATH', plugin_dir_path(__FILE__));
 define('WNQ_PORTAL_URL', plugin_dir_url(__FILE__));
 
