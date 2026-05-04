@@ -35,7 +35,7 @@ final class BlogScheduler
             client_id        varchar(100) NOT NULL,
             agent_key_id     bigint(20) DEFAULT NULL COMMENT 'FK to wnq_seo_agent_keys.id — target site',
             title            varchar(500) NOT NULL,
-            category_type    varchar(50) DEFAULT 'Informational' COMMENT 'Services|Informational|Seasonal',
+            category_type    varchar(50) DEFAULT 'Informational' COMMENT 'Informational',
             focus_keyword    varchar(255) DEFAULT NULL,
             featured_image_url varchar(1000) DEFAULT NULL,
             scheduled_date   date DEFAULT NULL,
@@ -48,8 +48,8 @@ final class BlogScheduler
             wp_post_id       bigint(20) DEFAULT NULL,
             wp_post_url      varchar(1000) DEFAULT NULL,
             error_message    text DEFAULT NULL,
-            internal_links   longtext DEFAULT NULL COMMENT 'JSON array of selected internal links',
-            external_citation varchar(1000) DEFAULT NULL,
+            internal_links   longtext DEFAULT NULL COMMENT 'Legacy unused link data',
+            external_citation varchar(1000) DEFAULT NULL COMMENT 'Legacy unused citation data',
             tokens_used      int(11) DEFAULT 0,
             created_at       datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at       datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -89,7 +89,7 @@ final class BlogScheduler
                 'client_id'      => $client_id,
                 'agent_key_id'   => !empty($data['agent_key_id']) ? (int)$data['agent_key_id'] : null,
                 'title'          => sanitize_text_field($data['title'] ?? ''),
-                'category_type'  => sanitize_text_field($data['category_type'] ?? 'Informational'),
+                'category_type'  => 'Informational',
                 'focus_keyword'  => sanitize_text_field($data['focus_keyword'] ?? ''),
                 'featured_image_url' => esc_url_raw($data['featured_image_url'] ?? ''),
                 'scheduled_date' => !empty($data['scheduled_date']) ? sanitize_text_field($data['scheduled_date']) : null,
@@ -240,22 +240,4 @@ final class BlogScheduler
         return (int)$wpdb->get_var("SELECT COUNT(*) FROM {$wpdb->prefix}wnq_hub_notifications WHERE is_read = 0");
     }
 
-    /* ═══════════════════════════════════════════
-     *  "ALWAYS LINK TO" CURATED LIST
-     * ═══════════════════════════════════════════ */
-
-    /**
-     * Get the curated "Always Link To" list for a client.
-     * Each entry: ['url' => '...', 'anchor' => '...', 'keywords' => 'comma list']
-     */
-    public static function getAlwaysLinkTo(string $client_id): array
-    {
-        $data = get_option('wnq_always_link_' . $client_id, []);
-        return is_array($data) ? $data : [];
-    }
-
-    public static function saveAlwaysLinkTo(string $client_id, array $links): void
-    {
-        update_option('wnq_always_link_' . $client_id, $links);
-    }
 }

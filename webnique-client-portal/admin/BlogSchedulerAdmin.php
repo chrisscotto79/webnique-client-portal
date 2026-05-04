@@ -5,7 +5,7 @@
  * Tabs:
  *   queue     — Title queue management (add/edit/delete posts)
  *   generate  — AI batch title generator
- *   settings  — Elementor template + "Always Link To" per-client list
+ *   settings  — Elementor template management
  *
  * @package WebNique Portal
  */
@@ -178,7 +178,7 @@ final class BlogSchedulerAdmin
                     echo '<br><small style="color:#dc2626;">' . esc_html(substr($p['error_message'], 0, 120)) . '</small>';
                 }
                 echo '</td>';
-                echo '<td>' . esc_html($p['category_type']) . '</td>';
+                echo '<td>Informational</td>';
                 echo '<td>' . esc_html($p['focus_keyword'] ?? '—') . '</td>';
                 echo '<td style="min-width:260px;">';
                 echo '<form method="post" action="' . admin_url('admin-post.php') . '" class="wnq-featured-form">';
@@ -198,8 +198,9 @@ final class BlogSchedulerAdmin
                 if (!empty($p['generated_body'])) {
                     echo '<button class="button button-small wnq-view-content" data-id="' . (int)$p['id'] . '">View Content</button> ';
                 }
-                if ($p['status'] === 'pending' && empty($p['generated_body'])) {
-                    echo '<button class="button button-small wnq-generate-content" data-id="' . (int)$p['id'] . '">Generate Content</button> ';
+                if ($p['status'] === 'pending') {
+                    $generate_label = empty($p['generated_body']) ? 'Generate Content' : 'Regenerate Content';
+                    echo '<button class="button button-small wnq-generate-content" data-id="' . (int)$p['id'] . '" data-has-content="' . (!empty($p['generated_body']) ? '1' : '0') . '">' . esc_html($generate_label) . '</button> ';
                 }
                 if ($p['status'] === 'pending') {
                     // Publish now button
@@ -274,7 +275,7 @@ jQuery(function($) {
     }
 
     $(document).on('click', '.wnq-publish-now', function() {
-        if (!confirm('Publish this post now?\n\nThe AI will generate the full post and push it live to the client site. This may take 30-60 seconds.')) return;
+        if (!confirm('Publish this post now?\n\nIf content is already generated, the saved article will be used. Otherwise AI will generate the article first. This may take 30-60 seconds.')) return;
         var id       = $(this).data('id');
         var $btn     = $(this);
         var origText = $btn.text();
@@ -299,7 +300,11 @@ jQuery(function($) {
     });
 
     $(document).on('click', '.wnq-generate-content', function() {
-        if (!confirm('Generate the blog content now so you can review it before publishing?')) return;
+        var hasContent = String($(this).data('has-content')) === '1';
+        var prompt = hasContent
+            ? 'Regenerate this blog content? This will replace the saved draft.'
+            : 'Generate the blog content now so you can review it before publishing?';
+        if (!confirm(prompt)) return;
         var id = $(this).data('id');
         var $btn = $(this);
         var origText = $btn.text();
@@ -426,6 +431,21 @@ jQuery(function($) {
         ?>
 <script>
 jQuery(function($) {
+    function wnqGenErrorMessage(xhr, fallback) {
+        var msg = fallback || 'Request failed.';
+        if (xhr && xhr.responseJSON) {
+            msg = (xhr.responseJSON.data && xhr.responseJSON.data.message) || xhr.responseJSON.message || msg;
+        } else if (xhr && xhr.responseText) {
+            try {
+                var parsed = JSON.parse(xhr.responseText);
+                msg = (parsed.data && parsed.data.message) || parsed.message || parsed.error || msg;
+            } catch(e) {
+                msg = xhr.responseText.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 400) || msg;
+            }
+        }
+        return msg;
+    }
+
     // Refresh agent dropdown when client changes
     $('#gen-client').on('change', function() {
         var clientId = $(this).val();
@@ -470,7 +490,7 @@ jQuery(function($) {
             $('#wnq-gen-spinner').hide();
             $('#wnq-gen-titles-btn').prop('disabled', false);
             if (!resp.success) {
-                alert('Error: ' + (resp.data?.message || 'Unknown error'));
+                alert('Error: ' + ((resp.data && resp.data.message) ? resp.data.message : 'Unknown error'));
                 return;
             }
             var titles = resp.data.titles || [];
@@ -491,10 +511,10 @@ jQuery(function($) {
             });
             $('#wnq-gen-list').html(html || '<p>No titles generated. Check AI settings.</p>');
             if (titles.length) $('#wnq-gen-results').show();
-        }).fail(function() {
+        }).fail(function(xhr) {
             $('#wnq-gen-spinner').hide();
             $('#wnq-gen-titles-btn').prop('disabled', false);
-            alert('Request failed. Check AI settings.');
+            alert(wnqGenErrorMessage(xhr, 'Title generation request failed.'));
         });
     });
 
@@ -511,6 +531,10 @@ jQuery(function($) {
         });
         if (!selected.length) return alert('Select at least one title.');
 
+        var $btn = $(this);
+        var originalText = $btn.text();
+        $btn.prop('disabled', true).text('Adding...');
+
         $.post(WNQ_SEOHUB.ajaxUrl, {
             action:       'wnq_blog_add_batch',
             nonce:        WNQ_SEOHUB.nonce,
@@ -522,8 +546,12 @@ jQuery(function($) {
                 alert('✅ ' + resp.data.added + ' post(s) added to queue!');
                 window.location = '<?php echo admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue'); ?>&client_id=' + $('#gen-client').val();
             } else {
-                alert('Error: ' + (resp.data?.message || 'Unknown'));
+                alert('Error: ' + ((resp.data && resp.data.message) ? resp.data.message : 'Unknown'));
+                $btn.prop('disabled', false).text(originalText);
             }
+        }).fail(function(xhr) {
+            alert(wnqGenErrorMessage(xhr, 'Could not add selected titles.'));
+            $btn.prop('disabled', false).text(originalText);
         });
     });
 
@@ -539,7 +567,6 @@ jQuery(function($) {
     {
         $clients    = Client::getByStatus('active');
         $client_id  = sanitize_text_field($_GET['client_id'] ?? ($clients[0]['client_id'] ?? ''));
-        $always_links = $client_id ? BlogScheduler::getAlwaysLinkTo($client_id) : [];
         $template_json = get_option('wnq_blog_elementor_template', '');
 
         $saved = sanitize_text_field($_GET['settings_saved'] ?? '');
@@ -564,7 +591,7 @@ jQuery(function($) {
 
         // Per-site Elementor templates
         $settings_agents = BlogScheduler::getClientAgents($client_id);
-        $widget_hint = '<p style="color:#6b7280;font-size:12px;"><strong>Widget IDs:</strong> Heading <code>5af58bd2</code> (H1) · Text Editor <code>5b794435</code> (body) · Text Editor <code>4861ee91</code> (TOC) · Image <code>1b605b78</code> (featured — add manually)</p>';
+        $widget_hint = '<p style="color:#6b7280;font-size:12px;"><strong>Widget IDs:</strong> Heading <code>5af58bd2</code> (H1) · Text Editor <code>5b794435</code> (body) · Text Editor <code>4861ee91</code> (TOC) · Image <code>1b605b78</code> (featured image URL is injected automatically)</p>';
 
         if (!empty($settings_agents)) {
             foreach ($settings_agents as $a) {
@@ -601,56 +628,6 @@ jQuery(function($) {
         echo '</form>';
         echo '</div>';
 
-        // Always Link To
-        echo '<div class="wnq-blog-card">';
-        echo '<h3>🔗 Always Link To — ' . esc_html($client_id) . '</h3>';
-        echo '<p style="color:#6b7280;">These links take priority in every blog post for this client. Add pages you always want to reference (service pages, key landing pages).</p>';
-
-        echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
-        echo '<input type="hidden" name="action" value="wnq_blog_save_always_link">';
-        echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
-        wp_nonce_field('wnq_blog_save_always_link');
-
-        echo '<table class="widefat" id="wnq-always-link-table" style="margin-bottom:12px;">';
-        echo '<thead><tr><th>URL</th><th>Anchor Text</th><th>Context Keywords (comma-sep)</th><th></th></tr></thead>';
-        echo '<tbody>';
-        foreach ($always_links as $i => $lnk) {
-            echo '<tr>';
-            echo '<td><input type="url" name="always_link[' . $i . '][url]" value="' . esc_url($lnk['url'] ?? '') . '" style="width:100%;" placeholder="https://..."></td>';
-            echo '<td><input type="text" name="always_link[' . $i . '][anchor]" value="' . esc_attr($lnk['anchor'] ?? '') . '" style="width:100%;"></td>';
-            echo '<td><input type="text" name="always_link[' . $i . '][keywords]" value="' . esc_attr($lnk['keywords'] ?? '') . '" style="width:100%;" placeholder="roofing, roof repair"></td>';
-            echo '<td><button type="button" class="button button-small wnq-remove-link">✕</button></td>';
-            echo '</tr>';
-        }
-        echo '</tbody>';
-        echo '</table>';
-        echo '<button type="button" class="button" id="wnq-add-link-row">+ Add Row</button> ';
-        echo '<button type="submit" class="button button-primary" style="margin-left:8px;">💾 Save Links</button>';
-        echo '</form>';
-        echo '</div>';
-
-        // Inline JS for table management
-        ?>
-<script>
-jQuery(function($) {
-    var rowIdx = <?php echo count($always_links); ?>;
-    $('#wnq-add-link-row').on('click', function() {
-        var i = rowIdx++;
-        $('#wnq-always-link-table tbody').append(
-            '<tr>' +
-            '<td><input type="url" name="always_link['+i+'][url]" style="width:100%;" placeholder="https://..."></td>' +
-            '<td><input type="text" name="always_link['+i+'][anchor]" style="width:100%;"></td>' +
-            '<td><input type="text" name="always_link['+i+'][keywords]" style="width:100%;" placeholder="roofing, roof repair"></td>' +
-            '<td><button type="button" class="button button-small wnq-remove-link">✕</button></td>' +
-            '</tr>'
-        );
-    });
-    $(document).on('click', '.wnq-remove-link', function() {
-        $(this).closest('tr').remove();
-    });
-});
-</script>
-        <?php
     }
 
     // ── AJAX Handlers ───────────────────────────────────────────────────────
@@ -796,10 +773,14 @@ jQuery(function($) {
             $line = preg_replace('/^\d+\.\s*/', '', $line);
             $parts = array_map('trim', explode('|', $line));
             if (count($parts) >= 1 && strlen($parts[0]) > 5) {
+                $keyword = $parts[2] ?? '';
+                if (!$keyword && !empty($parts[1]) && stripos($parts[1], 'informational') === false) {
+                    $keyword = $parts[1];
+                }
                 $results[] = [
                     'title'    => $parts[0],
-                    'category' => $parts[1] ?? 'Informational',
-                    'keyword'  => $parts[2] ?? '',
+                    'category' => 'Informational',
+                    'keyword'  => $keyword,
                 ];
             }
         }
