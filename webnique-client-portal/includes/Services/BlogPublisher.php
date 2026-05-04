@@ -171,7 +171,7 @@ final class BlogPublisher
             ],
             $client_id,
             [
-                'max_tokens'  => 7000,
+                'max_tokens'  => AIEngine::maxTokensForBlogGeneration(),
                 'no_cache'    => true,
                 'temperature' => 0.85,
             ]
@@ -310,7 +310,7 @@ final class BlogPublisher
             ],
             $client_id,
             [
-                'max_tokens'  => 7000,
+                'max_tokens'  => AIEngine::maxTokensForBlogGeneration(),
                 'no_cache'    => true,
                 'temperature' => 0.85,
             ]
