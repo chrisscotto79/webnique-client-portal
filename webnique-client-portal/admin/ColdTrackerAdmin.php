@@ -262,9 +262,9 @@ final class ColdTrackerAdmin
                         <div>Thu</div><div>Fri</div><div>Sat</div>
                     </div>
                     <div class="cold-day-legend">
-                        <span><i class="good"></i> Strong day</span>
-                        <span><i class="warning"></i> Progress</span>
-                        <span><i class="bad"></i> Needs work</span>
+                        <span><i class="good"></i> Completed</span>
+                        <span><i class="warning"></i> In progress</span>
+                        <span><i class="bad"></i> Missed</span>
                     </div>
                     <div class="cold-cal-grid" id="cold-cal-grid">
                         <div class="cold-loading">Loading calendar...</div>
@@ -873,22 +873,16 @@ CSS;
         const isPast = ds < COLD.today;
         const isToday = ds === COLD.today;
 
+        if (isToday) {
+            return { className: 'cold-day-status-warning', label: 'In progress' };
+        }
+
         if (!row || (parseInt(row.num_calls) || 0) <= 0) {
             if (isPast) return { className: 'cold-day-status-bad', label: 'Missed' };
-            if (isToday) return { className: 'cold-day-status-neutral', label: 'Today' };
             return null;
         }
 
-        const calls = parseInt(row.num_calls) || 0;
-        const pitches = parseInt(row.num_pitches) || 0;
-        const interested = parseInt(row.num_interested) || 0;
-        const meetings = parseInt(row.num_meetings) || 0;
-        const sales = parseInt(row.num_website_sales) || 0;
-
-        if (sales > 0) return { className: 'cold-day-status-good', label: offerLabel(row.offer_type) };
-        if (calls >= 200 || meetings > 0) return { className: 'cold-day-status-good', label: 'Strong' };
-        if (calls >= 100 || pitches > 0 || interested > 0) return { className: 'cold-day-status-warning', label: 'Progress' };
-        return { className: 'cold-day-status-bad', label: 'Needs work' };
+        return { className: 'cold-day-status-good', label: 'Completed' };
     }
 
     function destroyChart(key) {
