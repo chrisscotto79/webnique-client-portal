@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WebNique SEO Agent
  * Description: Lightweight data relay and execution endpoint for the WebNique SEO Operating System hub. Collects site data and syncs with web-nique.com.
- * Version: 1.1.0
+ * Version: 1.1.1
  * Author: WebNique
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WNQA_VERSION', '1.1.0');
+define('WNQA_VERSION', '1.1.1');
 define('WNQA_PATH', plugin_dir_path(__FILE__));
 define('WNQA_URL', plugin_dir_url(__FILE__));
 define('WNQA_SLUG', 'webnique-seo-agent');
@@ -27,6 +27,10 @@ require_once WNQA_PATH . 'admin/AgentSettings.php';
 
 register_activation_hook(__FILE__,   'wnqa_activate');
 register_deactivation_hook(__FILE__, 'wnqa_deactivate');
+
+function wnqa_register_blog_rewrites(): void {
+    add_rewrite_rule('^blog/([^/]+)/?$', 'index.php?post_type=post&name=$matches[1]', 'top');
+}
 
 function wnqa_activate(): void {
     // Schedule sync cron
@@ -46,6 +50,15 @@ function wnqa_deactivate(): void {
     if ($ts) wp_unschedule_event($ts, 'wnqa_local_checks');
     flush_rewrite_rules();
 }
+
+add_action('init', 'wnqa_register_blog_rewrites');
+add_action('init', function () {
+    if (get_option('wnqa_rewrite_version') !== WNQA_VERSION) {
+        wnqa_register_blog_rewrites();
+        flush_rewrite_rules(false);
+        update_option('wnqa_rewrite_version', WNQA_VERSION);
+    }
+}, 20);
 
 add_action('plugins_loaded', function () {
     // Admin settings page

@@ -87,13 +87,15 @@ final class BlogReceiver
         $status        = ($body['status'] ?? 'publish') === 'draft' ? 'draft' : 'publish';
         $focus_kw      = sanitize_text_field($body['focus_keyword'] ?? '');
         $featured_image_url = esc_url_raw($body['featured_image_url'] ?? '');
+        $source_schedule_id = sanitize_text_field($body['source_schedule_id'] ?? '');
 
         if (empty($title)) {
             return new \WP_REST_Response(['error' => 'title is required'], 400);
         }
 
-        // SEO-friendly slug from focus keyword; fall back to title
-        $post_slug = sanitize_title(!empty($focus_kw) ? $focus_kw : $title);
+        // Keep the published URL tied to the simple blog title, never the focus keyword.
+        $post_slug = sanitize_title($title);
+        $blog_path_slug = self::titlePathSegment($title);
 
         // Resolve category term IDs (create if they don't exist — never hardcode IDs)
         $cat_ids = [];
@@ -111,14 +113,16 @@ final class BlogReceiver
             }
         }
 
-        // Suspend save_post hooks for the draft insertion.
+        $existing_post_id = self::findExistingPost($source_schedule_id, $post_slug);
+
+        // Suspend save_post hooks for the write.
         // Some plugins (e.g. Elementor) hook into save_post and call wp_die() when
         // they encounter unexpected conditions during REST API requests, which sends
         // an error response and kills the process before our try-catch can respond.
         // We set all Elementor meta directly, so save_post processing is not needed.
         self::suspendSavePostHooks($saved_hooks);
 
-        $post_id = wp_insert_post([
+        $post_args = [
             'post_title'     => $title,
             'post_name'      => $post_slug,
             'post_content'   => $post_content,
@@ -128,7 +132,14 @@ final class BlogReceiver
             'post_category'  => $cat_ids,
             'comment_status' => 'closed',
             'ping_status'    => 'closed',
-        ], true);
+        ];
+
+        if ($existing_post_id) {
+            $post_args['ID'] = $existing_post_id;
+            $post_id = wp_update_post($post_args, true);
+        } else {
+            $post_id = wp_insert_post($post_args, true);
+        }
 
         self::restoreSavePostHooks($saved_hooks);
 
@@ -136,12 +147,18 @@ final class BlogReceiver
             return new \WP_REST_Response(['error' => $post_id->get_error_message()], 500);
         }
 
+        if (!empty($source_schedule_id)) {
+            update_post_meta((int)$post_id, '_wnq_source_schedule_id', $source_schedule_id);
+        }
+        update_post_meta((int)$post_id, '_wnq_source_slug', $post_slug);
+
         // Set Elementor data — directly via update_post_meta (no save_post fired)
+        $elementor_arr = null;
         if (!empty($elementor_raw)) {
             $elementor_arr = json_decode($elementor_raw, true);
             if (is_array($elementor_arr)) {
-                update_post_meta($post_id, '_elementor_data', wp_slash($elementor_raw));
                 update_post_meta($post_id, '_elementor_edit_mode', 'builder');
+                update_post_meta($post_id, '_elementor_version', defined('ELEMENTOR_VERSION') ? ELEMENTOR_VERSION : '3.0.0');
                 // Store as a PHP array — WordPress serializes it and Elementor reads it correctly.
                 // hide_title removes the theme's default post title from the page.
                 update_post_meta($post_id, '_elementor_page_settings', ['hide_title' => 'yes']);
@@ -187,11 +204,12 @@ final class BlogReceiver
             'author'        => ['@type' => 'Organization', 'name' => get_bloginfo('name')],
             'publisher'     => ['@type' => 'Organization', 'name' => get_bloginfo('name'),
                                 'logo'  => ['@type' => 'ImageObject', 'url' => get_site_icon_url()]],
-            'mainEntityOfPage' => ['@type' => 'WebPage', '@id' => get_home_url() . '/' . $post_slug . '/'],
+            'mainEntityOfPage' => ['@type' => 'WebPage', '@id' => self::blogPostUrl((int)$post_id, $blog_path_slug)],
         ];
         update_post_meta($post_id, '_wnq_schema_json', wp_json_encode($schema));
 
         $attachment_id = 0;
+        $local_image_url = '';
         if (!empty($featured_image_url)) {
             $attachment_id = self::sideloadFeaturedImage($featured_image_url, $post_id, $title);
             if ($attachment_id) {
@@ -203,14 +221,26 @@ final class BlogReceiver
             }
         }
 
+        if (is_array($elementor_arr)) {
+            self::syncElementorFeaturedImage($elementor_arr, $attachment_id, $local_image_url ?: $featured_image_url, $title);
+            update_post_meta(
+                $post_id,
+                '_elementor_data',
+                wp_slash(wp_json_encode($elementor_arr, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE))
+            );
+        }
+
         // Publish — suspend hooks again to prevent plugin crashes on status transition
         if ($status === 'publish') {
             self::suspendSavePostHooks($saved_hooks2);
-            wp_update_post(['ID' => $post_id, 'post_status' => 'publish']);
+            $published_id = wp_update_post(['ID' => $post_id, 'post_status' => 'publish'], true);
             self::restoreSavePostHooks($saved_hooks2);
+            if (is_wp_error($published_id)) {
+                return new \WP_REST_Response(['error' => $published_id->get_error_message()], 500);
+            }
         }
 
-        $post_url = get_permalink($post_id);
+        $post_url = self::blogPostUrl((int)$post_id, $blog_path_slug);
 
         return new \WP_REST_Response([
             'status'             => 'published',
@@ -218,6 +248,72 @@ final class BlogReceiver
             'post_url'           => $post_url,
             'featured_image_set' => !empty($attachment_id),
         ], 201);
+    }
+
+    private static function findExistingPost(string $source_schedule_id, string $post_slug): int
+    {
+        if (!empty($source_schedule_id)) {
+            $found = get_posts([
+                'post_type'      => 'post',
+                'post_status'    => ['draft', 'publish', 'pending', 'private'],
+                'fields'         => 'ids',
+                'posts_per_page' => 1,
+                'meta_key'       => '_wnq_source_schedule_id',
+                'meta_value'     => $source_schedule_id,
+            ]);
+            if (!empty($found[0])) {
+                return (int)$found[0];
+            }
+        }
+
+        $post = get_page_by_path($post_slug, OBJECT, 'post');
+        return $post ? (int)$post->ID : 0;
+    }
+
+    private static function titlePathSegment(string $title): string
+    {
+        $title = remove_accents($title);
+        $slug = preg_replace('/[^A-Za-z0-9]+/', '-', $title);
+        $slug = trim((string)$slug, '-');
+        return $slug ?: sanitize_title($title);
+    }
+
+    private static function blogPostUrl(int $post_id, string $blog_path_slug): string
+    {
+        $blog_path_slug = trim($blog_path_slug, '/');
+        if (!empty($blog_path_slug)) {
+            return home_url('/blog/' . $blog_path_slug . '/');
+        }
+        return get_permalink($post_id);
+    }
+
+    private static function syncElementorFeaturedImage(array &$elements, int $attachment_id, string $image_url, string $title): bool
+    {
+        $updated = false;
+        foreach ($elements as &$el) {
+            $id = $el['id'] ?? '';
+            if ($id === '1b605b78') {
+                if (!empty($image_url)) {
+                    $el['settings']['image'] = [
+                        'url'    => esc_url_raw($image_url),
+                        'id'     => $attachment_id ?: 0,
+                        'size'   => 'full',
+                        'alt'    => $title,
+                        'source' => $attachment_id ? 'library' : 'url',
+                    ];
+                } elseif (!empty($el['settings']['image']['url'])) {
+                    $el['settings']['image']['id'] = 0;
+                    $el['settings']['image']['source'] = 'url';
+                }
+                $el['settings']['image_size'] = $el['settings']['image_size'] ?? 'large';
+                $updated = true;
+            }
+
+            if (!empty($el['elements']) && is_array($el['elements'])) {
+                $updated = self::syncElementorFeaturedImage($el['elements'], $attachment_id, $image_url, $title) || $updated;
+            }
+        }
+        return $updated;
     }
 
     private static function sideloadFeaturedImage(string $image_url, int $post_id, string $title): int
@@ -253,7 +349,21 @@ final class BlogReceiver
     {
         global $wp_filter;
         $snapshot = [];
-        $hooks = ['save_post', 'save_post_post', 'transition_post_status'];
+        $hooks = [
+            'save_post',
+            'save_post_post',
+            'edit_post',
+            'post_updated',
+            'pre_post_update',
+            'wp_after_insert_post',
+            'transition_post_status',
+            'new_to_publish',
+            'draft_to_publish',
+            'pending_to_publish',
+            'future_to_publish',
+            'publish_post',
+            'wp_insert_post',
+        ];
         foreach ($hooks as $hook) {
             if (isset($wp_filter[$hook])) {
                 $snapshot[$hook] = $wp_filter[$hook];

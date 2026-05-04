@@ -326,6 +326,7 @@ final class BlogPublisher
             'status'            => 'publish',
             'focus_keyword'     => $focus_kw,
             'featured_image_url'=> $featured_image_url,
+            'source_schedule_id'=> $schedule_id,
             'hide_title'        => true,
         ]);
 
@@ -450,10 +451,14 @@ final class BlogPublisher
             } elseif ($id === '1b605b78' && !empty($content['featured_image_url'])) {
                 $el['settings']['image'] = [
                     'url'    => esc_url_raw($content['featured_image_url']),
-                    'id'     => '',
+                    'id'     => 0,
+                    'size'   => 'full',
                     'source' => 'url',
                 ];
                 $el['settings']['image_size'] = $el['settings']['image_size'] ?? 'large';
+            } elseif ($id === '1b605b78' && !empty($el['settings']['image']['url'])) {
+                $el['settings']['image']['id'] = 0;
+                $el['settings']['image']['source'] = 'url';
             }
 
             if (!empty($el['elements'])) {
