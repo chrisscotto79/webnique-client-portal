@@ -216,6 +216,7 @@ final class SEOOSBootstrap
         // Blog Scheduler handlers
         add_action('admin_post_wnq_blog_add_post',         [self::class, 'handleBlogAddPost']);
         add_action('admin_post_wnq_blog_delete_post',      [self::class, 'handleBlogDeletePost']);
+        add_action('admin_post_wnq_blog_save_featured',    [self::class, 'handleBlogSaveFeaturedImage']);
         add_action('admin_post_wnq_blog_save_template',    [self::class, 'handleBlogSaveTemplate']);
         add_action('admin_post_wnq_blog_save_always_link', [self::class, 'handleBlogSaveAlwaysLink']);
         add_action('admin_post_wnq_blog_mark_all_read',    [self::class, 'handleBlogMarkAllRead']);
@@ -491,11 +492,29 @@ final class SEOOSBootstrap
             'title'          => $title,
             'category_type'  => sanitize_text_field($_POST['category_type'] ?? 'Informational'),
             'focus_keyword'  => sanitize_text_field($_POST['focus_keyword'] ?? ''),
+            'featured_image_url' => esc_url_raw($_POST['featured_image_url'] ?? ''),
             'scheduled_date' => sanitize_text_field($_POST['scheduled_date'] ?? ''),
             'agent_key_id'   => (int)($_POST['agent_key_id'] ?? 0),
         ]);
 
         wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue&client_id=' . urlencode($client_id) . '&notice=added'));
+        exit;
+    }
+
+    public static function handleBlogSaveFeaturedImage(): void
+    {
+        $post_id   = (int)($_POST['post_id'] ?? 0);
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        check_admin_referer('wnq_blog_featured_' . $post_id);
+        self::requireCap();
+
+        if ($post_id) {
+            \WNQ\Models\BlogScheduler::updatePost($post_id, [
+                'featured_image_url' => esc_url_raw($_POST['featured_image_url'] ?? ''),
+            ]);
+        }
+
+        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue&client_id=' . urlencode($client_id) . '&notice=featured_saved'));
         exit;
     }
 
@@ -667,16 +686,17 @@ final class SEOOSBootstrap
     {
         $current = get_option('wnq_blog_schema_ver', '0');
 
-        if ($current === '2') {
+        if ($current === '3') {
             return; // already up to date
         }
 
         if (class_exists('WNQ\\Models\\BlogScheduler')) {
             \WNQ\Models\BlogScheduler::createTables();
 
+            global $wpdb;
+
             // v1 → v2: add agent_key_id to existing installations
-            if ($current === '1') {
-                global $wpdb;
+            if (in_array($current, ['1'], true)) {
                 $col = $wpdb->get_row("SHOW COLUMNS FROM {$wpdb->prefix}wnq_blog_schedule LIKE 'agent_key_id'");
                 if (!$col) {
                     $wpdb->query("ALTER TABLE {$wpdb->prefix}wnq_blog_schedule ADD COLUMN agent_key_id bigint(20) DEFAULT NULL AFTER client_id");
@@ -684,7 +704,15 @@ final class SEOOSBootstrap
                 }
             }
 
-            update_option('wnq_blog_schema_ver', '2');
+            // v2 → v3: store featured image URL selected in the hub queue.
+            if (in_array($current, ['1', '2'], true)) {
+                $col = $wpdb->get_row("SHOW COLUMNS FROM {$wpdb->prefix}wnq_blog_schedule LIKE 'featured_image_url'");
+                if (!$col) {
+                    $wpdb->query("ALTER TABLE {$wpdb->prefix}wnq_blog_schedule ADD COLUMN featured_image_url varchar(1000) DEFAULT NULL AFTER focus_keyword");
+                }
+            }
+
+            update_option('wnq_blog_schema_ver', '3');
         }
     }
 

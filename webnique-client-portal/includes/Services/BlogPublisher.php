@@ -57,6 +57,22 @@ final class BlogPublisher
             return ['success' => false, 'message' => 'Post must be in pending or failed status to process'];
         }
 
+        if (!empty($scheduled['generated_body'])) {
+            $agent = self::getActiveAgent($scheduled['client_id'], (int)($scheduled['agent_key_id'] ?? 0));
+            if (!$agent) {
+                return self::fail($schedule_id, 'No active agent key found for client. Is the plugin installed and connected?');
+            }
+
+            $parsed = [
+                'h1'  => self::sanitizeTitle($scheduled['generated_title'] ?: $scheduled['title']),
+                'meta' => $scheduled['generated_meta'] ?? '',
+                'toc'  => $scheduled['generated_toc'] ?? '',
+                'body' => $scheduled['generated_body'] ?? '',
+            ];
+            BlogScheduler::updatePost($schedule_id, ['status' => 'publishing']);
+            return self::publishGeneratedPost($schedule_id, $scheduled, $agent, $parsed);
+        }
+
         // Reset failed posts before retrying
         if ($scheduled['status'] === 'failed') {
             BlogScheduler::updatePost($schedule_id, ['status' => 'pending', 'error_message' => null]);
@@ -186,19 +202,173 @@ final class BlogPublisher
             'status'          => 'publishing',
         ]);
 
-        // Build Elementor JSON — use per-site template if one is saved for this agent key
+        return self::publishGeneratedPost($schedule_id, $scheduled, $agent, $parsed, $category, $focus_kw);
+    }
+
+    public static function generateContentOnly(int $schedule_id): array
+    {
+        $result = self::generateAndStoreContent($schedule_id, 'pending');
+        if (!$result['success']) {
+            return $result;
+        }
+
+        return [
+            'success' => true,
+            'message' => 'Content generated',
+            'title'   => $result['parsed']['h1'] ?? '',
+        ];
+    }
+
+    private static function generateAndStoreContent(int $schedule_id, string $final_status): array
+    {
+        $scheduled = BlogScheduler::getPost($schedule_id);
+        if (!$scheduled) {
+            return ['success' => false, 'message' => 'Schedule entry not found'];
+        }
+
+        if (!in_array($scheduled['status'], ['pending', 'failed'], true)) {
+            return ['success' => false, 'message' => 'Post must be pending or failed to generate content'];
+        }
+
+        BlogScheduler::updatePost($schedule_id, ['status' => 'generating', 'error_message' => null]);
+
+        $client_id = $scheduled['client_id'];
+        $profile = SEOHub::getProfile($client_id);
+        if (!$profile) {
+            return self::fail($schedule_id, 'No SEO profile found for client: ' . $client_id);
+        }
+
+        $client      = Client::getByClientId($client_id) ?? [];
+        $biz_name    = $client['company'] ?? $client['name'] ?? $client_id;
+        $services    = implode(', ', (array)($profile['primary_services'] ?? []));
+        $location    = implode(', ', (array)($profile['service_locations'] ?? []));
+        $tone        = $profile['content_tone'] ?? 'professional';
+        $category    = $scheduled['category_type'] ?? 'Informational';
+        $focus_kw    = $scheduled['focus_keyword'] ?? '';
+
+        if (empty($focus_kw)) {
+            global $wpdb;
+            $top_kw = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT keyword FROM {$wpdb->prefix}wnq_seo_keywords
+                     WHERE client_id = %s ORDER BY impressions DESC, clicks DESC LIMIT 1",
+                    $client_id
+                )
+            );
+            if ($top_kw) {
+                $focus_kw = $top_kw;
+                BlogScheduler::updatePost($schedule_id, ['focus_keyword' => $focus_kw]);
+            }
+        }
+
+        $agent = self::getActiveAgent($client_id, (int)($scheduled['agent_key_id'] ?? 0));
+        if (!$agent) {
+            return self::fail($schedule_id, 'No active agent key found for client. Is the plugin installed and connected?');
+        }
+
+        $keyword_context = self::buildKeywordContext($client_id, $profile);
+        $all_links = array_merge(
+            BlogScheduler::getAlwaysLinkTo($client_id),
+            self::getSitemapLinks($agent['site_url'] ?? '', $scheduled['title'], $focus_kw),
+            self::selectInternalLinks($client_id, $scheduled['title'], $focus_kw)
+        );
+
+        $seen = [];
+        $link_list = [];
+        foreach ($all_links as $lnk) {
+            $url = $lnk['url'] ?? '';
+            if ($url && !isset($seen[$url])) {
+                $seen[$url] = true;
+                $link_list[] = $lnk;
+            }
+        }
+        $link_list = array_slice($link_list, 0, 6);
+
+        $links_prompt = '';
+        foreach ($link_list as $i => $lnk) {
+            $links_prompt .= ($i + 1) . '. Anchor: "' . ($lnk['anchor'] ?? $lnk['title'] ?? '') . '" → URL: ' . ($lnk['url'] ?? '') . "\n";
+        }
+
+        $external_links = ($category === 'Informational')
+            ? 'Use one authoritative non-competitor citation if it genuinely supports the topic, such as a government, university, standards, or major industry source.'
+            : 'No external links required unless they genuinely support the topic.';
+
+        $ai_result = AIEngine::generate(
+            'blog_post_full',
+            [
+                'business_name'   => $biz_name,
+                'services'        => $services,
+                'location'        => $location,
+                'title'           => $scheduled['title'],
+                'category_type'   => $category,
+                'focus_keyword'   => $focus_kw,
+                'url_slug'        => sanitize_title($scheduled['title']),
+                'tone'            => $tone,
+                'keyword_context' => $keyword_context,
+                'internal_links'  => $links_prompt ?: 'No internal link candidates available.',
+                'external_links'  => $external_links,
+            ],
+            $client_id,
+            [
+                'max_tokens'  => 7000,
+                'no_cache'    => true,
+                'temperature' => 0.85,
+            ]
+        );
+
+        if (!$ai_result['success']) {
+            return self::fail($schedule_id, 'AI generation failed: ' . ($ai_result['error'] ?? 'unknown error'));
+        }
+
+        $parsed = self::parseAIResponse($ai_result['content']);
+        if (!$parsed) {
+            return self::fail($schedule_id, 'Failed to parse AI response. Raw output: ' . substr($ai_result['content'], 0, 300));
+        }
+
+        $parsed['h1'] = self::sanitizeTitle($parsed['h1']);
+        BlogScheduler::updatePost($schedule_id, [
+            'generated_title' => $parsed['h1'],
+            'generated_meta'  => $parsed['meta'],
+            'generated_body'  => $parsed['body'],
+            'generated_toc'   => $parsed['toc'],
+            'tokens_used'     => $ai_result['tokens_used'] ?? 0,
+            'internal_links'  => wp_json_encode($link_list),
+            'status'          => $final_status,
+            'error_message'   => null,
+        ]);
+
+        return [
+            'success' => true,
+            'parsed'  => $parsed,
+            'agent'   => $agent,
+            'category'=> $category,
+            'focus_kw'=> $focus_kw,
+        ];
+    }
+
+    private static function publishGeneratedPost(
+        int $schedule_id,
+        array $scheduled,
+        array $agent,
+        array $parsed,
+        string $category = '',
+        string $focus_kw = ''
+    ): array {
+        $category = $category ?: ($scheduled['category_type'] ?? 'Informational');
+        $focus_kw = $focus_kw ?: ($scheduled['focus_keyword'] ?? '');
+
         $elementor_json = self::buildElementorJson($parsed, (int)($scheduled['agent_key_id'] ?? 0));
 
-        // Push to client site
         $push_result = self::pushToAgent($agent, [
-            'title'            => $parsed['h1'],
-            'meta_description' => $parsed['meta'],
-            'post_content'     => wp_strip_all_tags($parsed['body']),
-            'elementor_data'   => $elementor_json,
-            'categories'       => [$category],
-            'status'           => 'publish',
-            'focus_keyword'    => $focus_kw,
-            'hide_title'       => true,  // always hide the WordPress post title; H1 comes from Elementor
+            'title'             => $parsed['h1'],
+            'meta_description'  => $parsed['meta'],
+            'post_content'      => wp_strip_all_tags($parsed['body']),
+            'elementor_data'    => $elementor_json,
+            'categories'        => [$category],
+            'status'            => 'publish',
+            'focus_keyword'     => $focus_kw,
+            'featured_image_url'=> $scheduled['featured_image_url'] ?? '',
+            'hide_title'        => true,
         ]);
 
         if (!$push_result['success']) {
@@ -219,7 +389,7 @@ final class BlogPublisher
         BlogScheduler::addNotification(
             'blog_published',
             '✅ Blog Post Published: ' . $post_title,
-            'Published to ' . ($agent['site_url'] ?? $client_id) . '. Remember to add a featured image!',
+            'Published to ' . ($agent['site_url'] ?? $client_id) . '.',
             $post_url,
             $client_id
         );

@@ -86,6 +86,7 @@ final class BlogReceiver
         $categories    = array_map('sanitize_text_field', (array)($body['categories'] ?? []));
         $status        = ($body['status'] ?? 'publish') === 'draft' ? 'draft' : 'publish';
         $focus_kw      = sanitize_text_field($body['focus_keyword'] ?? '');
+        $featured_image_url = esc_url_raw($body['featured_image_url'] ?? '');
 
         if (empty($title)) {
             return new \WP_REST_Response(['error' => 'title is required'], 400);
@@ -190,6 +191,14 @@ final class BlogReceiver
         ];
         update_post_meta($post_id, '_wnq_schema_json', wp_json_encode($schema));
 
+        if (!empty($featured_image_url)) {
+            $attachment_id = self::sideloadFeaturedImage($featured_image_url, $post_id, $title);
+            if ($attachment_id) {
+                set_post_thumbnail($post_id, $attachment_id);
+                update_post_meta($post_id, '_wnq_og_image', $featured_image_url);
+            }
+        }
+
         // Publish — suspend hooks again to prevent plugin crashes on status transition
         if ($status === 'publish') {
             self::suspendSavePostHooks($saved_hooks2);
@@ -204,6 +213,24 @@ final class BlogReceiver
             'post_id'  => $post_id,
             'post_url' => $post_url,
         ], 201);
+    }
+
+    private static function sideloadFeaturedImage(string $image_url, int $post_id, string $title): int
+    {
+        if (!function_exists('media_sideload_image')) {
+            require_once ABSPATH . 'wp-admin/includes/media.php';
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+            require_once ABSPATH . 'wp-admin/includes/image.php';
+        }
+
+        $attachment_id = media_sideload_image($image_url, $post_id, $title, 'id');
+        if (is_wp_error($attachment_id)) {
+            error_log('WNQ featured image sideload failed: ' . $attachment_id->get_error_message());
+            return 0;
+        }
+
+        update_post_meta((int)$attachment_id, '_wp_attachment_image_alt', $title);
+        return (int)$attachment_id;
     }
 
     /**
