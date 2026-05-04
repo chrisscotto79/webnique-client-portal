@@ -312,7 +312,7 @@ PROMPT,
      * Run an AI generation job.
      *
      * @param array $options Override default settings for this call only.
-     *                       Supported keys: max_tokens, temperature.
+     *                       Supported keys: max_tokens, temperature, no_cache.
      *                       Useful for blog posts that need higher token limits.
      */
     public static function generate(string $template_key, array $vars, string $client_id = '', array $options = []): array
@@ -335,11 +335,14 @@ PROMPT,
         }
         $prompt = self::interpolate($template, $vars);
 
-        // Check cache
+        // Check cache unless this call needs fresh AI output.
         $cache_key = 'ai_' . md5($provider . $prompt);
-        $cached    = get_transient($cache_key);
-        if ($cached !== false) {
-            return ['success' => true, 'content' => $cached, 'cached' => true, 'tokens_used' => 0];
+        $no_cache = !empty($settings['no_cache']);
+        if (!$no_cache) {
+            $cached = get_transient($cache_key);
+            if ($cached !== false) {
+                return ['success' => true, 'content' => $cached, 'cached' => true, 'tokens_used' => 0];
+            }
         }
 
         // Rate limiting
@@ -357,7 +360,7 @@ PROMPT,
         };
 
         // Cache successful results
-        if ($result['success'] && !empty($result['content'])) {
+        if (!$no_cache && $result['success'] && !empty($result['content'])) {
             $cache_ttl = (int)($settings['cache_ttl'] ?? 86400); // 24h default
             set_transient($cache_key, $result['content'], $cache_ttl);
         }

@@ -582,6 +582,9 @@ jQuery(function($) {
             'location'       => $location,
             'count'          => $count,
             'existing_titles'=> $existing,
+        ], $client_id, [
+            'no_cache'    => true,
+            'temperature' => 0.9,
         ]);
 
         if (!$result['success']) {

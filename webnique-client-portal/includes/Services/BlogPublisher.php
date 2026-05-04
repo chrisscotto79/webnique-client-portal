@@ -154,7 +154,11 @@ final class BlogPublisher
                 'external_links'             => $external_links,
             ],
             $client_id,
-            ['max_tokens' => 7000]
+            [
+                'max_tokens'  => 7000,
+                'no_cache'    => true,
+                'temperature' => 0.85,
+            ]
         );
 
         if (!$ai_result['success']) {
