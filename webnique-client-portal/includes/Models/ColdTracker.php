@@ -34,8 +34,10 @@ final class ColdTracker
             num_calls     int(11) NOT NULL DEFAULT 0,
             num_answers   int(11) NOT NULL DEFAULT 0,
             num_pitches   int(11) NOT NULL DEFAULT 0,
+            num_interested int(11) NOT NULL DEFAULT 0,
             num_meetings  int(11) NOT NULL DEFAULT 0,
             num_website_sales int(11) NOT NULL DEFAULT 0,
+            offer_type    varchar(32) NOT NULL DEFAULT 'website_sales',
             notes         text,
             created_at    datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at    datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -59,6 +61,14 @@ final class ColdTracker
         if (!in_array('num_website_sales', $columns, true)) {
             $wpdb->query("ALTER TABLE " . self::table() . " ADD COLUMN num_website_sales int(11) NOT NULL DEFAULT 0 AFTER num_meetings");
         }
+
+        if (!in_array('num_interested', $columns, true)) {
+            $wpdb->query("ALTER TABLE " . self::table() . " ADD COLUMN num_interested int(11) NOT NULL DEFAULT 0 AFTER num_pitches");
+        }
+
+        if (!in_array('offer_type', $columns, true)) {
+            $wpdb->query("ALTER TABLE " . self::table() . " ADD COLUMN offer_type varchar(32) NOT NULL DEFAULT 'website_sales' AFTER num_website_sales");
+        }
     }
 
     /**
@@ -78,8 +88,10 @@ final class ColdTracker
             'num_calls'    => max(0, (int)($data['num_calls']    ?? 0)),
             'num_answers'  => max(0, (int)($data['num_answers']  ?? 0)),
             'num_pitches'  => max(0, (int)($data['num_pitches']  ?? 0)),
+            'num_interested' => max(0, (int)($data['num_interested'] ?? 0)),
             'num_meetings' => max(0, (int)($data['num_meetings'] ?? 0)),
             'num_website_sales' => max(0, (int)($data['num_website_sales'] ?? 0)),
+            'offer_type'   => self::normalizeOfferType($data['offer_type'] ?? 'website_sales'),
             'notes'        => sanitize_textarea_field($data['notes'] ?? ''),
             'updated_at'   => current_time('mysql'),
         ];
@@ -147,8 +159,11 @@ final class ColdTracker
             'calls'       => 0,
             'answers'     => 0,
             'pitches'     => 0,
+            'interested'   => 0,
             'meetings'    => 0,
             'website_sales' => 0,
+            'website_sales_offer' => 0,
+            'ninety_offer' => 0,
             'days_called' => 0,
         ];
 
@@ -156,8 +171,15 @@ final class ColdTracker
             $totals['calls']    += (int)$day['num_calls'];
             $totals['answers']  += (int)$day['num_answers'];
             $totals['pitches']  += (int)$day['num_pitches'];
+            $totals['interested'] += (int)($day['num_interested'] ?? 0);
             $totals['meetings'] += (int)$day['num_meetings'];
-            $totals['website_sales'] += (int)($day['num_website_sales'] ?? 0);
+            $website_sales = (int)($day['num_website_sales'] ?? 0);
+            $totals['website_sales'] += $website_sales;
+            if (($day['offer_type'] ?? 'website_sales') === '90_offer') {
+                $totals['ninety_offer'] += $website_sales;
+            } else {
+                $totals['website_sales_offer'] += $website_sales;
+            }
             if ((int)$day['num_calls'] > 0) {
                 $totals['days_called']++;
             }
@@ -168,12 +190,19 @@ final class ColdTracker
             : 0;
         $totals['answer_rate']   = $totals['calls']   > 0 ? round($totals['answers']  / $totals['calls']   * 100, 1) : 0;
         $totals['pitch_rate']    = $totals['answers'] > 0 ? round($totals['pitches']  / $totals['answers'] * 100, 1) : 0;
+        $totals['interest_rate'] = $totals['pitches'] > 0 ? round($totals['interested'] / $totals['pitches'] * 100, 1) : 0;
         $totals['meeting_rate']  = $totals['pitches'] > 0 ? round($totals['meetings'] / $totals['pitches'] * 100, 1) : 0;
         $totals['call_to_meet']  = $totals['calls']   > 0 ? round($totals['meetings'] / $totals['calls']   * 100, 2) : 0;
         $totals['website_sale_rate'] = $totals['pitches'] > 0 ? round($totals['website_sales'] / $totals['pitches'] * 100, 1) : 0;
         $totals['call_to_sale'] = $totals['calls'] > 0 ? round($totals['website_sales'] / $totals['calls'] * 100, 2) : 0;
 
         return $totals;
+    }
+
+    private static function normalizeOfferType($offerType): string
+    {
+        $offerType = sanitize_key((string)$offerType);
+        return in_array($offerType, ['website_sales', '90_offer'], true) ? $offerType : 'website_sales';
     }
 
     /**
