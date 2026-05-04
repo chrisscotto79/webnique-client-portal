@@ -168,6 +168,7 @@ final class BlogPublisher
         // Keep the public post title simple: use the queued title, not an
         // AI-expanded H1 that may append keywords, locations, or subtitles.
         $parsed['h1'] = self::sanitizeTitle($scheduled['title']);
+        $parsed['body'] = self::syncBodyH1($parsed['body'], $parsed['h1']);
 
         // Store generated content
         BlogScheduler::updatePost($schedule_id, [
@@ -278,6 +279,7 @@ final class BlogPublisher
         $parsed['body'] = self::normalizeGeneratedBody($parsed['body']);
 
         $parsed['h1'] = self::sanitizeTitle($scheduled['title']);
+        $parsed['body'] = self::syncBodyH1($parsed['body'], $parsed['h1']);
         BlogScheduler::updatePost($schedule_id, [
             'generated_title' => $parsed['h1'],
             'generated_meta'  => $parsed['meta'],
@@ -307,8 +309,15 @@ final class BlogPublisher
         string $category = '',
         string $focus_kw = ''
     ): array {
+        $client_id = $scheduled['client_id'] ?? '';
         $category = 'Informational';
         $focus_kw = $focus_kw ?: ($scheduled['focus_keyword'] ?? '');
+
+        $parsed['h1'] = self::sanitizeTitle($parsed['h1'] ?: ($scheduled['title'] ?? ''));
+        $parsed['body'] = self::syncBodyH1($parsed['body'] ?? '', $parsed['h1']);
+        $post_slug = sanitize_title($parsed['h1']);
+        $blog_path_slug = self::titlePathSegment($parsed['h1']);
+        $preferred_post_url = self::buildBlogPostUrl($agent['site_url'] ?? '', $blog_path_slug);
 
         $featured_image_url = esc_url_raw($scheduled['featured_image_url'] ?? '');
         $elementor_json = self::buildElementorJson(
@@ -320,13 +329,16 @@ final class BlogPublisher
         $push_result = self::pushToAgent($agent, [
             'title'             => $parsed['h1'],
             'meta_description'  => $parsed['meta'],
-            'post_content'      => $parsed['body'],
+            'post_content'      => self::composePostContent($parsed),
             'elementor_data'    => $elementor_json,
             'categories'        => [$category],
             'status'            => 'publish',
             'focus_keyword'     => $focus_kw,
             'featured_image_url'=> $featured_image_url,
             'source_schedule_id'=> $schedule_id,
+            'post_slug'         => $post_slug,
+            'blog_path_slug'    => $blog_path_slug,
+            'preferred_post_url'=> $preferred_post_url,
             'hide_title'        => true,
         ]);
 
@@ -334,17 +346,18 @@ final class BlogPublisher
             return self::fail($schedule_id, 'Failed to push to client site: ' . ($push_result['message'] ?? 'unknown error'));
         }
 
+        $post_url = self::resolvePublishedUrl($push_result['post_url'] ?? '', $preferred_post_url);
+
         // Mark published
         BlogScheduler::updatePost($schedule_id, [
             'status'        => 'published',
             'wp_post_id'    => $push_result['post_id'] ?? null,
-            'wp_post_url'   => $push_result['post_url'] ?? '',
+            'wp_post_url'   => $post_url,
             'error_message' => null,
             'category_type'  => 'Informational',
         ]);
 
         // Hub notification
-        $post_url  = $push_result['post_url'] ?? '';
         $post_title = $parsed['h1'];
         BlogScheduler::addNotification(
             'blog_published',
@@ -421,6 +434,7 @@ final class BlogPublisher
         if (!empty($featured_image_url)) {
             $content['featured_image_url'] = $featured_image_url;
         }
+        $content['elementor_body'] = self::bodyWithoutArticleH1($content['body'] ?? '');
 
         // Walk and inject content by known widget IDs
         $elements = self::walkAndInject($elements, $content);
@@ -444,8 +458,8 @@ final class BlogPublisher
 
             if ($id === '5af58bd2' && !empty($content['h1'])) {
                 $el['settings']['title'] = esc_html($content['h1']);
-            } elseif ($id === '5b794435' && !empty($content['body'])) {
-                $el['settings']['editor'] = $content['body'];
+            } elseif ($id === '5b794435' && !empty($content['elementor_body'])) {
+                $el['settings']['editor'] = $content['elementor_body'];
             } elseif ($id === '4861ee91' && !empty($content['toc'])) {
                 $el['settings']['editor'] = $content['toc'];
             } elseif ($id === '1b605b78' && !empty($content['featured_image_url'])) {
@@ -502,7 +516,88 @@ final class BlogPublisher
             $body = wpautop($body);
         }
 
-        return trim($body);
+        return self::ensureBodyArticleWrapper($body);
+    }
+
+    private static function composePostContent(array $content): string
+    {
+        $toc = trim($content['toc'] ?? '');
+        $body = trim($content['body'] ?? '');
+        return trim($toc . "\n\n" . $body);
+    }
+
+    private static function ensureBodyArticleWrapper(string $body): string
+    {
+        $trimmed = trim($body);
+        if ($trimmed === '') {
+            return $trimmed;
+        }
+
+        if (preg_match('/^\s*<article\b/i', $trimmed) && preg_match('/<\/article>\s*$/i', $trimmed)) {
+            return $trimmed;
+        }
+
+        return '<article>' . "\n" . $trimmed . "\n" . '</article>';
+    }
+
+    private static function bodyWithoutArticleH1(string $body): string
+    {
+        $body = trim($body);
+        $body = preg_replace('/(<article\b[^>]*>\s*)<h1\b[^>]*>.*?<\/h1>\s*/is', '$1', $body, 1);
+        return trim((string)$body);
+    }
+
+    private static function syncBodyH1(string $body, string $title): string
+    {
+        $body = self::ensureBodyArticleWrapper($body);
+        $title = self::sanitizeTitle($title);
+        $h1 = '<h1 id="' . esc_attr(sanitize_title($title)) . '">' . esc_html($title) . '</h1>';
+
+        if (preg_match('/<article\b[^>]*>\s*<h1\b[^>]*>.*?<\/h1>/is', $body)) {
+            return (string)preg_replace_callback(
+                '/(<article\b[^>]*>\s*)<h1\b[^>]*>.*?<\/h1>/is',
+                static function ($matches) use ($h1) {
+                    return $matches[1] . $h1;
+                },
+                $body,
+                1
+            );
+        }
+
+        return (string)preg_replace_callback(
+            '/(<article\b[^>]*>)/i',
+            static function ($matches) use ($h1) {
+                return $matches[1] . "\n" . $h1;
+            },
+            $body,
+            1
+        );
+    }
+
+    private static function titlePathSegment(string $title): string
+    {
+        $title = remove_accents($title);
+        $slug = preg_replace('/[^A-Za-z0-9]+/', '-', $title);
+        $slug = trim((string)$slug, '-');
+        return $slug ?: sanitize_title($title);
+    }
+
+    private static function buildBlogPostUrl(string $site_url, string $blog_path_slug): string
+    {
+        $site_url = rtrim($site_url, '/');
+        $blog_path_slug = trim($blog_path_slug, '/');
+        if ($site_url === '' || $blog_path_slug === '') {
+            return '';
+        }
+        return $site_url . '/blog/' . $blog_path_slug . '/';
+    }
+
+    private static function resolvePublishedUrl(string $returned_url, string $preferred_post_url): string
+    {
+        if ($preferred_post_url !== '') {
+            return $preferred_post_url;
+        }
+        return $returned_url;
     }
 
     private static function generateElId(): string

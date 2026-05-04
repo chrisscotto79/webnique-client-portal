@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 
 final class AIEngine
 {
-    private const BLOG_PROMPT_VERSION = '2026-05-simple-title-v1';
+    private const BLOG_PROMPT_VERSION = '2026-05-manual-html-format-v1';
 
     const CACHE_GROUP   = 'wnq_ai_cache';
     const RATE_KEY      = 'wnq_ai_rate_';
@@ -205,6 +205,13 @@ Conclusion & FAQ:
 - Add an FAQ section at the end with 5-10 questions.
 - Each FAQ answer should be 2-4 sentences and target long-tail keyword variations.
 
+HTML Format:
+- Format the article like this structure: a Table of Contents block, then an article with short paragraphs, H2 sections, H3 subsections, conclusion, and FAQ.
+- The Table of Contents must use: <div class="blog-toc"><h2>Table of Contents</h2><ul>...</ul></div>
+- Section IDs must be readable slugs, for example id="what-is-ceramic-coating", not "section-1".
+- The BODY section must start with <article> and end with </article>.
+- Do not include schema scripts in BODY. The publishing agent adds schema separately.
+
 STRICT FORMAT — return EXACTLY using these delimiters, nothing before ===H1===:
 
 ===H1===
@@ -214,19 +221,20 @@ STRICT FORMAT — return EXACTLY using these delimiters, nothing before ===H1===
 [Meta description, 150-160 characters, includes the Primary Keyword near the start, ends with a subtle CTA. No quotes.]
 
 ===TOC===
-<ul>
-  <li><a href="#section-1">First Section Title</a></li>
-  <li><a href="#section-2">Second Section Title</a></li>
-  <li><a href="#section-3">Third Section Title</a></li>
-  <li><a href="#section-4">Fourth Section Title</a></li>
-  <li><a href="#section-5">Fifth Section Title</a></li>
-  <li><a href="#section-6">Sixth Section Title</a></li>
-</ul>
+<div class="blog-toc">
+  <h2>Table of Contents</h2>
+  <ul>
+    <li><a href="#readable-section-id">Readable Section Title</a></li>
+    <li><a href="#conclusion">Conclusion</a></li>
+    <li><a href="#faq">FAQ</a></li>
+  </ul>
+</div>
 
 ===BODY===
 [Full HTML blog post body. Rules:
-- Do NOT include H1 (that is separate above)
-- Use <h2 id="section-N"> sections matching the TOC anchors above
+- Start with <article> and end with </article>
+- Include exactly one <h1 id="{url_slug}">{title}</h1> as the first element inside <article>
+- Use <h2 id="readable-section-id"> sections matching the TOC anchors above
 - At least ONE <h2> must contain the Primary Keyword naturally
 - Use <h3> subsections inside sections where helpful
 - Use valid HTML only. Do not use Markdown, plain-text headings, or loose labels.
@@ -234,7 +242,7 @@ STRICT FORMAT — return EXACTLY using these delimiters, nothing before ===H1===
 - Paragraphs: 2-3 sentences max — never write a wall of text
 - Primary Keyword appears in the first 100 words
 - Do not include any <a> tags in the BODY.
-- Include a conclusion section. Do not title it "Conclusion and Next Steps" unless that is genuinely specific to the article.
+- Include <h2 id="conclusion">Conclusion</h2>
 - Include an FAQ section exactly like this pattern:
   <h2 id="faq">Frequently Asked Questions</h2>
   <h3>Question written as a full sentence?</h3>

@@ -88,14 +88,16 @@ final class BlogReceiver
         $focus_kw      = sanitize_text_field($body['focus_keyword'] ?? '');
         $featured_image_url = esc_url_raw($body['featured_image_url'] ?? '');
         $source_schedule_id = sanitize_text_field($body['source_schedule_id'] ?? '');
+        $requested_post_slug = sanitize_title($body['post_slug'] ?? '');
+        $requested_blog_path_slug = sanitize_text_field($body['blog_path_slug'] ?? '');
 
         if (empty($title)) {
             return new \WP_REST_Response(['error' => 'title is required'], 400);
         }
 
         // Keep the published URL tied to the simple blog title, never the focus keyword.
-        $post_slug = sanitize_title($title);
-        $blog_path_slug = self::titlePathSegment($title);
+        $post_slug = $requested_post_slug ?: sanitize_title($title);
+        $blog_path_slug = $requested_blog_path_slug ?: self::titlePathSegment($title);
 
         // Resolve category term IDs (create if they don't exist — never hardcode IDs)
         $cat_ids = [];
@@ -127,21 +129,23 @@ final class BlogReceiver
             'post_name'      => $post_slug,
             'post_content'   => $post_content,
             'post_excerpt'   => wp_strip_all_tags($meta_desc),
-            'post_status'    => 'draft',
+            'post_status'    => $status,
             'post_type'      => 'post',
             'post_category'  => $cat_ids,
             'comment_status' => 'closed',
             'ping_status'    => 'closed',
         ];
 
-        if ($existing_post_id) {
-            $post_args['ID'] = $existing_post_id;
-            $post_id = wp_update_post($post_args, true);
-        } else {
-            $post_id = wp_insert_post($post_args, true);
+        try {
+            if ($existing_post_id) {
+                $post_args['ID'] = $existing_post_id;
+                $post_id = wp_update_post($post_args, true);
+            } else {
+                $post_id = wp_insert_post($post_args, true);
+            }
+        } finally {
+            self::restoreSavePostHooks($saved_hooks);
         }
-
-        self::restoreSavePostHooks($saved_hooks);
 
         if (is_wp_error($post_id)) {
             return new \WP_REST_Response(['error' => $post_id->get_error_message()], 500);
@@ -151,6 +155,7 @@ final class BlogReceiver
             update_post_meta((int)$post_id, '_wnq_source_schedule_id', $source_schedule_id);
         }
         update_post_meta((int)$post_id, '_wnq_source_slug', $post_slug);
+        update_post_meta((int)$post_id, '_wnq_blog_path_slug', $blog_path_slug);
 
         // Set Elementor data — directly via update_post_meta (no save_post fired)
         $elementor_arr = null;
@@ -164,6 +169,7 @@ final class BlogReceiver
                 update_post_meta($post_id, '_elementor_page_settings', ['hide_title' => 'yes']);
             }
         }
+        $template_image = is_array($elementor_arr) ? self::extractElementorFeaturedImage($elementor_arr) : ['id' => 0, 'url' => ''];
 
         // Set SEO meta
         if (!empty($meta_desc)) {
@@ -189,13 +195,15 @@ final class BlogReceiver
                 update_post_meta($post_id, 'rank_math_snippet_article_type', 'BlogPosting');
             }
             update_post_meta($post_id, '_meta_description', $meta_desc);
+            update_post_meta($post_id, '_wnq_og_description', $meta_desc);
         }
+        update_post_meta($post_id, '_wnq_og_title', $title);
 
-        // Inject BlogPosting JSON-LD schema (plugin-agnostic fallback)
+        // Inject Article/FAQ JSON-LD schema (plugin-agnostic fallback)
         // Stored in meta and output via wp_head if the theme/plugin doesn't cover it.
         $schema = [
             '@context'      => 'https://schema.org',
-            '@type'         => 'BlogPosting',
+            '@type'         => 'Article',
             'headline'      => $title,
             'description'   => $meta_desc,
             'keywords'      => $focus_kw,
@@ -206,48 +214,130 @@ final class BlogReceiver
                                 'logo'  => ['@type' => 'ImageObject', 'url' => get_site_icon_url()]],
             'mainEntityOfPage' => ['@type' => 'WebPage', '@id' => self::blogPostUrl((int)$post_id, $blog_path_slug)],
         ];
-        update_post_meta($post_id, '_wnq_schema_json', wp_json_encode($schema));
+        update_post_meta($post_id, '_wnq_schema_json', wp_json_encode(self::schemaPayload($schema, self::faqSchemaFromHtml($post_content))));
 
         $attachment_id = 0;
         $local_image_url = '';
-        if (!empty($featured_image_url)) {
-            $attachment_id = self::sideloadFeaturedImage($featured_image_url, $post_id, $title);
-            if ($attachment_id) {
-                set_post_thumbnail($post_id, $attachment_id);
-                $local_image_url = wp_get_attachment_image_url($attachment_id, 'full') ?: $featured_image_url;
-                update_post_meta($post_id, '_wnq_og_image', $local_image_url);
-                update_post_meta($post_id, '_yoast_wpseo_opengraph-image', $local_image_url);
-                update_post_meta($post_id, 'rank_math_facebook_image', $local_image_url);
-            }
+        $effective_featured_image_url = $featured_image_url ?: ($template_image['url'] ?? '');
+        $template_attachment_id = (int)($template_image['id'] ?? 0);
+        if (empty($featured_image_url) && $template_attachment_id > 0 && get_post_type($template_attachment_id) === 'attachment') {
+            $attachment_id = $template_attachment_id;
+        }
+
+        if (!$attachment_id && !empty($effective_featured_image_url)) {
+            $attachment_id = self::sideloadFeaturedImage($effective_featured_image_url, $post_id, $title);
+        }
+
+        if ($attachment_id) {
+            set_post_thumbnail($post_id, $attachment_id);
+            $local_image_url = wp_get_attachment_image_url($attachment_id, 'full') ?: $effective_featured_image_url;
+            update_post_meta($post_id, '_wnq_og_image', $local_image_url);
+            update_post_meta($post_id, '_yoast_wpseo_opengraph-image', $local_image_url);
+            update_post_meta($post_id, 'rank_math_facebook_image', $local_image_url);
+        } elseif (!empty($effective_featured_image_url)) {
+            update_post_meta($post_id, '_wnq_og_image', $effective_featured_image_url);
+            update_post_meta($post_id, '_yoast_wpseo_opengraph-image', $effective_featured_image_url);
+            update_post_meta($post_id, 'rank_math_facebook_image', $effective_featured_image_url);
         }
 
         if (is_array($elementor_arr)) {
-            self::syncElementorFeaturedImage($elementor_arr, $attachment_id, $local_image_url ?: $featured_image_url, $title);
+            $elementor_image_set = self::syncElementorFeaturedImage($elementor_arr, $attachment_id, $local_image_url ?: $effective_featured_image_url, $title);
             update_post_meta(
                 $post_id,
                 '_elementor_data',
                 wp_slash(wp_json_encode($elementor_arr, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE))
             );
-        }
-
-        // Publish — suspend hooks again to prevent plugin crashes on status transition
-        if ($status === 'publish') {
-            self::suspendSavePostHooks($saved_hooks2);
-            $published_id = wp_update_post(['ID' => $post_id, 'post_status' => 'publish'], true);
-            self::restoreSavePostHooks($saved_hooks2);
-            if (is_wp_error($published_id)) {
-                return new \WP_REST_Response(['error' => $published_id->get_error_message()], 500);
-            }
+        } else {
+            $elementor_image_set = false;
         }
 
         $post_url = self::blogPostUrl((int)$post_id, $blog_path_slug);
 
         return new \WP_REST_Response([
-            'status'             => 'published',
-            'post_id'            => $post_id,
-            'post_url'           => $post_url,
-            'featured_image_set' => !empty($attachment_id),
+            'status'              => 'published',
+            'post_id'             => $post_id,
+            'post_url'            => $post_url,
+            'post_slug'           => $post_slug,
+            'blog_path_slug'      => $blog_path_slug,
+            'featured_image_set'  => !empty($attachment_id),
+            'elementor_image_set' => !empty($elementor_image_set),
         ], 201);
+    }
+
+    private static function extractElementorFeaturedImage(array $elements): array
+    {
+        foreach ($elements as $el) {
+            $id = $el['id'] ?? '';
+            if ($id === '1b605b78') {
+                $image = $el['settings']['image'] ?? [];
+                return [
+                    'id'  => isset($image['id']) ? (int)$image['id'] : 0,
+                    'url' => esc_url_raw($image['url'] ?? ''),
+                ];
+            }
+
+            if (!empty($el['elements']) && is_array($el['elements'])) {
+                $found = self::extractElementorFeaturedImage($el['elements']);
+                if (!empty($found['id']) || !empty($found['url'])) {
+                    return $found;
+                }
+            }
+        }
+
+        return ['id' => 0, 'url' => ''];
+    }
+
+    private static function schemaPayload(array $article_schema, ?array $faq_schema): array
+    {
+        if (!$faq_schema) {
+            return $article_schema;
+        }
+
+        unset($article_schema['@context'], $faq_schema['@context']);
+        return [
+            '@context' => 'https://schema.org',
+            '@graph'   => [$article_schema, $faq_schema],
+        ];
+    }
+
+    private static function faqSchemaFromHtml(string $html): ?array
+    {
+        if (!preg_match('/<h2\b[^>]*id=["\']faq["\'][^>]*>.*?<\/h2>(.*?)(?:<\/article>|$)/is', $html, $section_match)) {
+            return null;
+        }
+
+        $faq_html = $section_match[1];
+        preg_match_all('/<h3\b[^>]*>(.*?)<\/h3>\s*<p\b[^>]*>(.*?)<\/p>/is', $faq_html, $matches, PREG_SET_ORDER);
+        if (empty($matches)) {
+            return null;
+        }
+
+        $entities = [];
+        foreach ($matches as $match) {
+            $question = trim(wp_strip_all_tags($match[1]));
+            $answer = trim(wp_strip_all_tags($match[2]));
+            if ($question === '' || $answer === '') {
+                continue;
+            }
+            $entities[] = [
+                '@type' => 'Question',
+                'name'  => $question,
+                'acceptedAnswer' => [
+                    '@type' => 'Answer',
+                    'text'  => $answer,
+                ],
+            ];
+        }
+
+        if (empty($entities)) {
+            return null;
+        }
+
+        return [
+            '@context'   => 'https://schema.org',
+            '@type'      => 'FAQPage',
+            'mainEntity' => $entities,
+        ];
     }
 
     private static function findExistingPost(string $source_schedule_id, string $post_slug): int

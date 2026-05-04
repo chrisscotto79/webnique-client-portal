@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WebNique SEO Agent
  * Description: Lightweight data relay and execution endpoint for the WebNique SEO Operating System hub. Collects site data and syncs with web-nique.com.
- * Version: 1.1.1
+ * Version: 1.1.2
  * Author: WebNique
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WNQA_VERSION', '1.1.1');
+define('WNQA_VERSION', '1.1.2');
 define('WNQA_PATH', plugin_dir_path(__FILE__));
 define('WNQA_URL', plugin_dir_url(__FILE__));
 define('WNQA_SLUG', 'webnique-seo-agent');
@@ -59,6 +59,13 @@ add_action('init', function () {
         update_option('wnqa_rewrite_version', WNQA_VERSION);
     }
 }, 20);
+add_filter('redirect_canonical', function ($redirect_url, $requested_url) {
+    $path = parse_url($requested_url ?: ($_SERVER['REQUEST_URI'] ?? ''), PHP_URL_PATH);
+    if (is_string($path) && preg_match('#^/blog/[^/]+/?$#', $path)) {
+        return false;
+    }
+    return $redirect_url;
+}, 10, 2);
 
 add_action('plugins_loaded', function () {
     // Admin settings page
@@ -98,8 +105,10 @@ add_action('plugins_loaded', function () {
         if (!empty($og_title)) echo '<meta property="og:title" content="' . esc_attr($og_title) . '">' . "\n";
         if (!empty($og_desc))  echo '<meta property="og:description" content="' . esc_attr($og_desc) . '">' . "\n";
         if (!empty($og_image)) echo '<meta property="og:image" content="' . esc_url($og_image) . '">' . "\n";
+        $blog_slug = get_post_meta($post_id, '_wnq_blog_path_slug', true);
+        $og_url = !empty($blog_slug) ? home_url('/blog/' . trim((string)$blog_slug, '/') . '/') : get_permalink($post_id);
         echo '<meta property="og:type" content="' . (is_single() ? 'article' : 'website') . '">' . "\n";
-        echo '<meta property="og:url" content="' . esc_url(get_permalink($post_id)) . '">' . "\n";
+        echo '<meta property="og:url" content="' . esc_url($og_url) . '">' . "\n";
     });
 
     // Add loading="lazy" to images on Elementor pages flagged by SEOFixer
