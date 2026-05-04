@@ -902,9 +902,20 @@ CSS;
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body,
         })
-        .then(r => r.json())
+        .then(r => r.text().then(text => {
+            let json;
+            try {
+                json = JSON.parse(text);
+            } catch (e) {
+                throw new Error(text ? text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160) : 'Empty server response');
+            }
+            if (!r.ok) {
+                throw new Error(json?.data?.message || 'Server error');
+            }
+            return json;
+        }))
         .then(res => cb(res))
-        .catch(() => cb({ success: false, data: { message: 'Network error' } }));
+        .catch(err => cb({ success: false, data: { message: err.message || 'Save request failed' } }));
     }
 
     function showToast(msg, type) {

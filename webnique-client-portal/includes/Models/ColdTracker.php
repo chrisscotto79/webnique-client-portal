@@ -78,6 +78,8 @@ final class ColdTracker
     {
         global $wpdb;
 
+        self::createTable();
+
         $date = sanitize_text_field($data['call_date'] ?? '');
         if (!$date || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
             return false;
