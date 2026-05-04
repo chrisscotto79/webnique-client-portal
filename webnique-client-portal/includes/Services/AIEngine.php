@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 
 final class AIEngine
 {
-    private const BLOG_PROMPT_VERSION = '2026-05-sitemap-layout-v2';
+    private const BLOG_PROMPT_VERSION = '2026-05-informational-no-links-v1';
 
     const CACHE_GROUP   = 'wnq_ai_cache';
     const RATE_KEY      = 'wnq_ai_rate_';
@@ -167,14 +167,10 @@ You are an expert local SEO copywriter writing on behalf of {business_name}. Cre
 Blog Title: {title}
 Primary Keyword: {focus_keyword}
 URL Slug: {url_slug}
-Internal Links:
-{internal_links}
-External Links:
-{external_links}
 Business: {business_name}
 Services: {services}
 Location: {location}
-Category Type: {category_type}
+Category Type: Informational
 Tone: {tone}
 Target Word Count: 1,500-2,000+ words. If the active AI provider has a tight token limit, prioritize a complete, non-repetitive 1,200-1,500 word post over an unfinished longer draft.
 
@@ -201,11 +197,6 @@ Content Requirements:
 - Avoid fluff and repetitive content. Every section must provide real value.
 - Write at a high school senior reading level.
 - Make this post meaningfully different from other posts by focusing tightly on the Blog Title and Primary Keyword.
-
-Linking Strategy:
-- Treat provided Internal Links as candidates. Use only the 3-5 most relevant internal links with descriptive anchor text.
-- Use provided External Links only when they fit naturally.
-- Never dump links in a list, never stack several links in one paragraph, and never force an irrelevant link into the post.
 
 Conclusion & FAQ:
 - Write a strong conclusion summarizing key points and reinforcing the topic.
@@ -240,8 +231,7 @@ STRICT FORMAT — return EXACTLY using these delimiters, nothing before ===H1===
 - Wrap all paragraphs in <p> tags
 - Paragraphs: 2-3 sentences max — never write a wall of text
 - Primary Keyword appears in the first 100 words
-- Insert 3-5 relevant internal links naturally: <a href="URL">anchor text</a>
-- Insert relevant external links naturally when provided: <a href="URL">anchor text</a>
+- Do not include any <a> tags in the BODY.
 - Include a conclusion section. Do not title it "Conclusion and Next Steps" unless that is genuinely specific to the article.
 - Include an FAQ section exactly like this pattern:
   <h2 id="faq">Frequently Asked Questions</h2>
@@ -271,13 +261,14 @@ Rules:
 - Keep titles simple, direct, and easy to understand.
 - Do not make titles long, clever, or complicated.
 - Each title must target one distinct keyword angle.
+- Every title must be informational, helpful, and blog-style.
 - Use natural local modifiers only where they make sense.
 - Keep titles under 60 characters.
 - Avoid duplicate topics from the existing blog titles.
 
 Return ONLY a numbered list in this exact format (one per line, no extra text):
-1. [Title] | [Category: Services/Informational/Seasonal] | [Focus Keyword]
-2. [Title] | [Category] | [Focus Keyword]
+1. [Title] | Informational | [Focus Keyword]
+2. [Title] | Informational | [Focus Keyword]
 PROMPT,
 
         // ── Backlink / Outreach Templates ──────────────────────────────────

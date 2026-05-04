@@ -128,11 +128,7 @@ final class BlogSchedulerAdmin
         wp_nonce_field('wnq_blog_add_post');
         echo '<div class="wnq-blog-form-row">';
         echo '<input type="text" name="title" placeholder="Blog post title or working title..." required style="flex:2;">';
-        echo '<select name="category_type" style="min-width:160px;">';
-        foreach (['Informational' => 'Informational', 'Services' => 'Services', 'Seasonal' => 'Seasonal'] as $v => $l) {
-            echo '<option value="' . $v . '">' . $l . '</option>';
-        }
-        echo '</select>';
+        echo '<input type="hidden" name="category_type" value="Informational">';
         echo '<input type="text" name="focus_keyword" placeholder="Focus keyword (optional)" style="min-width:200px;">';
         echo '<input type="url" name="featured_image_url" placeholder="Featured image URL (optional)" style="min-width:240px;">';
         echo '<input type="date" name="scheduled_date" style="min-width:150px;">';

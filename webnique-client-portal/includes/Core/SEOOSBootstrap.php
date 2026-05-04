@@ -490,7 +490,7 @@ final class SEOOSBootstrap
 
         \WNQ\Models\BlogScheduler::addPost($client_id, [
             'title'          => $title,
-            'category_type'  => sanitize_text_field($_POST['category_type'] ?? 'Informational'),
+            'category_type'  => 'Informational',
             'focus_keyword'  => sanitize_text_field($_POST['focus_keyword'] ?? ''),
             'featured_image_url' => esc_url_raw($_POST['featured_image_url'] ?? ''),
             'scheduled_date' => sanitize_text_field($_POST['scheduled_date'] ?? ''),
@@ -616,7 +616,7 @@ final class SEOOSBootstrap
             if (empty($title)) continue;
             \WNQ\Models\BlogScheduler::addPost($client_id, [
                 'title'          => $title,
-                'category_type'  => sanitize_text_field($p['category'] ?? 'Informational'),
+                'category_type'  => 'Informational',
                 'focus_keyword'  => sanitize_text_field($p['keyword'] ?? ''),
                 'scheduled_date' => sanitize_text_field($p['date'] ?? ''),
                 'agent_key_id'   => $agent_key_id,
