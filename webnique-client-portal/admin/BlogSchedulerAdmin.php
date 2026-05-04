@@ -27,7 +27,9 @@ final class BlogSchedulerAdmin
     public static function register(): void
     {
         add_action('wp_ajax_wnq_blog_generate_titles', [self::class, 'ajaxGenerateTitles']);
+        add_action('wp_ajax_wnq_blog_generate_content', [self::class, 'ajaxGenerateContent']);
         add_action('wp_ajax_wnq_blog_publish_now',     [self::class, 'ajaxPublishNow']);
+        add_action('wp_ajax_wnq_blog_get_content',     [self::class, 'ajaxGetContent']);
         add_action('wp_ajax_wnq_blog_mark_read',       [self::class, 'ajaxMarkNotifRead']);
         add_action('wp_ajax_wnq_blog_get_agents',      [self::class, 'ajaxGetAgents']);
     }
@@ -90,6 +92,7 @@ final class BlogSchedulerAdmin
         if ($notice === 'deleted')  echo '<div class="wnq-notice success">✅ Post removed from queue.</div>';
         if ($notice === 'failed')   echo '<div class="wnq-notice error">❌ Publish failed. Check error message.</div>';
         if ($notice === 'published') echo '<div class="wnq-notice success">✅ Publishing triggered. Check the post queue for status.</div>';
+        if ($notice === 'featured_saved') echo '<div class="wnq-notice success">✅ Featured image saved.</div>';
 
         // Client selector
         echo '<div class="wnq-blog-client-bar">';
@@ -131,6 +134,7 @@ final class BlogSchedulerAdmin
         }
         echo '</select>';
         echo '<input type="text" name="focus_keyword" placeholder="Focus keyword (optional)" style="min-width:200px;">';
+        echo '<input type="url" name="featured_image_url" placeholder="Featured image URL (optional)" style="min-width:240px;">';
         echo '<input type="date" name="scheduled_date" style="min-width:150px;">';
         if (!empty($agents)) {
             echo '<select name="agent_key_id" style="min-width:160px;">';
@@ -158,7 +162,7 @@ final class BlogSchedulerAdmin
             }
 
             echo '<table class="widefat striped wnq-blog-table">';
-            echo '<thead><tr><th>Title</th><th>Category</th><th>Keyword</th><th>Site</th><th>Scheduled</th><th>Status</th><th>Actions</th></tr></thead>';
+            echo '<thead><tr><th>Title</th><th>Category</th><th>Keyword</th><th>Featured Image</th><th>Site</th><th>Scheduled</th><th>Status</th><th>Actions</th></tr></thead>';
             echo '<tbody>';
             foreach ($posts as $p) {
                 $status_class = match($p['status']) {
@@ -180,11 +184,27 @@ final class BlogSchedulerAdmin
                 echo '</td>';
                 echo '<td>' . esc_html($p['category_type']) . '</td>';
                 echo '<td>' . esc_html($p['focus_keyword'] ?? '—') . '</td>';
+                echo '<td style="min-width:260px;">';
+                echo '<form method="post" action="' . admin_url('admin-post.php') . '" class="wnq-featured-form">';
+                echo '<input type="hidden" name="action" value="wnq_blog_save_featured">';
+                echo '<input type="hidden" name="post_id" value="' . (int)$p['id'] . '">';
+                echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+                wp_nonce_field('wnq_blog_featured_' . $p['id']);
+                echo '<input type="url" name="featured_image_url" value="' . esc_attr($p['featured_image_url'] ?? '') . '" placeholder="https://.../image.jpg">';
+                echo '<button type="submit" class="button button-small">Save</button>';
+                echo '</form>';
+                echo '</td>';
                 $site_label = !empty($p['agent_key_id']) ? ($agent_map[(int)$p['agent_key_id']] ?? '—') : '<span style="color:#9ca3af;">Any</span>';
                 echo '<td style="font-size:12px;">' . esc_html(strip_tags($site_label)) . (!empty($p['agent_key_id']) ? '' : ' <span style="color:#9ca3af;">(any)</span>') . '</td>';
                 echo '<td>' . esc_html($p['scheduled_date'] ?? '—') . '</td>';
                 echo '<td><span class="wnq-status-badge ' . $status_class . '">' . esc_html($p['status']) . '</span></td>';
                 echo '<td>';
+                if (!empty($p['generated_body'])) {
+                    echo '<button class="button button-small wnq-view-content" data-id="' . (int)$p['id'] . '">View Content</button> ';
+                }
+                if ($p['status'] === 'pending' && empty($p['generated_body'])) {
+                    echo '<button class="button button-small wnq-generate-content" data-id="' . (int)$p['id'] . '">Generate Content</button> ';
+                }
                 if ($p['status'] === 'pending') {
                     // Publish now button
                     echo '<button class="button button-small wnq-publish-now" data-id="' . (int)$p['id'] . '">▶ Publish Now</button> ';
@@ -207,6 +227,14 @@ final class BlogSchedulerAdmin
             echo '</tbody></table>';
         }
         echo '</div>';
+
+        echo '<div id="wnq-content-modal" class="wnq-content-modal" style="display:none;">';
+        echo '<div class="wnq-content-modal-inner">';
+        echo '<button type="button" class="wnq-content-close" aria-label="Close">&times;</button>';
+        echo '<h2 id="wnq-content-title">Blog Content</h2>';
+        echo '<p id="wnq-content-meta" class="wnq-content-meta"></p>';
+        echo '<div id="wnq-content-body" class="wnq-content-body"></div>';
+        echo '</div></div>';
 
         // Notifications panel
         $notifications = BlogScheduler::getNotifications(20);
@@ -251,6 +279,60 @@ jQuery(function($) {
             alert('❌ ' + msg + '\n\nCheck your browser console for details.');
             $btn.prop('disabled', false).text(origText);
         });
+    });
+
+    $(document).on('click', '.wnq-generate-content', function() {
+        if (!confirm('Generate the blog content now so you can review it before publishing?')) return;
+        var id = $(this).data('id');
+        var $btn = $(this);
+        var origText = $btn.text();
+        $btn.prop('disabled', true).text('⏳ Generating...');
+
+        $.post(WNQ_SEOHUB.ajaxUrl, {
+            action:      'wnq_blog_generate_content',
+            nonce:       WNQ_SEOHUB.nonce,
+            schedule_id: id
+        }, function(resp) {
+            if (resp.success) {
+                location.reload();
+            } else {
+                alert('❌ Content generation failed:\n\n' + ((resp.data && resp.data.message) ? resp.data.message : 'Unknown error'));
+                $btn.prop('disabled', false).text(origText);
+            }
+        }).fail(function() {
+            alert('❌ AJAX request failed.');
+            $btn.prop('disabled', false).text(origText);
+        });
+    });
+
+    $(document).on('click', '.wnq-view-content', function() {
+        var id = $(this).data('id');
+        $('#wnq-content-title').text('Loading...');
+        $('#wnq-content-meta').text('');
+        $('#wnq-content-body').html('');
+        $('#wnq-content-modal').fadeIn(120);
+
+        $.post(WNQ_SEOHUB.ajaxUrl, {
+            action:      'wnq_blog_get_content',
+            nonce:       WNQ_SEOHUB.nonce,
+            schedule_id: id
+        }, function(resp) {
+            if (!resp.success) {
+                $('#wnq-content-title').text('Content unavailable');
+                $('#wnq-content-body').html('<p>' + ((resp.data && resp.data.message) ? resp.data.message : 'No content found.') + '</p>');
+                return;
+            }
+            $('#wnq-content-title').text(resp.data.title || 'Blog Content');
+            $('#wnq-content-meta').text(resp.data.meta || '');
+            $('#wnq-content-body').html(resp.data.toc + resp.data.body);
+        });
+    });
+
+    $(document).on('click', '.wnq-content-close', function() {
+        $('#wnq-content-modal').fadeOut(120);
+    });
+    $(document).on('click', '#wnq-content-modal', function(e) {
+        if (e.target === this) $('#wnq-content-modal').fadeOut(120);
     });
 });
 </script>
@@ -613,6 +695,47 @@ jQuery(function($) {
         }
     }
 
+    public static function ajaxGenerateContent(): void
+    {
+        check_ajax_referer('wnq_seohub_nonce', 'nonce');
+        self::checkCap();
+
+        $schedule_id = (int)($_POST['schedule_id'] ?? 0);
+        if (!$schedule_id) {
+            wp_send_json_error(['message' => 'Invalid schedule_id']);
+        }
+
+        $result = \WNQ\Services\BlogPublisher::generateContentOnly($schedule_id);
+        if ($result['success']) {
+            wp_send_json_success($result);
+        } else {
+            wp_send_json_error(['message' => $result['message'] ?? 'Content generation failed']);
+        }
+    }
+
+    public static function ajaxGetContent(): void
+    {
+        check_ajax_referer('wnq_seohub_nonce', 'nonce');
+        self::checkCap();
+
+        $schedule_id = (int)($_POST['schedule_id'] ?? 0);
+        if (!$schedule_id) {
+            wp_send_json_error(['message' => 'Invalid schedule_id']);
+        }
+
+        $post = BlogScheduler::getPost($schedule_id);
+        if (!$post || empty($post['generated_body'])) {
+            wp_send_json_error(['message' => 'This post does not have generated content yet. Publish it first to generate the article.']);
+        }
+
+        wp_send_json_success([
+            'title' => $post['generated_title'] ?: $post['title'],
+            'meta'  => $post['generated_meta'] ?? '',
+            'toc'   => wp_kses_post($post['generated_toc'] ?? ''),
+            'body'  => wp_kses_post($post['generated_body'] ?? ''),
+        ]);
+    }
+
     public static function ajaxMarkNotifRead(): void
     {
         check_ajax_referer('wnq_seohub_nonce', 'nonce');
@@ -711,6 +834,8 @@ jQuery(function($) {
         .wnq-blog-form-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
         .wnq-blog-form-row input, .wnq-blog-form-row select { padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 6px; }
         .wnq-blog-table th, .wnq-blog-table td { padding: 8px 10px; vertical-align: top; }
+        .wnq-featured-form { display: flex; gap: 6px; align-items: center; }
+        .wnq-featured-form input { width: 180px; padding: 4px 7px; border: 1px solid #d1d5db; border-radius: 4px; }
         .wnq-status-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
         .status-ok   { background: #dcfce7; color: #166534; }
         .status-err  { background: #fef2f2; color: #991b1b; }
@@ -730,6 +855,13 @@ jQuery(function($) {
         .wnq-gen-title-row input[type=date] { min-width: 140px; padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 4px; }
         .wnq-gen-tag { background: #ede9fe; color: #5b21b6; border-radius: 10px; padding: 1px 8px; font-size: 11px; margin-left: 6px; }
         .wnq-gen-kw { color: #6b7280; font-size: 12px; }
+        .wnq-content-modal { position: fixed; inset: 0; z-index: 100000; background: rgba(15,23,42,.72); overflow: auto; padding: 42px 20px; }
+        .wnq-content-modal-inner { max-width: 920px; margin: 0 auto; background: #fff; border-radius: 10px; padding: 26px; position: relative; box-shadow: 0 24px 80px rgba(0,0,0,.35); }
+        .wnq-content-close { position: absolute; top: 12px; right: 14px; border: 0; background: transparent; font-size: 28px; cursor: pointer; color: #64748b; }
+        .wnq-content-meta { color: #64748b; margin: 0 0 18px; }
+        .wnq-content-body { color: #1f2937; line-height: 1.65; font-size: 15px; }
+        .wnq-content-body h2 { margin-top: 28px; color: #111827; }
+        .wnq-content-body h3 { margin-top: 18px; color: #1f2937; }
         </style>';
     }
 

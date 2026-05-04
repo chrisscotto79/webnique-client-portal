@@ -37,6 +37,7 @@ final class BlogScheduler
             title            varchar(500) NOT NULL,
             category_type    varchar(50) DEFAULT 'Informational' COMMENT 'Services|Informational|Seasonal',
             focus_keyword    varchar(255) DEFAULT NULL,
+            featured_image_url varchar(1000) DEFAULT NULL,
             scheduled_date   date DEFAULT NULL,
             status           varchar(30) DEFAULT 'pending' COMMENT 'pending|generating|publishing|published|failed',
             generated_title  varchar(500) DEFAULT NULL,
@@ -90,6 +91,7 @@ final class BlogScheduler
                 'title'          => sanitize_text_field($data['title'] ?? ''),
                 'category_type'  => sanitize_text_field($data['category_type'] ?? 'Informational'),
                 'focus_keyword'  => sanitize_text_field($data['focus_keyword'] ?? ''),
+                'featured_image_url' => esc_url_raw($data['featured_image_url'] ?? ''),
                 'scheduled_date' => !empty($data['scheduled_date']) ? sanitize_text_field($data['scheduled_date']) : null,
                 'status'         => 'pending',
             ]
