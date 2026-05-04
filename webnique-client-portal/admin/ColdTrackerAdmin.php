@@ -261,6 +261,11 @@ final class ColdTrackerAdmin
                         <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div>
                         <div>Thu</div><div>Fri</div><div>Sat</div>
                     </div>
+                    <div class="cold-day-legend">
+                        <span><i class="good"></i> Strong day</span>
+                        <span><i class="warning"></i> Progress</span>
+                        <span><i class="bad"></i> Needs work</span>
+                    </div>
                     <div class="cold-cal-grid" id="cold-cal-grid">
                         <div class="cold-loading">Loading calendar...</div>
                     </div>
@@ -443,20 +448,29 @@ final class ColdTrackerAdmin
     {
         return <<<'CSS'
 /* ── Cold Tracker Styles ─────────────────────────────────────────── */
-.cold-wrap { max-width: 1200px; }
+.cold-wrap {
+    max-width: 1280px;
+    padding: 8px 18px 28px 0;
+}
 
 .cold-header {
-    display: flex; justify-content: space-between; align-items: flex-start;
-    margin-bottom: 20px;
+    display: flex; justify-content: space-between; align-items: center;
+    margin: 0 0 18px;
+    padding: 18px 20px;
+    background: #ffffff;
+    border: 1px solid #dbe3ef;
+    border-radius: 8px;
+    box-shadow: 0 14px 34px rgba(15,23,42,.08);
 }
-.cold-title { font-size: 1.8rem; font-weight: 700; color: #e2e8f0; margin: 0 0 4px; }
-.cold-subtitle { color: #94a3b8; margin: 0; font-size: 0.9rem; }
+.cold-title { font-size: 1.8rem; font-weight: 800; color: #0f172a; margin: 0 0 4px; letter-spacing: 0; }
+.cold-subtitle { color: #64748b; margin: 0; font-size: 0.95rem; }
 
 .cold-streak-badge {
     display: flex; align-items: center; gap: 6px;
-    background: linear-gradient(135deg, #f97316, #ef4444);
-    color: #fff; padding: 8px 16px; border-radius: 24px;
-    font-weight: 600; font-size: 0.9rem; box-shadow: 0 4px 12px rgba(249,115,22,.3);
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    color: #c2410c; padding: 8px 14px; border-radius: 8px;
+    font-weight: 700; font-size: 0.9rem;
 }
 .cold-streak-icon { font-size: 1.1rem; }
 .cold-streak-num { font-size: 1.4rem; line-height: 1; }
@@ -464,82 +478,105 @@ final class ColdTrackerAdmin
 
 /* Tabs */
 .cold-tabs {
-    display: flex; gap: 4px; margin-bottom: 20px;
-    background: #1e293b; padding: 4px; border-radius: 10px;
+    display: flex; gap: 6px; margin-bottom: 18px;
+    background: #111827; padding: 5px; border-radius: 8px;
     width: fit-content;
+    box-shadow: 0 10px 24px rgba(15,23,42,.18);
 }
 .cold-tab-btn {
     background: transparent; border: none; color: #94a3b8;
-    padding: 8px 20px; border-radius: 8px; cursor: pointer;
-    font-size: 0.9rem; font-weight: 500; transition: all .2s;
+    padding: 10px 22px; border-radius: 7px; cursor: pointer;
+    font-size: 0.9rem; font-weight: 700; transition: all .2s;
 }
-.cold-tab-btn:hover { background: #334155; color: #e2e8f0; }
-.cold-tab-btn.active { background: #6366f1; color: #fff; box-shadow: 0 2px 8px rgba(99,102,241,.4); }
+.cold-tab-btn:hover { background: #263244; color: #e2e8f0; }
+.cold-tab-btn.active { background: #4f46e5; color: #fff; box-shadow: 0 6px 14px rgba(79,70,229,.35); }
 
 /* Card */
 .cold-card {
-    background: #1e293b; border: 1px solid #334155;
-    border-radius: 12px; padding: 24px; margin-bottom: 16px;
+    background: #202b3d; border: 1px solid #334155;
+    border-radius: 8px; padding: 26px; margin-bottom: 16px;
+    box-shadow: 0 18px 42px rgba(15,23,42,.22);
 }
 .cold-loading { color: #64748b; text-align: center; padding: 40px; font-size: 0.9rem; }
 
 /* Calendar Nav */
 .cold-cal-nav {
     display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: 20px;
+    margin-bottom: 18px;
 }
-.cold-cal-month-label { margin: 0; font-size: 1.2rem; font-weight: 700; color: #e2e8f0; }
+.cold-cal-month-label { margin: 0; font-size: 1.35rem; font-weight: 800; color: #f8fafc; letter-spacing: 0; }
 
 /* Buttons */
 .cold-btn {
     display: inline-flex; align-items: center; gap: 6px;
     border: none; cursor: pointer; border-radius: 8px;
-    font-size: 0.85rem; font-weight: 500; padding: 8px 16px; transition: all .2s;
+    font-size: 0.85rem; font-weight: 700; padding: 10px 16px; transition: all .2s;
 }
 .cold-btn-primary { background: #6366f1; color: #fff; }
 .cold-btn-primary:hover { background: #4f46e5; }
-.cold-btn-ghost { background: #334155; color: #94a3b8; }
+.cold-btn-ghost { background: #334155; color: #cbd5e1; }
 .cold-btn-ghost:hover { background: #475569; color: #e2e8f0; }
 .cold-btn:disabled { opacity: .6; cursor: not-allowed; }
 
 /* Day of Week Header */
 .cold-cal-dow {
     display: grid; grid-template-columns: repeat(7, 1fr);
-    gap: 4px; margin-bottom: 4px;
+    gap: 7px; margin-bottom: 8px;
 }
 .cold-cal-dow > div {
-    text-align: center; font-size: 0.72rem; font-weight: 600;
-    color: #64748b; text-transform: uppercase; padding: 4px 0;
+    text-align: center; font-size: 0.72rem; font-weight: 800;
+    color: #94a3b8; text-transform: uppercase; padding: 4px 0;
 }
+.cold-day-legend {
+    display: flex; justify-content: flex-end; gap: 14px; align-items: center;
+    margin: -2px 0 10px;
+    color: #94a3b8; font-size: 0.76rem; font-weight: 700;
+}
+.cold-day-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.cold-day-legend i {
+    width: 8px; height: 8px; border-radius: 50%;
+    display: inline-block;
+}
+.cold-day-legend .good { background: #22c55e; }
+.cold-day-legend .warning { background: #f59e0b; }
+.cold-day-legend .bad { background: #ef4444; }
 
 /* Calendar Grid */
 .cold-cal-grid {
-    display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px;
+    display: grid; grid-template-columns: repeat(7, 1fr); gap: 7px;
 }
 .cold-day {
-    min-height: 82px; background: #0f172a; border: 1px solid #1e293b;
-    border-radius: 8px; padding: 6px; cursor: pointer;
-    transition: all .15s; position: relative; overflow: hidden;
+    min-height: 104px; background: #111827; border: 1px solid #263244;
+    border-radius: 8px; padding: 9px; cursor: pointer;
+    transition: transform .15s, border-color .15s, box-shadow .15s, background .15s;
+    position: relative; overflow: hidden;
+    display: flex; flex-direction: column; justify-content: space-between;
 }
-.cold-day:hover { border-color: #6366f1; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+.cold-day:hover { border-color: #818cf8; transform: translateY(-1px); box-shadow: 0 10px 24px rgba(0,0,0,.28); }
 .cold-day-empty { background: transparent; border-color: transparent; cursor: default; }
 .cold-day-empty:hover { transform: none; box-shadow: none; }
 .cold-day-weekend .cold-day-num { color: #64748b; }
-.cold-day-today { border-color: #6366f1 !important; box-shadow: 0 0 0 1px #6366f1; }
-.cold-day-today .cold-day-num { color: #6366f1; font-weight: 800; }
+.cold-day-today { border-color: #818cf8 !important; box-shadow: inset 0 0 0 1px #818cf8, 0 0 0 2px rgba(99,102,241,.18); }
+.cold-day-today .cold-day-num { color: #c7d2fe; font-weight: 900; }
 .cold-day-active { background: #0f1f3d; border-color: #1d4ed8; }
-.cold-day-great { background: #052e16; border-color: #15803d; }
-.cold-day-great .cold-day-num { color: #4ade80; }
+.cold-day-great,
+.cold-day-status-good { background: #082f25; border-color: #0f9f6e; }
+.cold-day-status-good .cold-day-num { color: #86efac; }
+.cold-day-status-warning { background: #312711; border-color: #d97706; }
+.cold-day-status-warning .cold-day-num { color: #fcd34d; }
+.cold-day-status-bad { background: #351414; border-color: #dc2626; }
+.cold-day-status-bad .cold-day-num { color: #fca5a5; }
+.cold-day-status-neutral { background: #111827; border-color: #334155; }
 
 .cold-day-num {
-    font-size: 0.8rem; font-weight: 600; color: #94a3b8;
-    margin-bottom: 4px; display: block;
+    font-size: 0.95rem; font-weight: 800; color: #94a3b8;
+    margin-bottom: 5px; display: block;
 }
 .cold-day-stats {
-    display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 3px;
+    display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 6px;
 }
 .cold-day-stats span {
-    font-size: 0.62rem; padding: 1px 4px; border-radius: 3px; font-weight: 600;
+    font-size: 0.62rem; padding: 2px 5px; border-radius: 4px; font-weight: 800;
 }
 .cold-stat-calls    { background: rgba(59,130,246,.2);  color: #60a5fa; }
 .cold-stat-answers  { background: rgba(16,185,129,.2);  color: #34d399; }
@@ -548,7 +585,25 @@ final class ColdTrackerAdmin
 .cold-stat-meetings { background: rgba(139,92,246,.2);  color: #a78bfa; }
 .cold-stat-sales    { background: rgba(20,184,166,.2);  color: #2dd4bf; }
 .cold-stat-offer    { background: rgba(99,102,241,.2);  color: #a5b4fc; }
-.cold-day-rate { font-size: 0.62rem; color: #64748b; }
+.cold-day-rate { font-size: 0.66rem; color: #cbd5e1; font-weight: 700; }
+.cold-day-status {
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    margin-top: auto; padding: 6px 7px;
+    background: rgba(15,23,42,.56);
+    border: 1px solid rgba(148,163,184,.16);
+    border-radius: 7px;
+    font-size: 0.68rem; font-weight: 800; color: #cbd5e1;
+}
+.cold-day-status::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
+    background: #64748b;
+}
+.cold-day-status-good .cold-day-status { color: #bbf7d0; border-color: rgba(34,197,94,.25); }
+.cold-day-status-good .cold-day-status::before { background: #22c55e; }
+.cold-day-status-warning .cold-day-status { color: #fde68a; border-color: rgba(245,158,11,.3); }
+.cold-day-status-warning .cold-day-status::before { background: #f59e0b; }
+.cold-day-status-bad .cold-day-status { color: #fecaca; border-color: rgba(239,68,68,.3); }
+.cold-day-status-bad .cold-day-status::before { background: #ef4444; }
 .cold-day-note-dot {
     position: absolute; top: 5px; right: 5px;
     width: 5px; height: 5px; border-radius: 50%;
@@ -739,10 +794,19 @@ final class ColdTrackerAdmin
 
 /* Responsive */
 @media (max-width: 640px) {
+    .cold-wrap { padding-right: 10px; }
+    .cold-header { align-items: flex-start; flex-direction: column; gap: 12px; }
+    .cold-tabs { width: 100%; }
+    .cold-tab-btn { flex: 1; padding: 9px 10px; }
+    .cold-card { padding: 16px; }
+    .cold-cal-nav { gap: 10px; }
+    .cold-cal-month-label { font-size: 1rem; }
+    .cold-day-legend { justify-content: flex-start; flex-wrap: wrap; gap: 8px; }
     .cold-kpi-grid { grid-template-columns: 1fr 1fr; }
     .cold-rate-row { grid-template-columns: repeat(2, 1fr); }
-    .cold-day { min-height: 60px; }
+    .cold-day { min-height: 74px; padding: 7px; }
     .cold-day-stats { display: none; }
+    .cold-day-status { padding: 4px 5px; font-size: 0.62rem; }
 }
 CSS;
     }
@@ -804,6 +868,27 @@ CSS;
     function rate(a, b) { return b > 0 ? (a / b * 100).toFixed(1) : '0.0'; }
     function offerLabel(type) {
         return type === '90_offer' ? '90 Offer' : 'Website Sales';
+    }
+    function dayStatus(row, ds) {
+        const isPast = ds < COLD.today;
+        const isToday = ds === COLD.today;
+
+        if (!row || (parseInt(row.num_calls) || 0) <= 0) {
+            if (isPast) return { className: 'cold-day-status-bad', label: 'Missed' };
+            if (isToday) return { className: 'cold-day-status-neutral', label: 'Today' };
+            return null;
+        }
+
+        const calls = parseInt(row.num_calls) || 0;
+        const pitches = parseInt(row.num_pitches) || 0;
+        const interested = parseInt(row.num_interested) || 0;
+        const meetings = parseInt(row.num_meetings) || 0;
+        const sales = parseInt(row.num_website_sales) || 0;
+
+        if (sales > 0) return { className: 'cold-day-status-good', label: offerLabel(row.offer_type) };
+        if (calls >= 200 || meetings > 0) return { className: 'cold-day-status-good', label: 'Strong' };
+        if (calls >= 100 || pitches > 0 || interested > 0) return { className: 'cold-day-status-warning', label: 'Progress' };
+        return { className: 'cold-day-status-bad', label: 'Needs work' };
     }
 
     function destroyChart(key) {
@@ -868,13 +953,12 @@ CSS;
             const isToday   = ds === today;
             const isWeekend = [0, 6].includes(new Date(year, month - 1, d).getDay());
             const hasNote   = row && row.notes && row.notes.trim().length > 0;
+            const status    = dayStatus(row, ds);
 
             let cls = 'cold-day';
             if (isToday)   cls += ' cold-day-today';
             if (isWeekend) cls += ' cold-day-weekend';
-            if (row && (row.num_calls > 0)) {
-                cls += parseInt(row.num_calls) >= 200 ? ' cold-day-great' : ' cold-day-active';
-            }
+            if (status) cls += ' ' + status.className;
 
             let inner = `<span class="cold-day-num">${d}</span>`;
             if (hasNote) inner += `<div class="cold-day-note-dot" title="Has notes"></div>`;
@@ -893,6 +977,9 @@ CSS;
                     ? Math.round((parseInt(row.num_website_sales) || 0) / parseInt(row.num_calls) * 100)
                     : 0;
                 inner += `<div class="cold-day-rate">${conv}% sale</div>`;
+            }
+            if (status) {
+                inner += `<div class="cold-day-status">${status.label}</div>`;
             }
 
             html += `<div class="${cls}" data-date="${ds}">${inner}</div>`;
