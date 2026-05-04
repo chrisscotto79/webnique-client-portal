@@ -22,6 +22,8 @@ if (!defined('ABSPATH')) {
 
 final class AIEngine
 {
+    private const BLOG_PROMPT_VERSION = '2026-05-sitemap-layout-v1';
+
     const CACHE_GROUP   = 'wnq_ai_cache';
     const RATE_KEY      = 'wnq_ai_rate_';
     const MAX_RPM       = 30;  // requests per minute per provider (conservative)
@@ -160,40 +162,62 @@ Return as a numbered list: Topic | Primary Keyword | Secondary Keywords | Conten
 PROMPT,
 
         'blog_post_full' => <<<'PROMPT'
-You are an expert local SEO copywriter. Write a complete, publish-ready blog post of AT LEAST 2000 words.
+You are an expert local SEO copywriter writing on behalf of {business_name}. Create a unique, publish-ready blog post using this exact content brief.
 
+Blog Title: {title}
+Primary Keyword: {focus_keyword}
+URL Slug: {url_slug}
+Internal Links:
+{internal_links}
+External Links:
+{external_links}
 Business: {business_name}
 Services: {services}
 Location: {location}
-Post Title (working title): {title}
 Category Type: {category_type}
-Focus Keyword: {focus_keyword}
 Tone: {tone}
-Target Word Count: 2000-2500 words
+Target Word Count: 1,500-2,000+ words
 
 Client Keyword Data (weave relevant terms naturally into the content):
 {keyword_context}
 
-Internal Link Candidates (use 3-5 of these naturally in the body):
-{internal_links}
+Structure & Formatting:
+- Use only ONE H1 tag in the H1 section below, and it must match or closely include the Blog Title and Primary Keyword.
+- Make the content easy to read, well organized, and naturally flowing.
+- Start with an introduction that clearly identifies the target audience, answers the main query in the first paragraph, and explains what the reader will learn.
+- Use H2s for main sections and H3s for subsections.
+- Keep paragraphs short: 2-3 sentences max.
+- Use light lists where helpful, but prioritize paragraph-based writing.
 
-{external_citation_instruction}
+SEO Optimization:
+- Include the Primary Keyword in the H1, URL slug, first 100 words, and naturally throughout the post.
+- Keep keyword density around 1-2%; do not keyword stuff.
+- Use natural keyword variations throughout.
+- Write in a human, expert tone. Avoid AI-sounding phrasing.
+- Optimize for featured snippets and readability.
 
-H1 TITLE RULES (critical for SEO):
-- The focus keyword MUST appear at the very beginning of the H1
-- Include a power word (e.g. Proven, Essential, Ultimate, Expert, Trusted, Best, Complete, Effective)
-- Include a number where natural (e.g. "5 Reasons", "7 Signs", "10 Tips", "3 Steps")
-- Example pattern: "{focus_keyword}: 7 Expert Tips for [Location] Homeowners"
-- Keep under 65 characters
-- Write ONLY the plain title text — absolutely NO SEO plugin tokens such as %page%, %sep%, %sitename%, %title%, or any other %variable% patterns
+Content Requirements:
+- Write a valuable, actionable post aligned with search intent.
+- Avoid fluff and repetitive content. Every section must provide real value.
+- Write at a high school senior reading level.
+- Make this post meaningfully different from other posts by focusing tightly on the Blog Title and Primary Keyword.
+
+Linking Strategy:
+- Naturally include every provided Internal Link using descriptive anchor text.
+- Naturally include every provided External Link if any are provided. Integrate links contextually; do not list them.
+
+Conclusion & FAQ:
+- Write a strong conclusion summarizing key points and reinforcing the topic.
+- Add an FAQ section at the end with 5-10 questions.
+- Each FAQ answer should be 2-4 sentences and target long-tail keyword variations.
 
 STRICT FORMAT — return EXACTLY using these delimiters, nothing before ===H1===:
 
 ===H1===
-[SEO-optimized H1 title following the rules above. No quotes.]
+[H1 matching or closely including the Blog Title and Primary Keyword. Keep under 60 characters where possible. No quotes.]
 
 ===META===
-[Meta description, 150-160 characters, includes focus keyword near the start, ends with a subtle CTA. No quotes.]
+[Meta description, 150-160 characters, includes the Primary Keyword near the start, ends with a subtle CTA. No quotes.]
 
 ===TOC===
 <ul>
@@ -206,25 +230,26 @@ STRICT FORMAT — return EXACTLY using these delimiters, nothing before ===H1===
 </ul>
 
 ===BODY===
-[Full HTML blog post body — minimum 2000 words. Rules:
+[Full HTML blog post body. Rules:
 - Do NOT include H1 (that is separate above)
-- Use 6 <h2 id="section-N"> sections matching the TOC anchors above
-- At least ONE <h2> must contain the focus keyword naturally
-- Use <h3> subsections inside each <h2> to add depth (aim for 2-3 <h3> per <h2>)
+- Use <h2 id="section-N"> sections matching the TOC anchors above
+- At least ONE <h2> must contain the Primary Keyword naturally
+- Use <h3> subsections inside sections where helpful
 - Wrap all paragraphs in <p> tags
-- Paragraphs: 2-4 sentences max — never write a wall of text
-- Focus keyword appears in the first 100 words
-- Focus keyword appears 8-12 times total throughout the post (natural 0.5-1% density for 2000 words)
-- Insert 3-5 internal links naturally: <a href="URL">anchor text</a>
-- End with a strong <h2 id="section-6">Conclusion</h2> section that includes the focus keyword and a clear CTA
+- Paragraphs: 2-3 sentences max — never write a wall of text
+- Primary Keyword appears in the first 100 words
+- Insert all provided internal links naturally: <a href="URL">anchor text</a>
+- Insert all provided external links naturally when provided: <a href="URL">anchor text</a>
+- Include a conclusion section and an FAQ section
 - No filler phrases like "In conclusion", "In today's world", "Look no further", or "At [Business]"
-- Write with specific, useful information — not generic advice]
+- Write with specific, useful information — not generic advice
+- Content should feel like it was written by an expert representing {business_name}]
 
 ===END===
 PROMPT,
 
         'blog_titles_batch' => <<<'PROMPT'
-You are an SEO content strategist specializing in local business content marketing.
+You are an SEO content strategist specializing in local business content marketing. Generate simple, clear blog titles.
 
 Business: {business_name}
 Services: {services}
@@ -233,16 +258,15 @@ Location: {location}
 Existing blog titles to avoid duplicating topics:
 {existing_titles}
 
-Generate {count} blog post title ideas. Mix these three content types:
-- Services: Targets service-specific keywords ("Best roofing company in {location}", "Roof repair vs replacement")
-- Informational: How-to guides, FAQs, educational content ("How to know if your roof needs repair")
-- Seasonal: Time-sensitive local topics ("Preparing your roof for {location} winters")
+Generate {count} blog post title ideas.
 
 Rules:
-- Each title must target a distinct keyword angle
-- Include natural local modifiers where it makes sense (city/region from Location)
-- Use power words that drive clicks
-- Keep titles under 65 characters where possible
+- Keep titles simple, direct, and easy to understand.
+- Do not make titles long, clever, or complicated.
+- Each title must target one distinct keyword angle.
+- Use natural local modifiers only where they make sense.
+- Keep titles under 60 characters.
+- Avoid duplicate topics from the existing blog titles.
 
 Return ONLY a numbered list in this exact format (one per line, no extra text):
 1. [Title] | [Category: Services/Informational/Seasonal] | [Focus Keyword]
@@ -346,6 +370,10 @@ PROMPT,
      */
     public static function getTemplate(string $key): ?string
     {
+        if (in_array($key, ['blog_post_full', 'blog_titles_batch'], true)) {
+            self::ensureBlogPromptDefaults();
+        }
+
         $overrides = get_option('wnq_ai_prompt_templates', []);
         if (!empty($overrides[$key])) {
             return $overrides[$key];
@@ -366,6 +394,19 @@ PROMPT,
     public static function getDefaultTemplates(): array
     {
         return self::$prompt_templates;
+    }
+
+    private static function ensureBlogPromptDefaults(): void
+    {
+        if (get_option('wnq_ai_blog_prompt_version', '') === self::BLOG_PROMPT_VERSION) {
+            return;
+        }
+
+        $overrides = get_option('wnq_ai_prompt_templates', []);
+        $overrides['blog_post_full'] = self::$prompt_templates['blog_post_full'];
+        $overrides['blog_titles_batch'] = self::$prompt_templates['blog_titles_batch'];
+        update_option('wnq_ai_prompt_templates', $overrides);
+        update_option('wnq_ai_blog_prompt_version', self::BLOG_PROMPT_VERSION);
     }
 
     public static function getSettings(): array
