@@ -161,13 +161,13 @@ final class BlogPublisher
         // Parse structured AI response
         $parsed = self::parseAIResponse($ai_result['content']);
         if (!$parsed) {
-            return self::fail($schedule_id, 'Failed to parse AI response. Raw output: ' . substr($ai_result['content'], 0, 300));
+            return self::fail($schedule_id, self::incompleteAIResponseMessage($ai_result['content']));
         }
         $parsed['body'] = self::normalizeGeneratedBody($parsed['body']);
 
-        // Sanitize the H1 so SEO plugin template tokens (%page%, %sep%, %sitename%,
-        // etc.) can never end up as the WordPress post title.
-        $parsed['h1'] = self::sanitizeTitle($parsed['h1']);
+        // Keep the public post title simple: use the queued title, not an
+        // AI-expanded H1 that may append keywords, locations, or subtitles.
+        $parsed['h1'] = self::sanitizeTitle($scheduled['title']);
 
         // Store generated content
         BlogScheduler::updatePost($schedule_id, [
@@ -273,11 +273,11 @@ final class BlogPublisher
 
         $parsed = self::parseAIResponse($ai_result['content']);
         if (!$parsed) {
-            return self::fail($schedule_id, 'Failed to parse AI response. Raw output: ' . substr($ai_result['content'], 0, 300));
+            return self::fail($schedule_id, self::incompleteAIResponseMessage($ai_result['content']));
         }
         $parsed['body'] = self::normalizeGeneratedBody($parsed['body']);
 
-        $parsed['h1'] = self::sanitizeTitle($parsed['h1']);
+        $parsed['h1'] = self::sanitizeTitle($scheduled['title']);
         BlogScheduler::updatePost($schedule_id, [
             'generated_title' => $parsed['h1'],
             'generated_meta'  => $parsed['meta'],
@@ -326,6 +326,7 @@ final class BlogPublisher
             'status'            => 'publish',
             'focus_keyword'     => $focus_kw,
             'featured_image_url'=> $featured_image_url,
+            'source_schedule_id'=> $schedule_id,
             'hide_title'        => true,
         ]);
 
@@ -450,10 +451,14 @@ final class BlogPublisher
             } elseif ($id === '1b605b78' && !empty($content['featured_image_url'])) {
                 $el['settings']['image'] = [
                     'url'    => esc_url_raw($content['featured_image_url']),
-                    'id'     => '',
+                    'id'     => 0,
+                    'size'   => 'full',
                     'source' => 'url',
                 ];
                 $el['settings']['image_size'] = $el['settings']['image_size'] ?? 'large';
+            } elseif ($id === '1b605b78' && !empty($el['settings']['image']['url'])) {
+                $el['settings']['image']['id'] = 0;
+                $el['settings']['image']['source'] = 'url';
             }
 
             if (!empty($el['elements'])) {
@@ -533,6 +538,20 @@ final class BlogPublisher
         }
 
         return $sections;
+    }
+
+    private static function incompleteAIResponseMessage(string $raw): string
+    {
+        $has_h1   = strpos($raw, '===H1===') !== false;
+        $has_meta = strpos($raw, '===META===') !== false;
+        $has_toc  = strpos($raw, '===TOC===') !== false;
+        $has_body = strpos($raw, '===BODY===') !== false;
+
+        if ($has_h1 || $has_meta || $has_toc || !$has_body) {
+            return 'AI returned an incomplete blog draft. Please click Regenerate Content and try again.';
+        }
+
+        return 'AI returned content in an unexpected format. Please click Regenerate Content and try again.';
     }
 
     // ── Agent Push ──────────────────────────────────────────────────────────

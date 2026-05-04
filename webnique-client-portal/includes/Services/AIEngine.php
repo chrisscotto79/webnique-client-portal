@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 
 final class AIEngine
 {
-    private const BLOG_PROMPT_VERSION = '2026-05-informational-no-links-v1';
+    private const BLOG_PROMPT_VERSION = '2026-05-simple-title-v1';
 
     const CACHE_GROUP   = 'wnq_ai_cache';
     const RATE_KEY      = 'wnq_ai_rate_';
@@ -178,7 +178,8 @@ Client Keyword Data (weave relevant terms naturally into the content):
 {keyword_context}
 
 Structure & Formatting:
-- Use only ONE H1 tag in the H1 section below, and it must match or closely include the Blog Title and Primary Keyword.
+- Use only ONE H1 tag in the H1 section below, and it must be the Blog Title exactly.
+- Do not add the Primary Keyword, location, business name, subtitle, colon phrase, "with...", or any extra wording to the H1.
 - Make the content easy to read, well organized, and naturally flowing.
 - Start with an introduction that clearly identifies the target audience, answers the main query in the first paragraph, and explains what the reader will learn.
 - Use H2s for main sections and H3s for subsections.
@@ -186,7 +187,8 @@ Structure & Formatting:
 - Use light lists where helpful, but prioritize paragraph-based writing.
 
 SEO Optimization:
-- Include the Primary Keyword in the H1, URL slug, first 100 words, and naturally throughout the post.
+- Include the Primary Keyword in the URL slug, first 100 words, at least one H2, and naturally throughout the post.
+- Do not force the Primary Keyword into the H1 if it is not already part of the Blog Title.
 - Keep keyword density around 1-2%; do not keyword stuff.
 - Use natural keyword variations throughout.
 - Write in a human, expert tone. Avoid AI-sounding phrasing.
@@ -206,7 +208,7 @@ Conclusion & FAQ:
 STRICT FORMAT — return EXACTLY using these delimiters, nothing before ===H1===:
 
 ===H1===
-[H1 matching or closely including the Blog Title and Primary Keyword. Keep under 60 characters where possible. No quotes.]
+{title}
 
 ===META===
 [Meta description, 150-160 characters, includes the Primary Keyword near the start, ends with a subtle CTA. No quotes.]
@@ -260,10 +262,11 @@ Generate {count} blog post title ideas.
 Rules:
 - Keep titles simple, direct, and easy to understand.
 - Do not make titles long, clever, or complicated.
+- Do not use colons, subtitles, "with...", "for your...", or stacked keyword phrases.
 - Each title must target one distinct keyword angle.
 - Every title must be informational, helpful, and blog-style.
 - Use natural local modifiers only where they make sense.
-- Keep titles under 60 characters.
+- Keep titles under 8 words when possible and always under 55 characters.
 - Avoid duplicate topics from the existing blog titles.
 
 Return ONLY a numbered list in this exact format (one per line, no extra text):
