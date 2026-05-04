@@ -415,6 +415,7 @@ final class SEO
     public static function getTaskTemplates(): array
     {
         return [
+            'launch'    => self::getLaunchTasks(),
             'onpage'    => self::getOnPageTasks(),
             'technical' => self::getTechnicalTasks(),
             'local'     => self::getLocalTasks(),
@@ -425,11 +426,11 @@ final class SEO
 
     public static function getValidServiceTypes(): array
     {
-        return ['onpage', 'technical', 'local', 'offpage', 'monthly'];
+        return ['launch', 'onpage', 'technical', 'local', 'offpage', 'monthly'];
     }
 
     /**
-     * Initialize a client with ALL one-time tasks (onpage + technical + local + offpage).
+     * Initialize a client with ALL one-time tasks.
      */
     public static function initializeClientTasks(string $client_id): array
     {
@@ -437,7 +438,7 @@ final class SEO
         $imported  = 0;
         $failed    = 0;
 
-        foreach (['onpage', 'technical', 'local', 'offpage'] as $service_type) {
+        foreach (['launch', 'onpage', 'technical', 'local', 'offpage'] as $service_type) {
             if (self::hasExistingTasks($client_id, $service_type)) {
                 continue; // skip if already initialized
             }
@@ -675,6 +676,7 @@ final class SEO
     {
         $lines = [
             ['service_type', 'task_group', 'task_name', 'task_description'],
+            ['launch', 'Go Live', 'Set up SSL certificate', 'One-time client site launch task'],
             ['onpage', 'Section 1: Standards Alignment', 'Run SOP kickoff meeting', 'Initial meeting to align on SEO standards'],
             ['technical', 'Site Speed & Core Web Vitals', 'Run PageSpeed Insights analysis (desktop)', 'Analyze desktop performance scores'],
             ['local', 'Google Business Profile Setup', 'Complete business name and category', ''],
@@ -722,6 +724,64 @@ final class SEO
     /* ───────────────────────────────────────────
      *  TASK TEMPLATES (built-in)
      * ─────────────────────────────────────────── */
+
+    private static function getLaunchTasks(): array
+    {
+        return [
+            'Design Source & Build Plan' => [
+                'If the site uses a bought template, import the template',
+                'If the site uses a ChatGPT design, generate all page layouts',
+                'Map out all pages and focus keywords',
+            ],
+            'Site Structure & Global Layout' => [
+                'Fix header',
+                'Fix footer',
+                'Fix pages, add pages, and remove pages as needed',
+                'Fix primary menu',
+                'Add service menu',
+                'Add service area menu',
+                'Finish site customization',
+                'Finish popups',
+            ],
+            'Core Pages' => [
+                'Edit Home page',
+                'Edit About page',
+                'Edit FAQ page',
+                'Edit Projects / Gallery page',
+                'Edit Services page',
+                'Edit Service Areas page',
+            ],
+            'Content Buildout' => [
+                'Make 3 blogs',
+                'Create all individual service pages',
+                'Create all service area pages',
+            ],
+            'Go Live' => [
+                'Get site live',
+                'Change DNS config and point domain to the right application',
+                'Set up SSL certificate',
+            ],
+            'Post-Launch Tracking Setup' => [
+                'Set up Google Site Kit',
+                'Install GTM',
+                'Import GTM tag files',
+                'Set up Google Analytics',
+                'Get Measurement ID and correct all tags',
+                'Go to GHL and set up form automation',
+                'Go to Analytics and create API secret',
+            ],
+            'SEO Plugin & Metadata' => [
+                'Download and activate Rank Math',
+                'Set up titles and tag descriptions',
+                'Push sitemap in Google Search Console',
+            ],
+            'WebNique Client Setup' => [
+                'Import site to Clients in WebNique',
+                'Set up payment for plugin',
+                'Make a blog for client site on WebNique',
+            ],
+        ];
+    }
 
     private static function getOnPageTasks(): array
     {

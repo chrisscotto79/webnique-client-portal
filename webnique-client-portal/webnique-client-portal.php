@@ -18,7 +18,7 @@ define('WNQ_PORTAL_PATH', plugin_dir_path(__FILE__));
 define('WNQ_PORTAL_URL', plugin_dir_url(__FILE__));
 
 if (!defined('WNQ_ENABLE_SEO_FEATURES')) {
-    define('WNQ_ENABLE_SEO_FEATURES', false);
+    define('WNQ_ENABLE_SEO_FEATURES', true);
 }
 
 function wnq_seo_features_enabled(): bool {
@@ -186,6 +186,22 @@ add_action('plugins_loaded', function() {
 }, 10);
 
 if (wnq_seo_features_enabled()) {
+    // SEO Portal — Auto-create legacy checklist tables on admin.
+    add_action('admin_init', function() {
+        $installed = get_option('wnq_seo_tracking_db_version', '');
+        if ($installed === WNQ_PORTAL_VERSION) {
+            return;
+        }
+        $seo_model = WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+        if (file_exists($seo_model)) {
+            require_once $seo_model;
+            if (class_exists('WNQ\\Models\\SEO')) {
+                \WNQ\Models\SEO::createTables();
+                update_option('wnq_seo_tracking_db_version', WNQ_PORTAL_VERSION);
+            }
+        }
+    });
+
     // SEO OS — Initialize after portal is loaded
     add_action('plugins_loaded', function() {
         $seoos = WNQ_PORTAL_PATH . 'includes/Core/SEOOSBootstrap.php';
@@ -667,7 +683,7 @@ add_action('admin_menu', function() {
     add_submenu_page('wnq-portal', 'Tasks', 'Tasks', $capability, 'wnq-tasks', 'wnq_render_tasks_page');
     add_submenu_page('wnq-portal', 'Analytics', 'Analytics', $capability, 'wnq-analytics', 'wnq_render_analytics_page');
     if (wnq_seo_features_enabled()) {
-        add_submenu_page('wnq-portal', 'SEO Tracking', 'SEO Tracking', $capability, 'wnq-seo', 'wnq_render_seo_page');
+        add_submenu_page('wnq-portal', 'SEO Portal', 'SEO Portal', $capability, 'wnq-seo', 'wnq_render_seo_page');
     }
     add_submenu_page('wnq-portal', 'Web Requests', 'Web Requests', $capability, 'wnq-web-requests', 'wnq_render_requests_page');
 }, 10);
