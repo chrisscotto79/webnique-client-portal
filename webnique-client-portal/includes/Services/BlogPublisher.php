@@ -106,14 +106,15 @@ final class BlogPublisher
             return self::fail($schedule_id, 'No active agent key found for client. Is the plugin installed and connected?');
         }
 
-        // Build internal link candidates from synced site data
+        // Build internal link candidates from the client sitemap first, then synced site data.
+        $sitemap_candidates = self::getSitemapLinks($agent['site_url'] ?? '', $scheduled['title'], $focus_kw);
         $internal_candidates = self::selectInternalLinks($client_id, $scheduled['title'], $focus_kw);
 
         // Get "Always Link To" curated list
         $always_links = BlogScheduler::getAlwaysLinkTo($client_id);
 
         // Merge always-links at the front (they take priority)
-        $all_links = array_merge($always_links, $internal_candidates);
+        $all_links = array_merge($always_links, $sitemap_candidates, $internal_candidates);
         // Dedupe by URL, keep first occurrence
         $seen = [];
         $link_list = [];
@@ -126,16 +127,15 @@ final class BlogPublisher
         }
         $link_list = array_slice($link_list, 0, 6); // cap at 6 candidates for the prompt
 
-        // Format links for prompt
+        // Format links for prompt.
         $links_prompt = '';
         foreach ($link_list as $i => $lnk) {
             $links_prompt .= ($i + 1) . '. Anchor: "' . ($lnk['anchor'] ?? $lnk['title'] ?? '') . '" → URL: ' . ($lnk['url'] ?? '') . "\n";
         }
 
-        // External citation instruction
-        $ext_instruction = ($category === 'Informational')
-            ? 'For Informational posts, you MAY include ONE external citation link to an authoritative source (Wikipedia, government site, major industry publication — NOT competitors). Add it naturally in the body as <a href="URL">anchor text</a>.'
-            : 'Do NOT include any external links. This is a Services-focused post.';
+        $external_links = ($category === 'Informational')
+            ? 'Use one authoritative non-competitor citation if it genuinely supports the topic, such as a government, university, standards, or major industry source.'
+            : 'No external links required unless they genuinely support the topic.';
 
         // Generate full post content via AI
         $ai_result = AIEngine::generate(
@@ -147,13 +147,14 @@ final class BlogPublisher
                 'title'                      => $scheduled['title'],
                 'category_type'              => $category,
                 'focus_keyword'              => $focus_kw,
+                'url_slug'                   => sanitize_title($scheduled['title']),
                 'tone'                       => $tone,
                 'keyword_context'            => $keyword_context,
                 'internal_links'             => $links_prompt ?: 'No internal link candidates available.',
-                'external_citation_instruction' => $ext_instruction,
+                'external_links'             => $external_links,
             ],
             $client_id,
-            ['max_tokens' => 4096]
+            ['max_tokens' => 7000]
         );
 
         if (!$ai_result['success']) {
@@ -276,6 +277,72 @@ final class BlogPublisher
 
         // Return top 4 candidates
         return array_slice($scored, 0, 4);
+    }
+
+    /**
+     * Pull internal link candidates from https://client-site.com/page-sitemap.xml.
+     */
+    private static function getSitemapLinks(string $site_url, string $post_title, string $focus_kw): array
+    {
+        $site_url = rtrim($site_url, '/');
+        if (empty($site_url)) {
+            return [];
+        }
+
+        $sitemap_url = $site_url . '/page-sitemap.xml';
+        $response = wp_remote_get($sitemap_url, [
+            'timeout'     => 8,
+            'redirection' => 3,
+            'headers'     => [
+                'User-Agent' => 'WebNique-SEO-OS/1.0',
+            ],
+        ]);
+
+        if (is_wp_error($response)) {
+            return [];
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        if (empty($body)) {
+            return [];
+        }
+
+        preg_match_all('/<loc>\s*([^<]+)\s*<\/loc>/i', $body, $matches);
+        $urls = array_values(array_unique(array_map('trim', $matches[1] ?? [])));
+        if (empty($urls)) {
+            return [];
+        }
+
+        $topic_words = self::extractKeywords($post_title . ' ' . $focus_kw);
+        $scored = [];
+        foreach ($urls as $url) {
+            $path = trim((string)parse_url($url, PHP_URL_PATH), '/');
+            if ($path === '' || stripos($path, 'privacy') !== false || stripos($path, 'terms') !== false) {
+                continue;
+            }
+
+            $anchor = self::anchorFromUrl($url);
+            $page_words = self::extractKeywords($anchor . ' ' . str_replace(['-', '/'], ' ', $path));
+            $overlap = count(array_intersect($topic_words, $page_words));
+
+            $scored[] = [
+                'url'    => esc_url_raw($url),
+                'anchor' => $anchor,
+                'score'  => $overlap * 10 + (str_contains($path, 'service') ? 3 : 0),
+            ];
+        }
+
+        usort($scored, fn($a, $b) => $b['score'] <=> $a['score']);
+        return array_slice($scored, 0, 6);
+    }
+
+    private static function anchorFromUrl(string $url): string
+    {
+        $path = trim((string)parse_url($url, PHP_URL_PATH), '/');
+        $last = basename($path);
+        $anchor = str_replace(['-', '_'], ' ', $last ?: $path);
+        $anchor = trim(preg_replace('/\s+/', ' ', $anchor));
+        return $anchor ? ucwords($anchor) : 'Related page';
     }
 
     /**
