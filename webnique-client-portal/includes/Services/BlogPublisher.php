@@ -53,8 +53,23 @@ final class BlogPublisher
             return ['success' => false, 'message' => 'Schedule entry not found'];
         }
 
+        if ($scheduled['status'] === 'published') {
+            return [
+                'success' => true,
+                'message' => 'Post is already published',
+                'post_url' => $scheduled['wp_post_url'] ?? '',
+            ];
+        }
+
+        if (in_array($scheduled['status'], ['generating', 'publishing'], true)) {
+            return [
+                'success' => true,
+                'message' => 'Post is already being processed',
+            ];
+        }
+
         if (!in_array($scheduled['status'], ['pending', 'failed'], true)) {
-            return ['success' => false, 'message' => 'Post must be in pending or failed status to process'];
+            return ['success' => false, 'message' => 'Post cannot be processed from status: ' . ($scheduled['status'] ?? 'unknown')];
         }
 
         if (!empty($scheduled['generated_body'])) {
@@ -67,7 +82,7 @@ final class BlogPublisher
                 'h1'  => self::sanitizeTitle($scheduled['generated_title'] ?: $scheduled['title']),
                 'meta' => $scheduled['generated_meta'] ?? '',
                 'toc'  => $scheduled['generated_toc'] ?? '',
-                'body' => $scheduled['generated_body'] ?? '',
+                'body' => self::normalizeGeneratedBody($scheduled['generated_body'] ?? ''),
             ];
             BlogScheduler::updatePost($schedule_id, ['status' => 'publishing']);
             return self::publishGeneratedPost($schedule_id, $scheduled, $agent, $parsed);
@@ -94,7 +109,7 @@ final class BlogPublisher
         $services    = implode(', ', (array)($profile['primary_services'] ?? []));
         $location    = implode(', ', (array)($profile['service_locations'] ?? []));
         $tone        = $profile['content_tone'] ?? 'professional';
-        $category    = $scheduled['category_type'] ?? 'Informational';
+        $category    = 'Informational';
         $focus_kw    = $scheduled['focus_keyword'] ?? '';
 
         // If no focus keyword set, auto-select the top tracked keyword for this client
@@ -122,37 +137,6 @@ final class BlogPublisher
             return self::fail($schedule_id, 'No active agent key found for client. Is the plugin installed and connected?');
         }
 
-        // Build internal link candidates from the client sitemap first, then synced site data.
-        $sitemap_candidates = self::getSitemapLinks($agent['site_url'] ?? '', $scheduled['title'], $focus_kw);
-        $internal_candidates = self::selectInternalLinks($client_id, $scheduled['title'], $focus_kw);
-
-        // Get "Always Link To" curated list
-        $always_links = BlogScheduler::getAlwaysLinkTo($client_id);
-
-        // Merge always-links at the front (they take priority)
-        $all_links = array_merge($always_links, $sitemap_candidates, $internal_candidates);
-        // Dedupe by URL, keep first occurrence
-        $seen = [];
-        $link_list = [];
-        foreach ($all_links as $lnk) {
-            $url = $lnk['url'] ?? '';
-            if ($url && !isset($seen[$url])) {
-                $seen[$url] = true;
-                $link_list[] = $lnk;
-            }
-        }
-        $link_list = array_slice($link_list, 0, 4); // cap candidates so links stay natural in the post
-
-        // Format links for prompt.
-        $links_prompt = '';
-        foreach ($link_list as $i => $lnk) {
-            $links_prompt .= ($i + 1) . '. Anchor: "' . ($lnk['anchor'] ?? $lnk['title'] ?? '') . '" → URL: ' . ($lnk['url'] ?? '') . "\n";
-        }
-
-        $external_links = ($category === 'Informational')
-            ? 'Use one authoritative non-competitor citation if it genuinely supports the topic, such as a government, university, standards, or major industry source.'
-            : 'No external links required unless they genuinely support the topic.';
-
         // Generate full post content via AI
         $ai_result = AIEngine::generate(
             'blog_post_full',
@@ -166,8 +150,6 @@ final class BlogPublisher
                 'url_slug'                   => sanitize_title($scheduled['title']),
                 'tone'                       => $tone,
                 'keyword_context'            => $keyword_context,
-                'internal_links'             => $links_prompt ?: 'No internal link candidates available.',
-                'external_links'             => $external_links,
             ],
             $client_id,
             [
@@ -199,7 +181,7 @@ final class BlogPublisher
             'generated_body'  => $parsed['body'],
             'generated_toc'   => $parsed['toc'],
             'tokens_used'     => $ai_result['tokens_used'] ?? 0,
-            'internal_links'  => wp_json_encode($link_list),
+            'internal_links'  => wp_json_encode([]),
             'status'          => 'publishing',
         ]);
 
@@ -244,7 +226,7 @@ final class BlogPublisher
         $services    = implode(', ', (array)($profile['primary_services'] ?? []));
         $location    = implode(', ', (array)($profile['service_locations'] ?? []));
         $tone        = $profile['content_tone'] ?? 'professional';
-        $category    = $scheduled['category_type'] ?? 'Informational';
+        $category    = 'Informational';
         $focus_kw    = $scheduled['focus_keyword'] ?? '';
 
         if (empty($focus_kw)) {
@@ -268,32 +250,6 @@ final class BlogPublisher
         }
 
         $keyword_context = self::buildKeywordContext($client_id, $profile);
-        $all_links = array_merge(
-            BlogScheduler::getAlwaysLinkTo($client_id),
-            self::getSitemapLinks($agent['site_url'] ?? '', $scheduled['title'], $focus_kw),
-            self::selectInternalLinks($client_id, $scheduled['title'], $focus_kw)
-        );
-
-        $seen = [];
-        $link_list = [];
-        foreach ($all_links as $lnk) {
-            $url = $lnk['url'] ?? '';
-            if ($url && !isset($seen[$url])) {
-                $seen[$url] = true;
-                $link_list[] = $lnk;
-            }
-        }
-        $link_list = array_slice($link_list, 0, 4);
-
-        $links_prompt = '';
-        foreach ($link_list as $i => $lnk) {
-            $links_prompt .= ($i + 1) . '. Anchor: "' . ($lnk['anchor'] ?? $lnk['title'] ?? '') . '" → URL: ' . ($lnk['url'] ?? '') . "\n";
-        }
-
-        $external_links = ($category === 'Informational')
-            ? 'Use one authoritative non-competitor citation if it genuinely supports the topic, such as a government, university, standards, or major industry source.'
-            : 'No external links required unless they genuinely support the topic.';
-
         $ai_result = AIEngine::generate(
             'blog_post_full',
             [
@@ -306,8 +262,6 @@ final class BlogPublisher
                 'url_slug'        => sanitize_title($scheduled['title']),
                 'tone'            => $tone,
                 'keyword_context' => $keyword_context,
-                'internal_links'  => $links_prompt ?: 'No internal link candidates available.',
-                'external_links'  => $external_links,
             ],
             $client_id,
             [
@@ -334,7 +288,7 @@ final class BlogPublisher
             'generated_body'  => $parsed['body'],
             'generated_toc'   => $parsed['toc'],
             'tokens_used'     => $ai_result['tokens_used'] ?? 0,
-            'internal_links'  => wp_json_encode($link_list),
+            'internal_links'  => wp_json_encode([]),
             'status'          => $final_status,
             'error_message'   => null,
         ]);
@@ -356,7 +310,7 @@ final class BlogPublisher
         string $category = '',
         string $focus_kw = ''
     ): array {
-        $category = $category ?: ($scheduled['category_type'] ?? 'Informational');
+        $category = 'Informational';
         $focus_kw = $focus_kw ?: ($scheduled['focus_keyword'] ?? '');
 
         $featured_image_url = esc_url_raw($scheduled['featured_image_url'] ?? '');
@@ -369,7 +323,7 @@ final class BlogPublisher
         $push_result = self::pushToAgent($agent, [
             'title'             => $parsed['h1'],
             'meta_description'  => $parsed['meta'],
-            'post_content'      => wp_strip_all_tags($parsed['body']),
+            'post_content'      => $parsed['body'],
             'elementor_data'    => $elementor_json,
             'categories'        => [$category],
             'status'            => 'publish',
@@ -643,11 +597,18 @@ final class BlogPublisher
     private static function normalizeGeneratedBody(string $body): string
     {
         $body = trim($body);
+        $body = preg_replace('/^```(?:html)?\s*|\s*```$/i', '', $body);
+        $body = preg_replace('/<a\b[^>]*>(.*?)<\/a>/is', '$1', $body);
         $body = preg_replace('/\bIn conclusion,\s*/i', '', $body);
+        $body = preg_replace('/\s*(#{3})\s*([^#<\r\n]+)(?=\s|$)/', "\n<h3>$2</h3>\n", $body);
+        $body = preg_replace('/\s*(#{2})\s*([^#<\r\n]+)(?=\s|$)/', "\n<h2>$2</h2>\n", $body);
         $body = preg_replace('/<p>\s*(Q:\s*)?([^<\?]{8,120}\?)\s*A:\s*/i', '<h3>$2</h3><p>', $body);
         $body = preg_replace('/\s+Q:\s*([^<\?]{8,120}\?)\s*A:\s*/i', '</p><h3>$1</h3><p>', $body);
+        $body = preg_replace('/\s+\*\s*([^*\r\n]{3,180})\s+\*/', "\n<ul><li>$1</li></ul>\n", $body);
+        $body = preg_replace('/<\/ul>\s*<ul>/', '', $body);
+        $body = preg_replace('/\*\*([^*]+)\*\*/', '$1', $body);
 
-        if (strpos($body, '<') === false) {
+        if (strpos($body, '<p') === false && strpos($body, '<h2') === false && strpos($body, '<h3') === false) {
             $lines = array_filter(array_map('trim', preg_split('/\R{2,}/', $body)));
             $html = [];
             foreach ($lines as $line) {
@@ -660,6 +621,8 @@ final class BlogPublisher
                 }
             }
             $body = implode("\n", $html);
+        } elseif (strpos($body, '<p') === false && function_exists('wpautop')) {
+            $body = wpautop($body);
         }
 
         return trim($body);
