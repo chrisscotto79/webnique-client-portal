@@ -218,7 +218,6 @@ final class SEOOSBootstrap
         add_action('admin_post_wnq_blog_delete_post',      [self::class, 'handleBlogDeletePost']);
         add_action('admin_post_wnq_blog_save_featured',    [self::class, 'handleBlogSaveFeaturedImage']);
         add_action('admin_post_wnq_blog_save_template',    [self::class, 'handleBlogSaveTemplate']);
-        add_action('admin_post_wnq_blog_save_always_link', [self::class, 'handleBlogSaveAlwaysLink']);
         add_action('admin_post_wnq_blog_mark_all_read',    [self::class, 'handleBlogMarkAllRead']);
         add_action('wp_ajax_wnq_blog_add_batch',           [self::class, 'ajaxBlogAddBatch']);
     }
@@ -555,31 +554,6 @@ final class SEOOSBootstrap
         } else {
             update_option('wnq_blog_elementor_template', $json);
         }
-
-        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=settings&client_id=' . urlencode($client_id) . '&settings_saved=1'));
-        exit;
-    }
-
-    public static function handleBlogSaveAlwaysLink(): void
-    {
-        check_admin_referer('wnq_blog_save_always_link');
-        self::requireCap();
-
-        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
-        if (!$client_id) wp_die('Missing client_id');
-
-        $raw   = $_POST['always_link'] ?? [];
-        $links = [];
-        foreach ($raw as $entry) {
-            $url = esc_url_raw($entry['url'] ?? '');
-            if (empty($url)) continue;
-            $links[] = [
-                'url'      => $url,
-                'anchor'   => sanitize_text_field($entry['anchor'] ?? ''),
-                'keywords' => sanitize_text_field($entry['keywords'] ?? ''),
-            ];
-        }
-        \WNQ\Models\BlogScheduler::saveAlwaysLinkTo($client_id, $links);
 
         wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=settings&client_id=' . urlencode($client_id) . '&settings_saved=1'));
         exit;

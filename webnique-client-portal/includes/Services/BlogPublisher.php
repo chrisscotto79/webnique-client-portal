@@ -5,16 +5,11 @@
  * Orchestrates the full blog auto-publishing pipeline:
  *  1. Load post from the schedule queue
  *  2. Build AI vars from client profile + synced site data
- *  3. Select 2-4 internal links (scored by relevance + "Always Link To" priority)
- *  4. Call AIEngine::generate('blog_post_full') — returns H1, META, TOC, BODY
- *  5. Parse structured AI response
- *  6. Inject content into stored Elementor JSON template
- *  7. Push to client site via POST {site_url}/wp-json/wnq-agent/v1/publish-post
- *  8. Update schedule record, fire hub notification
- *
- * External links policy:
- *  - Informational posts: AI is prompted to include 1 authoritative citation (no competitors)
- *  - Services posts: zero external links
+ *  3. Call AIEngine::generate('blog_post_full') — returns H1, META, TOC, BODY
+ *  4. Parse and normalize structured AI response
+ *  5. Inject content into stored Elementor JSON template
+ *  6. Push to client site via POST {site_url}/wp-json/wnq-agent/v1/publish-post
+ *  7. Update schedule record, fire hub notification
  *
  * @package WebNique Portal
  */
@@ -182,6 +177,7 @@ final class BlogPublisher
             'generated_toc'   => $parsed['toc'],
             'tokens_used'     => $ai_result['tokens_used'] ?? 0,
             'internal_links'  => wp_json_encode([]),
+            'category_type'   => 'Informational',
             'status'          => 'publishing',
         ]);
 
@@ -289,6 +285,7 @@ final class BlogPublisher
             'generated_toc'   => $parsed['toc'],
             'tokens_used'     => $ai_result['tokens_used'] ?? 0,
             'internal_links'  => wp_json_encode([]),
+            'category_type'   => 'Informational',
             'status'          => $final_status,
             'error_message'   => null,
         ]);
@@ -342,6 +339,7 @@ final class BlogPublisher
             'wp_post_id'    => $push_result['post_id'] ?? null,
             'wp_post_url'   => $push_result['post_url'] ?? '',
             'error_message' => null,
+            'category_type'  => 'Informational',
         ]);
 
         // Hub notification
@@ -362,132 +360,6 @@ final class BlogPublisher
         ], 'success', 'cron');
 
         return ['success' => true, 'post_url' => $post_url, 'message' => 'Published: ' . $post_title];
-    }
-
-    // ── Internal Link Selection ─────────────────────────────────────────────
-
-    /**
-     * Score and return the top internal link candidates from synced site data.
-     * Scores by: keyword match in title > focus_keyword match > word count.
-     */
-    private static function selectInternalLinks(string $client_id, string $post_title, string $focus_kw): array
-    {
-        global $wpdb;
-
-        // Get published pages with reasonable word count
-        $rows = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT page_url, title, focus_keyword, word_count, page_type
-                 FROM {$wpdb->prefix}wnq_seo_site_data
-                 WHERE client_id = %s
-                   AND post_status = 'publish'
-                   AND word_count >= 200
-                   AND page_type IN ('post', 'page')
-                 ORDER BY word_count DESC
-                 LIMIT 50",
-                $client_id
-            ),
-            ARRAY_A
-        ) ?: [];
-
-        if (empty($rows)) {
-            return [];
-        }
-
-        // Score each page for relevance to the new post
-        $title_words  = self::extractKeywords($post_title . ' ' . $focus_kw);
-        $scored = [];
-        foreach ($rows as $row) {
-            $page_words = self::extractKeywords($row['title'] . ' ' . $row['focus_keyword']);
-            $overlap    = count(array_intersect($title_words, $page_words));
-            $scored[]   = [
-                'url'    => $row['page_url'],
-                'anchor' => $row['title'],
-                'score'  => $overlap * 10 + min($row['word_count'] / 100, 5),
-            ];
-        }
-
-        // Sort by score descending
-        usort($scored, fn($a, $b) => $b['score'] <=> $a['score']);
-
-        // Return top 4 candidates
-        return array_slice($scored, 0, 4);
-    }
-
-    /**
-     * Pull internal link candidates from https://client-site.com/page-sitemap.xml.
-     */
-    private static function getSitemapLinks(string $site_url, string $post_title, string $focus_kw): array
-    {
-        $site_url = rtrim($site_url, '/');
-        if (empty($site_url)) {
-            return [];
-        }
-
-        $sitemap_url = $site_url . '/page-sitemap.xml';
-        $response = wp_remote_get($sitemap_url, [
-            'timeout'     => 8,
-            'redirection' => 3,
-            'headers'     => [
-                'User-Agent' => 'WebNique-SEO-OS/1.0',
-            ],
-        ]);
-
-        if (is_wp_error($response)) {
-            return [];
-        }
-
-        $body = wp_remote_retrieve_body($response);
-        if (empty($body)) {
-            return [];
-        }
-
-        preg_match_all('/<loc>\s*([^<]+)\s*<\/loc>/i', $body, $matches);
-        $urls = array_values(array_unique(array_map('trim', $matches[1] ?? [])));
-        if (empty($urls)) {
-            return [];
-        }
-
-        $topic_words = self::extractKeywords($post_title . ' ' . $focus_kw);
-        $scored = [];
-        foreach ($urls as $url) {
-            $path = trim((string)parse_url($url, PHP_URL_PATH), '/');
-            if ($path === '' || stripos($path, 'privacy') !== false || stripos($path, 'terms') !== false) {
-                continue;
-            }
-
-            $anchor = self::anchorFromUrl($url);
-            $page_words = self::extractKeywords($anchor . ' ' . str_replace(['-', '/'], ' ', $path));
-            $overlap = count(array_intersect($topic_words, $page_words));
-
-            $scored[] = [
-                'url'    => esc_url_raw($url),
-                'anchor' => $anchor,
-                'score'  => $overlap * 10 + (str_contains($path, 'service') ? 3 : 0),
-            ];
-        }
-
-        usort($scored, fn($a, $b) => $b['score'] <=> $a['score']);
-        return array_slice($scored, 0, 6);
-    }
-
-    private static function anchorFromUrl(string $url): string
-    {
-        $path = trim((string)parse_url($url, PHP_URL_PATH), '/');
-        $last = basename($path);
-        $anchor = str_replace(['-', '_'], ' ', $last ?: $path);
-        $anchor = trim(preg_replace('/\s+/', ' ', $anchor));
-        return $anchor ? ucwords($anchor) : 'Related page';
-    }
-
-    /**
-     * Extract meaningful keywords from text (stop-word filtered).
-     */
-    private static function extractKeywords(string $text): array
-    {
-        $stop = ['a','an','the','and','or','but','in','on','at','to','for','of','with','by','from','is','are','was','were','be','been','being','have','has','had','do','does','did','will','would','could','should','may','might','this','that','these','those','it','its','we','you','he','she','they','our','your','his','her','their'];
-        $words = preg_split('/\W+/', strtolower($text), -1, PREG_SPLIT_NO_EMPTY);
-        return array_values(array_diff($words, $stop));
     }
 
     // ── Elementor JSON Builder ──────────────────────────────────────────────
