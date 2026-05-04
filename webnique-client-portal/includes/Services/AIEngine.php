@@ -176,7 +176,7 @@ Services: {services}
 Location: {location}
 Category Type: {category_type}
 Tone: {tone}
-Target Word Count: 1,500-2,000+ words
+Target Word Count: 1,500-2,000+ words. If the active AI provider has a tight token limit, prioritize a complete, non-repetitive 1,200-1,500 word post over an unfinished longer draft.
 
 Client Keyword Data (weave relevant terms naturally into the content):
 {keyword_context}
@@ -428,6 +428,18 @@ PROMPT,
             'max_tokens'       => 2000,
             'temperature'      => 0.7,
         ]);
+    }
+
+    public static function maxTokensForBlogGeneration(): int
+    {
+        $settings = self::getSettings();
+        $provider = $settings['provider'] ?? 'openai';
+
+        if ($provider === 'groq') {
+            return 4200;
+        }
+
+        return 7000;
     }
 
     public static function saveSettings(array $data): void
