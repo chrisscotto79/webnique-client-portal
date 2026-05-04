@@ -37,8 +37,8 @@ final class SEOAdmin
 
         add_submenu_page(
             'wnq-portal',
-            'SEO Tracking',
-            'SEO Tracking',
+            'SEO Portal',
+            'SEO Portal',
             $capability,
             'wnq-seo',
             [self::class, 'render']
@@ -93,8 +93,8 @@ final class SEOAdmin
         <div class="wrap wnq-seo-premium">
             <div class="seo-header">
                 <div class="header-content">
-                    <h1>🚀 SEO Tracking Dashboard</h1>
-                    <p class="subtitle">Monitor SEO progress across all clients</p>
+                    <h1>🚀 SEO Portal</h1>
+                    <p class="subtitle">Track each client launch, go-live, and SEO setup workflow</p>
                 </div>
             </div>
 
@@ -240,7 +240,7 @@ final class SEOAdmin
         }
         $admin_url = $website_url ? rtrim($website_url, '/') . '/wp-admin' : '';
 
-        $selected_service = isset($_GET['service']) ? sanitize_text_field($_GET['service']) : 'onpage';
+        $selected_service = isset($_GET['service']) ? sanitize_text_field($_GET['service']) : 'launch';
         $selected_month = isset($_GET['month']) ? sanitize_text_field($_GET['month']) : date('Y-m');
 
         // For monthly tasks, filter by month
@@ -263,6 +263,7 @@ final class SEOAdmin
         }
 
         $service_types = [
+            'launch' => ['name' => 'Site Launch', 'icon' => '🚀', 'color' => '#0ea5e9'],
             'onpage' => ['name' => 'On-Page SEO', 'icon' => '📝', 'color' => '#667eea'],
             'technical' => ['name' => 'Technical SEO', 'icon' => '⚙️', 'color' => '#10b981'],
             'local' => ['name' => 'Local SEO', 'icon' => '📍', 'color' => '#f59e0b'],
@@ -270,14 +271,14 @@ final class SEOAdmin
             'monthly' => ['name' => 'Monthly Tasks', 'icon' => '📅', 'color' => '#ec4899'],
         ];
 
-        $current_service = $service_types[$selected_service] ?? $service_types['onpage'];
+        $current_service = $service_types[$selected_service] ?? $service_types['launch'];
 
         ?>
         <div class="wrap wnq-seo-premium">
             <div class="seo-header">
                 <div class="header-content">
                     <a href="<?php echo admin_url('admin.php?page=wnq-seo'); ?>" class="back-link">← Back</a>
-                    <h1>🚀 <?php echo esc_html($client['name']); ?> - SEO Tracking</h1>
+                    <h1>🚀 <?php echo esc_html($client['name']); ?> - SEO Portal</h1>
                     <?php if ($website_url || $admin_url): ?>
                         <div class="client-links-header">
                             <?php if ($website_url): ?>
