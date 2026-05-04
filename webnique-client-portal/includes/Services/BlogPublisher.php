@@ -141,7 +141,7 @@ final class BlogPublisher
                 $link_list[] = $lnk;
             }
         }
-        $link_list = array_slice($link_list, 0, 6); // cap at 6 candidates for the prompt
+        $link_list = array_slice($link_list, 0, 4); // cap candidates so links stay natural in the post
 
         // Format links for prompt.
         $links_prompt = '';
@@ -186,6 +186,7 @@ final class BlogPublisher
         if (!$parsed) {
             return self::fail($schedule_id, 'Failed to parse AI response. Raw output: ' . substr($ai_result['content'], 0, 300));
         }
+        $parsed['body'] = self::normalizeGeneratedBody($parsed['body']);
 
         // Sanitize the H1 so SEO plugin template tokens (%page%, %sep%, %sitename%,
         // etc.) can never end up as the WordPress post title.
@@ -282,7 +283,7 @@ final class BlogPublisher
                 $link_list[] = $lnk;
             }
         }
-        $link_list = array_slice($link_list, 0, 6);
+        $link_list = array_slice($link_list, 0, 4);
 
         $links_prompt = '';
         foreach ($link_list as $i => $lnk) {
@@ -324,6 +325,7 @@ final class BlogPublisher
         if (!$parsed) {
             return self::fail($schedule_id, 'Failed to parse AI response. Raw output: ' . substr($ai_result['content'], 0, 300));
         }
+        $parsed['body'] = self::normalizeGeneratedBody($parsed['body']);
 
         $parsed['h1'] = self::sanitizeTitle($parsed['h1']);
         BlogScheduler::updatePost($schedule_id, [
@@ -357,7 +359,12 @@ final class BlogPublisher
         $category = $category ?: ($scheduled['category_type'] ?? 'Informational');
         $focus_kw = $focus_kw ?: ($scheduled['focus_keyword'] ?? '');
 
-        $elementor_json = self::buildElementorJson($parsed, (int)($scheduled['agent_key_id'] ?? 0));
+        $featured_image_url = esc_url_raw($scheduled['featured_image_url'] ?? '');
+        $elementor_json = self::buildElementorJson(
+            $parsed,
+            (int)($scheduled['agent_key_id'] ?? 0),
+            $featured_image_url
+        );
 
         $push_result = self::pushToAgent($agent, [
             'title'             => $parsed['h1'],
@@ -367,7 +374,7 @@ final class BlogPublisher
             'categories'        => [$category],
             'status'            => 'publish',
             'focus_keyword'     => $focus_kw,
-            'featured_image_url'=> $scheduled['featured_image_url'] ?? '',
+            'featured_image_url'=> $featured_image_url,
             'hide_title'        => true,
         ]);
 
@@ -535,7 +542,7 @@ final class BlogPublisher
      * Inject AI-generated content into the stored Elementor template.
      * Falls back to empty structure if no template is saved.
      */
-    private static function buildElementorJson(array $content, int $agent_key_id = 0): string
+    private static function buildElementorJson(array $content, int $agent_key_id = 0, string $featured_image_url = ''): string
     {
         // Try per-site template first, then fall back to the global template
         $template_json = '';
@@ -584,6 +591,10 @@ final class BlogPublisher
             ? $template['content']
             : $template;
 
+        if (!empty($featured_image_url)) {
+            $content['featured_image_url'] = $featured_image_url;
+        }
+
         // Walk and inject content by known widget IDs
         $elements = self::walkAndInject($elements, $content);
 
@@ -597,7 +608,7 @@ final class BlogPublisher
      *  5af58bd2 → heading widget  → settings.title  (H1)
      *  5b794435 → text-editor     → settings.editor (body HTML)
      *  4861ee91 → text-editor     → settings.editor (TOC HTML)
-     *  1b605b78 → image widget    → left empty (user adds manually)
+     *  1b605b78 → image widget    → settings.image (featured image URL)
      */
     private static function walkAndInject(array $elements, array $content): array
     {
@@ -610,14 +621,48 @@ final class BlogPublisher
                 $el['settings']['editor'] = $content['body'];
             } elseif ($id === '4861ee91' && !empty($content['toc'])) {
                 $el['settings']['editor'] = $content['toc'];
+            } elseif ($id === '1b605b78' && !empty($content['featured_image_url'])) {
+                $el['settings']['image'] = [
+                    'url'    => esc_url_raw($content['featured_image_url']),
+                    'id'     => '',
+                    'source' => 'url',
+                ];
+                $el['settings']['image_size'] = $el['settings']['image_size'] ?? 'large';
             }
-            // 1b605b78 (image) → intentionally left as-is
 
             if (!empty($el['elements'])) {
                 $el['elements'] = self::walkAndInject($el['elements'], $content);
             }
         }
         return $elements;
+    }
+
+    /**
+     * Clean up common AI formatting drift before storing/publishing.
+     */
+    private static function normalizeGeneratedBody(string $body): string
+    {
+        $body = trim($body);
+        $body = preg_replace('/\bIn conclusion,\s*/i', '', $body);
+        $body = preg_replace('/<p>\s*(Q:\s*)?([^<\?]{8,120}\?)\s*A:\s*/i', '<h3>$2</h3><p>', $body);
+        $body = preg_replace('/\s+Q:\s*([^<\?]{8,120}\?)\s*A:\s*/i', '</p><h3>$1</h3><p>', $body);
+
+        if (strpos($body, '<') === false) {
+            $lines = array_filter(array_map('trim', preg_split('/\R{2,}/', $body)));
+            $html = [];
+            foreach ($lines as $line) {
+                if (preg_match('/^#{2,3}\s+(.+)$/', $line, $m)) {
+                    $html[] = '<h2>' . esc_html($m[1]) . '</h2>';
+                } elseif (substr($line, -1) === ':' && strlen($line) <= 90) {
+                    $html[] = '<h3>' . esc_html(rtrim($line, ':')) . '</h3>';
+                } else {
+                    $html[] = '<p>' . esc_html($line) . '</p>';
+                }
+            }
+            $body = implode("\n", $html);
+        }
+
+        return trim($body);
     }
 
     private static function generateElId(): string

@@ -22,7 +22,7 @@ if (!defined('ABSPATH')) {
 
 final class AIEngine
 {
-    private const BLOG_PROMPT_VERSION = '2026-05-sitemap-layout-v1';
+    private const BLOG_PROMPT_VERSION = '2026-05-sitemap-layout-v2';
 
     const CACHE_GROUP   = 'wnq_ai_cache';
     const RATE_KEY      = 'wnq_ai_rate_';
@@ -203,8 +203,9 @@ Content Requirements:
 - Make this post meaningfully different from other posts by focusing tightly on the Blog Title and Primary Keyword.
 
 Linking Strategy:
-- Naturally include every provided Internal Link using descriptive anchor text.
-- Naturally include every provided External Link if any are provided. Integrate links contextually; do not list them.
+- Treat provided Internal Links as candidates. Use only the 3-5 most relevant internal links with descriptive anchor text.
+- Use provided External Links only when they fit naturally.
+- Never dump links in a list, never stack several links in one paragraph, and never force an irrelevant link into the post.
 
 Conclusion & FAQ:
 - Write a strong conclusion summarizing key points and reinforcing the topic.
@@ -235,12 +236,18 @@ STRICT FORMAT — return EXACTLY using these delimiters, nothing before ===H1===
 - Use <h2 id="section-N"> sections matching the TOC anchors above
 - At least ONE <h2> must contain the Primary Keyword naturally
 - Use <h3> subsections inside sections where helpful
+- Use valid HTML only. Do not use Markdown, plain-text headings, or loose labels.
 - Wrap all paragraphs in <p> tags
 - Paragraphs: 2-3 sentences max — never write a wall of text
 - Primary Keyword appears in the first 100 words
-- Insert all provided internal links naturally: <a href="URL">anchor text</a>
-- Insert all provided external links naturally when provided: <a href="URL">anchor text</a>
-- Include a conclusion section and an FAQ section
+- Insert 3-5 relevant internal links naturally: <a href="URL">anchor text</a>
+- Insert relevant external links naturally when provided: <a href="URL">anchor text</a>
+- Include a conclusion section. Do not title it "Conclusion and Next Steps" unless that is genuinely specific to the article.
+- Include an FAQ section exactly like this pattern:
+  <h2 id="faq">Frequently Asked Questions</h2>
+  <h3>Question written as a full sentence?</h3>
+  <p>Answer in 2-4 sentences.</p>
+- Never write inline "Q:" or "A:" FAQ text. FAQ questions must be <h3> headings and answers must be <p> paragraphs.
 - No filler phrases like "In conclusion", "In today's world", "Look no further", or "At [Business]"
 - Write with specific, useful information — not generic advice
 - Content should feel like it was written by an expert representing {business_name}]

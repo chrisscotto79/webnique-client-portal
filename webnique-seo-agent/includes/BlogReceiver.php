@@ -191,11 +191,15 @@ final class BlogReceiver
         ];
         update_post_meta($post_id, '_wnq_schema_json', wp_json_encode($schema));
 
+        $attachment_id = 0;
         if (!empty($featured_image_url)) {
             $attachment_id = self::sideloadFeaturedImage($featured_image_url, $post_id, $title);
             if ($attachment_id) {
                 set_post_thumbnail($post_id, $attachment_id);
-                update_post_meta($post_id, '_wnq_og_image', $featured_image_url);
+                $local_image_url = wp_get_attachment_image_url($attachment_id, 'full') ?: $featured_image_url;
+                update_post_meta($post_id, '_wnq_og_image', $local_image_url);
+                update_post_meta($post_id, '_yoast_wpseo_opengraph-image', $local_image_url);
+                update_post_meta($post_id, 'rank_math_facebook_image', $local_image_url);
             }
         }
 
@@ -209,9 +213,10 @@ final class BlogReceiver
         $post_url = get_permalink($post_id);
 
         return new \WP_REST_Response([
-            'status'   => 'published',
-            'post_id'  => $post_id,
-            'post_url' => $post_url,
+            'status'             => 'published',
+            'post_id'            => $post_id,
+            'post_url'           => $post_url,
+            'featured_image_set' => !empty($attachment_id),
         ], 201);
     }
 
