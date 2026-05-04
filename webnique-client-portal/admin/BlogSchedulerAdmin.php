@@ -254,6 +254,29 @@ final class BlogSchedulerAdmin
         ?>
 <script>
 jQuery(function($) {
+    function wnqAjaxErrorMessage(xhr, fallback) {
+        var msg = fallback || 'AJAX request failed.';
+        if (xhr && xhr.responseJSON) {
+            if (xhr.responseJSON.data && xhr.responseJSON.data.message) {
+                msg = xhr.responseJSON.data.message;
+            } else if (xhr.responseJSON.message) {
+                msg = xhr.responseJSON.message;
+            }
+        } else if (xhr && xhr.responseText) {
+            try {
+                var parsed = JSON.parse(xhr.responseText);
+                msg = (parsed.data && parsed.data.message) || parsed.message || parsed.error || msg;
+            } catch(e) {
+                msg = xhr.responseText.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 500) || msg;
+            }
+        }
+
+        if (xhr && xhr.status) {
+            msg = 'HTTP ' + xhr.status + ': ' + msg;
+        }
+        return msg;
+    }
+
     $(document).on('click', '.wnq-publish-now', function() {
         if (!confirm('Publish this post now?\n\nThe AI will generate the full post and push it live to the client site. This may take 30-60 seconds.')) return;
         var id       = $(this).data('id');
@@ -274,9 +297,7 @@ jQuery(function($) {
                 $btn.prop('disabled', false).text(origText);
             }
         }).fail(function(xhr) {
-            var msg = 'AJAX request failed.';
-            try { msg = JSON.parse(xhr.responseText).message || msg; } catch(e) {}
-            alert('❌ ' + msg + '\n\nCheck your browser console for details.');
+            alert('❌ ' + wnqAjaxErrorMessage(xhr, 'Publish request failed.') + '\n\nCheck your browser console for details.');
             $btn.prop('disabled', false).text(origText);
         });
     });
@@ -299,8 +320,8 @@ jQuery(function($) {
                 alert('❌ Content generation failed:\n\n' + ((resp.data && resp.data.message) ? resp.data.message : 'Unknown error'));
                 $btn.prop('disabled', false).text(origText);
             }
-        }).fail(function() {
-            alert('❌ AJAX request failed.');
+        }).fail(function(xhr) {
+            alert('❌ ' + wnqAjaxErrorMessage(xhr, 'Content generation request failed.') + '\n\nCheck your browser console for details.');
             $btn.prop('disabled', false).text(origText);
         });
     });
