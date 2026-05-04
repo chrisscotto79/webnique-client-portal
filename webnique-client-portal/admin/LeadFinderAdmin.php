@@ -83,7 +83,7 @@ final class LeadFinderAdmin
         if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
             wp_die('Access denied');
         }
-        $tab      = sanitize_key($_GET['tab'] ?? 'search');
+        $tab      = sanitize_key($_GET['tab'] ?? 'browser_scraper');
         $settings = get_option('wnq_lead_finder_settings', []);
         $backend_enabled = self::backendEnabled();
         $stats    = Lead::getStats();
@@ -164,7 +164,7 @@ final class LeadFinderAdmin
 
         <div class="wnq-lf-header">
             <h1>Lead Finder</h1>
-            <span class="wnq-lf-badge"><?php echo $backend_enabled ? 'Backend Active' : 'Legacy Fallback'; ?></span>
+            <span class="wnq-lf-badge"><?php echo $backend_enabled ? 'Backend Active' : 'Browser Mode'; ?></span>
         </div>
 
         <div class="wnq-lf-stats">
@@ -174,7 +174,7 @@ final class LeadFinderAdmin
         </div>
 
         <div class="wnq-lf-tabs">
-            <?php foreach (['search'=>'ZIP Sweep','backend_jobs'=>'Backend Jobs','manual'=>'Manual URLs','csv_import'=>'CSV Import','leads'=>'All Leads','settings'=>'Settings'] as $t=>$label): ?>
+            <?php foreach (['browser_scraper'=>'Browser Scraper','search'=>'ZIP Sweep','backend_jobs'=>'Backend Jobs','manual'=>'Manual URLs','csv_import'=>'CSV Import','leads'=>'All Leads','settings'=>'Settings'] as $t=>$label): ?>
                 <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-lead-finder&tab='.$t)); ?>" class="wnq-lf-tab <?php echo $tab===$t?'active':''; ?>"><?php echo esc_html($label); ?></a>
             <?php endforeach; ?>
         </div>
@@ -186,10 +186,188 @@ final class LeadFinderAdmin
             'settings'   => self::renderSettingsTab($settings),
             'manual'     => self::renderManualTab($settings),
             'csv_import' => self::renderCsvImportTab($settings),
+            'browser_scraper' => self::renderBrowserScraperTab($settings),
             default      => self::renderZipSweepTab($settings),
         };
         ?>
         </div>
+        <?php
+    }
+
+    // ── Tab: Browser Scraper ─────────────────────────────────────────────────
+
+    private static function renderBrowserScraperTab(array $settings): void
+    {
+        $nonce = wp_create_nonce('wnq_lead_manual');
+        $browser_script = <<<'JS'
+(async function(){
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const cell = value => String(value || '').replace(/\t/g, ' ').replace(/\r?\n/g, ' ').trim();
+  const feed = document.querySelector('[role="feed"]') || document.scrollingElement || document.body;
+  let lastCount = -1;
+  let stableRounds = 0;
+
+  for (let i = 0; i < 80; i++) {
+    const count = document.querySelectorAll('a[href*="/maps/place/"]').length;
+    stableRounds = count === lastCount ? stableRounds + 1 : 0;
+    lastCount = count;
+    feed.scrollBy(0, feed.scrollHeight || 3000);
+    await wait(900);
+    if (stableRounds >= 7) break;
+  }
+
+  const cards = Array.from(document.querySelectorAll('[role="feed"] [jsaction*="mouseover:pane"], [role="feed"] [role="article"], [jsaction*="mouseover:pane"], [role="article"]'));
+  const seen = new Set();
+  const rows = [];
+
+  for (const card of cards) {
+    const placeLink = card.querySelector('a[href*="/maps/place/"]');
+    const mapsUrl = placeLink ? placeLink.href : '';
+    const title = (card.querySelector('.fontHeadlineSmall')?.innerText || placeLink?.getAttribute('aria-label') || placeLink?.textContent || '').trim();
+    if (!title || !mapsUrl || seen.has(mapsUrl)) continue;
+    seen.add(mapsUrl);
+
+    const text = (card.textContent || '').replace(/\s+/g, ' ').trim();
+    const ratingLabel = card.querySelector('[role="img"][aria-label*="stars"], [aria-label*="stars"]')?.getAttribute('aria-label') || text;
+    const rating = (ratingLabel.match(/([0-5](?:\.\d)?)\s*stars?/i) || [])[1] || '';
+    const reviews = ((ratingLabel.match(/([\d,]+)\s*reviews?/i) || text.match(/\(([\d,]+)\)/)) || [])[1] || '';
+    const phone = (text.match(/(?:\+1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/) || [])[0] || '';
+    const website = Array.from(card.querySelectorAll('a[href]')).map(a => a.href).find(href => !href.includes('google.com/maps') && !href.includes('google.com/search') && !href.startsWith('tel:')) || '';
+    const parts = text.split('·').map(part => part.trim()).filter(Boolean);
+    const address = parts.find(part => /^\d{1,6}\s+/.test(part) && !/\d+\s*reviews?/i.test(part)) || '';
+    const industry = parts.find(part => part && part !== address && !part.includes('stars') && !part.includes('reviews') && !/^\(?\d{3}/.test(part)) || '';
+
+    rows.push([title, rating, reviews, phone, '', industry, address, website, mapsUrl]);
+  }
+
+  const headers = ['Title','Rating','Reviews','Phone','Email','Industry','Address','Website','Google Maps Link'];
+  const tsv = [headers, ...rows].map(row => row.map(cell).join('\t')).join('\n');
+  await navigator.clipboard.writeText(tsv).catch(() => {});
+  console.log(tsv);
+  alert('WebNique copied ' + rows.length + ' Google Maps rows. Paste them into the Browser Scraper tab.');
+})();
+JS;
+        ?>
+        <div class="wnq-card">
+            <h3>No-API Browser Scraper</h3>
+            <p style="color:#6b7280;font-size:13px;margin:0 0 16px">
+                This setup does not use a paid API or a Node backend. Google Maps is scraped in your browser, then WordPress imports the copied rows and enriches each website.
+            </p>
+            <div class="wnq-row2" style="max-width:720px">
+                <div class="wnq-field">
+                    <label>Keyword</label>
+                    <input type="text" id="bs-keyword" value="<?php echo esc_attr($settings['default_keyword'] ?? 'plumbing'); ?>" placeholder="plumbing">
+                </div>
+                <div class="wnq-field">
+                    <label>ZIP Code</label>
+                    <input type="text" id="bs-zip" value="32825" placeholder="32825">
+                </div>
+            </div>
+            <button type="button" class="wnq-btn wnq-btn-primary" onclick="wnqOpenMapsSearch()">Open Google Maps Search</button>
+        </div>
+
+        <div class="wnq-card">
+            <h3>Step 1: Copy Browser Scraper</h3>
+            <p style="color:#6b7280;font-size:13px;margin:0 0 12px">Open Google Maps, press F12, paste this into the Console, and press Enter. It scrolls the results and copies tab-separated rows.</p>
+            <textarea id="bs-script" readonly style="width:100%;height:220px;font-family:Menlo,Consolas,monospace;font-size:11px;line-height:1.45"><?php echo esc_textarea($browser_script); ?></textarea>
+            <button type="button" class="wnq-btn wnq-btn-secondary" style="margin-top:10px" onclick="wnqCopyBrowserScript()">Copy Browser Scraper</button>
+            <span id="bs-copy-result" style="margin-left:10px;color:#16a34a;font-size:12px"></span>
+        </div>
+
+        <div class="wnq-card">
+            <h3>Step 2: Paste Results</h3>
+            <p style="color:#6b7280;font-size:13px;margin:0 0 12px">Paste the copied Google Maps rows here. This uses the existing Bulk Google Maps importer, not the CSV import tab.</p>
+            <div class="wnq-field" style="margin-bottom:14px">
+                <label>Google Maps Rows</label>
+                <textarea id="bs-tsv" style="height:180px;font-family:Menlo,Consolas,monospace;font-size:12px" placeholder="Title	Rating	Reviews	Phone	Email	Industry	Address	Website	Google Maps Link"></textarea>
+            </div>
+            <div class="wnq-field" style="max-width:320px;margin-bottom:14px">
+                <label>Fallback Industry</label>
+                <input type="text" id="bs-industry" value="<?php echo esc_attr($settings['default_keyword'] ?? ''); ?>" placeholder="plumbing">
+            </div>
+            <button class="wnq-btn wnq-btn-primary" id="bs-import-btn" onclick="wnqBrowserImportStart()">Import Browser Leads</button>
+            <button class="wnq-btn wnq-btn-secondary" id="bs-stop-btn" onclick="wnqBrowserImportStop()" style="display:none">Stop</button>
+            <div id="bs-progress" style="display:none;margin-top:16px">
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:#374151;margin-bottom:4px">
+                    <span id="bs-label">Starting…</span><span id="bs-pct">0%</span>
+                </div>
+                <div class="wnq-progressbar-wrap"><div class="wnq-progressbar" id="bs-bar"></div></div>
+                <div class="wnq-live-stats" style="margin:8px 0">
+                    <span>Total: <b id="bs-found">0</b></span>
+                    <span>Saved: <b id="bs-saved" style="color:#16a34a">0</b></span>
+                    <span>Dupe: <b id="bs-dup">0</b></span>
+                    <span>No Site: <b id="bs-noweb">0</b></span>
+                    <span>Errors: <b id="bs-err" style="color:#dc2626">0</b></span>
+                </div>
+                <div id="bs-log" style="background:#0f172a;border-radius:6px;padding:10px 12px;font-family:monospace;font-size:11px;color:#94a3b8;max-height:220px;overflow-y:auto;line-height:1.7"></div>
+            </div>
+            <div id="bs-result" style="margin-top:12px"></div>
+        </div>
+        <script>
+        (function(){
+            let stopped=false;
+            const nonce=<?php echo wp_json_encode($nonce); ?>;
+            window.wnqOpenMapsSearch=function(){
+                const keyword=(document.getElementById('bs-keyword').value||'').trim()||'plumbing';
+                const zip=(document.getElementById('bs-zip').value||'').trim()||'32825';
+                window.open('https://www.google.com/maps/search/'+encodeURIComponent(keyword+' in '+zip)+'/','_blank','noopener');
+            };
+            window.wnqCopyBrowserScript=function(){
+                const box=document.getElementById('bs-script'),out=document.getElementById('bs-copy-result');
+                box.select();box.setSelectionRange(0,99999);
+                navigator.clipboard.writeText(box.value).then(()=>{out.textContent='Copied';setTimeout(()=>out.textContent='',1800);}).catch(()=>{document.execCommand('copy');out.textContent='Copied';});
+            };
+            window.wnqBrowserImportStop=function(){stopped=true;};
+            window.wnqBrowserImportStart=async function(){
+                stopped=false;
+                const tsv=document.getElementById('bs-tsv').value.trim();
+                const industry=document.getElementById('bs-industry').value.trim();
+                if(!tsv){alert('Paste browser scraper results first.');return;}
+                const start=document.getElementById('bs-import-btn'),stop=document.getElementById('bs-stop-btn');
+                start.disabled=true;stop.style.display='';
+                document.getElementById('bs-progress').style.display='';
+                document.getElementById('bs-result').innerHTML='';
+                document.getElementById('bs-log').innerHTML='';
+                ['bs-found','bs-saved','bs-dup','bs-noweb','bs-err'].forEach(id=>document.getElementById(id).textContent='0');
+                bsProg(0,1);bsLabel('Parsing rows…');
+                let qr;
+                try{
+                    const fd=new FormData();fd.append('action','wnq_bulk_maps_queue');fd.append('nonce',nonce);fd.append('tsv',tsv);fd.append('industry',industry);
+                    const r=await fetch(ajaxurl,{method:'POST',body:fd}),raw=await r.text();
+                    try{qr=JSON.parse(raw);}catch(_){bsErr('Server returned non-JSON: '+raw.replace(/<[^>]+>/g,'').trim().substring(0,140));return;}
+                }catch(e){bsErr('Network error: '+e.message);return;}
+                if(!qr.success){bsErr(qr.data?.message||'Could not queue rows.');return;}
+                const batch=qr.data.batch_id,total=qr.data.total||0;
+                document.getElementById('bs-found').textContent=total;
+                bsLog('Queued '+total+' row(s). Enriching websites…','#60a5fa');
+                let progress=0,lastStats=null;
+                while(progress<total&&!stopped){
+                    bsLabel('Processing '+progress+'/'+total+'…');
+                    let pr;
+                    try{
+                        const ctrl=new AbortController(),tid=setTimeout(()=>ctrl.abort(),75000);
+                        const fd=new FormData();fd.append('action','wnq_bulk_maps_process');fd.append('nonce',nonce);fd.append('batch_id',batch);
+                        const r=await fetch(ajaxurl,{method:'POST',body:fd,signal:ctrl.signal});clearTimeout(tid);
+                        const raw=await r.text();try{pr=JSON.parse(raw);}catch(_){bsLog('Server error on row '+(progress+1),'#f87171');progress++;bsProg(progress,total);continue;}
+                    }catch(e){bsLog('Timeout on row '+(progress+1),'#fb923c');progress++;bsProg(progress,total);continue;}
+                    if(!pr.success){bsLog(pr.data?.message||'Processing error','#f87171');progress++;bsProg(progress,total);continue;}
+                    const d=pr.data;progress=d.progress;lastStats=d.stats;
+                    const outcome=d.outcome||'?';const name=d.name||('Row '+progress);
+                    bsLog((outcome==='saved'?'✓ Saved: ':outcome==='duplicate'?'⟳ Dupe: ':outcome==='no_website'?'✗ No site: ':'— '+outcome+': ')+name,outcome==='saved'?'#4ade80':outcome==='duplicate'?'#94a3b8':'#fb923c');
+                    if(d.stats){document.getElementById('bs-saved').textContent=d.stats.saved||0;document.getElementById('bs-dup').textContent=d.stats.duplicate||0;document.getElementById('bs-noweb').textContent=d.stats.no_website||0;document.getElementById('bs-err').textContent=d.stats.error||0;}
+                    bsProg(progress,total);if(d.done)break;
+                }
+                start.disabled=false;stop.style.display='none';
+                const saved=lastStats?lastStats.saved:0;
+                bsLabel(stopped?'Stopped':'Complete');
+                document.getElementById('bs-result').innerHTML='<div class="wnq-result '+(stopped?'':'wnq-result-ok')+'" style="'+(stopped?'background:#fef9c3;border:1px solid #fde68a;color:#92400e;':'')+'"><strong>'+(stopped?'Stopped':'Done')+'</strong><p>'+saved+' lead'+(saved!==1?'s':'')+' saved. <a href="admin.php?page=wnq-lead-finder&tab=leads">View leads</a></p></div>';
+            };
+            function bsLog(msg,color){const el=document.getElementById('bs-log');const d=document.createElement('div');d.style.color=color||'#94a3b8';d.textContent=msg;el.appendChild(d);el.scrollTop=el.scrollHeight;}
+            function bsLabel(msg){document.getElementById('bs-label').textContent=msg;}
+            function bsProg(c,t){const p=t>0?Math.round(c/t*100):0;document.getElementById('bs-bar').style.width=p+'%';document.getElementById('bs-pct').textContent=p+'%';}
+            function bsErr(msg){document.getElementById('bs-result').innerHTML='<div class="wnq-result wnq-result-err"><strong>Error</strong><p>'+msg+'</p></div>';document.getElementById('bs-import-btn').disabled=false;document.getElementById('bs-stop-btn').style.display='none';}
+        })();
+        </script>
         <?php
     }
 
