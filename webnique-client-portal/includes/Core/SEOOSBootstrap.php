@@ -41,6 +41,7 @@ final class SEOOSBootstrap
 
         // Create blog tables if not yet created (schema migration for existing installs)
         self::maybeCreateBlogTables();
+        \WNQ\Models\ServiceCityPage::createTables();
 
         // Create lead finder table if not yet created
         \WNQ\Models\Lead::createTable();
@@ -67,11 +68,13 @@ final class SEOOSBootstrap
             'includes/Models/Task.php',
             'includes/Models/SEOHub.php',
             'includes/Models/BlogScheduler.php',
+            'includes/Models/ServiceCityPage.php',
             // Services
             'includes/Services/AIEngine.php',
             'includes/Services/AuditEngine.php',
             'includes/Services/ReportGenerator.php',
             'includes/Services/BlogPublisher.php',
+            'includes/Services/ServiceCityPageGenerator.php',
             'includes/Services/SEOHealthFixer.php',
             // Spider & Analysis Services
             'includes/Services/CrawlEngine.php',
@@ -117,10 +120,12 @@ final class SEOOSBootstrap
             'includes/Models/Task.php'                => 'WNQ\\Models\\Task',
             'includes/Models/SEOHub.php'              => 'WNQ\\Models\\SEOHub',
             'includes/Models/BlogScheduler.php'       => 'WNQ\\Models\\BlogScheduler',
+            'includes/Models/ServiceCityPage.php'     => 'WNQ\\Models\\ServiceCityPage',
             'includes/Services/AIEngine.php'          => 'WNQ\\Services\\AIEngine',
             'includes/Services/AuditEngine.php'       => 'WNQ\\Services\\AuditEngine',
             'includes/Services/ReportGenerator.php'   => 'WNQ\\Services\\ReportGenerator',
             'includes/Services/BlogPublisher.php'     => 'WNQ\\Services\\BlogPublisher',
+            'includes/Services/ServiceCityPageGenerator.php' => 'WNQ\\Services\\ServiceCityPageGenerator',
             'includes/Services/SEOHealthFixer.php'   => 'WNQ\\Services\\SEOHealthFixer',
             'includes/Controllers/SEOAgentController.php' => 'WNQ\\Controllers\\SEOAgentController',
             'includes/Core/CronScheduler.php'             => 'WNQ\\Core\\CronScheduler',
@@ -205,6 +210,11 @@ final class SEOOSBootstrap
 
         // Spider sitemap export
         add_action('admin_post_wnq_spider_sitemap',        [self::class, 'handleSpiderSitemap']);
+
+        // Service + City draft page workflow
+        add_action('admin_post_wnq_service_city_save_template', [self::class, 'handleServiceCitySaveTemplate']);
+        add_action('admin_post_wnq_service_city_import_csv',    [self::class, 'handleServiceCityImportCsv']);
+        add_action('admin_post_wnq_service_city_generate_page', [self::class, 'handleServiceCityGeneratePage']);
 
         // Blog Scheduler handlers
         add_action('admin_post_wnq_blog_add_post',         [self::class, 'handleBlogAddPost']);
@@ -706,6 +716,81 @@ final class SEOOSBootstrap
         exit;
     }
 
+    // ── Service + City Page Handlers ────────────────────────────────────────
+
+    public static function handleServiceCitySaveTemplate(): void
+    {
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        check_admin_referer('wnq_service_city_template_' . $client_id);
+        self::requireCap();
+
+        if ($client_id === '') {
+            wp_die('Missing client_id');
+        }
+
+        \WNQ\Models\ServiceCityPage::saveTemplate($client_id, stripslashes($_POST['elementor_template'] ?? ''));
+
+        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-content&client_id=' . urlencode($client_id) . '&notice=template_saved'));
+        exit;
+    }
+
+    public static function handleServiceCityImportCsv(): void
+    {
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        check_admin_referer('wnq_service_city_import_' . $client_id);
+        self::requireCap();
+
+        if ($client_id === '') {
+            wp_die('Missing client_id');
+        }
+
+        if (empty($_FILES['service_city_csv']['tmp_name']) || !empty($_FILES['service_city_csv']['error'])) {
+            wp_redirect(admin_url('admin.php?page=wnq-seo-hub-content&client_id=' . urlencode($client_id) . '&notice=import_error&message=' . urlencode('Upload a readable CSV file.')));
+            exit;
+        }
+
+        $agent_key_id = (int)($_POST['agent_key_id'] ?? 0);
+        $result = \WNQ\Models\ServiceCityPage::importCsvFile($client_id, $agent_key_id, $_FILES['service_city_csv']['tmp_name']);
+
+        $args = [
+            'page'      => 'wnq-seo-hub-content',
+            'client_id' => $client_id,
+            'notice'    => empty($result['errors']) ? 'csv_imported' : 'csv_imported_with_errors',
+            'imported'  => (int)$result['imported'],
+            'skipped'   => (int)$result['skipped'],
+        ];
+        if (!empty($result['errors'])) {
+            $args['message'] = implode(' ', array_slice($result['errors'], 0, 3));
+        }
+
+        wp_redirect(add_query_arg($args, admin_url('admin.php')));
+        exit;
+    }
+
+    public static function handleServiceCityGeneratePage(): void
+    {
+        $row_id = (int)($_POST['row_id'] ?? 0);
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        check_admin_referer('wnq_service_city_generate_' . $row_id);
+        self::requireCap();
+
+        $row = $row_id ? \WNQ\Models\ServiceCityPage::getRow($row_id) : null;
+        if (!$row || $row['client_id'] !== $client_id) {
+            wp_die('Invalid Service + City row');
+        }
+
+        $result = \WNQ\Services\ServiceCityPageGenerator::generateDraft($row_id);
+        $args = [
+            'page'      => 'wnq-seo-hub-content',
+            'client_id' => $client_id,
+            'notice'    => $result['success'] ? 'generated' : 'generate_error',
+            'message'   => $result['message'] ?? '',
+        ];
+
+        wp_redirect(add_query_arg($args, admin_url('admin.php')));
+        exit;
+    }
+
     // ── Schema Migration (creates blog tables for existing installs) ─────────
 
     private static function maybeCreateBlogTables(): void
@@ -756,6 +841,12 @@ final class SEOOSBootstrap
             require_once WNQ_PORTAL_PATH . 'includes/Models/BlogScheduler.php';
             if (class_exists('WNQ\\Models\\BlogScheduler')) {
                 \WNQ\Models\BlogScheduler::createTables();
+            }
+        }
+        if (file_exists(WNQ_PORTAL_PATH . 'includes/Models/ServiceCityPage.php')) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/ServiceCityPage.php';
+            if (class_exists('WNQ\\Models\\ServiceCityPage')) {
+                \WNQ\Models\ServiceCityPage::createTables();
             }
         }
 

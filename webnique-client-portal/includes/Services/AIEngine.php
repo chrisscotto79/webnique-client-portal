@@ -234,6 +234,60 @@ STRICT FORMAT — return EXACTLY using these delimiters, nothing before ===H1===
 ===END===
 PROMPT,
 
+        'service_city_page' => <<<'PROMPT'
+You are an expert local SEO copywriter writing a Service + City page for {business_name}. Create unique, useful page content for this exact page.
+
+Primary Keyword: {primary_keyword}
+Service: {service}
+Service Variations: {service_variations}
+City: {city}
+State: {state}
+County: {county}
+URL Slug: {slug}
+Page Title: {page_title}
+Title Tag: {title_tag}
+Meta Description: {meta_description}
+H1: {h1}
+CTA Title: {cta_title}
+CTA Text: {cta_text}
+Related Services: {related_services}
+Nearby Cities: {nearby_cities}
+Internal Links: {internal_links}
+Geo Modifiers: {geo_modifiers}
+Commercial Intent: {commercial_intent}
+Keyword Variants: {keyword_variants}
+Tone: {tone}
+
+Rules:
+- Write one localized service page, not a blog post.
+- The content must be specific to the service and city, with helpful details a real customer would care about.
+- Do not publish-sounding boilerplate, fake guarantees, fake reviews, fake stats, or generic filler.
+- Keep paragraphs short, 2-3 sentences max.
+- Use H2s and H3s only. Do not include an H1 because the template controls the H1.
+- Naturally include the Primary Keyword in the first 100 words and in at least one H2.
+- Naturally mention relevant service variations, nearby cities, county, and geo modifiers where they make sense.
+- Use the CTA Title and CTA Text once near the end.
+- If internal links are provided, mention the page topics naturally, but do not add raw URL lists.
+- Write 700-1,100 words.
+- Return valid HTML only inside the BODY delimiter. Do not use markdown.
+- Do not include schema scripts.
+
+Recommended structure:
+- Intro section that answers what the page is about immediately
+- Why customers in {city} need this service
+- What is included
+- Local process or approach
+- Related services / nearby areas
+- CTA
+- FAQ with 4-6 questions
+
+STRICT FORMAT - return exactly:
+
+===BODY===
+[HTML content using <section>, <h2>, <h3>, <p>, <ul>, and <li>. No <h1>.]
+===END===
+PROMPT,
+
         'blog_titles_batch' => <<<'PROMPT'
 You are an SEO content strategist specializing in local business content marketing. Generate simple, clear blog titles.
 

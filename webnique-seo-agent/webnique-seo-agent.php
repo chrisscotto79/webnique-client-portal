@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WebNique SEO Agent
  * Description: Lightweight data relay and execution endpoint for the WebNique SEO Operating System hub. Collects site data and syncs with web-nique.com.
- * Version: 1.1.3
+ * Version: 1.1.4
  * Author: WebNique
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WNQA_VERSION', '1.1.3');
+define('WNQA_VERSION', '1.1.4');
 define('WNQA_PATH', plugin_dir_path(__FILE__));
 define('WNQA_URL', plugin_dir_url(__FILE__));
 define('WNQA_SLUG', 'webnique-seo-agent');
@@ -22,6 +22,7 @@ require_once WNQA_PATH . 'includes/DataCollector.php';
 require_once WNQA_PATH . 'includes/APISync.php';
 require_once WNQA_PATH . 'includes/LocalChecks.php';
 require_once WNQA_PATH . 'includes/BlogReceiver.php';
+require_once WNQA_PATH . 'includes/ServiceCityReceiver.php';
 require_once WNQA_PATH . 'includes/SEOFixer.php';
 require_once WNQA_PATH . 'admin/AgentSettings.php';
 
@@ -75,6 +76,9 @@ add_action('plugins_loaded', function () {
 
     // Register blog receiver REST endpoint (hub → agent publishing)
     \WNQA\BlogReceiver::register();
+
+    // Register Service + City draft page receiver endpoint
+    \WNQA\ServiceCityReceiver::register();
 
     // Register SEO fixer REST endpoint (hub → agent auto-fix SEO meta)
     \WNQA\SEOFixer::register();
