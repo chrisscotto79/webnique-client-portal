@@ -216,6 +216,9 @@ final class SEOOSBootstrap
         // Blog Scheduler handlers
         add_action('admin_post_wnq_blog_add_post',         [self::class, 'handleBlogAddPost']);
         add_action('admin_post_wnq_blog_import_titles',    [self::class, 'handleBlogImportTitles']);
+        add_action('admin_post_wnq_blog_update_post',      [self::class, 'handleBlogUpdatePost']);
+        add_action('admin_post_wnq_blog_bulk_delete',      [self::class, 'handleBlogBulkDelete']);
+        add_action('admin_post_wnq_blog_delete_all',       [self::class, 'handleBlogDeleteAll']);
         add_action('admin_post_wnq_blog_delete_post',      [self::class, 'handleBlogDeletePost']);
         add_action('admin_post_wnq_blog_save_featured',    [self::class, 'handleBlogSaveFeaturedImage']);
         add_action('admin_post_wnq_blog_save_template',    [self::class, 'handleBlogSaveTemplate']);
@@ -513,6 +516,15 @@ final class SEOOSBootstrap
         }
 
         $titles = array_filter(array_map('trim', explode(',', $raw_titles)));
+        $start_date_raw = sanitize_text_field($_POST['scheduled_date'] ?? '');
+        $start_date = null;
+        if (!empty($start_date_raw)) {
+            $parsed_date = \DateTimeImmutable::createFromFormat('!Y-m-d', $start_date_raw);
+            if ($parsed_date && $parsed_date->format('Y-m-d') === $start_date_raw) {
+                $start_date = $parsed_date;
+            }
+        }
+
         $seen = [];
         $added = 0;
         foreach ($titles as $title) {
@@ -522,12 +534,15 @@ final class SEOOSBootstrap
                 continue;
             }
             $seen[$key] = true;
+            $scheduled_date = $start_date
+                ? $start_date->modify('+' . ($added * 2) . ' days')->format('Y-m-d')
+                : '';
             \WNQ\Models\BlogScheduler::addPost($client_id, [
                 'title'              => $title,
                 'category_type'      => 'Informational',
                 'focus_keyword'      => sanitize_text_field($_POST['focus_keyword'] ?? ''),
                 'featured_image_url' => '',
-                'scheduled_date'     => sanitize_text_field($_POST['scheduled_date'] ?? ''),
+                'scheduled_date'     => $scheduled_date,
                 'agent_key_id'       => (int)($_POST['agent_key_id'] ?? 0),
             ]);
             $added++;
@@ -551,6 +566,75 @@ final class SEOOSBootstrap
         }
 
         wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue&client_id=' . urlencode($client_id) . '&notice=featured_saved'));
+        exit;
+    }
+
+    public static function handleBlogUpdatePost(): void
+    {
+        $post_id   = (int)($_POST['post_id'] ?? 0);
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        check_admin_referer('wnq_blog_edit_' . $post_id);
+        self::requireCap();
+
+        $post = $post_id ? \WNQ\Models\BlogScheduler::getPost($post_id) : null;
+        if (!$post || $post['client_id'] !== $client_id) {
+            wp_die('Invalid post');
+        }
+
+        $new_title = sanitize_text_field($_POST['title'] ?? '');
+        if ($new_title === '') {
+            wp_die('Title is required');
+        }
+
+        $updates = [
+            'title'              => $new_title,
+            'category_type'      => 'Informational',
+            'focus_keyword'      => sanitize_text_field($_POST['focus_keyword'] ?? ''),
+            'featured_image_url' => esc_url_raw($_POST['featured_image_url'] ?? ''),
+            'scheduled_date'     => !empty($_POST['scheduled_date']) ? sanitize_text_field($_POST['scheduled_date']) : null,
+            'agent_key_id'       => !empty($_POST['agent_key_id']) ? (int)$_POST['agent_key_id'] : null,
+        ];
+
+        $content_changed = $new_title !== ($post['title'] ?? '')
+            || $updates['focus_keyword'] !== ($post['focus_keyword'] ?? '');
+        if ($content_changed && in_array($post['status'], ['pending', 'failed'], true)) {
+            $updates['generated_title'] = null;
+            $updates['generated_meta']  = null;
+            $updates['generated_body']  = null;
+            $updates['generated_toc']   = null;
+            $updates['status']          = 'pending';
+            $updates['error_message']   = null;
+        }
+
+        \WNQ\Models\BlogScheduler::updatePost($post_id, $updates);
+
+        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue&client_id=' . urlencode($client_id) . '&notice=updated'));
+        exit;
+    }
+
+    public static function handleBlogBulkDelete(): void
+    {
+        check_admin_referer('wnq_blog_bulk_delete');
+        self::requireCap();
+
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $ids_raw = sanitize_text_field($_POST['post_ids'] ?? '');
+        $ids = array_filter(array_map('intval', explode(',', $ids_raw)));
+        $deleted = \WNQ\Models\BlogScheduler::deletePosts($ids, $client_id);
+
+        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue&client_id=' . urlencode($client_id) . '&notice=bulk_deleted&deleted=' . $deleted));
+        exit;
+    }
+
+    public static function handleBlogDeleteAll(): void
+    {
+        check_admin_referer('wnq_blog_delete_all');
+        self::requireCap();
+
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $deleted = \WNQ\Models\BlogScheduler::deletePostsByClient($client_id);
+
+        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue&client_id=' . urlencode($client_id) . '&notice=bulk_deleted&deleted=' . $deleted));
         exit;
     }
 
