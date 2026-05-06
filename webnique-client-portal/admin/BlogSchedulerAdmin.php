@@ -130,7 +130,7 @@ final class BlogSchedulerAdmin
         echo '<input type="text" name="title" placeholder="Blog post title or working title..." required style="flex:2;">';
         echo '<input type="hidden" name="category_type" value="Informational">';
         echo '<input type="text" name="focus_keyword" placeholder="Focus keyword (optional)" style="min-width:200px;">';
-        echo '<input type="url" name="featured_image_url" placeholder="Featured image URL (optional)" style="min-width:240px;">';
+        echo '<input type="url" name="featured_image_url" placeholder="Featured image URL (blank = random media image)" style="min-width:260px;">';
         echo '<input type="date" name="scheduled_date" style="min-width:150px;">';
         if (!empty($agents)) {
             echo '<select name="agent_key_id" style="min-width:160px;">';
@@ -186,7 +186,7 @@ final class BlogSchedulerAdmin
                 echo '<input type="hidden" name="post_id" value="' . (int)$p['id'] . '">';
                 echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
                 wp_nonce_field('wnq_blog_featured_' . $p['id']);
-                echo '<input type="url" name="featured_image_url" value="' . esc_attr($p['featured_image_url'] ?? '') . '" placeholder="https://.../image.jpg">';
+                echo '<input type="url" name="featured_image_url" value="' . esc_attr($p['featured_image_url'] ?? '') . '" placeholder="Blank uses random media image">';
                 echo '<button type="submit" class="button button-small">Save</button>';
                 echo '</form>';
                 echo '</td>';
