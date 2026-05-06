@@ -71,7 +71,6 @@ final class SEOOSBootstrap
             'includes/Models/BlogScheduler.php',
             // Services
             'includes/Services/AIEngine.php',
-            'includes/Services/AutomationEngine.php',
             'includes/Services/AuditEngine.php',
             'includes/Services/ReportGenerator.php',
             'includes/Services/BlogPublisher.php',
@@ -121,7 +120,6 @@ final class SEOOSBootstrap
             'includes/Models/SEOHub.php'              => 'WNQ\\Models\\SEOHub',
             'includes/Models/BlogScheduler.php'       => 'WNQ\\Models\\BlogScheduler',
             'includes/Services/AIEngine.php'          => 'WNQ\\Services\\AIEngine',
-            'includes/Services/AutomationEngine.php'  => 'WNQ\\Services\\AutomationEngine',
             'includes/Services/AuditEngine.php'       => 'WNQ\\Services\\AuditEngine',
             'includes/Services/ReportGenerator.php'   => 'WNQ\\Services\\ReportGenerator',
             'includes/Services/BlogPublisher.php'     => 'WNQ\\Services\\BlogPublisher',
@@ -181,9 +179,6 @@ final class SEOOSBootstrap
 
         // Add keyword
         add_action('admin_post_wnq_add_seo_keyword', [self::class, 'handleAddKeyword']);
-
-        // Create AI job manually
-        add_action('admin_post_wnq_create_ai_job', [self::class, 'handleCreateAIJob']);
 
         // Generate/export report
         add_action('admin_post_wnq_export_report', [self::class, 'handleExportReport']);
@@ -325,40 +320,6 @@ final class SEOOSBootstrap
         ]);
 
         wp_redirect(admin_url('admin.php?page=wnq-seo-hub-keywords&client_id=' . urlencode($client_id) . '&added=1'));
-        exit;
-    }
-
-    public static function handleCreateAIJob(): void
-    {
-        check_admin_referer('wnq_create_ai_job');
-        self::requireCap();
-
-        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
-        $job_type  = sanitize_text_field($_POST['job_type'] ?? '');
-
-        if (empty($client_id) || empty($job_type)) {
-            wp_die('Missing required fields');
-        }
-
-        $client  = \WNQ\Models\Client::getByClientId($client_id) ?? [];
-        $profile = \WNQ\Models\SEOHub::getProfile($client_id) ?? [];
-
-        \WNQ\Models\SEOHub::createContentJob([
-            'client_id'      => $client_id,
-            'job_type'       => $job_type,
-            'target_keyword' => sanitize_text_field($_POST['target_keyword'] ?? ''),
-            'target_url'     => esc_url_raw($_POST['target_url'] ?? ''),
-            'prompt_key'     => $job_type,
-            'input_data'     => [
-                'business_name' => $client['company'] ?? $client['name'] ?? '',
-                'services'      => implode(', ', (array)($profile['primary_services'] ?? [])),
-                'location'      => implode(', ', (array)($profile['service_locations'] ?? [])),
-                'keyword'       => sanitize_text_field($_POST['target_keyword'] ?? ''),
-                'tone'          => $profile['content_tone'] ?? 'professional',
-            ],
-        ]);
-
-        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-content&client_id=' . urlencode($client_id) . '&created=1'));
         exit;
     }
 

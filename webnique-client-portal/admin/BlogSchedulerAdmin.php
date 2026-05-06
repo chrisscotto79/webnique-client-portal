@@ -903,7 +903,7 @@ jQuery(function($) {
             'wnq-seo-hub'          => 'Dashboard',
             'wnq-seo-hub-clients'  => 'Clients',
             'wnq-seo-hub-keywords' => 'Keywords',
-            'wnq-seo-hub-content'  => 'Content',
+            'wnq-seo-hub-content'  => 'Service City Pages',
             'wnq-seo-hub-audits'   => 'Audits',
             'wnq-seo-hub-reports'  => 'Reports',
             'wnq-seo-hub-blog'     => 'Blog Scheduler',
