@@ -156,7 +156,7 @@ final class BlogSchedulerAdmin
         echo '<textarea name="bulk_titles" rows="3" placeholder="Paste titles separated by commas, like: Roof Repair Tips, How Often To Clean Gutters, Best Time To Replace Windows" style="width:100%;max-width:100%;min-height:86px;"></textarea>';
         echo '<div class="wnq-blog-form-row" style="margin-top:10px;">';
         echo '<input type="text" name="focus_keyword" placeholder="Default focus keyword (optional)" style="min-width:220px;">';
-        echo '<input type="date" name="scheduled_date" style="min-width:150px;">';
+        echo '<input type="date" name="scheduled_date" title="Start date. Imported posts will schedule every 2 days." style="min-width:150px;">';
         if (!empty($agents)) {
             echo '<select name="agent_key_id" style="min-width:160px;">';
             echo '<option value="">— Any Connected Site —</option>';
@@ -168,7 +168,7 @@ final class BlogSchedulerAdmin
         }
         echo '<button type="submit" class="button button-primary">Import Titles</button>';
         echo '</div>';
-        echo '<p style="margin:8px 0 0;color:#6b7280;font-size:12px;">Each comma-separated title becomes one informational queued post. Blank image uses a random media image.</p>';
+        echo '<p style="margin:8px 0 0;color:#6b7280;font-size:12px;">Each comma-separated title becomes one informational queued post. The date you pick is the start date, then each next post schedules 2 days later. Blank image uses a random media image.</p>';
         echo '</form>';
         echo '</div>';
 

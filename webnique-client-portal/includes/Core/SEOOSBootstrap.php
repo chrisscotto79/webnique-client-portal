@@ -513,6 +513,15 @@ final class SEOOSBootstrap
         }
 
         $titles = array_filter(array_map('trim', explode(',', $raw_titles)));
+        $start_date_raw = sanitize_text_field($_POST['scheduled_date'] ?? '');
+        $start_date = null;
+        if (!empty($start_date_raw)) {
+            $parsed_date = \DateTimeImmutable::createFromFormat('!Y-m-d', $start_date_raw);
+            if ($parsed_date && $parsed_date->format('Y-m-d') === $start_date_raw) {
+                $start_date = $parsed_date;
+            }
+        }
+
         $seen = [];
         $added = 0;
         foreach ($titles as $title) {
@@ -522,12 +531,15 @@ final class SEOOSBootstrap
                 continue;
             }
             $seen[$key] = true;
+            $scheduled_date = $start_date
+                ? $start_date->modify('+' . ($added * 2) . ' days')->format('Y-m-d')
+                : '';
             \WNQ\Models\BlogScheduler::addPost($client_id, [
                 'title'              => $title,
                 'category_type'      => 'Informational',
                 'focus_keyword'      => sanitize_text_field($_POST['focus_keyword'] ?? ''),
                 'featured_image_url' => '',
-                'scheduled_date'     => sanitize_text_field($_POST['scheduled_date'] ?? ''),
+                'scheduled_date'     => $scheduled_date,
                 'agent_key_id'       => (int)($_POST['agent_key_id'] ?? 0),
             ]);
             $added++;
