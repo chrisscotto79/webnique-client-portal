@@ -1,6 +1,6 @@
 /**
  * WebNique SEO OS — Admin JavaScript
- * Handles AJAX calls, tabs, modals, and job viewing
+ * Handles AJAX calls, tabs, and SEO OS admin interactions.
  */
 
 (function ($) {
@@ -225,71 +225,6 @@
     });
   };
 
-  // ── View/Approve Job Modal ────────────────────────────────────────────────
-
-  window.wnqViewJob = function (jobId, btn) {
-    const $overlay = $('<div class="wnq-modal-overlay" id="wnq-job-modal">');
-    const $modal   = $('<div class="wnq-modal">');
-    const $header  = $('<div class="wnq-modal-header"><h3>AI Generated Content</h3><button id="wnq-close-modal" style="background:none;border:none;font-size:20px;cursor:pointer;">✕</button></div>');
-    const $body    = $('<div class="wnq-modal-body"><div style="text-align:center;padding:40px;color:#6b7280;">Loading content...</div></div>');
-    const $footer  = $('<div class="wnq-modal-footer"></div>');
-
-    $overlay.append($modal.append($header).append($body).append($footer));
-    $('body').append($overlay);
-
-    // Load job content
-    $.post(WNQ_SEOHUB.ajaxUrl, {
-      action:     'wnq_seohub_get_job',
-      job_id:     jobId,
-      nonce:      WNQ_SEOHUB.nonce
-    }).done(function (res) {
-      if (res.success) {
-        const job = res.data;
-        $body.html(
-          '<p style="margin-bottom:12px;"><strong>Type:</strong> ' + job.job_type + ' &nbsp;|&nbsp; <strong>Keyword:</strong> ' + (job.target_keyword || '—') + '</p>' +
-          '<div class="wnq-modal-content">' + wnqEscape(job.output_content) + '</div>'
-        );
-
-        const $copyBtn    = $('<button class="wnq-btn">📋 Copy to Clipboard</button>');
-        const $approveBtn = $('<button class="wnq-btn wnq-btn-primary">✅ Approve Content</button>');
-        const $rejectBtn  = $('<button class="wnq-btn wnq-btn-danger" style="margin-right:auto;">✗ Reject</button>');
-
-        $copyBtn.on('click', function () {
-          navigator.clipboard.writeText(job.output_content).then(() => {
-            $copyBtn.html('✓ Copied!');
-            setTimeout(() => $copyBtn.html('📋 Copy to Clipboard'), 2000);
-          });
-        });
-
-        $approveBtn.on('click', function () {
-          $.post(WNQ_SEOHUB.ajaxUrl, {
-            action: 'wnq_seohub_action', hub_action: 'approve_job',
-            entity_id: jobId, nonce: WNQ_SEOHUB.nonce
-          }).done(function (r) {
-            if (r.success) {
-              $overlay.remove();
-              $(btn).closest('tr').find('td:nth-child(3)').html('<span style="color:#16a34a;font-weight:600;">completed ✓ Approved</span>');
-              $(btn).closest('td').html('<span style="color:#16a34a;font-size:12px;">Approved</span>');
-            }
-          });
-        });
-
-        $footer.append($rejectBtn).append($copyBtn).append($approveBtn);
-      } else {
-        $body.html('<p style="color:#dc2626;">Failed to load content.</p>');
-      }
-    }).fail(() => $body.html('<p style="color:#dc2626;">Network error.</p>'));
-
-    // Close handlers
-    $overlay.on('click', '#wnq-close-modal', () => $overlay.remove());
-    $overlay.on('click', function (e) {
-      if ($(e.target).is($overlay)) $overlay.remove();
-    });
-    $(document).on('keydown.wnqmodal', function (e) {
-      if (e.key === 'Escape') { $overlay.remove(); $(document).off('keydown.wnqmodal'); }
-    });
-  };
-
   // ── Tab Switching ─────────────────────────────────────────────────────────
 
   $(document).on('click', '.wnq-tab', function (e) {
@@ -319,21 +254,6 @@
     }
     $hint.text(hints[provider] || '');
   });
-
-  // ── Utility ────────────────────────────────────────────────────────────────
-
-  function wnqEscape(str) {
-    const div = document.createElement('div');
-    div.appendChild(document.createTextNode(str || ''));
-    return div.innerHTML;
-  }
-
-  // ── AJAX: Get Single Job Content ──────────────────────────────────────────
-
-  if (typeof WNQ_SEOHUB !== 'undefined') {
-    // Register the get_job action handler response parser
-    // (actual wp_ajax handler added in PHP — this just triggers on modal open)
-  }
 
   // ── Init ──────────────────────────────────────────────────────────────────
 

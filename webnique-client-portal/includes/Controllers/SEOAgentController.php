@@ -8,8 +8,8 @@
  * Endpoints (base: /wp-json/wnq/v1/agent):
  *  POST /sync          - Receive full site data sync from client plugin
  *  POST /ping          - Heartbeat / plugin version check
- *  GET  /instructions  - Return pending automation instructions for the site
- *  POST /ack           - Client acknowledges execution of an instruction
+ *  GET  /instructions  - Reserved compatibility endpoint
+ *  POST /ack           - Reserved compatibility acknowledgement endpoint
  *
  * @package WebNique Portal
  */
@@ -183,35 +183,14 @@ final class SEOAgentController
     }
 
     /**
-     * GET /agent/instructions - Pending tasks for client plugin to execute
-     *
-     * Returns approved content jobs so client plugin can optionally auto-apply
-     * (meta tags, schema insertion). Client plugin must have auto-execute enabled.
+     * GET /agent/instructions - Reserved compatibility endpoint.
+     * Old automation instructions were retired with the Service + City workflow.
      */
     public static function handleInstructions(\WP_REST_Request $request): \WP_REST_Response
     {
-        $agent     = $request->get_param('__agent');
-        $client_id = $agent['client_id'];
-
-        // Only return approved meta_tags and schema jobs (safe to auto-apply)
-        $jobs = SEOHub::getContentJobs($client_id, ['status' => 'completed', 'limit' => 20]);
-
-        $instructions = [];
-        foreach ($jobs as $job) {
-            if (!$job['approved']) continue;
-            if (!in_array($job['job_type'], ['meta_tags', 'schema'])) continue;
-
-            $instructions[] = [
-                'id'         => $job['id'],
-                'type'       => $job['job_type'],
-                'target_url' => $job['target_url'],
-                'content'    => $job['output_content'],
-            ];
-        }
-
         return new \WP_REST_Response([
-            'instructions' => $instructions,
-            'count'        => count($instructions),
+            'instructions' => [],
+            'count'        => 0,
         ], 200);
     }
 

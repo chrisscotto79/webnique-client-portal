@@ -37,8 +37,6 @@ final class SEOOSBootstrap
             \WNQ\Admin\BlogSchedulerAdmin::register();
             \WNQ\Admin\SpiderAdmin::register();
             \WNQ\Admin\LeadFinderAdmin::register();
-            // Register get_job ajax handler
-            add_action('wp_ajax_wnq_seohub_get_job', [self::class, 'ajaxGetJob']);
         }
 
         // Create blog tables if not yet created (schema migration for existing installs)
@@ -221,33 +219,6 @@ final class SEOOSBootstrap
         add_action('wp_ajax_wnq_blog_add_batch',           [self::class, 'ajaxBlogAddBatch']);
     }
 
-    // ── AJAX: Get Job Content ───────────────────────────────────────────────
-
-    public static function ajaxGetJob(): void
-    {
-        check_ajax_referer('wnq_seohub_nonce', 'nonce');
-        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Access denied']);
-        }
-
-        $job_id = (int)($_POST['job_id'] ?? 0);
-        if (!$job_id) {
-            wp_send_json_error(['message' => 'Invalid job ID']);
-        }
-
-        global $wpdb;
-        $job = $wpdb->get_row(
-            $wpdb->prepare("SELECT * FROM {$wpdb->prefix}wnq_seo_content_jobs WHERE id=%d", $job_id),
-            ARRAY_A
-        );
-
-        if (!$job) {
-            wp_send_json_error(['message' => 'Job not found']);
-        }
-
-        wp_send_json_success($job);
-    }
-
     // ── Form Handlers ───────────────────────────────────────────────────────
 
     public static function handleSaveProfile(): void
@@ -278,7 +249,6 @@ final class SEOOSBootstrap
             'content_tone'      => sanitize_text_field($_POST['content_tone'] ?? 'professional'),
             'gsc_property'      => esc_url_raw($_POST['gsc_property'] ?? ''),
             'ga_property'       => sanitize_text_field($_POST['ga_property'] ?? ''),
-            'auto_approve'      => !empty($_POST['auto_approve']) ? 1 : 0,
         ]);
 
         // Also queue keyword imports from clusters if defined

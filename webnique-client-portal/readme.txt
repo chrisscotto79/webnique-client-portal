@@ -225,16 +225,16 @@ Changelog
 
 Complete AI-powered SEO OS integrated into hub:
 - 8 new database tables for SEO OS
-- SEO Hub admin menu (Dashboard, Clients, Keywords, Content Automation, Technical Audits, Reports, API Management, Settings)
+- SEO Hub admin menu (Dashboard, Clients, Keywords, Service City Pages, Technical Audits, Reports, API Management, AI Settings)
 - WebNique SEO Agent client plugin (separate installable)
 - Groq/OpenAI/Together AI modular engine with free tier support
 - Nightly audit system via WP-Cron (missing H1, thin content, schema, alt text, declining ranks)
 - Monthly report auto-generation with AI executive summaries
 - REST API for client plugin: /wp-json/wnq/v1/agent/*
 - Keyword tracking with cluster grouping and position history
-- Content gap analysis engine
-- AI content job queue with manual approval workflow
-- Automation activity log for full traceability
+- Service + City draft page workflow scaffold
+- Blog scheduler with Elementor draft/publish support
+- SEO activity log for full traceability
 
 2.0.0
 

@@ -304,14 +304,6 @@ final class SEOHubAdmin
           <input type="text" name="ga_property" value="<?php echo esc_attr($profile['ga_property'] ?? ''); ?>" placeholder="G-XXXXXXXXXX">
         </div>
 
-        <div class="wnq-hub-form-group">
-          <label>
-            <input type="checkbox" name="auto_approve" value="1" <?php checked(!empty($profile['auto_approve'])); ?>>
-            Auto-approve AI content (without manual review)
-          </label>
-          <p class="description">⚠️ Only enable if you trust the AI output. Recommended: OFF.</p>
-        </div>
-
       </div>
 
       <button type="submit" class="wnq-btn wnq-btn-primary wnq-btn-lg">💾 Save Client Profile</button>
@@ -334,9 +326,9 @@ final class SEOHubAdmin
       <button class="wnq-btn" onclick="wnqHubAjax('run_client_audit', '<?php echo esc_js($client_id); ?>')">
         🔍 Run Audit for This Client
       </button>
-      <button class="wnq-btn wnq-btn-primary" onclick="wnqHubAjax('run_client_automation', '<?php echo esc_js($client_id); ?>')">
-        ⚡ Run Automation for This Client
-      </button>
+      <a class="wnq-btn wnq-btn-primary" href="<?php echo admin_url('admin.php?page=wnq-seo-hub-content&client_id=' . urlencode($client_id)); ?>">
+        📍 Build Service + City Drafts
+      </a>
     </div>
   </div>
 
