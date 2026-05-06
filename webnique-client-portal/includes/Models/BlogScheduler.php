@@ -133,6 +133,39 @@ final class BlogScheduler
         $wpdb->delete($wpdb->prefix . 'wnq_blog_schedule', ['id' => $id]);
     }
 
+    public static function deletePosts(array $ids, string $client_id = ''): int
+    {
+        global $wpdb;
+        $ids = array_values(array_filter(array_map('intval', $ids)));
+        if (empty($ids)) {
+            return 0;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($ids), '%d'));
+        $params = $ids;
+        $where_client = '';
+        if ($client_id !== '') {
+            $where_client = ' AND client_id = %s';
+            $params[] = $client_id;
+        }
+
+        return (int)$wpdb->query(
+            $wpdb->prepare(
+                "DELETE FROM {$wpdb->prefix}wnq_blog_schedule WHERE id IN ($placeholders)$where_client",
+                $params
+            )
+        );
+    }
+
+    public static function deletePostsByClient(string $client_id): int
+    {
+        global $wpdb;
+        if ($client_id === '') {
+            return 0;
+        }
+        return (int)$wpdb->delete($wpdb->prefix . 'wnq_blog_schedule', ['client_id' => $client_id]);
+    }
+
     public static function getPost(int $id): ?array
     {
         global $wpdb;

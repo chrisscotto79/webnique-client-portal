@@ -90,6 +90,8 @@ final class BlogSchedulerAdmin
         $notice = sanitize_text_field($_GET['notice'] ?? '');
         if ($notice === 'added')    echo '<div class="wnq-notice success">✅ Post added to queue.</div>';
         if ($notice === 'bulk_added') echo '<div class="wnq-notice success">✅ ' . (int)($_GET['added'] ?? 0) . ' post(s) imported to queue.</div>';
+        if ($notice === 'updated')  echo '<div class="wnq-notice success">✅ Scheduled post updated.</div>';
+        if ($notice === 'bulk_deleted') echo '<div class="wnq-notice success">✅ ' . (int)($_GET['deleted'] ?? 0) . ' scheduled post(s) deleted.</div>';
         if ($notice === 'deleted')  echo '<div class="wnq-notice success">✅ Post removed from queue.</div>';
         if ($notice === 'failed')   echo '<div class="wnq-notice error">❌ Publish failed. Check error message.</div>';
         if ($notice === 'published') echo '<div class="wnq-notice success">✅ Publishing triggered. Check the post queue for status.</div>';
@@ -184,8 +186,27 @@ final class BlogSchedulerAdmin
                 $agent_map[(int)$a['id']] = $a['site_name'] ?: parse_url($a['site_url'] ?? '', PHP_URL_HOST) ?: $a['site_url'];
             }
 
+            echo '<div class="wnq-queue-tools" style="display:flex;gap:10px;align-items:center;justify-content:space-between;margin:0 0 12px;flex-wrap:wrap;">';
+            echo '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
+            echo '<button type="button" class="button button-small" id="wnq-select-all-posts">Select All</button>';
+            echo '<form method="post" action="' . admin_url('admin-post.php') . '" id="wnq-bulk-delete-form" style="display:inline;">';
+            echo '<input type="hidden" name="action" value="wnq_blog_bulk_delete">';
+            echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+            echo '<input type="hidden" name="post_ids" id="wnq-bulk-delete-ids" value="">';
+            wp_nonce_field('wnq_blog_bulk_delete');
+            echo '<button type="submit" class="button button-small" onclick="return window.wnqConfirmBulkDelete && window.wnqConfirmBulkDelete();">Delete Selected</button>';
+            echo '</form>';
+            echo '</div>';
+            echo '<form method="post" action="' . admin_url('admin-post.php') . '" style="display:inline;">';
+            echo '<input type="hidden" name="action" value="wnq_blog_delete_all">';
+            echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+            wp_nonce_field('wnq_blog_delete_all');
+            echo '<button type="submit" class="button button-small" style="border-color:#dc2626;color:#991b1b;" onclick="return confirm(\'Delete the entire scheduled post list for this client?\')">Delete Whole List</button>';
+            echo '</form>';
+            echo '</div>';
+
             echo '<table class="widefat striped wnq-blog-table">';
-            echo '<thead><tr><th>Title</th><th>Category</th><th>Keyword</th><th>Featured Image</th><th>Site</th><th>Scheduled</th><th>Status</th><th>Actions</th></tr></thead>';
+            echo '<thead><tr><th style="width:32px;"></th><th>Title</th><th>Category</th><th>Keyword</th><th>Featured Image</th><th>Site</th><th>Scheduled</th><th>Status</th><th>Actions</th></tr></thead>';
             echo '<tbody>';
             foreach ($posts as $p) {
                 $status_class = match($p['status']) {
@@ -196,6 +217,7 @@ final class BlogSchedulerAdmin
                     default      => 'status-pend',
                 };
                 echo '<tr>';
+                echo '<td><input type="checkbox" class="wnq-post-select" value="' . (int)$p['id'] . '"></td>';
                 echo '<td>';
                 echo esc_html($p['generated_title'] ?: $p['title']);
                 if (!empty($p['wp_post_url'])) {
@@ -222,6 +244,7 @@ final class BlogSchedulerAdmin
                 echo '<td>' . esc_html($p['scheduled_date'] ?? '—') . '</td>';
                 echo '<td><span class="wnq-status-badge ' . $status_class . '">' . esc_html($p['status']) . '</span></td>';
                 echo '<td>';
+                echo '<button type="button" class="button button-small wnq-edit-post" data-id="' . (int)$p['id'] . '">Edit</button> ';
                 if (!empty($p['generated_body'])) {
                     echo '<button class="button button-small wnq-view-content" data-id="' . (int)$p['id'] . '">View Content</button> ';
                 }
@@ -244,6 +267,29 @@ final class BlogSchedulerAdmin
                 echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
                 wp_nonce_field('wnq_blog_delete_' . $p['id']);
                 echo '<button type="submit" class="button button-small" onclick="return confirm(\'Delete this post?\')">🗑</button>';
+                echo '</form>';
+                echo '</td>';
+                echo '</tr>';
+                echo '<tr id="wnq-edit-row-' . (int)$p['id'] . '" class="wnq-edit-row" style="display:none;">';
+                echo '<td></td><td colspan="8">';
+                echo '<form method="post" action="' . admin_url('admin-post.php') . '" class="wnq-edit-post-form" style="display:grid;grid-template-columns:2fr 1fr 1.4fr 160px 180px auto;gap:8px;align-items:center;">';
+                echo '<input type="hidden" name="action" value="wnq_blog_update_post">';
+                echo '<input type="hidden" name="post_id" value="' . (int)$p['id'] . '">';
+                echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+                wp_nonce_field('wnq_blog_edit_' . $p['id']);
+                echo '<input type="text" name="title" value="' . esc_attr($p['title'] ?? '') . '" placeholder="Title" required>';
+                echo '<input type="text" name="focus_keyword" value="' . esc_attr($p['focus_keyword'] ?? '') . '" placeholder="Focus keyword">';
+                echo '<input type="url" name="featured_image_url" value="' . esc_attr($p['featured_image_url'] ?? '') . '" placeholder="Blank uses random media image">';
+                echo '<input type="date" name="scheduled_date" value="' . esc_attr($p['scheduled_date'] ?? '') . '">';
+                echo '<select name="agent_key_id">';
+                echo '<option value="">— Any Connected Site —</option>';
+                foreach ($agents as $a) {
+                    $selected = (int)($p['agent_key_id'] ?? 0) === (int)$a['id'] ? ' selected' : '';
+                    $label = $a['site_name'] ?: parse_url($a['site_url'] ?? '', PHP_URL_HOST) ?: $a['site_url'];
+                    echo '<option value="' . (int)$a['id'] . '"' . $selected . '>' . esc_html($label) . '</option>';
+                }
+                echo '</select>';
+                echo '<button type="submit" class="button button-primary button-small">Save</button>';
                 echo '</form>';
                 echo '</td>';
                 echo '</tr>';
@@ -278,6 +324,18 @@ final class BlogSchedulerAdmin
         ?>
 <script>
 jQuery(function($) {
+    window.wnqConfirmBulkDelete = function() {
+        var ids = $('.wnq-post-select:checked').map(function() {
+            return this.value;
+        }).get();
+        if (!ids.length) {
+            alert('Select at least one scheduled post first.');
+            return false;
+        }
+        $('#wnq-bulk-delete-ids').val(ids.join(','));
+        return confirm('Delete ' + ids.length + ' selected scheduled post(s)?');
+    };
+
     function wnqAjaxErrorMessage(xhr, fallback) {
         var msg = fallback || 'AJAX request failed.';
         if (xhr && xhr.responseJSON) {
@@ -300,6 +358,18 @@ jQuery(function($) {
         }
         return msg;
     }
+
+    $(document).on('click', '#wnq-select-all-posts', function() {
+        var $boxes = $('.wnq-post-select');
+        var shouldCheck = $boxes.filter(':checked').length !== $boxes.length;
+        $boxes.prop('checked', shouldCheck);
+        $(this).text(shouldCheck ? 'Clear Selection' : 'Select All');
+    });
+
+    $(document).on('click', '.wnq-edit-post', function() {
+        var id = $(this).data('id');
+        $('#wnq-edit-row-' + id).toggle();
+    });
 
     $(document).on('click', '.wnq-publish-now', function() {
         if (!confirm('Publish this post now?\n\nIf content is already generated, the saved article will be used. Otherwise AI will generate the article first. This may take 30-60 seconds.')) return;
