@@ -7,7 +7,6 @@
  *  wnq_seo_agent_keys     - API keys for client site plugins
  *  wnq_seo_site_data      - Page-level data synced from client plugins
  *  wnq_seo_keywords       - Keyword tracking clusters & rankings
- *  wnq_seo_content_jobs   - AI content generation queue
  *  wnq_seo_audit_findings - Nightly audit flags
  *  wnq_seo_reports        - Monthly performance reports
  *  wnq_seo_automation_log - Traceability log for all automation actions
@@ -43,7 +42,6 @@ final class SEOHub
             keyword_clusters   longtext DEFAULT NULL COMMENT 'JSON: {cluster_name: [kws]}',
             brand_notes        text DEFAULT NULL,
             content_tone       varchar(100) DEFAULT 'professional',
-            auto_approve       tinyint(1) DEFAULT 0,
             gsc_property       varchar(500) DEFAULT NULL,
             ga_property        varchar(255) DEFAULT NULL,
             last_gsc_sync      datetime DEFAULT NULL,
@@ -143,33 +141,6 @@ final class SEOHub
             KEY intent (intent)
         ) $c;");
 
-        // --- Content Jobs (AI generation queue) ---
-        dbDelta("CREATE TABLE IF NOT EXISTS {$wpdb->prefix}wnq_seo_content_jobs (
-            id              bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
-            client_id       varchar(100) NOT NULL,
-            job_type        varchar(50) NOT NULL COMMENT 'blog_outline|blog_draft|meta_tags|schema|internal_links|report_summary',
-            target_keyword  varchar(500) DEFAULT NULL,
-            target_url      varchar(1000) DEFAULT NULL,
-            prompt_key      varchar(100) DEFAULT NULL COMMENT 'references prompt template',
-            ai_provider     varchar(50) DEFAULT 'groq',
-            ai_model        varchar(100) DEFAULT NULL,
-            input_data      longtext DEFAULT NULL COMMENT 'JSON context passed to AI',
-            output_content  longtext DEFAULT NULL COMMENT 'AI-generated content',
-            tokens_used     int(11) DEFAULT 0,
-            status          varchar(20) DEFAULT 'pending' COMMENT 'pending|running|completed|failed|approved|rejected',
-            approved        tinyint(1) DEFAULT 0,
-            approved_by     varchar(100) DEFAULT NULL,
-            approved_at     datetime DEFAULT NULL,
-            error_message   text DEFAULT NULL,
-            created_at      datetime DEFAULT CURRENT_TIMESTAMP,
-            completed_at    datetime DEFAULT NULL,
-            PRIMARY KEY (id),
-            KEY client_id (client_id),
-            KEY job_type (job_type),
-            KEY status (status),
-            KEY created_at (created_at)
-        ) $c;");
-
         // --- Audit Findings ---
         dbDelta("CREATE TABLE IF NOT EXISTS {$wpdb->prefix}wnq_seo_audit_findings (
             id           bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -256,7 +227,7 @@ final class SEOHub
         $payload = ['client_id' => $client_id];
         $json_fields = ['primary_services', 'service_locations', 'keyword_clusters'];
         $string_fields = ['brand_notes', 'content_tone', 'gsc_property', 'ga_property'];
-        $int_fields = ['auto_approve'];
+        $int_fields = [];
 
         foreach ($json_fields as $f) {
             if (array_key_exists($f, $data)) {
@@ -559,81 +530,6 @@ final class SEOHub
             if ($is_gap) $gaps++;
         }
         return $gaps;
-    }
-
-    /* ═══════════════════════════════════════════
-     *  CONTENT JOB METHODS
-     * ═══════════════════════════════════════════ */
-
-    public static function createContentJob(array $data): int|false
-    {
-        global $wpdb;
-        $t = $wpdb->prefix . 'wnq_seo_content_jobs';
-
-        $payload = [
-            'client_id'      => sanitize_text_field($data['client_id']),
-            'job_type'       => sanitize_text_field($data['job_type']),
-            'target_keyword' => sanitize_text_field($data['target_keyword'] ?? ''),
-            'target_url'     => esc_url_raw($data['target_url'] ?? ''),
-            'prompt_key'     => sanitize_text_field($data['prompt_key'] ?? ''),
-            'ai_provider'    => sanitize_text_field($data['ai_provider'] ?? 'groq'),
-            'ai_model'       => sanitize_text_field($data['ai_model'] ?? ''),
-            'input_data'     => is_array($data['input_data'] ?? null) ? wp_json_encode($data['input_data']) : ($data['input_data'] ?? null),
-            'status'         => 'pending',
-        ];
-
-        $wpdb->insert($t, $payload);
-        return $wpdb->insert_id ?: false;
-    }
-
-    public static function updateContentJob(int $id, array $data): bool
-    {
-        global $wpdb;
-        $t = $wpdb->prefix . 'wnq_seo_content_jobs';
-        $payload = [];
-
-        if (isset($data['output_content'])) $payload['output_content'] = $data['output_content'];
-        if (isset($data['status']))         $payload['status'] = sanitize_text_field($data['status']);
-        if (isset($data['tokens_used']))    $payload['tokens_used'] = (int)$data['tokens_used'];
-        if (isset($data['ai_model']))       $payload['ai_model'] = sanitize_text_field($data['ai_model']);
-        if (isset($data['error_message']))  $payload['error_message'] = sanitize_textarea_field($data['error_message']);
-        if (isset($data['approved']))       $payload['approved'] = (int)$data['approved'];
-        if (isset($data['approved_by']))    $payload['approved_by'] = sanitize_text_field($data['approved_by']);
-
-        if (in_array($data['status'] ?? '', ['completed', 'failed'])) {
-            $payload['completed_at'] = current_time('mysql');
-        }
-        if (!empty($data['approved'])) {
-            $payload['approved_at'] = current_time('mysql');
-        }
-
-        return $wpdb->update($t, $payload, ['id' => $id]) !== false;
-    }
-
-    public static function getContentJobs(string $client_id, array $args = []): array
-    {
-        global $wpdb;
-        $t = $wpdb->prefix . 'wnq_seo_content_jobs';
-        $where = $wpdb->prepare("WHERE client_id=%s", $client_id);
-
-        if (!empty($args['status'])) {
-            $where .= $wpdb->prepare(" AND status=%s", $args['status']);
-        }
-        if (!empty($args['job_type'])) {
-            $where .= $wpdb->prepare(" AND job_type=%s", $args['job_type']);
-        }
-
-        $limit = isset($args['limit']) ? "LIMIT " . (int)$args['limit'] : "LIMIT 50";
-        return $wpdb->get_results("SELECT * FROM $t $where ORDER BY created_at DESC $limit", ARRAY_A) ?: [];
-    }
-
-    public static function getPendingJobs(int $limit = 10): array
-    {
-        global $wpdb;
-        return $wpdb->get_results(
-            $wpdb->prepare("SELECT * FROM {$wpdb->prefix}wnq_seo_content_jobs WHERE status='pending' ORDER BY created_at ASC LIMIT %d", $limit),
-            ARRAY_A
-        ) ?: [];
     }
 
     /* ═══════════════════════════════════════════

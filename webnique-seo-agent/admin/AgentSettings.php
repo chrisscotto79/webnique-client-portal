@@ -267,7 +267,7 @@ final class AgentSettings
     <ul style="list-style:disc;margin-left:20px;line-height:2;">
       <li>Collects SEO data from your WordPress content</li>
       <li>Sends it securely to your WebNique SEO OS hub</li>
-      <li>Receives and acknowledges automation instructions</li>
+      <li>Receives hub-triggered blog publishing and SEO fix requests</li>
       <li>Runs lightweight local checks (H1, alt text, thin content)</li>
     </ul>
     <p style="margin-top:8px;">All SEO analysis, AI content generation, keyword tracking, and reporting happens on your hub. This plugin does NOT slow down your site.</p>

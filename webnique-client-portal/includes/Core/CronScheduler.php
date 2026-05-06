@@ -4,8 +4,6 @@
  *
  * Registers and manages WP-Cron jobs for the SEO OS:
  *  - wnq_seo_nightly_audit    (daily at ~2am)
- *  - wnq_seo_nightly_automation (daily at ~3am)
- *  - wnq_seo_process_queue    (every 15 minutes)
  *  - wnq_seo_monthly_reports  (monthly, 1st of month)
  *
  * @package WebNique Portal
@@ -18,7 +16,6 @@ if (!defined('ABSPATH')) {
 }
 
 use WNQ\Services\AuditEngine;
-use WNQ\Services\AutomationEngine;
 use WNQ\Services\BacklinkVerifier;
 use WNQ\Services\BlogPublisher;
 use WNQ\Services\CrawlEngine;
@@ -33,8 +30,6 @@ final class CronScheduler
 
         // Hook cron actions to handlers
         add_action('wnq_seo_nightly_audit',       [self::class, 'runNightlyAudit']);
-        add_action('wnq_seo_nightly_automation',  [self::class, 'runNightlyAutomation']);
-        add_action('wnq_seo_process_queue',       [self::class, 'processContentQueue']);
         add_action('wnq_seo_monthly_reports',     [self::class, 'generateMonthlyReports']);
         add_action('wnq_blog_publisher',          [self::class, 'runBlogPublisher']);
         add_action('wnq_spider_auto_crawl',       [self::class, 'runSpiderCrawls']);
@@ -43,6 +38,7 @@ final class CronScheduler
 
         // Schedule jobs if not already scheduled
         self::scheduleJobs();
+        self::unscheduleDeprecatedAutomationJobs();
     }
 
     public static function addIntervals(array $schedules): array
@@ -68,17 +64,6 @@ final class CronScheduler
         if (!wp_next_scheduled('wnq_seo_nightly_audit')) {
             $next_2am = strtotime('tomorrow 2:00am');
             wp_schedule_event($next_2am, 'daily', 'wnq_seo_nightly_audit');
-        }
-
-        // Nightly automation at 3am
-        if (!wp_next_scheduled('wnq_seo_nightly_automation')) {
-            $next_3am = strtotime('tomorrow 3:00am');
-            wp_schedule_event($next_3am, 'daily', 'wnq_seo_nightly_automation');
-        }
-
-        // Queue processor every 15 min
-        if (!wp_next_scheduled('wnq_seo_process_queue')) {
-            wp_schedule_event(time() + 60, 'every_fifteen_minutes', 'wnq_seo_process_queue');
         }
 
         // Monthly reports on 1st of next month at 6am
@@ -116,24 +101,23 @@ final class CronScheduler
         }
     }
 
+    private static function unscheduleDeprecatedAutomationJobs(): void
+    {
+        foreach (['wnq_seo_nightly_automation', 'wnq_seo_process_queue'] as $hook) {
+            $timestamp = wp_next_scheduled($hook);
+            while ($timestamp) {
+                wp_unschedule_event($timestamp, $hook);
+                $timestamp = wp_next_scheduled($hook);
+            }
+        }
+    }
+
     // ── Cron Handlers ──────────────────────────────────────────────────────
 
     public static function runNightlyAudit(): void
     {
         if (!self::canRun()) return;
         AuditEngine::runNightlyAudit();
-    }
-
-    public static function runNightlyAutomation(): void
-    {
-        if (!self::canRun()) return;
-        AutomationEngine::runNightlyAutomation();
-    }
-
-    public static function processContentQueue(): void
-    {
-        if (!self::canRun()) return;
-        AutomationEngine::processContentQueue(5);
     }
 
     public static function generateMonthlyReports(): void
@@ -230,8 +214,6 @@ final class CronScheduler
     {
         $jobs = [
             'wnq_seo_nightly_audit'      => 'Nightly Audit (2am daily)',
-            'wnq_seo_nightly_automation' => 'Nightly Automation (3am daily)',
-            'wnq_seo_process_queue'      => 'AI Queue Processor (every 15 min)',
             'wnq_seo_monthly_reports'    => 'Monthly Report Generator',
             'wnq_blog_publisher'         => 'Blog Auto-Publisher (8am daily)',
             'wnq_spider_auto_crawl'      => 'Spider Auto-Crawl Scheduler (hourly check)',

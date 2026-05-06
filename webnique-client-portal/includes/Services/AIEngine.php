@@ -140,27 +140,6 @@ Write a 3-4 paragraph executive summary that:
 Tone: {tone}. Keep it client-friendly, not technical.
 PROMPT,
 
-        'content_gap_topics' => <<<'PROMPT'
-You are an SEO content strategist. Identify blog post topics to fill content gaps:
-
-Business: {business_name}
-Services: {services}
-Location: {location}
-Target Keyword Clusters with no content:
-{gap_keywords}
-
-Existing pages already covering:
-{existing_pages}
-
-Generate 5 specific blog post topics that:
-1. Target the gap keywords naturally
-2. Are relevant to the business services
-3. Have local relevance where appropriate
-4. Progress logically (not duplicating existing content)
-
-Return as a numbered list: Topic | Primary Keyword | Secondary Keywords | Content Type (blog/page/faq)
-PROMPT,
-
         'blog_post_full' => <<<'PROMPT'
 You are an expert local SEO copywriter writing on behalf of {business_name}. Create a unique, publish-ready blog post using this exact content brief.
 

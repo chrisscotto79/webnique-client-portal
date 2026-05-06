@@ -12,10 +12,8 @@ namespace WNQ\Admin;
 
 use WNQ\Models\SEOHub;
 use WNQ\Models\Client;
-use WNQ\Services\AutomationEngine;
 use WNQ\Services\AuditEngine;
 use WNQ\Services\AIEngine;
-use WNQ\Core\CronScheduler;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -48,7 +46,7 @@ final class SEOHubAdmin
             ['Dashboard',         'wnq-seo-hub',             [self::class, 'renderDashboard']],
             ['Clients',           'wnq-seo-hub-clients',     [self::class, 'renderClients']],
             ['Keywords',          'wnq-seo-hub-keywords',    [self::class, 'renderKeywords']],
-            ['Content Automation','wnq-seo-hub-content',     [self::class, 'renderContent']],
+            ['Service City Pages','wnq-seo-hub-content',     [self::class, 'renderContent']],
             ['Technical Audits',  'wnq-seo-hub-audits',      [self::class, 'renderAudits']],
             ['Reports',           'wnq-seo-hub-reports',     [self::class, 'renderReports']],
             ['Blog Scheduler',    'wnq-seo-hub-blog',        ['WNQ\\Admin\\BlogSchedulerAdmin', 'renderPage']],
@@ -92,8 +90,6 @@ final class SEOHubAdmin
         $total_clients = count($seo_clients);
         $total_pages   = array_sum(array_column(array_column($seo_clients, 'stats'), 'total_pages'));
         $total_critical = array_sum(array_column(array_column($seo_clients, 'audit'), 'critical'));
-        $queue_stats   = AutomationEngine::getStats();
-        $cron_status   = CronScheduler::getCronStatus();
 
         self::renderHeader('SEO Operating System — Dashboard');
         ?>
@@ -112,14 +108,6 @@ final class SEOHubAdmin
       <span class="value"><?php echo $total_critical; ?></span>
       <span class="label">Critical Issues Open</span>
     </div>
-    <div class="wnq-hub-stat">
-      <span class="value"><?php echo $queue_stats['pending']; ?></span>
-      <span class="label">AI Jobs Pending</span>
-    </div>
-    <div class="wnq-hub-stat success">
-      <span class="value"><?php echo $queue_stats['awaiting_approval']; ?></span>
-      <span class="label">Awaiting Your Approval</span>
-    </div>
   </div>
 
   <!-- Quick Actions -->
@@ -132,12 +120,9 @@ final class SEOHubAdmin
       <button class="wnq-btn wnq-btn-primary" onclick="wnqHubAjax('run_nightly_audit')">
         🔍 Run Nightly Audit Now
       </button>
-      <button class="wnq-btn wnq-btn-primary" onclick="wnqHubAjax('run_automation')">
-        ⚡ Run Automation Now
-      </button>
-      <button class="wnq-btn wnq-btn-primary" onclick="wnqHubAjax('process_queue')">
-        🤖 Process AI Queue (5 jobs)
-      </button>
+      <a href="<?php echo admin_url('admin.php?page=wnq-seo-hub-content'); ?>" class="wnq-btn wnq-btn-primary">
+        📍 Build Service + City Drafts
+      </a>
       <a href="<?php echo admin_url('admin.php?page=wnq-seo-hub-reports'); ?>" class="wnq-btn">
         📊 Generate Monthly Reports
       </a>
@@ -191,24 +176,6 @@ final class SEOHubAdmin
     </div>
     <?php endif; ?>
   </div>
-
-  <!-- Cron Status -->
-  <div class="wnq-hub-section">
-    <h2>Automation Scheduler Status</h2>
-    <table class="wnq-hub-table">
-      <thead><tr><th>Job</th><th>Status</th><th>Next Run</th></tr></thead>
-      <tbody>
-        <?php foreach ($cron_status as $hook => $info): ?>
-        <tr>
-          <td><?php echo esc_html($info['label']); ?></td>
-          <td><?php echo $info['scheduled'] ? '<span class="wnq-badge-green">Scheduled</span>' : '<span class="wnq-badge-red">Not Scheduled</span>'; ?></td>
-          <td><?php echo esc_html($info['next_human']); ?></td>
-        </tr>
-        <?php endforeach; ?>
-      </tbody>
-    </table>
-  </div>
-
 </div>
         <?php
         self::renderFooter();
@@ -337,14 +304,6 @@ final class SEOHubAdmin
           <input type="text" name="ga_property" value="<?php echo esc_attr($profile['ga_property'] ?? ''); ?>" placeholder="G-XXXXXXXXXX">
         </div>
 
-        <div class="wnq-hub-form-group">
-          <label>
-            <input type="checkbox" name="auto_approve" value="1" <?php checked(!empty($profile['auto_approve'])); ?>>
-            Auto-approve AI content (without manual review)
-          </label>
-          <p class="description">⚠️ Only enable if you trust the AI output. Recommended: OFF.</p>
-        </div>
-
       </div>
 
       <button type="submit" class="wnq-btn wnq-btn-primary wnq-btn-lg">💾 Save Client Profile</button>
@@ -367,9 +326,9 @@ final class SEOHubAdmin
       <button class="wnq-btn" onclick="wnqHubAjax('run_client_audit', '<?php echo esc_js($client_id); ?>')">
         🔍 Run Audit for This Client
       </button>
-      <button class="wnq-btn wnq-btn-primary" onclick="wnqHubAjax('run_client_automation', '<?php echo esc_js($client_id); ?>')">
-        ⚡ Run Automation for This Client
-      </button>
+      <a class="wnq-btn wnq-btn-primary" href="<?php echo admin_url('admin.php?page=wnq-seo-hub-content&client_id=' . urlencode($client_id)); ?>">
+        📍 Build Service + City Drafts
+      </a>
     </div>
   </div>
 
@@ -490,7 +449,7 @@ final class SEOHubAdmin
         self::renderFooter();
     }
 
-    // ── Content Automation ─────────────────────────────────────────────────
+    // ── Service + City Pages ───────────────────────────────────────────────
 
     public static function renderContent(): void
     {
@@ -498,7 +457,7 @@ final class SEOHubAdmin
         $client_id = sanitize_text_field($_GET['client_id'] ?? '');
         $clients   = Client::getAll();
 
-        self::renderHeader('SEO OS — Content Automation');
+        self::renderHeader('SEO OS — Service + City Pages');
 
         echo '<div class="wnq-hub-section">';
         echo '<div class="wnq-client-selector">';
@@ -508,69 +467,51 @@ final class SEOHubAdmin
             echo '<option value="' . esc_attr($c['client_id']) . '" ' . $selected . '>' . esc_html($c['company'] ?: $c['name']) . '</option>';
         }
         echo '</select>';
-        if ($client_id) {
-            echo ' &nbsp;<button class="wnq-btn wnq-btn-primary" onclick="wnqHubAjax(\'analyze_content_gaps\', \'' . esc_js($client_id) . '\')">⚡ Analyze Gaps & Queue Jobs</button>';
-        }
         echo '</div>';
 
         if ($client_id) {
-            $stats   = AutomationEngine::getStats($client_id);
-            $jobs    = SEOHub::getContentJobs($client_id, ['limit' => 50]);
-            $profile = SEOHub::getProfile($client_id) ?? [];
+            $required_columns = [
+                'primary_keyword', 'service', 'service_variations', 'city', 'state', 'county', 'slug',
+                'page_title', 'title_tag', 'meta_description', 'h1', 'cta_title', 'cta_text',
+                'related_services', 'navigation_menu_related_services', 'nearby_cities',
+                'nav_menu_nearby_areas', 'internal_links', 'geo_modifiers', 'commercial_intent',
+                'page_type', 'parent_service_slug', 'keyword_variants',
+            ];
 
-            // Stats
-            echo '<div class="wnq-hub-stats-bar">';
-            foreach ([
-                'pending' => 'Pending', 'running' => 'Running', 'completed' => 'Completed',
-                'awaiting_approval' => 'Needs Approval', 'approved' => 'Approved', 'failed' => 'Failed'
-            ] as $k => $label) {
-                $class = $k === 'awaiting_approval' ? 'success' : '';
-                echo '<div class="wnq-hub-stat ' . $class . '"><span class="value">' . $stats[$k] . '</span><span class="label">' . $label . '</span></div>';
-            }
+            echo '<div class="wnq-hub-info" style="margin:18px 0;padding:16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;color:#1e3a5f;">';
+            echo '<strong>New workflow:</strong> upload a CSV of Service + City pages, paste the Elementor HTML/template structure, and WebNique will generate each page as an Elementor <strong>draft</strong>. Nothing is published automatically.';
             echo '</div>';
 
-            // Manual job creation
-            echo '<details style="margin-bottom:20px;"><summary class="wnq-btn">+ Create AI Job Manually</summary>';
-            echo '<form method="post" action="' . admin_url('admin-post.php') . '" style="padding:16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;margin-top:8px;">';
-            wp_nonce_field('wnq_create_ai_job');
-            echo '<input type="hidden" name="action" value="wnq_create_ai_job">';
-            echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
-            echo '<div class="wnq-hub-form-grid" style="grid-template-columns: repeat(3, 1fr);">';
-            echo '<div class="wnq-hub-form-group"><label>Job Type</label><select name="job_type">';
-            foreach (['blog_outline' => 'Blog Outline', 'blog_draft' => 'Blog Draft', 'meta_tags' => 'Meta Tags', 'schema' => 'Schema JSON-LD', 'internal_links' => 'Internal Links', 'content_gap_topics' => 'Content Gap Topics'] as $v => $l) {
-                echo '<option value="' . $v . '">' . $l . '</option>';
-            }
-            echo '</select></div>';
-            echo '<div class="wnq-hub-form-group"><label>Target Keyword</label><input type="text" name="target_keyword" placeholder="e.g. plumber brooklyn ny"></div>';
-            echo '<div class="wnq-hub-form-group"><label>Target URL (optional)</label><input type="url" name="target_url"></div>';
+            echo '<div class="wnq-hub-form-grid" style="grid-template-columns:1fr 1fr;align-items:start;">';
+            echo '<div class="wnq-hub-card" style="padding:18px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;">';
+            echo '<h3 style="margin-top:0;">CSV Import</h3>';
+            echo '<p style="color:#6b7280;">Required columns:</p>';
+            echo '<textarea readonly rows="8" style="width:100%;font-family:monospace;font-size:12px;">' . esc_textarea(implode(',', $required_columns)) . '</textarea>';
+            echo '<p style="color:#6b7280;margin-bottom:0;">Next step: I will wire this to upload/parse the CSV, validate missing columns, and show a preview before generation.</p>';
             echo '</div>';
-            echo '<button type="submit" class="wnq-btn wnq-btn-primary">Create Job</button>';
-            echo '</form></details>';
 
-            // Jobs table
-            echo '<div class="wnq-hub-table-wrap"><table class="wnq-hub-table">';
-            echo '<thead><tr><th>Type</th><th>Keyword</th><th>Status</th><th>Created</th><th>Output</th><th>Actions</th></tr></thead><tbody>';
-            foreach ($jobs as $job) {
-                $has_output = !empty($job['output_content']);
-                echo '<tr>';
-                echo '<td><strong>' . esc_html(str_replace('_', ' ', $job['job_type'])) . '</strong></td>';
-                echo '<td>' . esc_html($job['target_keyword'] ?: '—') . '</td>';
-                $status_colors = ['pending' => '#6b7280', 'running' => '#d97706', 'completed' => '#16a34a', 'failed' => '#dc2626', 'approved' => '#0d539e'];
-                $sc = $status_colors[$job['status']] ?? '#6b7280';
-                echo '<td><span style="color:' . $sc . ';font-weight:600;">' . esc_html($job['status']) . '</span>' . ($job['approved'] ? ' ✓' : '') . '</td>';
-                echo '<td>' . esc_html(substr($job['created_at'], 0, 10)) . '</td>';
-                echo '<td>' . ($has_output ? '<span style="color:#16a34a">✓ Ready</span>' : '—') . '</td>';
-                echo '<td>';
-                if ($has_output && !$job['approved']) {
-                    echo '<button class="wnq-btn wnq-btn-sm" onclick="wnqViewJob(' . $job['id'] . ', this)">View & Approve</button> ';
-                }
-                if ($job['status'] === 'pending') {
-                    echo '<button class="wnq-btn wnq-btn-sm wnq-btn-primary" onclick="wnqHubAjax(\'run_single_job\', \'' . esc_js($client_id) . '\', ' . $job['id'] . ')">Run Now</button> ';
-                }
-                echo '</td>';
-                echo '</tr>';
-            }
-            echo '</tbody></table></div>';
+            echo '<div class="wnq-hub-card" style="padding:18px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;">';
+            echo '<h3 style="margin-top:0;">Elementor Draft Output</h3>';
+            echo '<ul style="margin-left:18px;color:#374151;">';
+            echo '<li>Creates WordPress pages as <strong>draft</strong> only</li>';
+            echo '<li>Uses the provided slug, title tag, meta description, H1, CTA, service, city, and internal-link fields</li>';
+            echo '<li>Replaces content inside your provided HTML/Elementor structure</li>';
+            echo '<li>Never publishes automatically; you manually review and publish</li>';
+            echo '</ul>';
+            echo '</div>';
+            echo '</div>';
+
+            echo '<div class="wnq-hub-section" style="margin-top:22px;">';
+            echo '<h3>Questions before I wire generation</h3>';
+            echo '<ol style="margin-left:20px;color:#374151;line-height:1.7;">';
+            echo '<li>Will you paste the Elementor template JSON/HTML into this tool, or should it use a saved global template like the blog scheduler?</li>';
+            echo '<li>Should each Service + City page be a normal WordPress <code>page</code>, or a child page under the parent service page?</li>';
+            echo '<li>For AI generation, do you want one page at a time for review, or bulk generate all CSV rows into drafts?</li>';
+            echo '<li>Should the tool skip rows when the slug already exists, or update the existing draft?</li>';
+            echo '</ol>';
+            echo '</div>';
+        } else {
+            echo '<p style="color:#6b7280;margin-top:18px;">Select a client to prepare Service + City draft page generation.</p>';
         }
 
         echo '</div>';
@@ -1015,9 +956,8 @@ final class SEOHubAdmin
     {
         self::checkCap();
         $ai_settings = AIEngine::getSettings();
-        $cron_status = CronScheduler::getCronStatus();
 
-        self::renderHeader('SEO OS — AI & Automation Settings');
+        self::renderHeader('SEO OS — AI Settings');
 
         // Notices
         if (!empty($_GET['saved'])) {
@@ -1179,20 +1119,6 @@ final class SEOHubAdmin
 
         echo '</div>';
 
-        // Cron Status
-        echo '<div class="wnq-hub-section">';
-        echo '<h2>Automation Scheduler</h2>';
-        echo '<table class="wnq-hub-table"><thead><tr><th>Job</th><th>Scheduled?</th><th>Next Run</th></tr></thead><tbody>';
-        foreach ($cron_status as $hook => $info) {
-            echo '<tr>';
-            echo '<td>' . esc_html($info['label']) . '</td>';
-            echo '<td>' . ($info['scheduled'] ? '<span class="wnq-badge-green">Yes</span>' : '<span class="wnq-badge-red">No</span>') . '</td>';
-            echo '<td>' . esc_html($info['next_human']) . '</td>';
-            echo '</tr>';
-        }
-        echo '</tbody></table>';
-        echo '</div>';
-
         self::renderFooter();
     }
 
@@ -1217,51 +1143,6 @@ final class SEOHubAdmin
                 if (!$client_id) wp_send_json_error(['message' => 'No client selected']);
                 $result = AuditEngine::auditClient($client_id);
                 wp_send_json_success(['message' => "Audit complete. {$result['total']} findings.", 'data' => $result]);
-                break;
-
-            case 'run_automation':
-                $result = AutomationEngine::runNightlyAutomation();
-                wp_send_json_success(['message' => "Automation complete. Processed: {$result['clients_processed']} clients, {$result['total_jobs']} jobs queued.", 'data' => $result]);
-                break;
-
-            case 'run_client_automation':
-                if (!$client_id) wp_send_json_error(['message' => 'No client selected']);
-                $result = AutomationEngine::runClientAutomation($client_id);
-                wp_send_json_success(['message' => "Done. Content gaps: {$result['content_gaps']['gaps_found']}, Jobs created: {$result['content_gaps']['jobs_created']}", 'data' => $result]);
-                break;
-
-            case 'analyze_content_gaps':
-                if (!$client_id) wp_send_json_error(['message' => 'No client selected']);
-                $result = AutomationEngine::analyzeContentGaps($client_id);
-                wp_send_json_success(['message' => "Gaps found: {$result['gaps_found']}, Jobs queued: {$result['jobs_created']}", 'data' => $result]);
-                break;
-
-            case 'process_queue':
-                $result = AutomationEngine::processContentQueue(5);
-                wp_send_json_success(['message' => "Processed: {$result['processed']}, Succeeded: {$result['succeeded']}, Failed: {$result['failed']}", 'data' => $result]);
-                break;
-
-            case 'run_single_job':
-                if (!$entity_id) wp_send_json_error(['message' => 'No job ID']);
-                global $wpdb;
-                $job = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}wnq_seo_content_jobs WHERE id=%d", $entity_id), ARRAY_A);
-                if (!$job) wp_send_json_error(['message' => 'Job not found']);
-                SEOHub::updateContentJob($entity_id, ['status' => 'running']);
-                $result = AutomationEngine::executeContentJob($job);
-                if ($result['success']) {
-                    SEOHub::updateContentJob($entity_id, ['status' => 'completed', 'output_content' => $result['content'], 'tokens_used' => $result['tokens_used'] ?? 0]);
-                    wp_send_json_success(['message' => 'Job completed successfully', 'content' => $result['content']]);
-                } else {
-                    SEOHub::updateContentJob($entity_id, ['status' => 'failed', 'error_message' => $result['error']]);
-                    wp_send_json_error(['message' => $result['error']]);
-                }
-                break;
-
-            case 'approve_job':
-                if (!$entity_id) wp_send_json_error(['message' => 'No job ID']);
-                $user = wp_get_current_user();
-                SEOHub::updateContentJob($entity_id, ['approved' => 1, 'approved_by' => $user->user_login, 'status' => 'completed']);
-                wp_send_json_success(['message' => 'Content approved']);
                 break;
 
             case 'resolve_finding':
@@ -1465,7 +1346,7 @@ final class SEOHubAdmin
             'wnq-seo-hub'          => 'Dashboard',
             'wnq-seo-hub-clients'  => 'Clients',
             'wnq-seo-hub-keywords' => 'Keywords',
-            'wnq-seo-hub-content'  => 'Content',
+            'wnq-seo-hub-content'  => 'Service City Pages',
             'wnq-seo-hub-audits'   => 'Audits',
             'wnq-seo-hub-reports'  => 'Reports',
             'wnq-seo-hub-blog'     => 'Blog Scheduler',

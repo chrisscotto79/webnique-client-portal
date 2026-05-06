@@ -47,7 +47,7 @@ final class ReportGenerator
             'keywords'       => self::getKeywordSummary($client_id),
             'site_health'    => self::getSiteHealthSummary($client_id),
             'audit_findings' => self::getAuditFindingsSummary($client_id, $period_start, $period_end),
-            'content_jobs'   => self::getContentJobsSummary($client_id, $period_start, $period_end),
+            'blog_posts'     => self::getBlogPublishingSummary($client_id, $period_start, $period_end),
             'automation_log' => self::getAutomationLogSummary($client_id, $period_start, $period_end),
             'recommendations'=> self::generateRecommendations($client_id),
             'period'         => ['start' => $period_start, 'end' => $period_end, 'label' => date('F Y', strtotime($period_start))],
@@ -111,7 +111,7 @@ final class ReportGenerator
         $kws     = $data['keywords'] ?? [];
         $health  = $data['site_health'] ?? [];
         $audit   = $data['audit_findings'] ?? [];
-        $content = $data['content_jobs'] ?? [];
+        $blog_posts = $data['blog_posts'] ?? [];
         $recs    = $data['recommendations'] ?? [];
 
         ob_start();
@@ -283,26 +283,26 @@ final class ReportGenerator
   </div>
   <?php endif; ?>
 
-  <!-- Content & Automation -->
-  <?php if (!empty($content)): ?>
+  <!-- Blog Scheduler -->
+  <?php if (!empty($blog_posts)): ?>
   <div class="section">
-    <h2>Content & Automation Activity</h2>
+    <h2>Blog Scheduler Activity</h2>
     <div class="metric-grid" style="grid-template-columns: repeat(4, 1fr);">
       <div class="metric-card">
-        <div class="value"><?php echo (int)($content['total_jobs'] ?? 0); ?></div>
-        <div class="label">AI Jobs Run</div>
+        <div class="value"><?php echo (int)($blog_posts['published'] ?? 0); ?></div>
+        <div class="label">Published Blogs</div>
       </div>
       <div class="metric-card success">
-        <div class="value"><?php echo (int)($content['approved'] ?? 0); ?></div>
-        <div class="label">Content Approved</div>
+        <div class="value"><?php echo (int)($blog_posts['scheduled'] ?? 0); ?></div>
+        <div class="label">Scheduled Posts</div>
       </div>
       <div class="metric-card">
-        <div class="value"><?php echo (int)($content['blog_outlines'] ?? 0); ?></div>
-        <div class="label">Blog Outlines</div>
+        <div class="value"><?php echo (int)($blog_posts['pending'] ?? 0); ?></div>
+        <div class="label">Pending Drafts</div>
       </div>
       <div class="metric-card">
-        <div class="value"><?php echo (int)($content['meta_jobs'] ?? 0); ?></div>
-        <div class="label">Meta Tags</div>
+        <div class="value"><?php echo (int)($blog_posts['failed'] ?? 0); ?></div>
+        <div class="label">Failed Posts</div>
       </div>
     </div>
   </div>
@@ -394,25 +394,35 @@ final class ReportGenerator
         return array_merge($severity, ['resolved_this_period' => $resolved]);
     }
 
-    private static function getContentJobsSummary(string $client_id, string $start, string $end): array
+    private static function getBlogPublishingSummary(string $client_id, string $start, string $end): array
     {
         global $wpdb;
-        $t = $wpdb->prefix . 'wnq_seo_content_jobs';
+        $t = $wpdb->prefix . 'wnq_blog_schedule';
 
-        $rows = $wpdb->get_results($wpdb->prepare(
-            "SELECT job_type, COUNT(*) as cnt, SUM(approved) as approved FROM $t
-             WHERE client_id=%s AND created_at BETWEEN %s AND %s
-             GROUP BY job_type",
-            $client_id, $start . ' 00:00:00', $end . ' 23:59:59'
-        ), ARRAY_A) ?: [];
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT status, COUNT(*) as cnt FROM $t
+                 WHERE client_id=%s AND updated_at BETWEEN %s AND %s
+                 GROUP BY status",
+                $client_id,
+                $start . ' 00:00:00',
+                $end . ' 23:59:59'
+            ),
+            ARRAY_A
+        ) ?: [];
 
-        $summary = ['total_jobs' => 0, 'approved' => 0, 'blog_outlines' => 0, 'meta_jobs' => 0];
+        $summary = ['published' => 0, 'scheduled' => 0, 'pending' => 0, 'failed' => 0];
         foreach ($rows as $r) {
-            $summary['total_jobs'] += (int)$r['cnt'];
-            $summary['approved']   += (int)$r['approved'];
-            if ($r['job_type'] === 'blog_outline') $summary['blog_outlines'] = (int)$r['cnt'];
-            if ($r['job_type'] === 'meta_tags')    $summary['meta_jobs'] = (int)$r['cnt'];
+            $status = (string)($r['status'] ?? '');
+            if ($status === 'published') {
+                $summary['published'] = (int)$r['cnt'];
+            } elseif ($status === 'failed') {
+                $summary['failed'] = (int)$r['cnt'];
+            } elseif ($status === 'pending') {
+                $summary['pending'] = (int)$r['cnt'];
+            }
         }
+        $summary['scheduled'] = array_sum($summary);
         return $summary;
     }
 
@@ -464,7 +474,7 @@ final class ReportGenerator
     {
         $kws   = $data['keywords'] ?? [];
         $audit = $data['audit_findings'] ?? [];
-        $content = $data['content_jobs'] ?? [];
+        $blog_posts = $data['blog_posts'] ?? [];
         $period  = $data['period'] ?? [];
 
         $improving_kws = [];
@@ -482,7 +492,7 @@ final class ReportGenerator
             'traffic_change'     => 'Data pending GSC sync',
             'improving_keywords' => implode(', ', array_slice($improving_kws, 0, 5)) ?: 'None tracked',
             'declining_keywords' => implode(', ', array_slice($declining_kws, 0, 5)) ?: 'None tracked',
-            'content_published'  => ($content['approved'] ?? 0) . ' pieces approved',
+            'content_published'  => ($blog_posts['published'] ?? 0) . ' blog posts published',
             'issues_fixed'       => ($audit['resolved_this_period'] ?? 0) . ' technical issues',
             'open_issues'        => (($audit['critical'] ?? 0) + ($audit['warning'] ?? 0)) . ' open findings',
             'tone'               => $profile['content_tone'] ?? 'professional',

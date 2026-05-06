@@ -37,8 +37,6 @@ final class SEOOSBootstrap
             \WNQ\Admin\BlogSchedulerAdmin::register();
             \WNQ\Admin\SpiderAdmin::register();
             \WNQ\Admin\LeadFinderAdmin::register();
-            // Register get_job ajax handler
-            add_action('wp_ajax_wnq_seohub_get_job', [self::class, 'ajaxGetJob']);
         }
 
         // Create blog tables if not yet created (schema migration for existing installs)
@@ -71,7 +69,6 @@ final class SEOOSBootstrap
             'includes/Models/BlogScheduler.php',
             // Services
             'includes/Services/AIEngine.php',
-            'includes/Services/AutomationEngine.php',
             'includes/Services/AuditEngine.php',
             'includes/Services/ReportGenerator.php',
             'includes/Services/BlogPublisher.php',
@@ -121,7 +118,6 @@ final class SEOOSBootstrap
             'includes/Models/SEOHub.php'              => 'WNQ\\Models\\SEOHub',
             'includes/Models/BlogScheduler.php'       => 'WNQ\\Models\\BlogScheduler',
             'includes/Services/AIEngine.php'          => 'WNQ\\Services\\AIEngine',
-            'includes/Services/AutomationEngine.php'  => 'WNQ\\Services\\AutomationEngine',
             'includes/Services/AuditEngine.php'       => 'WNQ\\Services\\AuditEngine',
             'includes/Services/ReportGenerator.php'   => 'WNQ\\Services\\ReportGenerator',
             'includes/Services/BlogPublisher.php'     => 'WNQ\\Services\\BlogPublisher',
@@ -182,9 +178,6 @@ final class SEOOSBootstrap
         // Add keyword
         add_action('admin_post_wnq_add_seo_keyword', [self::class, 'handleAddKeyword']);
 
-        // Create AI job manually
-        add_action('admin_post_wnq_create_ai_job', [self::class, 'handleCreateAIJob']);
-
         // Generate/export report
         add_action('admin_post_wnq_export_report', [self::class, 'handleExportReport']);
 
@@ -226,33 +219,6 @@ final class SEOOSBootstrap
         add_action('wp_ajax_wnq_blog_add_batch',           [self::class, 'ajaxBlogAddBatch']);
     }
 
-    // ── AJAX: Get Job Content ───────────────────────────────────────────────
-
-    public static function ajaxGetJob(): void
-    {
-        check_ajax_referer('wnq_seohub_nonce', 'nonce');
-        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
-            wp_send_json_error(['message' => 'Access denied']);
-        }
-
-        $job_id = (int)($_POST['job_id'] ?? 0);
-        if (!$job_id) {
-            wp_send_json_error(['message' => 'Invalid job ID']);
-        }
-
-        global $wpdb;
-        $job = $wpdb->get_row(
-            $wpdb->prepare("SELECT * FROM {$wpdb->prefix}wnq_seo_content_jobs WHERE id=%d", $job_id),
-            ARRAY_A
-        );
-
-        if (!$job) {
-            wp_send_json_error(['message' => 'Job not found']);
-        }
-
-        wp_send_json_success($job);
-    }
-
     // ── Form Handlers ───────────────────────────────────────────────────────
 
     public static function handleSaveProfile(): void
@@ -283,7 +249,6 @@ final class SEOOSBootstrap
             'content_tone'      => sanitize_text_field($_POST['content_tone'] ?? 'professional'),
             'gsc_property'      => esc_url_raw($_POST['gsc_property'] ?? ''),
             'ga_property'       => sanitize_text_field($_POST['ga_property'] ?? ''),
-            'auto_approve'      => !empty($_POST['auto_approve']) ? 1 : 0,
         ]);
 
         // Also queue keyword imports from clusters if defined
@@ -325,40 +290,6 @@ final class SEOOSBootstrap
         ]);
 
         wp_redirect(admin_url('admin.php?page=wnq-seo-hub-keywords&client_id=' . urlencode($client_id) . '&added=1'));
-        exit;
-    }
-
-    public static function handleCreateAIJob(): void
-    {
-        check_admin_referer('wnq_create_ai_job');
-        self::requireCap();
-
-        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
-        $job_type  = sanitize_text_field($_POST['job_type'] ?? '');
-
-        if (empty($client_id) || empty($job_type)) {
-            wp_die('Missing required fields');
-        }
-
-        $client  = \WNQ\Models\Client::getByClientId($client_id) ?? [];
-        $profile = \WNQ\Models\SEOHub::getProfile($client_id) ?? [];
-
-        \WNQ\Models\SEOHub::createContentJob([
-            'client_id'      => $client_id,
-            'job_type'       => $job_type,
-            'target_keyword' => sanitize_text_field($_POST['target_keyword'] ?? ''),
-            'target_url'     => esc_url_raw($_POST['target_url'] ?? ''),
-            'prompt_key'     => $job_type,
-            'input_data'     => [
-                'business_name' => $client['company'] ?? $client['name'] ?? '',
-                'services'      => implode(', ', (array)($profile['primary_services'] ?? [])),
-                'location'      => implode(', ', (array)($profile['service_locations'] ?? [])),
-                'keyword'       => sanitize_text_field($_POST['target_keyword'] ?? ''),
-                'tone'          => $profile['content_tone'] ?? 'professional',
-            ],
-        ]);
-
-        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-content&client_id=' . urlencode($client_id) . '&created=1'));
         exit;
     }
 
