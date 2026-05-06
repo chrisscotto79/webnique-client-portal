@@ -218,14 +218,32 @@ final class BlogReceiver
 
         $attachment_id = 0;
         $local_image_url = '';
-        $effective_featured_image_url = $featured_image_url ?: ($template_image['url'] ?? '');
+        $effective_featured_image_url = '';
+        $featured_image_source = 'none';
         $template_attachment_id = (int)($template_image['id'] ?? 0);
-        if (empty($featured_image_url) && $template_attachment_id > 0 && get_post_type($template_attachment_id) === 'attachment') {
-            $attachment_id = $template_attachment_id;
-        }
 
-        if (!$attachment_id && !empty($effective_featured_image_url)) {
+        if (!empty($featured_image_url)) {
+            $effective_featured_image_url = $featured_image_url;
+            $featured_image_source = 'provided_url';
             $attachment_id = self::sideloadFeaturedImage($effective_featured_image_url, $post_id, $title);
+            if (!$attachment_id) {
+                $attachment_id = self::pickRandomMediaImageAttachment();
+                if ($attachment_id) {
+                    $effective_featured_image_url = '';
+                    $featured_image_source = 'provided_url_failed_random_media';
+                }
+            }
+        } else {
+            $attachment_id = self::pickRandomMediaImageAttachment();
+            if ($attachment_id) {
+                $featured_image_source = 'random_media';
+            } elseif ($template_attachment_id > 0 && get_post_type($template_attachment_id) === 'attachment') {
+                $attachment_id = $template_attachment_id;
+                $featured_image_source = 'template_media';
+            } elseif (!empty($template_image['url'])) {
+                $effective_featured_image_url = esc_url_raw($template_image['url']);
+                $featured_image_source = 'template_url';
+            }
         }
 
         if ($attachment_id) {
@@ -260,7 +278,8 @@ final class BlogReceiver
             'post_slug'           => $post_slug,
             'blog_path_slug'      => $blog_path_slug,
             'featured_image_set'  => !empty($attachment_id),
-            'elementor_image_set' => !empty($elementor_image_set),
+            'featured_image_source' => $featured_image_source,
+            'elementor_image_set'  => !empty($elementor_image_set),
         ], 201);
     }
 
@@ -404,6 +423,21 @@ final class BlogReceiver
             }
         }
         return $updated;
+    }
+
+    private static function pickRandomMediaImageAttachment(): int
+    {
+        $attachments = get_posts([
+            'post_type'      => 'attachment',
+            'post_status'    => 'inherit',
+            'post_mime_type' => ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
+            'fields'         => 'ids',
+            'posts_per_page' => 1,
+            'orderby'        => 'rand',
+            'no_found_rows'  => true,
+        ]);
+
+        return !empty($attachments[0]) ? (int)$attachments[0] : 0;
     }
 
     private static function sideloadFeaturedImage(string $image_url, int $post_id, string $title): int
