@@ -89,6 +89,7 @@ final class BlogSchedulerAdmin
         // Status notice
         $notice = sanitize_text_field($_GET['notice'] ?? '');
         if ($notice === 'added')    echo '<div class="wnq-notice success">✅ Post added to queue.</div>';
+        if ($notice === 'bulk_added') echo '<div class="wnq-notice success">✅ ' . (int)($_GET['added'] ?? 0) . ' post(s) imported to queue.</div>';
         if ($notice === 'deleted')  echo '<div class="wnq-notice success">✅ Post removed from queue.</div>';
         if ($notice === 'failed')   echo '<div class="wnq-notice error">❌ Publish failed. Check error message.</div>';
         if ($notice === 'published') echo '<div class="wnq-notice success">✅ Publishing triggered. Check the post queue for status.</div>';
@@ -143,6 +144,32 @@ final class BlogSchedulerAdmin
         }
         echo '<button type="submit" class="button button-primary">Add</button>';
         echo '</div></form>';
+        echo '</div>';
+
+        // Bulk comma-separated title importer
+        echo '<div class="wnq-blog-card">';
+        echo '<h3>Bulk Import Titles</h3>';
+        echo '<form method="post" action="' . admin_url('admin-post.php') . '" class="wnq-blog-add-form">';
+        echo '<input type="hidden" name="action" value="wnq_blog_import_titles">';
+        echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+        wp_nonce_field('wnq_blog_import_titles');
+        echo '<textarea name="bulk_titles" rows="3" placeholder="Paste titles separated by commas, like: Roof Repair Tips, How Often To Clean Gutters, Best Time To Replace Windows" style="width:100%;max-width:100%;min-height:86px;"></textarea>';
+        echo '<div class="wnq-blog-form-row" style="margin-top:10px;">';
+        echo '<input type="text" name="focus_keyword" placeholder="Default focus keyword (optional)" style="min-width:220px;">';
+        echo '<input type="date" name="scheduled_date" style="min-width:150px;">';
+        if (!empty($agents)) {
+            echo '<select name="agent_key_id" style="min-width:160px;">';
+            echo '<option value="">— Any Connected Site —</option>';
+            foreach ($agents as $a) {
+                $label = $a['site_name'] ?: parse_url($a['site_url'] ?? '', PHP_URL_HOST) ?: $a['site_url'];
+                echo '<option value="' . (int)$a['id'] . '">' . esc_html($label) . '</option>';
+            }
+            echo '</select>';
+        }
+        echo '<button type="submit" class="button button-primary">Import Titles</button>';
+        echo '</div>';
+        echo '<p style="margin:8px 0 0;color:#6b7280;font-size:12px;">Each comma-separated title becomes one informational queued post. Blank image uses a random media image.</p>';
+        echo '</form>';
         echo '</div>';
 
         // Post queue table

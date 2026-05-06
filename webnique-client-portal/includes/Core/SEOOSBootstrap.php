@@ -215,6 +215,7 @@ final class SEOOSBootstrap
 
         // Blog Scheduler handlers
         add_action('admin_post_wnq_blog_add_post',         [self::class, 'handleBlogAddPost']);
+        add_action('admin_post_wnq_blog_import_titles',    [self::class, 'handleBlogImportTitles']);
         add_action('admin_post_wnq_blog_delete_post',      [self::class, 'handleBlogDeletePost']);
         add_action('admin_post_wnq_blog_save_featured',    [self::class, 'handleBlogSaveFeaturedImage']);
         add_action('admin_post_wnq_blog_save_template',    [self::class, 'handleBlogSaveTemplate']);
@@ -497,6 +498,42 @@ final class SEOOSBootstrap
         ]);
 
         wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue&client_id=' . urlencode($client_id) . '&notice=added'));
+        exit;
+    }
+
+    public static function handleBlogImportTitles(): void
+    {
+        check_admin_referer('wnq_blog_import_titles');
+        self::requireCap();
+
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $raw_titles = sanitize_textarea_field(stripslashes($_POST['bulk_titles'] ?? ''));
+        if (empty($client_id) || empty($raw_titles)) {
+            wp_die('Missing required fields');
+        }
+
+        $titles = array_filter(array_map('trim', explode(',', $raw_titles)));
+        $seen = [];
+        $added = 0;
+        foreach ($titles as $title) {
+            $title = sanitize_text_field($title);
+            $key = strtolower($title);
+            if (empty($title) || isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            \WNQ\Models\BlogScheduler::addPost($client_id, [
+                'title'              => $title,
+                'category_type'      => 'Informational',
+                'focus_keyword'      => sanitize_text_field($_POST['focus_keyword'] ?? ''),
+                'featured_image_url' => '',
+                'scheduled_date'     => sanitize_text_field($_POST['scheduled_date'] ?? ''),
+                'agent_key_id'       => (int)($_POST['agent_key_id'] ?? 0),
+            ]);
+            $added++;
+        }
+
+        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue&client_id=' . urlencode($client_id) . '&notice=bulk_added&added=' . $added));
         exit;
     }
 
