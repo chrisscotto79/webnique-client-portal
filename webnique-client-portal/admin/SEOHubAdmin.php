@@ -12,6 +12,8 @@ namespace WNQ\Admin;
 
 use WNQ\Models\SEOHub;
 use WNQ\Models\Client;
+use WNQ\Models\BlogScheduler;
+use WNQ\Models\ServiceCityPage;
 use WNQ\Services\AuditEngine;
 use WNQ\Services\AIEngine;
 
@@ -470,45 +472,130 @@ final class SEOHubAdmin
         echo '</div>';
 
         if ($client_id) {
-            $required_columns = [
-                'primary_keyword', 'service', 'service_variations', 'city', 'state', 'county', 'slug',
-                'page_title', 'title_tag', 'meta_description', 'h1', 'cta_title', 'cta_text',
-                'related_services', 'navigation_menu_related_services', 'nearby_cities',
-                'nav_menu_nearby_areas', 'internal_links', 'geo_modifiers', 'commercial_intent',
-                'page_type', 'parent_service_slug', 'keyword_variants',
-            ];
+            $required_columns = ServiceCityPage::requiredColumns();
+            $template = ServiceCityPage::getTemplate($client_id);
+            $rows = ServiceCityPage::getRows($client_id, 150);
+            $agents = BlogScheduler::getClientAgents($client_id);
+            $notice = sanitize_key($_GET['notice'] ?? '');
+            $message = sanitize_text_field($_GET['message'] ?? '');
+
+            if ($notice) {
+                $notice_text = '';
+                $notice_class = 'success';
+                if ($notice === 'template_saved') {
+                    $notice_text = 'Template saved for this client.';
+                } elseif ($notice === 'csv_imported' || $notice === 'csv_imported_with_errors') {
+                    $notice_text = sprintf(
+                        'CSV import complete: %d imported, %d skipped.',
+                        (int)($_GET['imported'] ?? 0),
+                        (int)($_GET['skipped'] ?? 0)
+                    );
+                    if ($message) {
+                        $notice_text .= ' ' . $message;
+                        $notice_class = 'warning';
+                    }
+                } elseif ($notice === 'generated') {
+                    $notice_text = $message ?: 'Draft generated.';
+                } elseif ($notice === 'generate_error' || $notice === 'import_error') {
+                    $notice_text = $message ?: 'Something went wrong.';
+                    $notice_class = 'error';
+                }
+                if ($notice_text) {
+                    $bg = $notice_class === 'error' ? '#fef2f2' : ($notice_class === 'warning' ? '#fffbeb' : '#f0fdf4');
+                    $border = $notice_class === 'error' ? '#fecaca' : ($notice_class === 'warning' ? '#fde68a' : '#bbf7d0');
+                    $color = $notice_class === 'error' ? '#991b1b' : ($notice_class === 'warning' ? '#92400e' : '#166534');
+                    echo '<div style="margin:18px 0;padding:12px 14px;border-radius:8px;background:' . esc_attr($bg) . ';border:1px solid ' . esc_attr($border) . ';color:' . esc_attr($color) . ';font-weight:700;">' . esc_html($notice_text) . '</div>';
+                }
+            }
 
             echo '<div class="wnq-hub-info" style="margin:18px 0;padding:16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;color:#1e3a5f;">';
-            echo '<strong>New workflow:</strong> upload a CSV of Service + City pages, paste the Elementor HTML/template structure, and WebNique will generate each page as an Elementor <strong>draft</strong>. Nothing is published automatically.';
+            echo '<strong>Workflow:</strong> save this client\'s Elementor template, drop in the CSV, then generate one Service + City draft child page at a time. Existing slugs are skipped and nothing is published automatically.';
             echo '</div>';
 
             echo '<div class="wnq-hub-form-grid" style="grid-template-columns:1fr 1fr;align-items:start;">';
             echo '<div class="wnq-hub-card" style="padding:18px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;">';
-            echo '<h3 style="margin-top:0;">CSV Import</h3>';
-            echo '<p style="color:#6b7280;">Required columns:</p>';
-            echo '<textarea readonly rows="8" style="width:100%;font-family:monospace;font-size:12px;">' . esc_textarea(implode(',', $required_columns)) . '</textarea>';
-            echo '<p style="color:#6b7280;margin-bottom:0;">Next step: I will wire this to upload/parse the CSV, validate missing columns, and show a preview before generation.</p>';
+            echo '<h3 style="margin-top:0;">Client Elementor Template</h3>';
+            echo '<p style="color:#6b7280;">Paste this client\'s Elementor JSON or HTML structure. Use tokens like <code>{{h1}}</code>, <code>{{body}}</code>, <code>{{cta_title}}</code>, <code>{{cta_text}}</code>, <code>{{related_services}}</code>, and <code>{{nearby_cities}}</code>. If no tokens are found in Elementor JSON, the first heading and first text editor are replaced.</p>';
+            echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
+            echo '<input type="hidden" name="action" value="wnq_service_city_save_template">';
+            echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+            wp_nonce_field('wnq_service_city_template_' . $client_id);
+            echo '<textarea name="elementor_template" rows="12" style="width:100%;font-family:monospace;font-size:12px;border:1px solid #d1d5db;border-radius:8px;padding:10px;">' . esc_textarea($template) . '</textarea>';
+            echo '<button type="submit" class="wnq-btn wnq-btn-primary" style="margin-top:10px;">Save Client Template</button>';
+            echo '</form>';
             echo '</div>';
 
             echo '<div class="wnq-hub-card" style="padding:18px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;">';
-            echo '<h3 style="margin-top:0;">Elementor Draft Output</h3>';
-            echo '<ul style="margin-left:18px;color:#374151;">';
-            echo '<li>Creates WordPress pages as <strong>draft</strong> only</li>';
-            echo '<li>Uses the provided slug, title tag, meta description, H1, CTA, service, city, and internal-link fields</li>';
-            echo '<li>Replaces content inside your provided HTML/Elementor structure</li>';
-            echo '<li>Never publishes automatically; you manually review and publish</li>';
-            echo '</ul>';
+            echo '<h3 style="margin-top:0;">CSV Import</h3>';
+            echo '<p style="color:#6b7280;">Required columns:</p>';
+            echo '<textarea readonly rows="5" style="width:100%;font-family:monospace;font-size:12px;border:1px solid #d1d5db;border-radius:8px;padding:10px;">' . esc_textarea(implode(',', $required_columns)) . '</textarea>';
+            echo '<form method="post" action="' . admin_url('admin-post.php') . '" enctype="multipart/form-data" style="margin-top:14px;">';
+            echo '<input type="hidden" name="action" value="wnq_service_city_import_csv">';
+            echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+            wp_nonce_field('wnq_service_city_import_' . $client_id);
+            echo '<label style="display:block;margin-bottom:8px;font-weight:700;">Target Site</label>';
+            echo '<select name="agent_key_id" style="width:100%;margin-bottom:12px;">';
+            echo '<option value="0">Most recent active connected site</option>';
+            foreach ($agents as $agent) {
+                $label = $agent['site_name'] ?: parse_url($agent['site_url'] ?? '', PHP_URL_HOST) ?: $agent['site_url'];
+                echo '<option value="' . (int)$agent['id'] . '">' . esc_html($label) . '</option>';
+            }
+            echo '</select>';
+            echo '<label style="display:block;border:2px dashed #cbd5e1;border-radius:12px;padding:22px;text-align:center;background:#f8fafc;cursor:pointer;">';
+            echo '<strong>Drop or choose CSV</strong><br><span style="color:#64748b;font-size:12px;">Rows are queued only when the slug does not already exist.</span>';
+            echo '<input type="file" name="service_city_csv" accept=".csv,text/csv" required style="display:block;margin:14px auto 0;">';
+            echo '</label>';
+            echo '<button type="submit" class="wnq-btn wnq-btn-primary" style="margin-top:12px;">Import CSV</button>';
+            echo '</form>';
             echo '</div>';
             echo '</div>';
 
             echo '<div class="wnq-hub-section" style="margin-top:22px;">';
-            echo '<h3>Questions before I wire generation</h3>';
-            echo '<ol style="margin-left:20px;color:#374151;line-height:1.7;">';
-            echo '<li>Will you paste the Elementor template JSON/HTML into this tool, or should it use a saved global template like the blog scheduler?</li>';
-            echo '<li>Should each Service + City page be a normal WordPress <code>page</code>, or a child page under the parent service page?</li>';
-            echo '<li>For AI generation, do you want one page at a time for review, or bulk generate all CSV rows into drafts?</li>';
-            echo '<li>Should the tool skip rows when the slug already exists, or update the existing draft?</li>';
-            echo '</ol>';
+            echo '<h3>Imported Service + City Rows</h3>';
+            if (empty($rows)) {
+                echo '<p style="color:#6b7280;">No imported rows yet. Save a template, import a CSV, then generate drafts one page at a time.</p>';
+            } else {
+                echo '<div class="wnq-hub-table-wrap"><table class="wnq-hub-table">';
+                echo '<thead><tr><th>Slug</th><th>Service</th><th>City</th><th>Parent</th><th>Keyword</th><th>Status</th><th>Action</th></tr></thead><tbody>';
+                foreach ($rows as $row) {
+                    $status = $row['status'] ?? 'imported';
+                    $status_color = match ($status) {
+                        'draft_created' => '#166534',
+                        'skipped' => '#92400e',
+                        'failed' => '#991b1b',
+                        'generating' => '#1d4ed8',
+                        default => '#374151',
+                    };
+                    echo '<tr>';
+                    echo '<td><code>' . esc_html($row['slug']) . '</code></td>';
+                    echo '<td>' . esc_html($row['service'] ?: '—') . '</td>';
+                    echo '<td>' . esc_html(trim(($row['city'] ?? '') . ', ' . ($row['state'] ?? ''), ' ,') ?: '—') . '</td>';
+                    echo '<td><code>' . esc_html($row['parent_service_slug'] ?: '—') . '</code></td>';
+                    echo '<td>' . esc_html($row['primary_keyword'] ?: '—') . '</td>';
+                    echo '<td><strong style="color:' . esc_attr($status_color) . ';">' . esc_html(str_replace('_', ' ', $status)) . '</strong>';
+                    if (!empty($row['error_message'])) {
+                        echo '<br><small style="color:#991b1b;">' . esc_html(substr($row['error_message'], 0, 120)) . '</small>';
+                    }
+                    echo '</td>';
+                    echo '<td>';
+                    if (in_array($status, ['imported', 'failed'], true)) {
+                        echo '<form method="post" action="' . admin_url('admin-post.php') . '" style="display:inline;">';
+                        echo '<input type="hidden" name="action" value="wnq_service_city_generate_page">';
+                        echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+                        echo '<input type="hidden" name="row_id" value="' . (int)$row['id'] . '">';
+                        wp_nonce_field('wnq_service_city_generate_' . (int)$row['id']);
+                        echo '<button type="submit" class="wnq-btn wnq-btn-sm wnq-btn-primary" onclick="return confirm(\'Generate this one Service + City draft page now?\')">Generate Draft</button>';
+                        echo '</form>';
+                    } elseif (!empty($row['wp_page_url'])) {
+                        echo '<a class="wnq-btn wnq-btn-sm" href="' . esc_url($row['wp_page_url']) . '" target="_blank">View Draft URL</a>';
+                    } else {
+                        echo '<span style="color:#6b7280;">—</span>';
+                    }
+                    echo '</td>';
+                    echo '</tr>';
+                }
+                echo '</tbody></table></div>';
+            }
             echo '</div>';
         } else {
             echo '<p style="color:#6b7280;margin-top:18px;">Select a client to prepare Service + City draft page generation.</p>';
@@ -1238,6 +1325,7 @@ final class SEOHubAdmin
 
             case 'install_tables':
                 SEOHub::createTables();
+                ServiceCityPage::createTables();
                 \WNQ\Services\CrawlEngine::createTables();
                 \WNQ\Services\PageSpeedEngine::createTables();
                 \WNQ\Services\CompetitorTracker::createTables();

@@ -232,7 +232,7 @@ Complete AI-powered SEO OS integrated into hub:
 - Monthly report auto-generation with AI executive summaries
 - REST API for client plugin: /wp-json/wnq/v1/agent/*
 - Keyword tracking with cluster grouping and position history
-- Service + City draft page workflow scaffold
+- Service + City CSV import workflow for one-at-a-time Elementor draft child pages
 - Blog scheduler with Elementor draft/publish support
 - SEO activity log for full traceability
 
