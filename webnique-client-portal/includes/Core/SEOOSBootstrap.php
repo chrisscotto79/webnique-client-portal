@@ -616,8 +616,13 @@ final class SEOOSBootstrap
         } else {
             update_option('wnq_blog_elementor_template', $json);
         }
+        \WNQ\Services\BlogPublisher::saveTemplateInjectionMap($agent_key_id, $json);
 
-        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=settings&client_id=' . urlencode($client_id) . '&settings_saved=1'));
+        $redirect = admin_url('admin.php?page=wnq-seo-hub-blog&tab=settings&client_id=' . urlencode($client_id) . '&settings_saved=1');
+        if (!empty($_POST['template_importer'])) {
+            $redirect .= '&template_imported=1';
+        }
+        wp_redirect($redirect);
         exit;
     }
 
