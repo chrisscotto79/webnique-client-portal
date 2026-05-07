@@ -20,6 +20,8 @@ use WNQ\Models\ServiceCityPage;
 
 final class ServiceCityPageGenerator
 {
+    public const MIN_AGENT_VERSION = '1.1.4';
+
     public static function generateDraft(int $row_id): array
     {
         $row = ServiceCityPage::getRow($row_id);
@@ -47,6 +49,15 @@ final class ServiceCityPageGenerator
         $agent = self::getActiveAgent($client_id, (int)($row['agent_key_id'] ?? 0));
         if (!$agent) {
             return self::fail($row_id, 'No active agent key found for this client site.');
+        }
+        if (!self::agentSupportsServiceCity($agent)) {
+            $agent_version = trim((string)($agent['plugin_version'] ?? ''));
+            return self::fail(
+                $row_id,
+                'This connected site is running WebNique SEO Agent version ' . ($agent_version ?: 'unknown') .
+                '. Service + City drafts require version ' . self::MIN_AGENT_VERSION .
+                ' or newer. Update the agent plugin on that site, click Test Connection, then try Generate Draft again.'
+            );
         }
 
         ServiceCityPage::updateRow($row_id, ['status' => 'generating', 'error_message' => null]);
@@ -344,6 +355,16 @@ final class ServiceCityPageGenerator
             ),
             ARRAY_A
         ) ?: null;
+    }
+
+    private static function agentSupportsServiceCity(array $agent): bool
+    {
+        $version = trim((string)($agent['plugin_version'] ?? ''));
+        if ($version === '') {
+            return true;
+        }
+
+        return version_compare($version, self::MIN_AGENT_VERSION, '>=');
     }
 
     private static function fail(int $row_id, string $message): array

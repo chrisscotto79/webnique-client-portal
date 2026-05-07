@@ -108,7 +108,7 @@ final class BlogScheduler
         global $wpdb;
         return $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT id, site_url, site_name FROM {$wpdb->prefix}wnq_seo_agent_keys
+                "SELECT id, site_url, site_name, plugin_version, last_ping FROM {$wpdb->prefix}wnq_seo_agent_keys
                  WHERE client_id = %s AND status = 'active'
                  ORDER BY created_at ASC",
                 $client_id

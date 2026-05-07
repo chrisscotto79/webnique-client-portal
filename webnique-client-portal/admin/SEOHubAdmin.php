@@ -16,6 +16,7 @@ use WNQ\Models\BlogScheduler;
 use WNQ\Models\ServiceCityPage;
 use WNQ\Services\AuditEngine;
 use WNQ\Services\AIEngine;
+use WNQ\Services\ServiceCityPageGenerator;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -476,6 +477,10 @@ final class SEOHubAdmin
             $template = ServiceCityPage::getTemplate($client_id);
             $rows = ServiceCityPage::getRows($client_id, 150);
             $agents = BlogScheduler::getClientAgents($client_id);
+            $agents_need_update = array_filter($agents, static function ($agent) {
+                $version = trim((string)($agent['plugin_version'] ?? ''));
+                return $version !== '' && version_compare($version, ServiceCityPageGenerator::MIN_AGENT_VERSION, '<');
+            });
             $notice = sanitize_key($_GET['notice'] ?? '');
             $message = sanitize_text_field($_GET['message'] ?? '');
 
@@ -511,6 +516,11 @@ final class SEOHubAdmin
             echo '<div class="wnq-hub-info" style="margin:18px 0;padding:16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;color:#1e3a5f;">';
             echo '<strong>Workflow:</strong> save this client\'s Elementor template, drop in the CSV, then generate one Service + City draft child page at a time. Existing slugs are skipped and nothing is published automatically.';
             echo '</div>';
+            if (!empty($agents_need_update)) {
+                echo '<div style="margin:18px 0;padding:12px 14px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;font-weight:700;">';
+                echo 'This client has a connected site running an older WebNique SEO Agent. Service + City drafts require agent version ' . esc_html(ServiceCityPageGenerator::MIN_AGENT_VERSION) . ' or newer.';
+                echo '</div>';
+            }
 
             echo '<div class="wnq-hub-form-grid" style="grid-template-columns:1fr 1fr;align-items:start;">';
             echo '<div class="wnq-hub-card" style="padding:18px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;">';
@@ -538,6 +548,15 @@ final class SEOHubAdmin
             echo '<option value="0">Most recent active connected site</option>';
             foreach ($agents as $agent) {
                 $label = $agent['site_name'] ?: parse_url($agent['site_url'] ?? '', PHP_URL_HOST) ?: $agent['site_url'];
+                $version = trim((string)($agent['plugin_version'] ?? ''));
+                if ($version !== '') {
+                    $label .= ' - Agent ' . $version;
+                    if (version_compare($version, ServiceCityPageGenerator::MIN_AGENT_VERSION, '<')) {
+                        $label .= ' update required';
+                    }
+                } else {
+                    $label .= ' - Agent version unknown';
+                }
                 echo '<option value="' . (int)$agent['id'] . '">' . esc_html($label) . '</option>';
             }
             echo '</select>';
@@ -985,17 +1004,26 @@ final class SEOHubAdmin
         echo '</form>';
 
         // Keys table
-        echo '<table class="wnq-hub-table"><thead><tr><th>Client</th><th>Site URL</th><th>API Key</th><th>Last Ping</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
+        echo '<table class="wnq-hub-table"><thead><tr><th>Client</th><th>Site URL</th><th>API Key</th><th>Agent Version</th><th>Last Ping</th><th>Status</th><th>Actions</th></tr></thead><tbody>';
         if (empty($all_keys)) {
-            echo '<tr><td colspan="6" style="text-align:center;padding:40px;color:#6b7280;">No API keys generated yet.</td></tr>';
+            echo '<tr><td colspan="7" style="text-align:center;padding:40px;color:#6b7280;">No API keys generated yet.</td></tr>';
         }
         foreach ($all_keys as $key) {
             $client = Client::getByClientId($key['client_id']);
             $name   = $client ? ($client['company'] ?: $client['name']) : $key['client_id'];
+            $version = trim((string)($key['plugin_version'] ?? ''));
+            if ($version === '') {
+                $version_html = '<span style="color:#6b7280;">Unknown</span>';
+            } elseif (version_compare($version, ServiceCityPageGenerator::MIN_AGENT_VERSION, '<')) {
+                $version_html = '<span class="wnq-badge-red">' . esc_html($version) . ' - Update Required</span>';
+            } else {
+                $version_html = '<span class="wnq-badge-green">' . esc_html($version) . '</span>';
+            }
             echo '<tr>';
             echo '<td>' . esc_html($name) . '</td>';
             echo '<td><a href="' . esc_url($key['site_url']) . '" target="_blank">' . esc_html($key['site_url']) . '</a></td>';
             echo '<td><code style="font-size:11px;background:#f3f4f6;padding:2px 6px;border-radius:4px;">' . esc_html($key['api_key']) . '</code></td>';
+            echo '<td>' . $version_html . '</td>';
             echo '<td>' . esc_html($key['last_ping'] ?: 'Never') . '</td>';
             echo '<td>' . ($key['status'] === 'active' ? '<span class="wnq-badge-green">Active</span>' : '<span class="wnq-badge-red">Revoked</span>') . '</td>';
             echo '<td>';
