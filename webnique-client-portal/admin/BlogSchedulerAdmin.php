@@ -15,6 +15,7 @@ namespace WNQ\Admin;
 use WNQ\Models\BlogScheduler;
 use WNQ\Models\SEOHub;
 use WNQ\Models\Client;
+use WNQ\Services\BlogPublisher;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -667,7 +668,14 @@ jQuery(function($) {
         $template_json = get_option('wnq_blog_elementor_template', '');
 
         $saved = sanitize_text_field($_GET['settings_saved'] ?? '');
+        $error = sanitize_text_field($_GET['error'] ?? '');
         if ($saved === '1') echo '<div class="wnq-notice success">✅ Settings saved.</div>';
+        if (sanitize_text_field($_GET['template_imported'] ?? '') === '1') {
+            echo '<div class="wnq-notice success">✅ Template imported and widget IDs detected for that site.</div>';
+        }
+        if ($error === 'invalid_json') {
+            echo '<div class="wnq-notice error">❌ Template JSON is invalid. Paste the full Elementor export JSON and try again.</div>';
+        }
 
         // Client selector for template section
         echo '<div class="wnq-blog-card" style="padding:14px 20px;">';
@@ -686,18 +694,48 @@ jQuery(function($) {
         echo '</div>';
         echo '</div>';
 
-        // Per-site Elementor templates
         $settings_agents = BlogScheduler::getClientAgents($client_id);
-        $widget_hint = '<p style="color:#6b7280;font-size:12px;"><strong>Template injection:</strong> The scheduler supports the WebNique IDs <code>5af58bd2</code> H1, <code>5b794435</code> body, <code>4861ee91</code> TOC, <code>1b605b78</code> image, plus King Sheds IDs <code>50bd83b1</code> H1, <code>1820731f</code> body, <code>4098b8ca</code> TOC, <code>3e6a4048</code> image. It also detects a first H1 heading, text editor containing an <code>&lt;article&gt;</code>, TOC text editor, and first image widget.</p>';
+        $widget_hint = '<p style="color:#6b7280;font-size:12px;"><strong>Template injection:</strong> The scheduler supports the WebNique IDs <code>5af58bd2</code> H1, <code>5b794435</code> body, <code>4861ee91</code> TOC, <code>1b605b78</code> image, King Sheds IDs <code>50bd83b1</code> H1, <code>1820731f</code> body, <code>4098b8ca</code> TOC, <code>3e6a4048</code> image, and Executive Auto body <code>68ad1734</code>. It also detects H1/page-title widgets, article-style text editors, TOC text editors, and first image widgets.</p>';
 
+        echo '<div class="wnq-blog-card">';
+        echo '<h3>Template ID Importer</h3>';
+        if (empty($settings_agents)) {
+            echo '<p style="color:#6b7280;">No connected client sites found for this client yet. Connect the client site in API Management first, then import its Elementor template here.</p>';
+        } else {
+            echo '<p style="color:#6b7280;">Pick the connected site, paste that site\'s Elementor blog template JSON, then import it. This saves the template for that site and stores the detected title/body/TOC/image widget IDs so the scheduler uses the right layout automatically.</p>';
+            echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
+            echo '<input type="hidden" name="action" value="wnq_blog_save_template">';
+            echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+            echo '<input type="hidden" name="template_importer" value="1">';
+            wp_nonce_field('wnq_blog_save_template');
+            echo '<div style="display:grid;grid-template-columns:280px 1fr auto;gap:10px;align-items:start;">';
+            echo '<select name="agent_key_id" required style="padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;">';
+            foreach ($settings_agents as $a) {
+                $label = $a['site_name'] ?: parse_url($a['site_url'] ?? '', PHP_URL_HOST) ?: $a['site_url'];
+                echo '<option value="' . (int)$a['id'] . '">' . esc_html($label) . '</option>';
+            }
+            echo '</select>';
+            echo '<textarea name="elementor_template" rows="5" placeholder="Paste this client site\'s Elementor blog template JSON here..." style="width:100%;font-family:monospace;font-size:12px;border:1px solid #d1d5db;border-radius:6px;padding:8px;"></textarea>';
+            echo '<button type="submit" class="button button-primary">Import Template + IDs</button>';
+            echo '</div>';
+            echo '</form>';
+        }
+        echo '</div>';
+
+        // Per-site Elementor templates
         if (!empty($settings_agents)) {
             foreach ($settings_agents as $a) {
                 $site_label   = $a['site_name'] ?: parse_url($a['site_url'] ?? '', PHP_URL_HOST) ?: $a['site_url'];
                 $site_tpl     = get_option('wnq_blog_template_site_' . (int)$a['id'], '');
+                $site_map     = BlogPublisher::getTemplateInjectionMap((int)$a['id'], false);
+                if (empty(array_filter($site_map)) && $site_tpl !== '') {
+                    $site_map = BlogPublisher::detectTemplateInjectionMap($site_tpl);
+                }
                 echo '<div class="wnq-blog-card">';
                 echo '<h3>🎨 Elementor Template — <span style="color:#2563eb;">' . esc_html($site_label) . '</span></h3>';
                 echo '<p style="color:#6b7280;">Template for <strong>' . esc_html($a['site_url'] ?? '') . '</strong>. If empty the global fallback template is used.</p>';
                 echo $widget_hint;
+                self::renderTemplateIdSummary($site_map);
                 echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
                 echo '<input type="hidden" name="action" value="wnq_blog_save_template">';
                 echo '<input type="hidden" name="agent_key_id" value="' . (int)$a['id'] . '">';
@@ -715,6 +753,11 @@ jQuery(function($) {
         echo '<h3>🎨 Global Fallback Template</h3>';
         echo '<p style="color:#6b7280;">Used when no per-site template is saved. Paste your default Elementor blog layout JSON here.</p>';
         echo $widget_hint;
+        $global_map = BlogPublisher::getTemplateInjectionMap(0, false);
+        if (empty(array_filter($global_map)) && $template_json !== '') {
+            $global_map = BlogPublisher::detectTemplateInjectionMap($template_json);
+        }
+        self::renderTemplateIdSummary($global_map);
         echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
         echo '<input type="hidden" name="action" value="wnq_blog_save_template">';
         echo '<input type="hidden" name="agent_key_id" value="0">';
@@ -725,6 +768,36 @@ jQuery(function($) {
         echo '</form>';
         echo '</div>';
 
+    }
+
+    private static function renderTemplateIdSummary(array $map): void
+    {
+        $labels = [
+            'heading_id' => 'Title/H1',
+            'body_id'    => 'Article body',
+            'toc_id'     => 'Table of contents',
+            'image_id'   => 'Featured image',
+        ];
+
+        $has_ids = !empty(array_filter($map));
+        echo '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 12px;">';
+        if (!$has_ids) {
+            echo '<span style="background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:999px;padding:4px 10px;font-size:12px;">No widget IDs imported yet</span>';
+        }
+        foreach ($labels as $key => $label) {
+            $value = $map[$key] ?? '';
+            $style = $value !== ''
+                ? 'background:#ecfdf5;color:#166534;border:1px solid #86efac;'
+                : 'background:#f3f4f6;color:#6b7280;border:1px solid #e5e7eb;';
+            echo '<span style="' . esc_attr($style) . 'border-radius:999px;padding:4px 10px;font-size:12px;">';
+            echo esc_html($label) . ': ';
+            echo $value !== '' ? '<code>' . esc_html($value) . '</code>' : 'not detected';
+            echo '</span>';
+        }
+        if (!empty($map['image_widget_type'])) {
+            echo '<span style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:999px;padding:4px 10px;font-size:12px;">Image widget: <code>' . esc_html($map['image_widget_type']) . '</code></span>';
+        }
+        echo '</div>';
     }
 
     // ── AJAX Handlers ───────────────────────────────────────────────────────
