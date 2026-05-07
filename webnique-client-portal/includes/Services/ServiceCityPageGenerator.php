@@ -306,7 +306,14 @@ final class ServiceCityPageGenerator
             return array_merge(['success' => true], $body);
         }
 
-        return ['success' => false, 'message' => $body['message'] ?? $body['error'] ?? ('HTTP ' . $code . ' - ' . substr($raw, 0, 250))];
+        $message = $body['message'] ?? $body['error'] ?? ('HTTP ' . $code . ' - ' . substr($raw, 0, 250));
+        $error_code = (string)($body['code'] ?? '');
+
+        if ($code === 404 && ($error_code === 'rest_no_route' || stripos($message, 'No route was found') !== false)) {
+            $message = 'The connected client site needs the updated WebNique SEO Agent plugin. Install or update the agent on that site, then click Generate Draft again.';
+        }
+
+        return ['success' => false, 'message' => $message];
     }
 
     private static function getActiveAgent(string $client_id, int $agent_key_id = 0): ?array

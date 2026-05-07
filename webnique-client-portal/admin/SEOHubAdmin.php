@@ -574,7 +574,7 @@ final class SEOHubAdmin
                     echo '<td>' . esc_html($row['primary_keyword'] ?: '—') . '</td>';
                     echo '<td><strong style="color:' . esc_attr($status_color) . ';">' . esc_html(str_replace('_', ' ', $status)) . '</strong>';
                     if (!empty($row['error_message'])) {
-                        echo '<br><small style="color:#991b1b;">' . esc_html(substr($row['error_message'], 0, 120)) . '</small>';
+                        echo '<br><small style="color:#991b1b;">' . esc_html(substr($row['error_message'], 0, 220)) . '</small>';
                     }
                     echo '</td>';
                     echo '<td>';
