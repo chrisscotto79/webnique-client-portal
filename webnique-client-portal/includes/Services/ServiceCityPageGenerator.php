@@ -173,6 +173,7 @@ final class ServiceCityPageGenerator
     private static function buildElementorFromTemplate(string $template, array $tokens, string $body): array
     {
         $had_body_token = self::templateHasBodyToken($template);
+        $has_variable_tokens = self::templateHasVariableTokens($template);
         $decoded = json_decode($template, true);
 
         if (is_array($decoded)) {
@@ -181,7 +182,7 @@ final class ServiceCityPageGenerator
                 : $decoded;
 
             $elements = self::replaceTokensRecursive($elements, $tokens);
-            if (!$had_body_token) {
+            if (!$had_body_token && !$has_variable_tokens) {
                 $heading_done = false;
                 $body_done = false;
                 $elements = self::injectFallbackWidgets($elements, $tokens, $body, $heading_done, $body_done);
@@ -194,7 +195,7 @@ final class ServiceCityPageGenerator
         }
 
         $html = str_replace(array_keys($tokens), array_values($tokens), $template);
-        if (!$had_body_token) {
+        if (!$had_body_token && !$has_variable_tokens) {
             $h1 = (string)($tokens['{{h1}}'] ?? $tokens['{{page_title}}'] ?? '');
             $html = '<h1>' . esc_html($h1) . '</h1>' . "\n" . $html . "\n" . $body;
         }
@@ -263,6 +264,11 @@ final class ServiceCityPageGenerator
         return str_contains($template, '{{body}}')
             || str_contains($template, '{{generated_content}}')
             || str_contains($template, '{{service_city_content}}');
+    }
+
+    private static function templateHasVariableTokens(string $template): bool
+    {
+        return (bool)preg_match('/\{\{[a-zA-Z0-9_]+\}\}/', $template);
     }
 
     private static function elementorId(): string

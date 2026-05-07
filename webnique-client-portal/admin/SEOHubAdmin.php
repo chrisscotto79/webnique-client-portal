@@ -515,7 +515,7 @@ final class SEOHubAdmin
             echo '<div class="wnq-hub-form-grid" style="grid-template-columns:1fr 1fr;align-items:start;">';
             echo '<div class="wnq-hub-card" style="padding:18px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;">';
             echo '<h3 style="margin-top:0;">Client Elementor Template</h3>';
-            echo '<p style="color:#6b7280;">Paste this client\'s Elementor JSON or HTML structure. Use tokens like <code>{{h1}}</code>, <code>{{body}}</code>, <code>{{cta_title}}</code>, <code>{{cta_text}}</code>, <code>{{related_services}}</code>, and <code>{{nearby_cities}}</code>. If no tokens are found in Elementor JSON, the first heading and first text editor are replaced.</p>';
+            echo '<p style="color:#6b7280;">Paste this client\'s Elementor JSON or HTML structure. Variable templates can use tokens like <code>{{h1}}</code>, <code>{{page_title}}</code>, <code>{{primary_keyword}}</code>, <code>{{service}}</code>, <code>{{city}}</code>, <code>{{commercial_intent}}</code>, <code>{{cta_title}}</code>, <code>{{cta_text}}</code>, <code>{{related_services}}</code>, and <code>{{nearby_cities}}</code>. Add <code>{{body}}</code> only where you want the AI-written long-form page body inserted. If no tokens are found in Elementor JSON, the first heading and first text editor are replaced.</p>';
             echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
             echo '<input type="hidden" name="action" value="wnq_service_city_save_template">';
             echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
