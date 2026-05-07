@@ -688,7 +688,7 @@ jQuery(function($) {
 
         // Per-site Elementor templates
         $settings_agents = BlogScheduler::getClientAgents($client_id);
-        $widget_hint = '<p style="color:#6b7280;font-size:12px;"><strong>Widget IDs:</strong> Heading <code>5af58bd2</code> (H1) · Text Editor <code>5b794435</code> (body) · Text Editor <code>4861ee91</code> (TOC) · Image <code>1b605b78</code> (featured image URL is injected automatically)</p>';
+        $widget_hint = '<p style="color:#6b7280;font-size:12px;"><strong>Template injection:</strong> The scheduler supports the WebNique IDs <code>5af58bd2</code> H1, <code>5b794435</code> body, <code>4861ee91</code> TOC, <code>1b605b78</code> image, plus King Sheds IDs <code>50bd83b1</code> H1, <code>1820731f</code> body, <code>4098b8ca</code> TOC, <code>3e6a4048</code> image. It also detects a first H1 heading, text editor containing an <code>&lt;article&gt;</code>, TOC text editor, and first image widget.</p>';
 
         if (!empty($settings_agents)) {
             foreach ($settings_agents as $a) {

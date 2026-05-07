@@ -287,12 +287,14 @@ final class BlogReceiver
     {
         foreach ($elements as $el) {
             $id = $el['id'] ?? '';
-            if ($id === '1b605b78') {
+            if ($id === '1b605b78' || $id === '3e6a4048' || ($el['widgetType'] ?? '') === 'image') {
                 $image = $el['settings']['image'] ?? [];
-                return [
-                    'id'  => isset($image['id']) ? (int)$image['id'] : 0,
-                    'url' => esc_url_raw($image['url'] ?? ''),
-                ];
+                if (!empty($image['id']) || !empty($image['url'])) {
+                    return [
+                        'id'  => isset($image['id']) ? (int)$image['id'] : 0,
+                        'url' => esc_url_raw($image['url'] ?? ''),
+                    ];
+                }
             }
 
             if (!empty($el['elements']) && is_array($el['elements'])) {
@@ -401,7 +403,7 @@ final class BlogReceiver
         $updated = false;
         foreach ($elements as &$el) {
             $id = $el['id'] ?? '';
-            if ($id === '1b605b78') {
+            if (!$updated && ($id === '1b605b78' || $id === '3e6a4048' || ($el['widgetType'] ?? '') === 'image')) {
                 if (!empty($image_url)) {
                     $el['settings']['image'] = [
                         'url'    => esc_url_raw($image_url),
