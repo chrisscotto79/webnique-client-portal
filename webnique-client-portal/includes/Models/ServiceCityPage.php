@@ -137,6 +137,66 @@ final class ServiceCityPage
         return $row ?: null;
     }
 
+    public static function getBulkCounts(string $client_id): array
+    {
+        global $wpdb;
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT status, COUNT(*) AS total
+                 FROM {$wpdb->prefix}wnq_service_city_pages
+                 WHERE client_id=%s
+                 GROUP BY status",
+                $client_id
+            ),
+            ARRAY_A
+        ) ?: [];
+
+        $counts = [
+            'imported'      => 0,
+            'failed'        => 0,
+            'generating'    => 0,
+            'draft_created' => 0,
+            'skipped'       => 0,
+            'processable'   => 0,
+            'total'         => 0,
+        ];
+
+        foreach ($rows as $row) {
+            $status = (string)($row['status'] ?? '');
+            $total = (int)($row['total'] ?? 0);
+            if (array_key_exists($status, $counts)) {
+                $counts[$status] = $total;
+            }
+            $counts['total'] += $total;
+        }
+
+        $counts['processable'] = $counts['imported'] + $counts['failed'];
+        return $counts;
+    }
+
+    public static function getNextProcessableRow(string $client_id, array $exclude_ids = []): ?array
+    {
+        global $wpdb;
+        $exclude_ids = array_values(array_filter(array_map('intval', $exclude_ids)));
+        $exclude_sql = '';
+        if (!empty($exclude_ids)) {
+            $exclude_sql = ' AND id NOT IN (' . implode(',', $exclude_ids) . ')';
+        }
+
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT * FROM {$wpdb->prefix}wnq_service_city_pages
+                 WHERE client_id=%s AND status IN ('imported', 'failed') {$exclude_sql}
+                 ORDER BY FIELD(status, 'imported', 'failed'), created_at ASC, id ASC
+                 LIMIT 1",
+                $client_id
+            ),
+            ARRAY_A
+        );
+
+        return $row ?: null;
+    }
+
     public static function updateRow(int $id, array $data): bool
     {
         global $wpdb;

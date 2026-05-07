@@ -476,6 +476,7 @@ final class SEOHubAdmin
             $required_columns = ServiceCityPage::requiredColumns();
             $template = ServiceCityPage::getTemplate($client_id);
             $rows = ServiceCityPage::getRows($client_id, 150);
+            $bulk_counts = ServiceCityPage::getBulkCounts($client_id);
             $agents = BlogScheduler::getClientAgents($client_id);
             $agents_need_update = array_filter($agents, static function ($agent) {
                 $version = trim((string)($agent['plugin_version'] ?? ''));
@@ -574,6 +575,19 @@ final class SEOHubAdmin
             if (empty($rows)) {
                 echo '<p style="color:#6b7280;">No imported rows yet. Save a template, import a CSV, then generate drafts one page at a time.</p>';
             } else {
+                echo '<div id="wnq-service-city-bulk" data-client-id="' . esc_attr($client_id) . '" data-total="' . (int)$bulk_counts['processable'] . '" style="margin:14px 0 18px;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">';
+                echo '<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">';
+                echo '<div><strong>Bulk Draft Writer</strong><br><span style="color:#64748b;font-size:12px;">Writes one draft at a time with a delay between pages. Imported and failed rows are included.</span></div>';
+                echo '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">';
+                echo '<label style="font-size:12px;color:#475569;font-weight:700;">Delay <input id="wnq-service-city-delay" type="number" min="5" max="120" value="30" style="width:74px;margin-left:5px;"> sec</label>';
+                echo '<button type="button" id="wnq-service-city-bulk-start" class="wnq-btn wnq-btn-primary"' . ((int)$bulk_counts['processable'] <= 0 ? ' disabled' : '') . '>Write Drafts for All</button>';
+                echo '<button type="button" id="wnq-service-city-bulk-stop" class="wnq-btn" disabled>Stop</button>';
+                echo '</div></div>';
+                echo '<div style="margin-top:14px;height:14px;background:#e2e8f0;border-radius:999px;overflow:hidden;"><div id="wnq-service-city-progress-bar" style="height:100%;width:0%;background:#2563eb;border-radius:999px;transition:width .25s ease;"></div></div>';
+                echo '<div id="wnq-service-city-progress-text" style="margin-top:8px;color:#475569;font-size:12px;">Ready. ' . (int)$bulk_counts['processable'] . ' rows waiting for drafts.</div>';
+                echo '<div id="wnq-service-city-progress-log" style="margin-top:8px;color:#64748b;font-size:12px;max-height:90px;overflow:auto;"></div>';
+                echo '</div>';
+
                 echo '<div class="wnq-hub-table-wrap"><table class="wnq-hub-table">';
                 echo '<thead><tr><th>Slug</th><th>Service</th><th>City</th><th>Parent</th><th>Keyword</th><th>Status</th><th>Action</th></tr></thead><tbody>';
                 foreach ($rows as $row) {
@@ -614,6 +628,7 @@ final class SEOHubAdmin
                     echo '</tr>';
                 }
                 echo '</tbody></table></div>';
+                self::renderServiceCityBulkScript();
             }
             echo '</div>';
         } else {
@@ -622,6 +637,146 @@ final class SEOHubAdmin
 
         echo '</div>';
         self::renderFooter();
+    }
+
+    private static function renderServiceCityBulkScript(): void
+    {
+        ?>
+<script>
+jQuery(function($) {
+  var bulk = $('#wnq-service-city-bulk');
+  if (!bulk.length || bulk.data('ready')) return;
+  bulk.data('ready', true);
+
+  var clientId = String(bulk.data('client-id') || '');
+  var total = parseInt(bulk.data('total'), 10) || 0;
+  var processed = [];
+  var running = false;
+  var stopped = false;
+  var timer = null;
+
+  var startBtn = $('#wnq-service-city-bulk-start');
+  var stopBtn = $('#wnq-service-city-bulk-stop');
+  var delayInput = $('#wnq-service-city-delay');
+  var bar = $('#wnq-service-city-progress-bar');
+  var text = $('#wnq-service-city-progress-text');
+  var log = $('#wnq-service-city-progress-log');
+
+  function setProgress(message) {
+    var percent = total > 0 ? Math.min(100, Math.round((processed.length / total) * 100)) : 100;
+    bar.css('width', percent + '%');
+    text.text(message + ' (' + processed.length + '/' + total + ')');
+  }
+
+  function appendLog(message, isError) {
+    var color = isError ? '#991b1b' : '#475569';
+    log.prepend('<div style="color:' + color + ';">' + $('<div>').text(message).html() + '</div>');
+  }
+
+  function finish(message) {
+    running = false;
+    stopped = false;
+    startBtn.prop('disabled', total <= 0);
+    stopBtn.prop('disabled', true);
+    setProgress(message);
+    setTimeout(function() { window.location.reload(); }, 1400);
+  }
+
+  function scheduleNext() {
+    if (!running || stopped) {
+      finish('Stopped. Reloading current row statuses');
+      return;
+    }
+    var delaySeconds = Math.max(5, Math.min(120, parseInt(delayInput.val(), 10) || 30));
+    setProgress('Waiting ' + delaySeconds + ' seconds before the next draft');
+    timer = setTimeout(generateNext, delaySeconds * 1000);
+  }
+
+  function generateNext() {
+    if (!running || stopped) {
+      finish('Stopped. Reloading current row statuses');
+      return;
+    }
+
+    setProgress('Generating next draft');
+    $.post(WNQ_SEOHUB.ajaxUrl, {
+      action: 'wnq_seohub_action',
+      hub_action: 'service_city_bulk_generate_next',
+      nonce: WNQ_SEOHUB.nonce,
+      client_id: clientId,
+      exclude_ids: processed.join(',')
+    }).done(function(response) {
+      if (!response || !response.success) {
+        var message = response && response.data && response.data.message ? response.data.message : 'Bulk draft request failed.';
+        appendLog(message, true);
+        finish('Stopped after an error');
+        return;
+      }
+
+      var data = response.data || {};
+      if (data.done) {
+        finish('Finished writing drafts');
+        return;
+      }
+
+      if (data.row && data.row.id) {
+        processed.push(parseInt(data.row.id, 10));
+        appendLog((data.row.slug || 'Row #' + data.row.id) + ': ' + (data.row.message || data.row.status || 'processed'), !data.row.success);
+        if (data.row.stop) {
+          finish('Stopped: ' + (data.row.message || 'configuration needs attention'));
+          return;
+        }
+      }
+
+      if (processed.length >= total) {
+        finish('Finished writing drafts');
+        return;
+      }
+
+      scheduleNext();
+    }).fail(function(xhr) {
+      appendLog('Request failed: ' + (xhr.status || 'network error'), true);
+      finish('Stopped after a request failure');
+    });
+  }
+
+  startBtn.on('click', function() {
+    if (running || total <= 0) return;
+    processed = [];
+    running = true;
+    stopped = false;
+    log.empty();
+    startBtn.prop('disabled', true);
+    stopBtn.prop('disabled', false);
+    setProgress('Starting bulk draft writer');
+    generateNext();
+  });
+
+  stopBtn.on('click', function() {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+    finish('Stopped. Reloading current row statuses');
+  });
+});
+</script>
+        <?php
+    }
+
+    private static function isServiceCityBulkStopError(string $message): bool
+    {
+        foreach ([
+            'Paste and save an Elementor template',
+            'No active agent key',
+            'requires version',
+            'AI generation failed',
+            'parent_service_slug is required',
+        ] as $needle) {
+            if (stripos($message, $needle) !== false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // ── Technical Audits ───────────────────────────────────────────────────
@@ -1349,6 +1504,37 @@ final class SEOHubAdmin
             case 'generate_all_reports':
                 $result = \WNQ\Services\ReportGenerator::generateAllMonthlyReports();
                 wp_send_json_success(['message' => "Reports: generated={$result['generated']}, skipped={$result['skipped']}, failed={$result['failed']}", 'data' => $result]);
+                break;
+
+            case 'service_city_bulk_generate_next':
+                if (!$client_id) wp_send_json_error(['message' => 'No client selected']);
+                $exclude_ids = array_filter(array_map('intval', explode(',', sanitize_text_field($_POST['exclude_ids'] ?? ''))));
+                $row = ServiceCityPage::getNextProcessableRow($client_id, $exclude_ids);
+                if (!$row) {
+                    wp_send_json_success([
+                        'done'  => true,
+                        'stats' => ServiceCityPage::getBulkCounts($client_id),
+                    ]);
+                }
+
+                $result = ServiceCityPageGenerator::generateDraft((int)$row['id']);
+                $updated = ServiceCityPage::getRow((int)$row['id']) ?: $row;
+                $row_message = $result['message'] ?? ($updated['error_message'] ?? '');
+                $stop_on_error = !$result['success'] && self::isServiceCityBulkStopError($row_message);
+
+                wp_send_json_success([
+                    'done'  => false,
+                    'stats' => ServiceCityPage::getBulkCounts($client_id),
+                    'row'   => [
+                        'id'       => (int)$row['id'],
+                        'slug'     => $row['slug'] ?? '',
+                        'status'   => $updated['status'] ?? 'failed',
+                        'success'  => (bool)$result['success'],
+                        'message'  => $row_message,
+                        'page_url' => $result['page_url'] ?? ($updated['wp_page_url'] ?? ''),
+                        'stop'     => $stop_on_error,
+                    ],
+                ]);
                 break;
 
             case 'install_tables':
