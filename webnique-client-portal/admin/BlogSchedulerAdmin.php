@@ -727,10 +727,7 @@ jQuery(function($) {
             foreach ($settings_agents as $a) {
                 $site_label   = $a['site_name'] ?: parse_url($a['site_url'] ?? '', PHP_URL_HOST) ?: $a['site_url'];
                 $site_tpl     = get_option('wnq_blog_template_site_' . (int)$a['id'], '');
-                $site_map     = BlogPublisher::getTemplateInjectionMap((int)$a['id'], false);
-                if (empty(array_filter($site_map)) && $site_tpl !== '') {
-                    $site_map = BlogPublisher::detectTemplateInjectionMap($site_tpl);
-                }
+                $site_map     = BlogPublisher::resolveTemplateInjectionMap((int)$a['id'], $site_tpl, false);
                 echo '<div class="wnq-blog-card">';
                 echo '<h3>🎨 Elementor Template — <span style="color:#2563eb;">' . esc_html($site_label) . '</span></h3>';
                 echo '<p style="color:#6b7280;">Template for <strong>' . esc_html($a['site_url'] ?? '') . '</strong>. If empty the global fallback template is used.</p>';
@@ -753,10 +750,7 @@ jQuery(function($) {
         echo '<h3>🎨 Global Fallback Template</h3>';
         echo '<p style="color:#6b7280;">Used when no per-site template is saved. Paste your default Elementor blog layout JSON here.</p>';
         echo $widget_hint;
-        $global_map = BlogPublisher::getTemplateInjectionMap(0, false);
-        if (empty(array_filter($global_map)) && $template_json !== '') {
-            $global_map = BlogPublisher::detectTemplateInjectionMap($template_json);
-        }
+        $global_map = BlogPublisher::resolveTemplateInjectionMap(0, $template_json, false);
         self::renderTemplateIdSummary($global_map);
         echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
         echo '<input type="hidden" name="action" value="wnq_blog_save_template">';

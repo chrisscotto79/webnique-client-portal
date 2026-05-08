@@ -434,11 +434,15 @@ final class BlogPublisher
         if (!empty($featured_image_url)) {
             $content['featured_image_url'] = $featured_image_url;
         }
-        $content['elementor_body'] = self::bodyWithoutArticleH1($content['body'] ?? '');
-        $content['template_map'] = self::getTemplateInjectionMap($agent_key_id);
-        if (empty(array_filter($content['template_map']))) {
-            $content['template_map'] = self::detectTemplateInjectionMap($template_json);
-        }
+
+        $content['template_map'] = self::resolveTemplateInjectionMap($agent_key_id, $template_json);
+        $has_separate_toc = !empty($content['template_map']['toc_id'])
+            && $content['template_map']['toc_id'] !== ($content['template_map']['body_id'] ?? '');
+        $content['elementor_body'] = self::elementorBodyHtml(
+            $content['body'] ?? '',
+            $content['toc'] ?? '',
+            !$has_separate_toc
+        );
 
         // Walk and inject content by imported IDs first, then recognizable blog widgets.
         $elements = self::walkAndInject($elements, $content);
@@ -497,6 +501,14 @@ final class BlogPublisher
         return self::normalizeTemplateInjectionMap($map);
     }
 
+    public static function resolveTemplateInjectionMap(int $agent_key_id, string $template_json, bool $allow_global = true): array
+    {
+        return self::mergeTemplateInjectionMaps(
+            self::getTemplateInjectionMap($agent_key_id, $allow_global),
+            self::detectTemplateInjectionMap($template_json)
+        );
+    }
+
     private static function normalizeTemplateInjectionMap(array $map): array
     {
         return [
@@ -506,6 +518,24 @@ final class BlogPublisher
             'image_id'          => sanitize_text_field((string)($map['image_id'] ?? '')),
             'image_widget_type' => sanitize_text_field((string)($map['image_widget_type'] ?? '')),
         ];
+    }
+
+    private static function mergeTemplateInjectionMaps(array $saved, array $detected): array
+    {
+        $saved = self::normalizeTemplateInjectionMap($saved);
+        $detected = self::normalizeTemplateInjectionMap($detected);
+
+        foreach ($saved as $key => $value) {
+            if ($value === '' && !empty($detected[$key])) {
+                $saved[$key] = $detected[$key];
+            }
+        }
+
+        if ($saved['body_id'] !== '' && $saved['toc_id'] === $saved['body_id']) {
+            $saved['toc_id'] = '';
+        }
+
+        return self::normalizeTemplateInjectionMap($saved);
     }
 
     private static function collectTemplateInjectionIds(array $elements, array &$map): void
@@ -520,11 +550,11 @@ final class BlogPublisher
                 if ($map['heading_id'] === '' && self::isBlogHeadingTarget($el)) {
                     $map['heading_id'] = $id;
                 }
-                if ($map['toc_id'] === '' && self::isBlogTocTarget($el)) {
-                    $map['toc_id'] = $id;
-                }
                 if ($map['body_id'] === '' && self::isBlogBodyTarget($el)) {
                     $map['body_id'] = $id;
+                }
+                if ($map['toc_id'] === '' && self::isBlogTocTarget($el)) {
+                    $map['toc_id'] = $id;
                 }
                 if ($map['image_id'] === '' && self::isBlogImageLikeTarget($el)) {
                     $map['image_id'] = $id;
@@ -571,24 +601,24 @@ final class BlogPublisher
             if (!$state['h1'] && self::matchesTemplateMap($el, $template_map, 'heading_id') && !empty($content['h1'])) {
                 self::injectBlogHeading($el, (string)$content['h1']);
                 $state['h1'] = true;
-            } elseif (!$state['toc'] && self::matchesTemplateMap($el, $template_map, 'toc_id') && !empty($content['toc'])) {
-                $el['settings']['editor'] = $content['toc'];
-                $state['toc'] = true;
             } elseif (!$state['body'] && self::matchesTemplateMap($el, $template_map, 'body_id') && !empty($content['elementor_body'])) {
                 $el['settings']['editor'] = $content['elementor_body'];
                 $state['body'] = true;
+            } elseif (!$state['toc'] && self::matchesTemplateMap($el, $template_map, 'toc_id') && !empty($content['toc'])) {
+                $el['settings']['editor'] = $content['toc'];
+                $state['toc'] = true;
             } elseif (!$state['image'] && self::matchesTemplateMap($el, $template_map, 'image_id')) {
                 self::injectBlogImage($el, (string)($content['featured_image_url'] ?? ''));
                 $state['image'] = true;
             } elseif (!$state['h1'] && self::isBlogHeadingTarget($el) && !empty($content['h1'])) {
                 self::injectBlogHeading($el, (string)$content['h1']);
                 $state['h1'] = true;
-            } elseif (!$state['toc'] && self::isBlogTocTarget($el) && !empty($content['toc'])) {
-                $el['settings']['editor'] = $content['toc'];
-                $state['toc'] = true;
             } elseif (!$state['body'] && self::isBlogBodyTarget($el) && !empty($content['elementor_body'])) {
                 $el['settings']['editor'] = $content['elementor_body'];
                 $state['body'] = true;
+            } elseif (!$state['toc'] && self::isBlogTocTarget($el) && !empty($content['toc'])) {
+                $el['settings']['editor'] = $content['toc'];
+                $state['toc'] = true;
             } elseif (!$state['image'] && self::isBlogImageTarget($el) && !empty($content['featured_image_url'])) {
                 self::injectBlogImage($el, (string)$content['featured_image_url']);
                 $state['image'] = true;
@@ -662,14 +692,14 @@ final class BlogPublisher
         if ($id === '5b794435' || $id === '1820731f' || $id === '68ad1734') {
             return true;
         }
-        if (($el['widgetType'] ?? '') !== 'text-editor' || self::isBlogTocTarget($el)) {
+        if ($id === '4861ee91' || $id === '4098b8ca') {
+            return false;
+        }
+        if (($el['widgetType'] ?? '') !== 'text-editor') {
             return false;
         }
 
-        $editor = (string)($el['settings']['editor'] ?? '');
-        return stripos($editor, '<article') !== false
-            || stripos($editor, '</article>') !== false
-            || (strlen(wp_strip_all_tags($editor)) > 800 && stripos($editor, '<h2') !== false);
+        return self::textEditorLooksLikeArticleBody((string)($el['settings']['editor'] ?? ''));
     }
 
     private static function isBlogTocTarget(array $el): bool
@@ -683,8 +713,27 @@ final class BlogPublisher
         }
 
         $editor = (string)($el['settings']['editor'] ?? '');
+        if (self::textEditorLooksLikeArticleBody($editor)) {
+            return false;
+        }
+
         return stripos($editor, 'table-of-contents') !== false
             || stripos($editor, 'Table of Contents') !== false;
+    }
+
+    private static function textEditorLooksLikeArticleBody(string $editor): bool
+    {
+        if (stripos($editor, '<article') !== false || stripos($editor, '</article>') !== false) {
+            return true;
+        }
+
+        $looks_like_toc_only = stripos($editor, 'table-of-contents') !== false
+            || stripos($editor, 'Table of Contents') !== false;
+        if ($looks_like_toc_only) {
+            return false;
+        }
+
+        return strlen(wp_strip_all_tags($editor)) > 800 && stripos($editor, '<h2') !== false;
     }
 
     private static function isBlogImageTarget(array $el): bool
@@ -743,6 +792,16 @@ final class BlogPublisher
         $toc = trim($content['toc'] ?? '');
         $body = trim($content['body'] ?? '');
         return trim($toc . "\n\n" . $body);
+    }
+
+    private static function elementorBodyHtml(string $body, string $toc = '', bool $include_toc = false): string
+    {
+        $body = self::bodyWithoutArticleH1($body);
+        $toc = trim($toc);
+        if ($include_toc && $toc !== '') {
+            return trim($toc . "\n\n" . $body);
+        }
+        return $body;
     }
 
     private static function ensureBodyArticleWrapper(string $body): string
