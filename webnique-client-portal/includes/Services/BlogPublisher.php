@@ -438,10 +438,12 @@ final class BlogPublisher
         $content['template_map'] = self::resolveTemplateInjectionMap($agent_key_id, $template_json);
         $has_separate_toc = !empty($content['template_map']['toc_id'])
             && $content['template_map']['toc_id'] !== ($content['template_map']['body_id'] ?? '');
+        $has_separate_heading = !empty($content['template_map']['heading_id']);
         $content['elementor_body'] = self::elementorBodyHtml(
             $content['body'] ?? '',
             $content['toc'] ?? '',
-            !$has_separate_toc
+            !$has_separate_toc,
+            !$has_separate_heading
         );
 
         // Walk and inject content by imported IDs first, then recognizable blog widgets.
@@ -794,9 +796,14 @@ final class BlogPublisher
         return trim($toc . "\n\n" . $body);
     }
 
-    private static function elementorBodyHtml(string $body, string $toc = '', bool $include_toc = false): string
+    private static function elementorBodyHtml(
+        string $body,
+        string $toc = '',
+        bool $include_toc = false,
+        bool $include_h1 = false
+    ): string
     {
-        $body = self::bodyWithoutArticleH1($body);
+        $body = $include_h1 ? trim($body) : self::bodyWithoutArticleH1($body);
         $toc = trim($toc);
         if ($include_toc && $toc !== '') {
             return trim($toc . "\n\n" . $body);
