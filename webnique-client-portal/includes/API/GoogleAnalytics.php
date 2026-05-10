@@ -20,8 +20,6 @@ final class GoogleAnalytics
 {
     private array $credentials;
     private string $property_id;
-    private ?object $client = null;
-
     /**
      * Constructor
      */
@@ -81,7 +79,7 @@ final class GoogleAnalytics
 
             return $result;
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             error_log('GA Overview Error: ' . $e->getMessage());
             return $this->getEmptyOverview();
         }
@@ -122,7 +120,7 @@ final class GoogleAnalytics
 
             return $result;
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             error_log('GA Traffic Sources Error: ' . $e->getMessage());
             return [];
         }
@@ -165,7 +163,7 @@ final class GoogleAnalytics
 
             return $result;
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             error_log('GA Top Pages Error: ' . $e->getMessage());
             return [];
         }
@@ -206,7 +204,7 @@ final class GoogleAnalytics
 
             return $result;
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             error_log('GA Visitor Trends Error: ' . $e->getMessage());
             return [];
         }
@@ -243,7 +241,7 @@ final class GoogleAnalytics
 
             return $result;
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             error_log('GA Device Stats Error: ' . $e->getMessage());
             return [];
         }
@@ -254,43 +252,98 @@ final class GoogleAnalytics
      */
     public function getEventData(string $event_name, string $start_date = '30daysAgo', string $end_date = 'today'): array
     {
-        $cache_key = "ga_event_{$event_name}_{$this->property_id}_{$start_date}_{$end_date}";
-        
+        foreach ($this->getKeyEvents([$event_name], $start_date, $end_date) as $event) {
+            if (($event['event_name'] ?? '') === $event_name) {
+                return [
+                    'count' => (int)($event['count'] ?? 0),
+                    'trend' => 0,
+                ];
+            }
+        }
+
+        return ['count' => 0, 'trend' => 0];
+    }
+
+    /**
+     * Get tracked key events in one GA4 request.
+     */
+    public function getKeyEvents(array $event_names, string $start_date = '30daysAgo', string $end_date = 'today'): array
+    {
+        $event_names = array_values(array_unique(array_filter(array_map(
+            fn($event) => preg_replace('/[^a-zA-Z0-9_]/', '', (string)$event),
+            $event_names
+        ))));
+
+        if (empty($event_names)) {
+            return [];
+        }
+
+        sort($event_names);
+        $cache_key = "ga_key_events_{$this->property_id}_{$start_date}_{$end_date}_" . md5(implode('|', $event_names));
+
         $cached = AnalyticsCache::get($cache_key);
         if (is_array($cached)) {
             return $cached;
         }
 
+        $display_names = [
+            'phone_click' => 'Phone Clicks',
+            'email_click' => 'Email Clicks',
+            'social_click' => 'Social Clicks',
+            'contact_page_visit' => 'Contact Page',
+            'generate_lead' => 'Form Submissions',
+            'purchase' => 'Purchases',
+        ];
+
+        $counts = array_fill_keys($event_names, 0);
+
         try {
             $data = $this->makeRequest([
                 'dateRanges' => [
-                    ['startDate' => $start_date, 'endDate' => $end_date]
+                    ['startDate' => $start_date, 'endDate' => $end_date],
+                ],
+                'dimensions' => [
+                    ['name' => 'eventName'],
                 ],
                 'metrics' => [
                     ['name' => 'eventCount'],
                 ],
-                'dimensions' => [
-                    ['name' => 'eventName']
-                ],
                 'dimensionFilter' => [
                     'filter' => [
                         'fieldName' => 'eventName',
-                        'stringFilter' => [
-                            'value' => $event_name
-                        ]
-                    ]
-                ]
+                        'inListFilter' => [
+                            'values' => $event_names,
+                        ],
+                    ],
+                ],
+                'orderBys' => [
+                    ['metric' => ['metricName' => 'eventCount'], 'desc' => true],
+                ],
             ]);
 
-            $result = $this->parseEventData($data);
-            AnalyticsCache::set($cache_key, $result, 3600);
-
-            return $result;
-
-        } catch (\Exception $e) {
-            error_log('GA Event Data Error: ' . $e->getMessage());
-            return ['count' => 0, 'trend' => 0];
+            foreach (($data['rows'] ?? []) as $row) {
+                $event_name = (string)($row['dimensionValues'][0]['value'] ?? '');
+                if (array_key_exists($event_name, $counts)) {
+                    $counts[$event_name] = (int)($row['metricValues'][0]['value'] ?? 0);
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log('GA Key Events Error: ' . $e->getMessage());
         }
+
+        $events = [];
+        foreach ($event_names as $event_name) {
+            $label = $display_names[$event_name] ?? ucwords(str_replace('_', ' ', $event_name));
+            $events[] = [
+                'event_name' => $event_name,
+                'display_name' => $label,
+                'label' => $label,
+                'count' => (int)($counts[$event_name] ?? 0),
+            ];
+        }
+
+        AnalyticsCache::set($cache_key, $events, 3600);
+        return $events;
     }
 
     /**
@@ -298,7 +351,8 @@ final class GoogleAnalytics
      */
     private function makeRequest(array $request_body): array
     {
-        $url = "https://analyticsdata.googleapis.com/v1beta/properties/{$this->property_id}:runReport";
+        $property = $this->formatPropertyResource($this->property_id);
+        $url = "https://analyticsdata.googleapis.com/v1beta/{$property}:runReport";
         
         $access_token = $this->getAccessToken();
         
@@ -315,12 +369,12 @@ final class GoogleAnalytics
             throw new \Exception('API request failed: ' . $response->get_error_message());
         }
 
-        $body = wp_remote_retrieve_body($response);
-        $data = json_decode($body, true);
+        $code = wp_remote_retrieve_response_code($response);
+        $data = json_decode(wp_remote_retrieve_body($response), true);
 
-        if (!$data || isset($data['error'])) {
+        if ($code !== 200 || !is_array($data) || isset($data['error'])) {
             $error_msg = $data['error']['message'] ?? 'Unknown error';
-            throw new \Exception('API error: ' . $error_msg);
+            throw new \Exception('API error ' . $code . ': ' . $error_msg);
         }
 
         return $data;
@@ -333,18 +387,18 @@ final class GoogleAnalytics
     {
         // Check transient cache
         $cached_token = get_transient('wnq_ga_access_token');
-        if ($cached_token) {
+        if (is_string($cached_token) && $cached_token !== '') {
             return $cached_token;
         }
 
         // Create JWT
         $now = time();
-        $jwt_header = base64_encode(wp_json_encode([
+        $jwt_header = self::base64UrlEncode(wp_json_encode([
             'alg' => 'RS256',
             'typ' => 'JWT'
         ]));
 
-        $jwt_claim = base64_encode(wp_json_encode([
+        $jwt_claim = self::base64UrlEncode(wp_json_encode([
             'iss' => $this->credentials['client_email'],
             'scope' => 'https://www.googleapis.com/auth/analytics.readonly',
             'aud' => 'https://oauth2.googleapis.com/token',
@@ -355,21 +409,26 @@ final class GoogleAnalytics
         $signature_input = $jwt_header . '.' . $jwt_claim;
         
         // Sign with private key
-        openssl_sign(
+        $signed = openssl_sign(
             $signature_input,
             $signature,
             $this->credentials['private_key'],
             'SHA256'
         );
 
-        $jwt = $signature_input . '.' . base64_encode($signature);
+        if (!$signed) {
+            throw new \Exception('Failed to sign Google Analytics service account request');
+        }
+
+        $jwt = $signature_input . '.' . self::base64UrlEncode($signature);
 
         // Exchange JWT for access token
         $response = wp_remote_post('https://oauth2.googleapis.com/token', [
             'body' => [
                 'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
                 'assertion' => $jwt
-            ]
+            ],
+            'timeout' => 30,
         ]);
 
         if (is_wp_error($response)) {
@@ -379,13 +438,19 @@ final class GoogleAnalytics
         $body = json_decode(wp_remote_retrieve_body($response), true);
         
         if (!isset($body['access_token'])) {
-            throw new \Exception('Failed to get access token');
+            throw new \Exception('Failed to get access token: ' . ($body['error_description'] ?? $body['error'] ?? 'Unknown'));
         }
 
         // Cache token for 50 minutes (expires in 60)
         set_transient('wnq_ga_access_token', $body['access_token'], 3000);
 
         return $body['access_token'];
+    }
+
+    private function formatPropertyResource(string $property_id): string
+    {
+        $property_id = trim($property_id);
+        return str_starts_with($property_id, 'properties/') ? $property_id : 'properties/' . $property_id;
     }
 
     /**
@@ -560,7 +625,7 @@ final class GoogleAnalytics
         try {
             $prev_data = $this->getOverviewStats($prev_start, $prev_end, false);
             return $prev_data;
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return $this->getEmptyOverview();
         }
     }
@@ -598,5 +663,10 @@ final class GoogleAnalytics
             'new_users' => 0,
             'comparison' => []
         ];
+    }
+
+    private static function base64UrlEncode(string $data): string
+    {
+        return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
     }
 }

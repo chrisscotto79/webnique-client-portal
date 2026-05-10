@@ -747,7 +747,7 @@ final class SEOHub
         global $wpdb;
         return $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT * FROM {$wpdb->prefix}wnq_seo_reports WHERE client_id=%s ORDER BY period_start DESC LIMIT %d",
+                "SELECT * FROM {$wpdb->prefix}wnq_seo_reports WHERE client_id=%s ORDER BY period_start DESC, generated_at DESC, id DESC LIMIT %d",
                 $client_id, $limit
             ),
             ARRAY_A

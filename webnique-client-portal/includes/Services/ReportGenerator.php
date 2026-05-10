@@ -582,17 +582,23 @@ final class ReportGenerator
             'purchase' => 'Purchases',
         ];
 
-        $summary = [];
-        foreach ($events as $event_name => $label) {
-            $data = $analytics->getEventData($event_name, $start, $end);
-            $summary[] = [
-                'event_name' => $event_name,
-                'label' => $label,
-                'count' => (int)($data['count'] ?? 0),
-            ];
+        $counts = array_fill_keys(array_keys($events), 0);
+        foreach ($analytics->getKeyEvents(array_keys($events), $start, $end) as $event) {
+            $event_name = (string)($event['event_name'] ?? '');
+            if (array_key_exists($event_name, $counts)) {
+                $counts[$event_name] = (int)($event['count'] ?? 0);
+            }
         }
 
-        return $summary;
+        return array_map(
+            fn($event_name, $label) => [
+                'event_name' => $event_name,
+                'label' => $label,
+                'count' => (int)($counts[$event_name] ?? 0),
+            ],
+            array_keys($events),
+            $events
+        );
     }
 
     private static function getReportRecipients(array $client): array
