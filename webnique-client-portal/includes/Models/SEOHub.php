@@ -651,6 +651,53 @@ final class SEOHub
         return $row ?: null;
     }
 
+    public static function getReportForPeriod(string $client_id, string $type, string $start, string $end): ?array
+    {
+        global $wpdb;
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT * FROM {$wpdb->prefix}wnq_seo_reports
+                 WHERE client_id=%s AND report_type=%s AND period_start=%s AND period_end=%s
+                 ORDER BY id DESC LIMIT 1",
+                $client_id,
+                $type,
+                $start,
+                $end
+            ),
+            ARRAY_A
+        );
+
+        if ($row && !empty($row['report_data'])) {
+            $row['report_data'] = json_decode($row['report_data'], true);
+        }
+
+        return $row ?: null;
+    }
+
+    public static function updateReportStatus(int $id, string $status): bool
+    {
+        global $wpdb;
+        $status = sanitize_key($status);
+        if (!in_array($status, ['draft', 'ready', 'sent'], true)) {
+            return false;
+        }
+
+        $data = ['status' => $status];
+        if ($status === 'sent') {
+            $data['exported_at'] = current_time('mysql');
+        }
+
+        $updated = $wpdb->update(
+            $wpdb->prefix . 'wnq_seo_reports',
+            $data,
+            ['id' => $id],
+            null,
+            ['%d']
+        );
+
+        return $updated !== false;
+    }
+
     /* ═══════════════════════════════════════════
      *  AUTOMATION LOG METHODS
      * ═══════════════════════════════════════════ */
