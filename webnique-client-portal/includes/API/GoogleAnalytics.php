@@ -57,11 +57,9 @@ final class GoogleAnalytics
                 ],
                 'metrics' => [
                     ['name' => 'totalUsers'],
-                    ['name' => 'sessions'],
                     ['name' => 'screenPageViews'],
-                    ['name' => 'averageSessionDuration'],
+                    ['name' => 'sessions'],
                     ['name' => 'bounceRate'],
-                    ['name' => 'newUsers'],
                 ],
                 'dimensions' => []
             ]);
@@ -145,7 +143,6 @@ final class GoogleAnalytics
                 ],
                 'metrics' => [
                     ['name' => 'screenPageViews'],
-                    ['name' => 'averageSessionDuration'],
                     ['name' => 'bounceRate'],
                 ],
                 'dimensions' => [
@@ -353,31 +350,40 @@ final class GoogleAnalytics
     {
         $property = $this->formatPropertyResource($this->property_id);
         $url = "https://analyticsdata.googleapis.com/v1beta/{$property}:runReport";
-        
-        $access_token = $this->getAccessToken();
-        
-        $response = wp_remote_post($url, [
-            'headers' => [
-                'Authorization' => 'Bearer ' . $access_token,
-                'Content-Type' => 'application/json',
-            ],
-            'body' => wp_json_encode($request_body),
-            'timeout' => 30,
-        ]);
 
-        if (is_wp_error($response)) {
-            throw new \Exception('API request failed: ' . $response->get_error_message());
-        }
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            $access_token = $this->getAccessToken();
 
-        $code = wp_remote_retrieve_response_code($response);
-        $data = json_decode(wp_remote_retrieve_body($response), true);
+            $response = wp_remote_post($url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $access_token,
+                    'Content-Type' => 'application/json',
+                ],
+                'body' => wp_json_encode($request_body),
+                'timeout' => 30,
+            ]);
 
-        if ($code !== 200 || !is_array($data) || isset($data['error'])) {
-            $error_msg = $data['error']['message'] ?? 'Unknown error';
+            if (is_wp_error($response)) {
+                throw new \Exception('API request failed: ' . $response->get_error_message());
+            }
+
+            $code = wp_remote_retrieve_response_code($response);
+            $data = json_decode(wp_remote_retrieve_body($response), true);
+
+            if ($code === 200 && is_array($data) && !isset($data['error'])) {
+                return $data;
+            }
+
+            if (in_array((int)$code, [401, 403], true) && $attempt === 0) {
+                delete_transient('wnq_ga_access_token');
+                continue;
+            }
+
+            $error_msg = is_array($data) ? ($data['error']['message'] ?? 'Unknown error') : 'Invalid JSON response';
             throw new \Exception('API error ' . $code . ': ' . $error_msg);
         }
 
-        return $data;
+        throw new \Exception('API request failed after refreshing the access token');
     }
 
     /**
@@ -400,7 +406,7 @@ final class GoogleAnalytics
 
         $jwt_claim = self::base64UrlEncode(wp_json_encode([
             'iss' => $this->credentials['client_email'],
-            'scope' => 'https://www.googleapis.com/auth/analytics.readonly',
+            'scope' => 'https://www.googleapis.com/auth/analytics.readonly https://www.googleapis.com/auth/webmasters.readonly',
             'aud' => 'https://oauth2.googleapis.com/token',
             'exp' => $now + 3600,
             'iat' => $now
@@ -467,11 +473,11 @@ final class GoogleAnalytics
 
         return [
             'total_users' => intval($metrics[0]['value'] ?? 0),
-            'sessions' => intval($metrics[1]['value'] ?? 0),
-            'page_views' => intval($metrics[2]['value'] ?? 0),
-            'avg_session_duration' => floatval($metrics[3]['value'] ?? 0),
-            'bounce_rate' => floatval($metrics[4]['value'] ?? 0) * 100,
-            'new_users' => intval($metrics[5]['value'] ?? 0),
+            'page_views' => intval($metrics[1]['value'] ?? 0),
+            'sessions' => intval($metrics[2]['value'] ?? 0),
+            'bounce_rate' => floatval($metrics[3]['value'] ?? 0) * 100,
+            'avg_session_duration' => 0,
+            'new_users' => 0,
         ];
     }
 
@@ -524,8 +530,8 @@ final class GoogleAnalytics
                 'path' => $row['dimensionValues'][0]['value'],
                 'title' => $row['dimensionValues'][1]['value'] ?? 'Untitled',
                 'views' => intval($row['metricValues'][0]['value']),
-                'avg_time' => floatval($row['metricValues'][1]['value'] ?? 0),
-                'bounce_rate' => floatval($row['metricValues'][2]['value'] ?? 0) * 100,
+                'avg_time' => 0,
+                'bounce_rate' => floatval($row['metricValues'][1]['value'] ?? 0) * 100,
             ];
         }
 
