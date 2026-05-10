@@ -1061,7 +1061,7 @@ jQuery(function($) {
             if (!empty($reports)) {
                 $scores_list = array_filter(array_map(function($r) {
                     $d = is_string($r['report_data']) ? json_decode($r['report_data'], true) : [];
-                    return $d['site_health']['score'] ?? null;
+                    return $d['site_health']['health_score'] ?? $d['site_health']['score'] ?? null;
                 }, $reports));
                 if (!empty($scores_list)) {
                     $avg = (int)round(array_sum($scores_list) / count($scores_list));
@@ -1085,7 +1085,7 @@ jQuery(function($) {
             }
             foreach ($reports as $r) {
                 $rdata  = is_string($r['report_data']) ? json_decode($r['report_data'], true) : [];
-                $hscore = $rdata['site_health']['score'] ?? null;
+                $hscore = $rdata['site_health']['health_score'] ?? $rdata['site_health']['score'] ?? null;
                 echo '<tr>';
                 echo '<td><strong>' . esc_html($r['title']) . '</strong></td>';
                 echo '<td>' . esc_html($r['period_start']) . ' – ' . esc_html($r['period_end']) . '</td>';
@@ -1502,7 +1502,7 @@ jQuery(function($) {
                 break;
 
             case 'generate_all_reports':
-                $result = \WNQ\Services\ReportGenerator::generateAllMonthlyReports();
+                $result = \WNQ\Services\ReportGenerator::generateAllMonthlyReports('', false);
                 wp_send_json_success(['message' => "Reports: generated={$result['generated']}, skipped={$result['skipped']}, failed={$result['failed']}", 'data' => $result]);
                 break;
 

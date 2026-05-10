@@ -20,6 +20,7 @@ use WNQ\Services\BacklinkVerifier;
 use WNQ\Services\BlogPublisher;
 use WNQ\Services\CrawlEngine;
 use WNQ\Services\ReportGenerator;
+use WNQ\Models\SEOHub;
 
 final class CronScheduler
 {
@@ -66,11 +67,8 @@ final class CronScheduler
             wp_schedule_event($next_2am, 'daily', 'wnq_seo_nightly_audit');
         }
 
-        // Monthly reports on 1st of next month at 6am
-        if (!wp_next_scheduled('wnq_seo_monthly_reports')) {
-            $next_month_1st = strtotime('first day of next month 6:00am');
-            wp_schedule_event($next_month_1st, 'monthly', 'wnq_seo_monthly_reports');
-        }
+        // Monthly reports email the completed previous month on the 1st at 6am.
+        self::scheduleMonthlyReportJob();
 
         // Blog publisher daily at 8am — processes posts due today
         if (!wp_next_scheduled('wnq_blog_publisher')) {
@@ -112,6 +110,36 @@ final class CronScheduler
         }
     }
 
+    private static function scheduleMonthlyReportJob(): void
+    {
+        $existing = wp_next_scheduled('wnq_seo_monthly_reports');
+        $existing_schedule = $existing ? wp_get_schedule('wnq_seo_monthly_reports') : false;
+
+        if ($existing && $existing_schedule === 'monthly') {
+            self::unscheduleHook('wnq_seo_monthly_reports');
+            $existing = false;
+        }
+
+        if (!$existing) {
+            wp_schedule_single_event(self::nextMonthlyReportTimestamp(), 'wnq_seo_monthly_reports');
+        }
+    }
+
+    private static function nextMonthlyReportTimestamp(): int
+    {
+        $next = strtotime('first day of next month 6:00am');
+        return $next ?: (time() + DAY_IN_SECONDS);
+    }
+
+    private static function unscheduleHook(string $hook): void
+    {
+        $timestamp = wp_next_scheduled($hook);
+        while ($timestamp) {
+            wp_unschedule_event($timestamp, $hook);
+            $timestamp = wp_next_scheduled($hook);
+        }
+    }
+
     // ── Cron Handlers ──────────────────────────────────────────────────────
 
     public static function runNightlyAudit(): void
@@ -123,7 +151,9 @@ final class CronScheduler
     public static function generateMonthlyReports(): void
     {
         if (!self::canRun()) return;
-        ReportGenerator::generateAllMonthlyReports();
+        $result = ReportGenerator::generateAllMonthlyReports();
+        SEOHub::log('monthly_report_batch_complete', $result);
+        self::scheduleMonthlyReportJob();
     }
 
     public static function runBlogPublisher(): void
@@ -214,7 +244,7 @@ final class CronScheduler
     {
         $jobs = [
             'wnq_seo_nightly_audit'      => 'Nightly Audit (2am daily)',
-            'wnq_seo_monthly_reports'    => 'Monthly Report Generator',
+            'wnq_seo_monthly_reports'    => 'Monthly Analytics Report Email (1st at 6am)',
             'wnq_blog_publisher'         => 'Blog Auto-Publisher (8am daily)',
             'wnq_spider_auto_crawl'      => 'Spider Auto-Crawl Scheduler (hourly check)',
             'wnq_backlink_verify'        => 'Backlink Verifier (Sunday 4am weekly)',

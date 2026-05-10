@@ -41,9 +41,10 @@ final class GoogleAnalytics
     /**
      * Get overview stats
      */
-    public function getOverviewStats(string $start_date = '30daysAgo', string $end_date = 'today'): array
+    public function getOverviewStats(string $start_date = '30daysAgo', string $end_date = 'today', bool $include_comparison = true): array
     {
-        $cache_key = "ga_overview_{$this->property_id}_{$start_date}_{$end_date}";
+        $comparison_key = $include_comparison ? 'with_comparison' : 'base';
+        $cache_key = "ga_overview_{$this->property_id}_{$start_date}_{$end_date}_{$comparison_key}";
         
         // Check cache first
         $cached = AnalyticsCache::get($cache_key);
@@ -69,9 +70,11 @@ final class GoogleAnalytics
 
             $result = $this->parseOverviewData($data);
             
-            // Get comparison data (previous period)
-            $comparison = $this->getComparisonData($start_date, $end_date);
-            $result['comparison'] = $comparison;
+            if ($include_comparison) {
+                // Get comparison data (previous period)
+                $comparison = $this->getComparisonData($start_date, $end_date);
+                $result['comparison'] = $comparison;
+            }
 
             // Cache for 1 hour
             AnalyticsCache::set($cache_key, $result, 3600);
@@ -542,13 +545,20 @@ final class GoogleAnalytics
      */
     private function getComparisonData(string $start_date, string $end_date): array
     {
-        // Calculate previous period dates
-        // For simplicity, we'll compare to previous 30 days
-        $prev_end = date('Y-m-d', strtotime($start_date) - 86400);
-        $prev_start = date('Y-m-d', strtotime($prev_end) - (strtotime($end_date) - strtotime($start_date)));
+        $start_ts = strtotime($start_date);
+        $end_ts = strtotime($end_date);
+        if (!$start_ts || !$end_ts) {
+            return $this->getEmptyOverview();
+        }
+
+        $days = max(1, (int)floor(($end_ts - $start_ts) / DAY_IN_SECONDS) + 1);
+        $prev_end_ts = $start_ts - DAY_IN_SECONDS;
+        $prev_start_ts = $prev_end_ts - (($days - 1) * DAY_IN_SECONDS);
+        $prev_end = date('Y-m-d', $prev_end_ts);
+        $prev_start = date('Y-m-d', $prev_start_ts);
 
         try {
-            $prev_data = $this->getOverviewStats($prev_start, $prev_end);
+            $prev_data = $this->getOverviewStats($prev_start, $prev_end, false);
             return $prev_data;
         } catch (\Exception $e) {
             return $this->getEmptyOverview();
