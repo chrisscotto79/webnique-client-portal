@@ -2,13 +2,7 @@
 /**
  * Report Generator
  *
- * Generates monthly SEO performance reports including:
- *  - Traffic & keyword movement summary
- *  - Top/underperforming pages
- *  - Audit findings summary
- *  - Content published this period
- *  - AI-generated executive summary
- *  - Exportable HTML output
+ * Generates monthly analytics reports including GA4 and Google Search Console data.
  *
  * @package WebNique Portal
  */
@@ -23,6 +17,7 @@ use WNQ\Models\SEOHub;
 use WNQ\Models\Client;
 use WNQ\Models\AnalyticsConfig;
 use WNQ\API\GoogleAnalytics;
+use WNQ\API\GoogleSearchConsole;
 
 final class ReportGenerator
 {
@@ -43,13 +38,7 @@ final class ReportGenerator
         // Gather all report data
         $report_data = [
             'client'         => self::getClientSummary($client, $profile),
-            'keywords'       => self::getKeywordSummary($client_id),
-            'site_health'    => self::getSiteHealthSummary($client_id),
             'analytics'      => self::getAnalyticsSummary($client_id, $period_start, $period_end),
-            'audit_findings' => self::getAuditFindingsSummary($client_id, $period_start, $period_end),
-            'blog_posts'     => self::getBlogPublishingSummary($client_id, $period_start, $period_end),
-            'automation_log' => self::getAutomationLogSummary($client_id, $period_start, $period_end),
-            'recommendations'=> self::generateRecommendations($client_id),
             'period'         => ['start' => $period_start, 'end' => $period_end, 'label' => date('F Y', strtotime($period_start))],
             'generated_at'   => current_time('mysql'),
         ];
@@ -193,12 +182,7 @@ final class ReportGenerator
         $data    = is_array($report['report_data'] ?? null) ? $report['report_data'] : [];
         $period  = $data['period'] ?? [];
         $client  = $data['client'] ?? [];
-        $kws     = $data['keywords'] ?? [];
-        $health  = $data['site_health'] ?? [];
         $analytics = $data['analytics'] ?? [];
-        $audit   = $data['audit_findings'] ?? [];
-        $blog_posts = $data['blog_posts'] ?? [];
-        $recs    = $data['recommendations'] ?? [];
 
         ob_start();
         ?>
@@ -207,7 +191,7 @@ final class ReportGenerator
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SEO Report - <?php echo esc_html($client['name'] ?? ''); ?> - <?php echo esc_html($period['label'] ?? ''); ?></title>
+<title>Analytics Report - <?php echo esc_html($client['name'] ?? ''); ?> - <?php echo esc_html($period['label'] ?? ''); ?></title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #1f2937; background: #f9fafb; }
@@ -232,16 +216,8 @@ final class ReportGenerator
   th { background: #f1f5f9; text-align: left; padding: 10px 12px; font-weight: 600; color: #374151; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
   td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; color: #374151; }
   tr:hover td { background: #f9fafb; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
-  .badge-up { background: #dcfce7; color: #16a34a; }
-  .badge-down { background: #fef2f2; color: #dc2626; }
-  .badge-warn { background: #fef9c3; color: #92400e; }
-  .badge-crit { background: #fef2f2; color: #dc2626; }
   .ai-summary { background: #f0f9ff; border-left: 4px solid #0d539e; padding: 20px 24px; border-radius: 0 8px 8px 0; font-size: 15px; line-height: 1.7; }
   .note { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: 10px; padding: 14px 16px; font-size: 14px; line-height: 1.6; }
-  .rec-list { list-style: none; }
-  .rec-list li { padding: 12px 0; border-bottom: 1px solid #f1f5f9; display: flex; gap: 12px; align-items: flex-start; }
-  .rec-list li::before { content: '→'; color: #0d539e; font-weight: 700; flex-shrink: 0; }
   .report-footer { padding: 24px 40px; background: #f9fafb; text-align: center; font-size: 12px; color: #9ca3af; }
   @media print { body { background: white; } .section { page-break-inside: avoid; } }
 </style>
@@ -250,7 +226,7 @@ final class ReportGenerator
 <div class="report-wrapper">
 
   <div class="report-header">
-    <h1>SEO Performance Report</h1>
+    <h1>Analytics Performance Report</h1>
     <div class="meta">
       <?php echo esc_html($client['name'] ?? ''); ?> &bull; <?php echo esc_html($period['label'] ?? ''); ?>
     </div>
@@ -270,6 +246,7 @@ final class ReportGenerator
   <!-- Analytics -->
   <div class="section">
     <h2>Analytics Overview</h2>
+    <?php $search_console = $analytics['search_console'] ?? []; ?>
     <?php if (!empty($analytics['configured'])): ?>
       <?php
         $overview = $analytics['overview'] ?? [];
@@ -377,155 +354,108 @@ final class ReportGenerator
         </table>
       </div>
       <?php endif; ?>
+
     <?php else: ?>
       <div class="note">
-        Analytics data was not available for this client during report generation.
+        GA4 analytics data was not available for this client during report generation.
         <?php if (!empty($analytics['error'])): ?>
           <?php echo esc_html($analytics['error']); ?>
         <?php endif; ?>
       </div>
     <?php endif; ?>
-  </div>
 
-  <!-- Site Health -->
-  <div class="section">
-    <h2>Site Health Overview</h2>
-    <div class="metric-grid">
-      <div class="metric-card">
-        <div class="value"><?php echo (int)($health['total_pages'] ?? 0); ?></div>
-        <div class="label">Total Pages</div>
+      <?php if (!empty($search_console['configured'])): ?>
+      <?php
+        $gsc_overview = $search_console['overview'] ?? [];
+        $gsc_keywords = $search_console['top_keywords'] ?? [];
+        $gsc_pages = $search_console['top_pages'] ?? [];
+        $gsc_trends = $search_console['performance_over_time'] ?? [];
+      ?>
+      <h3 style="font-size:16px;color:#374151;margin:10px 0 12px;">Google Search Console</h3>
+      <div class="metric-grid">
+        <div class="metric-card">
+          <div class="value"><?php echo number_format((int)($gsc_overview['clicks']['value'] ?? 0)); ?></div>
+          <div class="label">Organic Clicks</div>
+        </div>
+        <div class="metric-card">
+          <div class="value"><?php echo number_format((int)($gsc_overview['impressions']['value'] ?? 0)); ?></div>
+          <div class="label">Search Impressions</div>
+        </div>
+        <div class="metric-card">
+          <div class="value"><?php echo number_format((float)($gsc_overview['ctr']['value'] ?? 0), 1); ?>%</div>
+          <div class="label">Average CTR</div>
+        </div>
+        <div class="metric-card">
+          <div class="value"><?php echo number_format((float)($gsc_overview['position']['value'] ?? 0), 1); ?></div>
+          <div class="label">Average Position</div>
+        </div>
       </div>
-      <div class="metric-card <?php echo ($health['missing_h1'] ?? 0) > 0 ? 'danger' : 'success'; ?>">
-        <div class="value"><?php echo (int)($health['missing_h1'] ?? 0); ?></div>
-        <div class="label">Missing H1</div>
-      </div>
-      <div class="metric-card <?php echo ($health['thin_content'] ?? 0) > 0 ? 'danger' : 'success'; ?>">
-        <div class="value"><?php echo (int)($health['thin_content'] ?? 0); ?></div>
-        <div class="label">Thin Content</div>
-      </div>
-      <div class="metric-card <?php echo ($health['missing_alt'] ?? 0) > 0 ? 'danger' : 'success'; ?>">
-        <div class="value"><?php echo (int)($health['missing_alt'] ?? 0); ?></div>
-        <div class="label">Missing Alt Text</div>
-      </div>
-      <div class="metric-card <?php echo ($health['no_schema'] ?? 0) > 0 ? 'danger' : 'success'; ?>">
-        <div class="value"><?php echo (int)($health['no_schema'] ?? 0); ?></div>
-        <div class="label">No Schema</div>
-      </div>
-      <div class="metric-card success">
-        <div class="value"><?php echo (int)($health['health_score'] ?? 0); ?>%</div>
-        <div class="label">Health Score</div>
-      </div>
-    </div>
-  </div>
 
-  <!-- Keyword Performance -->
-  <?php if (!empty($kws['top_keywords'])): ?>
-  <div class="section">
-    <h2>Keyword Performance</h2>
-    <div class="metric-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 24px;">
-      <div class="metric-card">
-        <div class="value"><?php echo (int)($kws['total'] ?? 0); ?></div>
-        <div class="label">Tracked Keywords</div>
+      <?php if (!empty($gsc_trends)): ?>
+      <h3 style="font-size:16px;color:#374151;margin:6px 0 12px;">Search Performance Over Time</h3>
+      <div class="table-wrap" style="margin-bottom:24px;">
+        <table>
+          <thead><tr><th>Date</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Position</th></tr></thead>
+          <tbody>
+            <?php foreach ($gsc_trends as $day): ?>
+            <tr>
+              <td><?php echo esc_html($day['date'] ?? ''); ?></td>
+              <td><?php echo number_format((int)($day['clicks'] ?? 0)); ?></td>
+              <td><?php echo number_format((int)($day['impressions'] ?? 0)); ?></td>
+              <td><?php echo number_format((float)($day['ctr'] ?? 0), 1); ?>%</td>
+              <td><?php echo number_format((float)($day['position'] ?? 0), 1); ?></td>
+            </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
       </div>
-      <div class="metric-card success">
-        <div class="value"><?php echo (int)($kws['improving'] ?? 0); ?></div>
-        <div class="label">Improving</div>
-      </div>
-      <div class="metric-card danger">
-        <div class="value"><?php echo (int)($kws['declining'] ?? 0); ?></div>
-        <div class="label">Declining</div>
-      </div>
-      <div class="metric-card">
-        <div class="value"><?php echo (int)($kws['content_gaps'] ?? 0); ?></div>
-        <div class="label">Content Gaps</div>
-      </div>
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Keyword</th><th>Cluster</th><th>Position</th><th>Change</th><th>Impressions</th><th>Clicks</th></tr></thead>
-        <tbody>
-          <?php foreach (array_slice($kws['top_keywords'], 0, 15) as $kw): ?>
-          <?php
-            $delta = $kw['delta'] ?? null;
-            $badge = '';
-            if ($delta !== null) {
-              if ($delta < 0) $badge = '<span class="badge badge-up">▲ ' . abs($delta) . '</span>';
-              elseif ($delta > 0) $badge = '<span class="badge badge-down">▼ ' . $delta . '</span>';
-              else $badge = '<span class="badge badge-warn">—</span>';
-            }
-          ?>
-          <tr>
-            <td><?php echo esc_html($kw['keyword']); ?></td>
-            <td><?php echo esc_html($kw['cluster_name'] ?? '—'); ?></td>
-            <td><?php echo $kw['current_position'] !== null ? '#' . number_format((float)$kw['current_position'], 1) : '—'; ?></td>
-            <td><?php echo $badge; ?></td>
-            <td><?php echo number_format((int)($kw['impressions'] ?? 0)); ?></td>
-            <td><?php echo number_format((int)($kw['clicks'] ?? 0)); ?></td>
-          </tr>
-          <?php endforeach; ?>
-        </tbody>
-      </table>
-    </div>
-  </div>
-  <?php endif; ?>
+      <?php endif; ?>
 
-  <!-- Audit Findings -->
-  <?php if (!empty($audit)): ?>
-  <div class="section">
-    <h2>Technical Audit Summary</h2>
-    <div class="metric-grid" style="grid-template-columns: repeat(3, 1fr);">
-      <div class="metric-card danger">
-        <div class="value"><?php echo (int)($audit['critical'] ?? 0); ?></div>
-        <div class="label">Critical Issues</div>
+      <?php if (!empty($gsc_keywords)): ?>
+      <h3 style="font-size:16px;color:#374151;margin:6px 0 12px;">Top Search Queries</h3>
+      <div class="table-wrap" style="margin-bottom:24px;">
+        <table>
+          <thead><tr><th>Query</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Position</th></tr></thead>
+          <tbody>
+            <?php foreach ($gsc_keywords as $keyword): ?>
+            <tr>
+              <td><?php echo esc_html($keyword['keyword'] ?? ''); ?></td>
+              <td><?php echo number_format((int)($keyword['clicks'] ?? 0)); ?></td>
+              <td><?php echo number_format((int)($keyword['impressions'] ?? 0)); ?></td>
+              <td><?php echo number_format((float)($keyword['ctr'] ?? 0), 1); ?>%</td>
+              <td><?php echo number_format((float)($keyword['position'] ?? 0), 1); ?></td>
+            </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
       </div>
-      <div class="metric-card <?php echo ($audit['warning'] ?? 0) > 0 ? 'danger' : 'success'; ?>">
-        <div class="value"><?php echo (int)($audit['warning'] ?? 0); ?></div>
-        <div class="label">Warnings</div>
-      </div>
-      <div class="metric-card">
-        <div class="value"><?php echo (int)($audit['resolved_this_period'] ?? 0); ?></div>
-        <div class="label">Resolved This Period</div>
-      </div>
-    </div>
-  </div>
-  <?php endif; ?>
+      <?php endif; ?>
 
-  <!-- Blog Scheduler -->
-  <?php if (!empty($blog_posts)): ?>
-  <div class="section">
-    <h2>Blog Scheduler Activity</h2>
-    <div class="metric-grid" style="grid-template-columns: repeat(4, 1fr);">
-      <div class="metric-card">
-        <div class="value"><?php echo (int)($blog_posts['published'] ?? 0); ?></div>
-        <div class="label">Published Blogs</div>
+      <?php if (!empty($gsc_pages)): ?>
+      <h3 style="font-size:16px;color:#374151;margin:6px 0 12px;">Top Search Pages</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Page</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Position</th></tr></thead>
+          <tbody>
+            <?php foreach ($gsc_pages as $page): ?>
+            <tr>
+              <td><?php echo esc_html($page['page'] ?? ''); ?></td>
+              <td><?php echo number_format((int)($page['clicks'] ?? 0)); ?></td>
+              <td><?php echo number_format((int)($page['impressions'] ?? 0)); ?></td>
+              <td><?php echo number_format((float)($page['ctr'] ?? 0), 1); ?>%</td>
+              <td><?php echo number_format((float)($page['position'] ?? 0), 1); ?></td>
+            </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
       </div>
-      <div class="metric-card success">
-        <div class="value"><?php echo (int)($blog_posts['scheduled'] ?? 0); ?></div>
-        <div class="label">Scheduled Posts</div>
+      <?php endif; ?>
+      <?php elseif (!empty($search_console['error'])): ?>
+      <div class="note" style="margin-top:20px;">
+        Google Search Console data was not available. <?php echo esc_html($search_console['error']); ?>
       </div>
-      <div class="metric-card">
-        <div class="value"><?php echo (int)($blog_posts['pending'] ?? 0); ?></div>
-        <div class="label">Pending Drafts</div>
-      </div>
-      <div class="metric-card">
-        <div class="value"><?php echo (int)($blog_posts['failed'] ?? 0); ?></div>
-        <div class="label">Failed Posts</div>
-      </div>
-    </div>
+      <?php endif; ?>
   </div>
-  <?php endif; ?>
-
-  <!-- Recommendations -->
-  <?php if (!empty($recs)): ?>
-  <div class="section">
-    <h2>Recommended Next Steps</h2>
-    <ul class="rec-list">
-      <?php foreach ($recs as $rec): ?>
-      <li><?php echo esc_html($rec); ?></li>
-      <?php endforeach; ?>
-    </ul>
-  </div>
-  <?php endif; ?>
 
   <div class="report-footer">
     Generated by WebNique SEO Operating System &bull; <?php echo date('F j, Y'); ?> &bull; Confidential
@@ -557,11 +487,18 @@ final class ReportGenerator
     {
         $config = AnalyticsConfig::getClientConfig($client_id);
         $credentials = AnalyticsConfig::getCredentials();
+        $search_console = $config
+            ? self::getSearchConsoleSummary($client_id, $config, $start, $end)
+            : [
+                'configured' => false,
+                'error' => 'Google Search Console is not configured for this client.',
+            ];
 
         if (!$config || empty($config['ga4_property_id'])) {
             return [
                 'configured' => false,
                 'error' => 'GA4 is not configured for this client.',
+                'search_console' => $search_console,
             ];
         }
 
@@ -569,6 +506,7 @@ final class ReportGenerator
             return [
                 'configured' => false,
                 'error' => 'Google Analytics service account credentials are not configured.',
+                'search_console' => $search_console,
             ];
         }
 
@@ -585,9 +523,43 @@ final class ReportGenerator
                 'top_pages' => $analytics->getTopPages($start, $end, 10),
                 'key_events' => $key_events,
                 'total_key_events' => array_sum(array_map(fn($event) => (int)($event['count'] ?? 0), $key_events)),
+                'search_console' => $search_console,
             ];
         } catch (\Throwable $e) {
             SEOHub::log('monthly_report_analytics_failed', [
+                'client_id' => $client_id,
+                'error' => $e->getMessage(),
+            ], 'failed');
+
+            return [
+                'configured' => false,
+                'error' => $e->getMessage(),
+                'search_console' => $search_console,
+            ];
+        }
+    }
+
+    private static function getSearchConsoleSummary(string $client_id, array $config, string $start, string $end): array
+    {
+        if (empty($config['search_console_url'])) {
+            return [
+                'configured' => false,
+                'error' => 'Google Search Console is not configured for this client.',
+            ];
+        }
+
+        try {
+            $gsc = new GoogleSearchConsole($client_id);
+
+            return [
+                'configured' => true,
+                'overview' => $gsc->getOverviewStats($start, $end),
+                'performance_over_time' => $gsc->getPerformanceOverTime($start, $end),
+                'top_keywords' => $gsc->getKeywordRankings($start, $end, 10),
+                'top_pages' => $gsc->getTopPages($start, $end, 10),
+            ];
+        } catch (\Throwable $e) {
+            SEOHub::log('monthly_report_gsc_failed', [
                 'client_id' => $client_id,
                 'error' => $e->getMessage(),
             ], 'failed');
@@ -678,164 +650,31 @@ final class ReportGenerator
         ];
     }
 
-    private static function getKeywordSummary(string $client_id): array
-    {
-        $kws     = SEOHub::getKeywords($client_id);
-        $total   = count($kws);
-        $improving = 0;
-        $declining = 0;
-        $gaps      = 0;
-
-        $enriched = [];
-        foreach ($kws as $kw) {
-            $delta = null;
-            if ($kw['current_position'] !== null && $kw['prev_position'] !== null) {
-                $delta = (float)$kw['current_position'] - (float)$kw['prev_position'];
-                if ($delta < 0) $improving++;
-                elseif ($delta > 0) $declining++;
-            }
-            if ($kw['content_gap']) $gaps++;
-            $enriched[] = array_merge($kw, ['delta' => $delta]);
-        }
-
-        usort($enriched, fn($a, $b) => (int)$b['impressions'] - (int)$a['impressions']);
-
-        return [
-            'total'        => $total,
-            'improving'    => $improving,
-            'declining'    => $declining,
-            'content_gaps' => $gaps,
-            'top_keywords' => $enriched,
-        ];
-    }
-
-    private static function getSiteHealthSummary(string $client_id): array
-    {
-        $stats = SEOHub::getSiteStats($client_id);
-        $stats['health_score'] = AuditEngine::getHealthScore($client_id);
-        return $stats;
-    }
-
-    private static function getAuditFindingsSummary(string $client_id, string $start, string $end): array
-    {
-        $severity = AuditEngine::getSeveritySummary($client_id);
-
-        global $wpdb;
-        $resolved = (int)$wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$wpdb->prefix}wnq_seo_audit_findings
-             WHERE client_id=%s AND status='resolved' AND resolved_at BETWEEN %s AND %s",
-            $client_id, $start . ' 00:00:00', $end . ' 23:59:59'
-        ));
-
-        return array_merge($severity, ['resolved_this_period' => $resolved]);
-    }
-
-    private static function getBlogPublishingSummary(string $client_id, string $start, string $end): array
-    {
-        global $wpdb;
-        $t = $wpdb->prefix . 'wnq_blog_schedule';
-
-        $rows = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT status, COUNT(*) as cnt FROM $t
-                 WHERE client_id=%s AND updated_at BETWEEN %s AND %s
-                 GROUP BY status",
-                $client_id,
-                $start . ' 00:00:00',
-                $end . ' 23:59:59'
-            ),
-            ARRAY_A
-        ) ?: [];
-
-        $summary = ['published' => 0, 'scheduled' => 0, 'pending' => 0, 'failed' => 0];
-        foreach ($rows as $r) {
-            $status = (string)($r['status'] ?? '');
-            if ($status === 'published') {
-                $summary['published'] = (int)$r['cnt'];
-            } elseif ($status === 'failed') {
-                $summary['failed'] = (int)$r['cnt'];
-            } elseif ($status === 'pending') {
-                $summary['pending'] = (int)$r['cnt'];
-            }
-        }
-        $summary['scheduled'] = array_sum($summary);
-        return $summary;
-    }
-
-    private static function getAutomationLogSummary(string $client_id, string $start, string $end): array
-    {
-        global $wpdb;
-        return $wpdb->get_results($wpdb->prepare(
-            "SELECT action_type, COUNT(*) as count, status FROM {$wpdb->prefix}wnq_seo_automation_log
-             WHERE client_id=%s AND created_at BETWEEN %s AND %s
-             GROUP BY action_type, status ORDER BY count DESC LIMIT 20",
-            $client_id, $start . ' 00:00:00', $end . ' 23:59:59'
-        ), ARRAY_A) ?: [];
-    }
-
-    private static function generateRecommendations(string $client_id): array
-    {
-        $recs  = [];
-        $stats = SEOHub::getSiteStats($client_id);
-        $audit = AuditEngine::getSeveritySummary($client_id);
-        $gaps  = SEOHub::getKeywords($client_id, ['content_gap' => 1, 'limit' => 5]);
-
-        if ($stats['missing_h1'] > 0) {
-            $recs[] = "Fix {$stats['missing_h1']} pages missing H1 tags — this is a critical ranking factor.";
-        }
-        if ($stats['thin_content'] > 0) {
-            $recs[] = "Expand {$stats['thin_content']} thin content pages to 600+ words with target keywords.";
-        }
-        if ($stats['no_schema'] > 0) {
-            $recs[] = "Add structured data (JSON-LD schema) to {$stats['no_schema']} pages to improve rich snippet eligibility.";
-        }
-        if (!empty($gaps)) {
-            $kw_list = implode(', ', array_column(array_slice($gaps, 0, 3), 'keyword'));
-            $recs[] = "Create new content targeting content gap keywords: $kw_list.";
-        }
-        if ($stats['missing_alt'] > 0) {
-            $recs[] = "Add alt text to images on {$stats['missing_alt']} pages for accessibility and image SEO.";
-        }
-        if ($audit['critical'] > 0) {
-            $recs[] = "Resolve {$audit['critical']} critical technical issues identified in the nightly audit.";
-        }
-        if (empty($recs)) {
-            $recs[] = "Site health is strong. Focus on expanding keyword cluster coverage and publishing fresh content.";
-        }
-
-        return $recs;
-    }
-
     private static function generateAISummary(array $client, array $profile, array $data): string
     {
-        $kws   = $data['keywords'] ?? [];
-        $audit = $data['audit_findings'] ?? [];
-        $blog_posts = $data['blog_posts'] ?? [];
         $analytics = $data['analytics'] ?? [];
         $overview = $analytics['overview'] ?? [];
         $comparison = $overview['comparison'] ?? [];
+        $gsc = $analytics['search_console'] ?? [];
+        $gsc_overview = $gsc['overview'] ?? [];
+        $top_queries = array_slice(array_column((array)($gsc['top_keywords'] ?? []), 'keyword'), 0, 5);
         $period  = $data['period'] ?? [];
 
-        $improving_kws = [];
-        $declining_kws = [];
-        foreach (($kws['top_keywords'] ?? []) as $kw) {
-            if (($kw['delta'] ?? null) !== null) {
-                if ($kw['delta'] < 0) $improving_kws[] = $kw['keyword'];
-                elseif ($kw['delta'] > 0) $declining_kws[] = $kw['keyword'];
-            }
-        }
-
         $vars = [
-            'client_name'        => $client['company'] ?? $client['name'] ?? '',
-            'period'             => $period['label'] ?? '',
-            'traffic_change'     => self::formatTrafficChange($overview, $comparison),
-            'improving_keywords' => implode(', ', array_slice($improving_kws, 0, 5)) ?: 'None tracked',
-            'declining_keywords' => implode(', ', array_slice($declining_kws, 0, 5)) ?: 'None tracked',
-            'content_published'  => ($blog_posts['published'] ?? 0) . ' blog posts published',
-            'issues_fixed'       => ($audit['resolved_this_period'] ?? 0) . ' technical issues',
-            'open_issues'        => (($audit['critical'] ?? 0) + ($audit['warning'] ?? 0)) . ' open findings',
-            'tone'               => $profile['content_tone'] ?? 'professional',
-            'services'           => implode(', ', (array)($profile['primary_services'] ?? [])),
+            'client_name'       => $client['company'] ?? $client['name'] ?? '',
+            'period'            => $period['label'] ?? '',
+            'traffic_change'    => self::formatTrafficChange($overview, $comparison),
+            'visitors'          => number_format((int)($overview['total_users'] ?? 0)),
+            'sessions'          => number_format((int)($overview['sessions'] ?? 0)),
+            'page_views'        => number_format((int)($overview['page_views'] ?? 0)),
+            'bounce_rate'       => number_format((float)($overview['bounce_rate'] ?? 0), 1) . '%',
+            'key_events'        => number_format((int)($analytics['total_key_events'] ?? 0)),
+            'search_clicks'     => number_format((int)($gsc_overview['clicks']['value'] ?? 0)),
+            'search_impressions'=> number_format((int)($gsc_overview['impressions']['value'] ?? 0)),
+            'search_ctr'        => number_format((float)($gsc_overview['ctr']['value'] ?? 0), 1) . '%',
+            'search_position'   => number_format((float)($gsc_overview['position']['value'] ?? 0), 1),
+            'top_queries'       => implode(', ', array_filter($top_queries)) ?: 'No query data available',
+            'tone'              => $profile['content_tone'] ?? 'professional',
         ];
 
         $result = AIEngine::generate('report_summary', $vars, $client['client_id'] ?? '');
@@ -845,7 +684,7 @@ final class ReportGenerator
         }
 
         // Fallback non-AI summary
-        return '<p>This monthly SEO report summarizes the performance, technical health, and automation activity for ' .
+        return '<p>This monthly report summarizes GA4 traffic and Google Search Console performance for ' .
                esc_html($client['company'] ?? $client['name'] ?? '') . ' during ' .
                esc_html($period['label'] ?? '') . '.</p>';
     }

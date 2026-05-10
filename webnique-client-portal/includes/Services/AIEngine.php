@@ -119,23 +119,31 @@ Return as a numbered list. Max 5 suggestions.
 PROMPT,
 
         'report_summary' => <<<'PROMPT'
-You are an SEO agency reporting specialist. Write a professional executive summary for a monthly SEO report:
+You are an SEO agency reporting specialist. Write a professional executive summary for a monthly analytics report:
 
 Client: {client_name}
 Period: {period}
-Key Metrics:
-- Traffic Change: {traffic_change}
-- Top Keywords Moving Up: {improving_keywords}
-- Keywords Declining: {declining_keywords}
-- New Content Published: {content_published}
-- Technical Issues Fixed: {issues_fixed}
-- Open Issues: {open_issues}
+GA4 Metrics:
+- Traffic: {traffic_change}
+- Visitors: {visitors}
+- Sessions: {sessions}
+- Page Views: {page_views}
+- Bounce Rate: {bounce_rate}
+- Key Events: {key_events}
 
-Write a 3-4 paragraph executive summary that:
-1. Highlights wins positively
-2. Explains declines professionally (with context)
-3. States what was done this month
-4. Recommends 3 specific next-steps
+Google Search Console Metrics:
+- Organic Clicks: {search_clicks}
+- Search Impressions: {search_impressions}
+- CTR: {search_ctr}
+- Average Position: {search_position}
+- Top Queries: {top_queries}
+
+Write a 2-3 paragraph executive summary that:
+1. Summarizes website traffic and engagement clearly
+2. Summarizes organic search visibility from Google Search Console
+3. Keeps the tone client-friendly and factual
+
+Do not include recommended next steps, technical audit notes, site health, or blog activity.
 
 Tone: {tone}. Keep it client-friendly, not technical.
 PROMPT,

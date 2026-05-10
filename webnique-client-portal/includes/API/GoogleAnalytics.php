@@ -48,7 +48,7 @@ final class GoogleAnalytics
         
         // Check cache first
         $cached = AnalyticsCache::get($cache_key);
-        if ($cached !== null) {
+        if (is_array($cached)) {
             return $cached;
         }
 
@@ -95,7 +95,7 @@ final class GoogleAnalytics
         $cache_key = "ga_sources_{$this->property_id}_{$start_date}_{$end_date}";
         
         $cached = AnalyticsCache::get($cache_key);
-        if ($cached !== null) {
+        if (is_array($cached)) {
             return $cached;
         }
 
@@ -136,7 +136,7 @@ final class GoogleAnalytics
         $cache_key = "ga_pages_{$this->property_id}_{$start_date}_{$end_date}_{$limit}";
         
         $cached = AnalyticsCache::get($cache_key);
-        if ($cached !== null) {
+        if (is_array($cached)) {
             return $cached;
         }
 
@@ -179,7 +179,7 @@ final class GoogleAnalytics
         $cache_key = "ga_trends_{$this->property_id}_{$start_date}_{$end_date}";
         
         $cached = AnalyticsCache::get($cache_key);
-        if ($cached !== null) {
+        if (is_array($cached)) {
             return $cached;
         }
 
@@ -220,7 +220,7 @@ final class GoogleAnalytics
         $cache_key = "ga_devices_{$this->property_id}_{$start_date}_{$end_date}";
         
         $cached = AnalyticsCache::get($cache_key);
-        if ($cached !== null) {
+        if (is_array($cached)) {
             return $cached;
         }
 
@@ -257,7 +257,7 @@ final class GoogleAnalytics
         $cache_key = "ga_event_{$event_name}_{$this->property_id}_{$start_date}_{$end_date}";
         
         $cached = AnalyticsCache::get($cache_key);
-        if ($cached !== null) {
+        if (is_array($cached)) {
             return $cached;
         }
 
