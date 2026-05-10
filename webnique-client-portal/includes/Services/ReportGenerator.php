@@ -62,7 +62,7 @@ final class ReportGenerator
     /**
      * Generate reports for all active clients
      */
-    public static function generateAllMonthlyReports(string $month = '', bool $send_email = true): array
+    public static function generateAllMonthlyReports(string $month = '', bool $send_email = true, bool $force_new = false): array
     {
         $clients = Client::getByStatus('active');
         $period = self::resolveMonthlyPeriod($month);
@@ -84,14 +84,14 @@ final class ReportGenerator
             }
 
             $existing = SEOHub::getReportForPeriod($client_id, 'monthly', $period['start'], $period['end']);
-            if ($existing && ($existing['status'] ?? '') === 'sent') {
+            if (!$force_new && $existing && ($existing['status'] ?? '') === 'sent') {
                 $results['email_skipped']++;
                 continue;
             }
 
-            $id = $existing ? (int)$existing['id'] : self::generateMonthlyReport($client_id, $month);
+            $id = (!$force_new && $existing) ? (int)$existing['id'] : self::generateMonthlyReport($client_id, $month);
             if ($id) {
-                if (!$existing) {
+                if ($force_new || !$existing) {
                     $results['generated']++;
                 }
                 if ($send_email) {
@@ -582,17 +582,23 @@ final class ReportGenerator
             'purchase' => 'Purchases',
         ];
 
-        $summary = [];
-        foreach ($events as $event_name => $label) {
-            $data = $analytics->getEventData($event_name, $start, $end);
-            $summary[] = [
-                'event_name' => $event_name,
-                'label' => $label,
-                'count' => (int)($data['count'] ?? 0),
-            ];
+        $counts = array_fill_keys(array_keys($events), 0);
+        foreach ($analytics->getKeyEvents(array_keys($events), $start, $end) as $event) {
+            $event_name = (string)($event['event_name'] ?? '');
+            if (array_key_exists($event_name, $counts)) {
+                $counts[$event_name] = (int)($event['count'] ?? 0);
+            }
         }
 
-        return $summary;
+        return array_map(
+            fn($event_name, $label) => [
+                'event_name' => $event_name,
+                'label' => $label,
+                'count' => (int)($counts[$event_name] ?? 0),
+            ],
+            array_keys($events),
+            $events
+        );
     }
 
     private static function getReportRecipients(array $client): array
