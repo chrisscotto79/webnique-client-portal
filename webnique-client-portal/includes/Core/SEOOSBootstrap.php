@@ -326,10 +326,14 @@ final class SEOOSBootstrap
         if (empty($html)) wp_die('Report not found');
 
         $report = \WNQ\Models\SEOHub::getReport($report_id);
-        $filename = sanitize_file_name('seo-report-' . ($report['client_id'] ?? 'client') . '-' . date('Y-m') . '.html');
+        $generated = !empty($report['generated_at']) ? strtotime((string)$report['generated_at']) : time();
+        $filename = sanitize_file_name(
+            'seo-report-' . ($report['client_id'] ?? 'client') . '-' . date('Y-m-d-His', $generated) . '-id-' . $report_id . '.html'
+        );
 
+        nocache_headers();
         header('Content-Type: text/html; charset=utf-8');
-        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Disposition: inline; filename="' . $filename . '"');
         echo $html;
         exit;
     }

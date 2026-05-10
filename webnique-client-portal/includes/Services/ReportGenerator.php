@@ -62,7 +62,7 @@ final class ReportGenerator
     /**
      * Generate reports for all active clients
      */
-    public static function generateAllMonthlyReports(string $month = '', bool $send_email = true): array
+    public static function generateAllMonthlyReports(string $month = '', bool $send_email = true, bool $force_new = false): array
     {
         $clients = Client::getByStatus('active');
         $period = self::resolveMonthlyPeriod($month);
@@ -84,14 +84,14 @@ final class ReportGenerator
             }
 
             $existing = SEOHub::getReportForPeriod($client_id, 'monthly', $period['start'], $period['end']);
-            if ($existing && ($existing['status'] ?? '') === 'sent') {
+            if (!$force_new && $existing && ($existing['status'] ?? '') === 'sent') {
                 $results['email_skipped']++;
                 continue;
             }
 
-            $id = $existing ? (int)$existing['id'] : self::generateMonthlyReport($client_id, $month);
+            $id = (!$force_new && $existing) ? (int)$existing['id'] : self::generateMonthlyReport($client_id, $month);
             if ($id) {
-                if (!$existing) {
+                if ($force_new || !$existing) {
                     $results['generated']++;
                 }
                 if ($send_email) {

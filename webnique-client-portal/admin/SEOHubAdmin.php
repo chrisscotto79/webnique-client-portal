@@ -1049,56 +1049,37 @@ jQuery(function($) {
         }
         echo '</select>';
         if ($client_id) {
-            echo ' &nbsp;<button class="wnq-btn wnq-btn-primary" onclick="wnqHubAjax(\'generate_report\', \'' . esc_js($client_id) . '\')">📊 Generate This Month\'s Report</button>';
-            echo ' &nbsp;<button class="wnq-btn" onclick="wnqHubAjax(\'generate_all_reports\', \'\')">📊 Generate All Client Reports</button>';
+            echo ' &nbsp;<button class="wnq-btn wnq-btn-primary" onclick="wnqHubAjax(\'generate_report\', \'' . esc_js($client_id) . '\')">📊 Generate New Report</button>';
+            echo ' &nbsp;<button class="wnq-btn" onclick="wnqHubAjax(\'generate_all_reports\', \'\')">📊 Generate New Reports for All Clients</button>';
         }
         echo '</div>';
 
         if ($client_id) {
             $reports = SEOHub::getReports($client_id);
 
-            // Archive header with summary
-            if (!empty($reports)) {
-                $scores_list = array_filter(array_map(function($r) {
-                    $d = is_string($r['report_data']) ? json_decode($r['report_data'], true) : [];
-                    return $d['site_health']['health_score'] ?? $d['site_health']['score'] ?? null;
-                }, $reports));
-                if (!empty($scores_list)) {
-                    $avg = (int)round(array_sum($scores_list) / count($scores_list));
-                    $ag  = self::getGrade($avg);
-                    echo '<div style="display:flex;gap:16px;align-items:center;padding:16px 20px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;margin-bottom:16px;flex-wrap:wrap;">';
-                    echo '<div style="text-align:center;padding:10px 16px;background:' . $ag['bg'] . ';border-radius:10px;">';
-                    echo '<div style="font-size:36px;font-weight:900;color:' . $ag['color'] . ';line-height:1;">' . $ag['letter'] . '</div>';
-                    echo '<div style="font-size:12px;color:#6b7280;margin-top:2px;">Avg Grade</div>';
-                    echo '</div>';
-                    echo '<div>';
-                    echo '<div style="font-size:16px;font-weight:700;color:#1e3a5f;">' . count($reports) . ' Reports in Archive</div>';
-                    echo '<div style="font-size:13px;color:#6b7280;margin-top:4px;">Average health score across all reports: <strong style="color:' . $ag['color'] . ';">' . $avg . '/100</strong></div>';
-                    echo '</div>';
-                    echo '</div>';
-                }
-            }
-
-            echo '<table class="wnq-hub-table"><thead><tr><th>Report</th><th>Period</th><th>Grade</th><th>Status</th><th>Generated</th><th>Actions</th></tr></thead><tbody>';
+            echo '<table class="wnq-hub-table"><thead><tr><th>Report</th><th>Period</th><th>Data Sources</th><th>Status</th><th>Generated</th><th>Actions</th></tr></thead><tbody>';
             if (empty($reports)) {
-                echo '<tr><td colspan="6" style="text-align:center;padding:40px;color:#6b7280;">No reports generated yet. Click "Generate This Month\'s Report" above.</td></tr>';
+                echo '<tr><td colspan="6" style="text-align:center;padding:40px;color:#6b7280;">No reports generated yet. Click "Generate New Report" above.</td></tr>';
             }
             foreach ($reports as $r) {
                 $rdata  = is_string($r['report_data']) ? json_decode($r['report_data'], true) : [];
-                $hscore = $rdata['site_health']['health_score'] ?? $rdata['site_health']['score'] ?? null;
+                $analytics = $rdata['analytics'] ?? [];
+                $sources = [];
+                $sources[] = !empty($analytics['configured'])
+                    ? '<span class="wnq-badge-green">GA4</span>'
+                    : '<span class="wnq-badge-gray">GA4 missing</span>';
+                $sources[] = !empty($analytics['search_console']['configured'])
+                    ? '<span class="wnq-badge-green">GSC</span>'
+                    : '<span class="wnq-badge-gray">GSC missing</span>';
+
                 echo '<tr>';
                 echo '<td><strong>' . esc_html($r['title']) . '</strong></td>';
                 echo '<td>' . esc_html($r['period_start']) . ' – ' . esc_html($r['period_end']) . '</td>';
-                if ($hscore !== null) {
-                    $g = self::getGrade((int)$hscore);
-                    echo '<td><span style="font-size:14px;font-weight:800;color:' . $g['color'] . ';background:' . $g['bg'] . ';padding:3px 10px;border-radius:99px;">' . $g['letter'] . '</span> <small style="color:#6b7280;">' . $hscore . '</small></td>';
-                } else {
-                    echo '<td style="color:#9ca3af;">—</td>';
-                }
+                echo '<td>' . implode(' ', $sources) . '</td>';
                 echo '<td><span class="wnq-badge-green">' . esc_html($r['status']) . '</span></td>';
-                echo '<td>' . esc_html(substr($r['generated_at'], 0, 10)) . '</td>';
+                echo '<td>' . esc_html($r['generated_at']) . '</td>';
                 echo '<td>';
-                echo '<a class="wnq-btn wnq-btn-sm" href="' . admin_url('admin-post.php?action=wnq_export_report&report_id=' . $r['id'] . '&_wpnonce=' . wp_create_nonce('wnq_export_report')) . '" target="_blank">Export HTML</a>';
+                echo '<a class="wnq-btn wnq-btn-sm" href="' . admin_url('admin-post.php?action=wnq_export_report&report_id=' . $r['id'] . '&_wpnonce=' . wp_create_nonce('wnq_export_report')) . '" target="_blank">View Report</a>';
                 echo '</td></tr>';
             }
             echo '</tbody></table>';
@@ -1495,15 +1476,24 @@ jQuery(function($) {
                 if (!$client_id) wp_send_json_error(['message' => 'No client selected']);
                 $id = \WNQ\Services\ReportGenerator::generateMonthlyReport($client_id);
                 if ($id) {
-                    wp_send_json_success(['message' => 'Report generated (ID #' . $id . ')', 'report_id' => $id]);
+                    wp_send_json_success([
+                        'message' => 'New report generated (ID #' . $id . ')',
+                        'report_id' => $id,
+                        'report_url' => admin_url('admin-post.php?action=wnq_export_report&report_id=' . $id . '&_wpnonce=' . wp_create_nonce('wnq_export_report')),
+                        'reload' => true,
+                    ]);
                 } else {
                     wp_send_json_error(['message' => 'Report generation failed']);
                 }
                 break;
 
             case 'generate_all_reports':
-                $result = \WNQ\Services\ReportGenerator::generateAllMonthlyReports('', false);
-                wp_send_json_success(['message' => "Reports: generated={$result['generated']}, skipped={$result['skipped']}, failed={$result['failed']}", 'data' => $result]);
+                $result = \WNQ\Services\ReportGenerator::generateAllMonthlyReports('', false, true);
+                wp_send_json_success([
+                    'message' => "New reports: generated={$result['generated']}, skipped={$result['skipped']}, failed={$result['failed']}",
+                    'data' => $result,
+                    'reload' => true,
+                ]);
                 break;
 
             case 'service_city_bulk_generate_next':

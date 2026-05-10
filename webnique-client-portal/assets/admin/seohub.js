@@ -16,6 +16,15 @@
     const origText = $btn.html();
     $btn.html('⏳ Working...').prop('disabled', true);
 
+    let pendingReportWindow = null;
+    if (action === 'generate_report') {
+      pendingReportWindow = window.open('', '_blank');
+      if (pendingReportWindow) {
+        pendingReportWindow.document.write('<!doctype html><title>Generating Report</title><p style="font-family:system-ui,sans-serif;padding:24px;">Generating your new report...</p>');
+        pendingReportWindow.document.close();
+      }
+    }
+
     $.post(WNQ_SEOHUB.ajaxUrl, {
       action:     'wnq_seohub_action',
       hub_action: action,
@@ -25,12 +34,34 @@
     })
     .done(function (res) {
       if (res.success) {
-        showResult('success', '✅ ' + res.data.message);
+        let message = '✅ ' + res.data.message;
+
+        if (res.data && res.data.report_url) {
+          message += ' <a href="' + res.data.report_url + '" target="_blank" rel="noopener">Open new report</a>';
+          if (pendingReportWindow && !pendingReportWindow.closed) {
+            pendingReportWindow.location.href = res.data.report_url;
+          } else if (action === 'generate_report') {
+            window.location.href = res.data.report_url;
+            return;
+          }
+        }
+
+        showResult('success', message);
+
+        if (res.data && res.data.reload) {
+          setTimeout(function () { location.reload(); }, 1500);
+        }
       } else {
+        if (pendingReportWindow && !pendingReportWindow.closed) {
+          pendingReportWindow.close();
+        }
         showResult('error', '❌ ' + (res.data?.message || 'An error occurred'));
       }
     })
     .fail(function () {
+      if (pendingReportWindow && !pendingReportWindow.closed) {
+        pendingReportWindow.close();
+      }
       showResult('error', '❌ Network error — check your connection');
     })
     .always(function () {
