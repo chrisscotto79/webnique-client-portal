@@ -30,6 +30,7 @@ final class SEOOSBootstrap
 
         // Set initial AI provider settings (first-run only, won't overwrite saved settings)
         self::maybeInitAISettings();
+        \WNQ\Models\SEOHub::ensureReportSchema();
 
         // Register admin UI
         if (is_admin()) {
