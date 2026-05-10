@@ -271,7 +271,7 @@ final class SEOHub
         if (!empty($column_set['title']) && !empty($column_set['period_start'])) {
             $wpdb->query(
                 "UPDATE $table
-                 SET title = CONCAT('SEO Report: ', DATE_FORMAT(period_start, '%M %Y'))
+                 SET title = CONCAT('Analytics Report: ', DATE_FORMAT(period_start, '%M %Y'))
                  WHERE period_start IS NOT NULL
                    AND (title IS NULL OR title = '')"
             );
@@ -731,7 +731,7 @@ final class SEOHub
             'report_type'  => $type,
             'period_start' => $start,
             'period_end'   => $end,
-            'title'        => "SEO Report: " . date('F Y', strtotime($start)),
+            'title'        => "Analytics Report: " . date('F Y', strtotime($start)),
             'report_data'  => wp_json_encode($data),
             'summary_html' => $summary_html,
             'status'       => 'ready',

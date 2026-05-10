@@ -73,6 +73,7 @@ final class SEOOSBootstrap
             'includes/Models/AnalyticsConfig.php',
             'includes/API/AnalyticsCache.php',
             'includes/API/GoogleAnalytics.php',
+            'includes/API/GoogleSearchConsole.php',
             // Services
             'includes/Services/AIEngine.php',
             'includes/Services/AuditEngine.php',
@@ -129,6 +130,7 @@ final class SEOOSBootstrap
             'includes/Models/AnalyticsConfig.php'     => 'WNQ\\Models\\AnalyticsConfig',
             'includes/API/AnalyticsCache.php'         => 'WNQ\\API\\AnalyticsCache',
             'includes/API/GoogleAnalytics.php'        => 'WNQ\\API\\GoogleAnalytics',
+            'includes/API/GoogleSearchConsole.php'    => 'WNQ\\API\\GoogleSearchConsole',
             'includes/Services/AIEngine.php'          => 'WNQ\\Services\\AIEngine',
             'includes/Services/AuditEngine.php'       => 'WNQ\\Services\\AuditEngine',
             'includes/Services/ReportGenerator.php'   => 'WNQ\\Services\\ReportGenerator',
