@@ -190,7 +190,7 @@ final class ReportGenerator
         $report = SEOHub::getReport($report_id);
         if (!$report) return '';
 
-        $data    = $report['report_data'];
+        $data    = is_array($report['report_data'] ?? null) ? $report['report_data'] : [];
         $period  = $data['period'] ?? [];
         $client  = $data['client'] ?? [];
         $kws     = $data['keywords'] ?? [];

@@ -22,6 +22,8 @@ if (!defined('ABSPATH')) {
 
 final class SEOHub
 {
+    private static bool $report_schema_checked = false;
+
     /* ═══════════════════════════════════════════
      *  TABLE CREATION
      * ═══════════════════════════════════════════ */
@@ -165,8 +167,8 @@ final class SEOHub
             id             bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
             client_id      varchar(100) NOT NULL,
             report_type    varchar(50) DEFAULT 'monthly' COMMENT 'monthly|quarterly|audit|custom',
-            period_start   date NOT NULL,
-            period_end     date NOT NULL,
+            period_start   date DEFAULT NULL,
+            period_end     date DEFAULT NULL,
             title          varchar(255) DEFAULT NULL,
             report_data    longtext DEFAULT NULL COMMENT 'JSON report payload',
             summary_html   longtext DEFAULT NULL COMMENT 'AI-generated HTML summary',
@@ -196,6 +198,116 @@ final class SEOHub
             KEY action_type (action_type),
             KEY created_at (created_at)
         ) $c;");
+
+        self::ensureReportSchema();
+    }
+
+    public static function ensureReportSchema(): void
+    {
+        if (self::$report_schema_checked) {
+            return;
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'wnq_seo_reports';
+
+        $exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table));
+        if (!$exists) {
+            self::createTables();
+            self::$report_schema_checked = true;
+            return;
+        }
+
+        $columns = $wpdb->get_col("SHOW COLUMNS FROM $table", 0) ?: [];
+        $column_set = array_fill_keys($columns, true);
+
+        $defs = [
+            'report_type'  => "ALTER TABLE $table ADD COLUMN report_type varchar(50) DEFAULT 'monthly' AFTER client_id",
+            'period_start' => "ALTER TABLE $table ADD COLUMN period_start date DEFAULT NULL AFTER report_type",
+            'period_end'   => "ALTER TABLE $table ADD COLUMN period_end date DEFAULT NULL AFTER period_start",
+            'title'        => "ALTER TABLE $table ADD COLUMN title varchar(255) DEFAULT NULL AFTER period_end",
+            'report_data'  => "ALTER TABLE $table ADD COLUMN report_data longtext DEFAULT NULL AFTER title",
+            'summary_html' => "ALTER TABLE $table ADD COLUMN summary_html longtext DEFAULT NULL AFTER report_data",
+            'status'       => "ALTER TABLE $table ADD COLUMN status varchar(20) DEFAULT 'draft' AFTER summary_html",
+            'generated_at' => "ALTER TABLE $table ADD COLUMN generated_at datetime DEFAULT NULL AFTER status",
+            'exported_at'  => "ALTER TABLE $table ADD COLUMN exported_at datetime DEFAULT NULL AFTER generated_at",
+        ];
+
+        foreach ($defs as $column => $sql) {
+            if (empty($column_set[$column])) {
+                $wpdb->query($sql);
+            }
+        }
+
+        $columns = $wpdb->get_col("SHOW COLUMNS FROM $table", 0) ?: [];
+        $column_set = array_fill_keys($columns, true);
+
+        if (!empty($column_set['month_year']) && !empty($column_set['period_start'])) {
+            $wpdb->query(
+                "UPDATE $table
+                 SET period_start = STR_TO_DATE(CONCAT(month_year, '-01'), '%Y-%m-%d')
+                 WHERE (period_start IS NULL OR period_start = '0000-00-00')
+                   AND month_year REGEXP '^[0-9]{4}-[0-9]{2}$'"
+            );
+        }
+
+        if (!empty($column_set['period_start']) && !empty($column_set['period_end'])) {
+            $wpdb->query(
+                "UPDATE $table
+                 SET period_end = LAST_DAY(period_start)
+                 WHERE period_start IS NOT NULL
+                   AND (period_end IS NULL OR period_end = '0000-00-00')"
+            );
+        }
+
+        if (!empty($column_set['report_type'])) {
+            $wpdb->query("UPDATE $table SET report_type = 'monthly' WHERE report_type IS NULL OR report_type = ''");
+        }
+
+        if (!empty($column_set['status'])) {
+            $wpdb->query("UPDATE $table SET status = 'ready' WHERE status IS NULL OR status = ''");
+        }
+
+        if (!empty($column_set['title']) && !empty($column_set['period_start'])) {
+            $wpdb->query(
+                "UPDATE $table
+                 SET title = CONCAT('SEO Report: ', DATE_FORMAT(period_start, '%M %Y'))
+                 WHERE period_start IS NOT NULL
+                   AND (title IS NULL OR title = '')"
+            );
+        }
+
+        if (!empty($column_set['generated_at']) && !empty($column_set['created_at'])) {
+            $wpdb->query("UPDATE $table SET generated_at = created_at WHERE generated_at IS NULL AND created_at IS NOT NULL");
+        }
+
+        self::ensureReportIndexes($table);
+        self::$report_schema_checked = true;
+    }
+
+    private static function ensureReportIndexes(string $table): void
+    {
+        global $wpdb;
+        $indexes = $wpdb->get_results("SHOW INDEX FROM $table", ARRAY_A) ?: [];
+        $keys = [];
+        foreach ($indexes as $index) {
+            if (!empty($index['Key_name'])) {
+                $keys[$index['Key_name']] = true;
+            }
+        }
+
+        $columns = array_fill_keys($wpdb->get_col("SHOW COLUMNS FROM $table", 0) ?: [], true);
+        $defs = [
+            'report_type'  => ['column' => 'report_type', 'sql' => "ALTER TABLE $table ADD INDEX report_type (report_type)"],
+            'period_start' => ['column' => 'period_start', 'sql' => "ALTER TABLE $table ADD INDEX period_start (period_start)"],
+            'status'       => ['column' => 'status', 'sql' => "ALTER TABLE $table ADD INDEX status (status)"],
+        ];
+
+        foreach ($defs as $name => $def) {
+            if (empty($keys[$name]) && !empty($columns[$def['column']])) {
+                $wpdb->query($def['sql']);
+            }
+        }
     }
 
     /* ═══════════════════════════════════════════
@@ -610,6 +722,8 @@ final class SEOHub
 
     public static function createReport(string $client_id, string $type, string $start, string $end, array $data, string $summary_html = ''): int|false
     {
+        self::ensureReportSchema();
+
         global $wpdb;
         $t = $wpdb->prefix . 'wnq_seo_reports';
         $wpdb->insert($t, [
@@ -628,6 +742,8 @@ final class SEOHub
 
     public static function getReports(string $client_id, int $limit = 12): array
     {
+        self::ensureReportSchema();
+
         global $wpdb;
         return $wpdb->get_results(
             $wpdb->prepare(
@@ -640,19 +756,25 @@ final class SEOHub
 
     public static function getReport(int $id): ?array
     {
+        self::ensureReportSchema();
+
         global $wpdb;
         $row = $wpdb->get_row(
             $wpdb->prepare("SELECT * FROM {$wpdb->prefix}wnq_seo_reports WHERE id=%d", $id),
             ARRAY_A
         );
-        if ($row && !empty($row['report_data'])) {
-            $row['report_data'] = json_decode($row['report_data'], true);
+        if ($row) {
+            $row['report_data'] = !empty($row['report_data'])
+                ? json_decode($row['report_data'], true)
+                : [];
         }
         return $row ?: null;
     }
 
     public static function getReportForPeriod(string $client_id, string $type, string $start, string $end): ?array
     {
+        self::ensureReportSchema();
+
         global $wpdb;
         $row = $wpdb->get_row(
             $wpdb->prepare(
@@ -667,8 +789,10 @@ final class SEOHub
             ARRAY_A
         );
 
-        if ($row && !empty($row['report_data'])) {
-            $row['report_data'] = json_decode($row['report_data'], true);
+        if ($row) {
+            $row['report_data'] = !empty($row['report_data'])
+                ? json_decode($row['report_data'], true)
+                : [];
         }
 
         return $row ?: null;
@@ -676,6 +800,8 @@ final class SEOHub
 
     public static function updateReportStatus(int $id, string $status): bool
     {
+        self::ensureReportSchema();
+
         global $wpdb;
         $status = sanitize_key($status);
         if (!in_array($status, ['draft', 'ready', 'sent'], true)) {
