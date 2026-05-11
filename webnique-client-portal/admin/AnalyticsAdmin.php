@@ -655,8 +655,8 @@ final class AnalyticsAdmin
                         <td>
                             <input type="text" id="search_console_url" name="search_console_url" class="regular-text"
                                 value="<?php echo esc_attr($client['search_console_url'] ?? ''); ?>"
-                                placeholder="https://example.com/">
-                            <p class="description">The exact URL as it appears in Google Search Console (include trailing slash).</p>
+                                placeholder="sc-domain:example.com or https://example.com/">
+                            <p class="description">Use <code>sc-domain:example.com</code> for domain properties, or the exact URL-prefix property as it appears in Search Console.</p>
                         </td>
                     </tr>
                     <tr>

@@ -299,7 +299,8 @@ final class SEOHubAdmin
 
         <div class="wnq-hub-form-group">
           <label>Google Search Console Property URL</label>
-          <input type="url" name="gsc_property" value="<?php echo esc_attr($profile['gsc_property'] ?? ''); ?>" placeholder="https://example.com/">
+          <input type="text" name="gsc_property" value="<?php echo esc_attr($profile['gsc_property'] ?? ''); ?>" placeholder="sc-domain:example.com or https://example.com/">
+          <p class="description">Use <code>sc-domain:example.com</code> for Search Console domain properties.</p>
         </div>
 
         <div class="wnq-hub-form-group">
