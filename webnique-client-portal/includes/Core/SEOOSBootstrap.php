@@ -322,11 +322,31 @@ final class SEOOSBootstrap
         $report_id = (int)($_GET['report_id'] ?? 0);
         if (!$report_id) wp_die('Invalid report ID');
 
+        $report = \WNQ\Models\SEOHub::getReport($report_id);
+        if (!$report) wp_die('Report not found');
+
+        $generated = !empty($report['generated_at']) ? strtotime((string)$report['generated_at']) : time();
+        $format = sanitize_key((string)($_GET['format'] ?? 'html'));
+
+        if ($format === 'pdf') {
+            $pdf = \WNQ\Services\ReportGenerator::renderReportPDF($report_id);
+            if (empty($pdf)) wp_die('Report not found');
+
+            $filename = sanitize_file_name(
+                'seo-report-' . ($report['client_id'] ?? 'client') . '-' . date('Y-m-d-His', $generated) . '-id-' . $report_id . '.pdf'
+            );
+
+            nocache_headers();
+            header('Content-Type: application/pdf');
+            header('Content-Disposition: attachment; filename="' . $filename . '"');
+            header('Content-Length: ' . strlen($pdf));
+            echo $pdf;
+            exit;
+        }
+
         $html = \WNQ\Services\ReportGenerator::renderReportHTML($report_id);
         if (empty($html)) wp_die('Report not found');
 
-        $report = \WNQ\Models\SEOHub::getReport($report_id);
-        $generated = !empty($report['generated_at']) ? strtotime((string)$report['generated_at']) : time();
         $filename = sanitize_file_name(
             'seo-report-' . ($report['client_id'] ?? 'client') . '-' . date('Y-m-d-His', $generated) . '-id-' . $report_id . '.html'
         );

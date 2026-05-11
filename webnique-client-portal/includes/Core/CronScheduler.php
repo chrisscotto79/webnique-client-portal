@@ -151,7 +151,7 @@ final class CronScheduler
     public static function generateMonthlyReports(): void
     {
         if (!self::canRun()) return;
-        $result = ReportGenerator::generateAllMonthlyReports();
+        $result = ReportGenerator::generateAllMonthlyReports('', false);
         SEOHub::log('monthly_report_batch_complete', $result);
         self::scheduleMonthlyReportJob();
     }
@@ -244,7 +244,7 @@ final class CronScheduler
     {
         $jobs = [
             'wnq_seo_nightly_audit'      => 'Nightly Audit (2am daily)',
-            'wnq_seo_monthly_reports'    => 'Monthly Analytics Report Email (1st at 6am)',
+            'wnq_seo_monthly_reports'    => 'Monthly Analytics Report Generator (1st at 6am)',
             'wnq_blog_publisher'         => 'Blog Auto-Publisher (8am daily)',
             'wnq_spider_auto_crawl'      => 'Spider Auto-Crawl Scheduler (hourly check)',
             'wnq_backlink_verify'        => 'Backlink Verifier (Sunday 4am weekly)',

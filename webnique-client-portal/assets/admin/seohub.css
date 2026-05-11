@@ -303,10 +303,10 @@
 
 .wnq-report-table th:nth-child(1) { width: 20%; }
 .wnq-report-table th:nth-child(2) { width: 15%; }
-.wnq-report-table th:nth-child(3) { width: 34%; }
+.wnq-report-table th:nth-child(3) { width: 26%; }
 .wnq-report-table th:nth-child(4) { width: 12%; }
 .wnq-report-table th:nth-child(5) { width: 11%; }
-.wnq-report-table th:nth-child(6) { width: 8%; }
+.wnq-report-table th:nth-child(6) { width: 16%; }
 .wnq-report-name strong,
 .wnq-report-period strong,
 .wnq-report-generated strong {
@@ -392,6 +392,7 @@
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+  min-width: 170px;
 }
 
 /* ── Buttons ──────────────────────────────────────── */

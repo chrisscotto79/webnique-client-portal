@@ -1083,6 +1083,7 @@ jQuery(function($) {
                 echo '<td class="wnq-report-generated"><strong>' . esc_html($view['generated_date']) . '</strong><small>' . esc_html($view['generated_time']) . '</small></td>';
                 echo '<td class="wnq-report-actions">';
                 echo '<a class="wnq-btn wnq-btn-sm wnq-btn-primary" href="' . esc_url($view['report_url']) . '" target="_blank" rel="noopener">View Report</a>';
+                echo '<a class="wnq-btn wnq-btn-sm" href="' . esc_url($view['pdf_url']) . '">Download PDF</a>';
                 echo '<button type="button" class="wnq-btn wnq-btn-sm" onclick="wnqHubAjax(\'generate_report\', \'' . esc_js($client_id) . '\', 0, this)">Regenerate</button>';
                 echo '</td></tr>';
             }
@@ -1120,6 +1121,7 @@ jQuery(function($) {
             'generated_date' => $generated_ts ? date('M j, Y', $generated_ts) : 'Not recorded',
             'generated_time' => $generated_ts ? date('g:i A', $generated_ts) : '',
             'report_url' => admin_url('admin-post.php?action=wnq_export_report&report_id=' . (int)($report['id'] ?? 0) . '&_wpnonce=' . wp_create_nonce('wnq_export_report')),
+            'pdf_url' => admin_url('admin-post.php?action=wnq_export_report&format=pdf&report_id=' . (int)($report['id'] ?? 0) . '&_wpnonce=' . wp_create_nonce('wnq_export_report')),
         ];
     }
 
@@ -1608,6 +1610,7 @@ jQuery(function($) {
                         'message' => 'New report generated (ID #' . $id . ')',
                         'report_id' => $id,
                         'report_url' => admin_url('admin-post.php?action=wnq_export_report&report_id=' . $id . '&_wpnonce=' . wp_create_nonce('wnq_export_report')),
+                        'pdf_url' => admin_url('admin-post.php?action=wnq_export_report&format=pdf&report_id=' . $id . '&_wpnonce=' . wp_create_nonce('wnq_export_report')),
                         'reload' => true,
                     ]);
                 } else {
