@@ -12,6 +12,7 @@ namespace WNQ\Admin;
 
 use WNQ\Models\SEOHub;
 use WNQ\Models\Client;
+use WNQ\Models\AnalyticsConfig;
 use WNQ\Models\BlogScheduler;
 use WNQ\Models\ServiceCityPage;
 use WNQ\Services\AuditEngine;
@@ -1037,7 +1038,7 @@ jQuery(function($) {
     {
         self::checkCap();
         $client_id = sanitize_text_field($_GET['client_id'] ?? '');
-        $clients   = Client::getAll();
+        $clients   = AnalyticsConfig::getAllClients();
 
         self::renderHeader('SEO OS — Reports');
 
@@ -1046,7 +1047,9 @@ jQuery(function($) {
         echo '<select onchange="location.href=\'?page=wnq-seo-hub-reports&client_id=\'+this.value"><option value="">— Select Client —</option>';
         foreach ($clients as $c) {
             $selected = $client_id === $c['client_id'] ? 'selected' : '';
-            echo '<option value="' . esc_attr($c['client_id']) . '" ' . $selected . '>' . esc_html($c['company'] ?: $c['name']) . '</option>';
+            $label = ($c['client_name'] ?? '') ?: $c['client_id'];
+            $site = trim((string)($c['website_url'] ?? ''));
+            echo '<option value="' . esc_attr($c['client_id']) . '" ' . $selected . '>' . esc_html($label . ($site ? ' — ' . $site : '')) . '</option>';
         }
         echo '</select>';
         if ($client_id) {
@@ -1054,6 +1057,13 @@ jQuery(function($) {
             echo ' &nbsp;<button class="wnq-btn" onclick="wnqHubAjax(\'generate_all_reports\', \'\', 0, this)">Generate All Client Reports</button>';
         }
         echo '</div>';
+
+        if (empty($clients)) {
+            echo '<div class="wnq-hub-card" style="padding:24px;margin-top:18px;">';
+            echo '<strong>No Analytics clients configured yet.</strong>';
+            echo '<p style="margin:8px 0 0;color:#6b7280;">Reports use WebNique Portal Analytics clients as their source of truth. Add clients under WebNique Portal → Analytics → Clients.</p>';
+            echo '</div>';
+        }
 
         if ($client_id) {
             $reports = SEOHub::getReports($client_id);
