@@ -1,9 +1,9 @@
 <?php
 /**
- * Plugin Name: WebNique Client Portal
+ * Plugin Name: Golden Web Marketing Client Portal
  * Description: Complete client management with portal, analytics, billing, tasks, SEO tracking, and messaging
  * Version: 2.4.3
- * Author: WebNique
+ * Author: Golden Web Marketing
  * Requires at least: 6.0
  * Requires PHP: 8.0
  * Text Domain: webnique-portal
@@ -51,7 +51,7 @@ $plugin_file = WNQ_PORTAL_PATH . 'includes/Core/Plugin.php';
 
 if (!file_exists($plugin_file)) {
     add_action('admin_notices', function() use ($plugin_file) {
-        echo '<div class="notice notice-error"><p><strong>WebNique Portal Error:</strong> Core Plugin file not found</p></div>';
+        echo '<div class="notice notice-error"><p><strong>Golden Web Marketing Portal Error:</strong> Core Plugin file not found</p></div>';
     });
     return;
 }
@@ -60,7 +60,7 @@ require_once $plugin_file;
 
 if (!class_exists('WNQ\\Core\\Plugin')) {
     add_action('admin_notices', function() {
-        echo '<div class="notice notice-error"><p><strong>WebNique Portal Error:</strong> Plugin class could not be loaded</p></div>';
+        echo '<div class="notice notice-error"><p><strong>Golden Web Marketing Portal Error:</strong> Plugin class could not be loaded</p></div>';
     });
     return;
 }
@@ -181,7 +181,7 @@ add_action('plugins_loaded', function() {
     try {
         WNQ\Core\Plugin::init();
     } catch (Exception $e) {
-        error_log('WebNique Portal Init Error: ' . $e->getMessage());
+        error_log('Golden Web Marketing Portal Init Error: ' . $e->getMessage());
     }
 }, 10);
 
@@ -211,7 +211,7 @@ if (wnq_seo_features_enabled()) {
                 try {
                     \WNQ\Core\SEOOSBootstrap::init();
                 } catch (Exception $e) {
-                    error_log('WebNique SEO OS Init Error: ' . $e->getMessage());
+                    error_log('Golden Web Marketing SEO OS Init Error: ' . $e->getMessage());
                 }
             }
         }
@@ -669,8 +669,8 @@ add_action('admin_menu', function() {
     $capability = current_user_can('wnq_manage_portal') ? 'wnq_manage_portal' : 'manage_options';
     
     add_menu_page(
-        'WebNique Portal',
-        'WebNique Portal',
+        'Golden Web Marketing Portal',
+        'Golden Web Marketing Portal',
         $capability,
         'wnq-portal',
         'wnq_render_settings_page',

@@ -2,7 +2,7 @@
 /**
  * SEO Fixer
  *
- * REST endpoint called by the WebNique SEO OS hub to apply AI-generated
+ * REST endpoint called by the Golden Web Marketing SEO OS hub to apply AI-generated
  * and programmatic SEO fixes to existing posts/pages.
  *
  * Endpoint: POST /wp-json/wnq-agent/v1/fix-seo
@@ -26,7 +26,7 @@
  *   fix_image_lazy_load bool Add loading="lazy" to content <img> tags
  *   internal_links   array   [{anchor, url}, …] to insert into post_content
  *
- * @package WebNique SEO Agent
+ * @package Golden Web Marketing SEO Agent
  */
 
 namespace WNQA;

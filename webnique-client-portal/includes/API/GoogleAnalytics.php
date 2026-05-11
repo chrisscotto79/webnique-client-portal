@@ -5,7 +5,7 @@
  * Connects to GA4 API and fetches analytics data
  * Uses service account authentication
  * 
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\API;

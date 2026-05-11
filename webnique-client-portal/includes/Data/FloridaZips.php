@@ -5,7 +5,7 @@
  * Complete list of Florida ZIP codes for mass lead generation.
  * Covers all major metros and surrounding areas (~850 ZIPs).
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Data;

@@ -8,7 +8,7 @@
  *   3. Send via wp_mail (uses Hostinger SMTP configured in Settings tab)
  *   4. Mark outreach_sent_at + update status → submitted
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;
@@ -124,8 +124,8 @@ final class BacklinkOutreachEngine
         // ── Step 3: Send via wp_mail ──────────────────────────────────────────
 
         $client    = Client::getByClientId($client_id);
-        $from_name = $client['company'] ?? get_bloginfo('name') ?: 'WebNique';
-        $from_addr = get_option('wnq_smtp_user', 'chris@web-nique.com');
+        $from_name = $client['company'] ?? get_bloginfo('name') ?: 'Golden Web Marketing';
+        $from_addr = get_option('wnq_smtp_user', 'hello@goldenwebmarketing.com');
 
         // Extract subject from first line if AI prefixed it with "Subject:"
         $subject    = 'Link Building Opportunity — ' . $from_name;

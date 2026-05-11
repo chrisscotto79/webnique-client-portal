@@ -5,7 +5,7 @@
  * Checks whether submitted/live backlinks still resolve via a HEAD request.
  * Used by the weekly cron and the "Verify Live Links" admin button.
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;
@@ -103,7 +103,7 @@ final class BacklinkVerifier
             'timeout'     => 8,
             'sslverify'   => false,
             'redirection' => 3,
-            'user-agent'  => 'Mozilla/5.0 (compatible; WebNique/1.0; +https://webnique.com)',
+            'user-agent'  => 'Mozilla/5.0 (compatible; GoldenWebMarketing/1.0; +https://goldenwebmarketing.com)',
         ]);
 
         if (is_wp_error($response)) {

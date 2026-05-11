@@ -11,7 +11,7 @@
  * All HTML fetching reuses already-retrieved HTML where passed in, to minimise
  * duplicate HTTP requests per lead.
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;
@@ -295,7 +295,7 @@ final class LeadEnrichmentService
 
         $response = wp_remote_get($url, [
             'timeout'             => 4,
-            'user-agent'          => 'Mozilla/5.0 (compatible; WebNique/1.0; +https://webnique.com)',
+            'user-agent'          => 'Mozilla/5.0 (compatible; GoldenWebMarketing/1.0; +https://goldenwebmarketing.com)',
             'sslverify'           => false,
             'redirection'         => 2,
             'limit_response_size' => 256000,

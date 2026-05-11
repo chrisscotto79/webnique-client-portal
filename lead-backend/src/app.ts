@@ -10,6 +10,6 @@ const app = Fastify({ logger: true });
 await app.register(cors, { origin: true });
 await app.register(jobRoutes);
 
-app.get('/v1/health', async () => ({ ok: true, service: 'webnique-lead-backend' }));
+app.get('/v1/health', async () => ({ ok: true, service: 'golden-web-marketing-lead-backend' }));
 
 await app.listen({ port: config.port, host: '0.0.0.0' });

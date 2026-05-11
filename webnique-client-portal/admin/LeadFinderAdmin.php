@@ -8,7 +8,7 @@
  *   All Leads  — browse, filter, manage and export saved leads
  *   Settings   — default keyword and filter settings
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Admin;
@@ -244,7 +244,7 @@ final class LeadFinderAdmin
   const tsv = [headers, ...rows].map(row => row.map(cell).join('\t')).join('\n');
   await navigator.clipboard.writeText(tsv).catch(() => {});
   console.log(tsv);
-  alert('WebNique copied ' + rows.length + ' Google Maps rows. Paste them into the Browser Scraper tab.');
+  alert('Golden Web Marketing copied ' + rows.length + ' Google Maps rows. Paste them into the Browser Scraper tab.');
 })();
 JS;
         ?>
@@ -1182,7 +1182,7 @@ JS;
                     <div class="wnq-row2">
                         <div class="wnq-field">
                             <label>Backend API URL</label>
-                            <input type="url" name="backend_api_url" value="<?php echo esc_attr($settings['backend_api_url']??'');?>" placeholder="https://lead-api.webnique.com">
+                            <input type="url" name="backend_api_url" value="<?php echo esc_attr($settings['backend_api_url']??'');?>" placeholder="https://lead-api.goldenwebmarketing.com">
                             <small>When set, ZIP Sweep runs in the Node backend instead of WordPress.</small>
                         </div>
                         <div class="wnq-field">
@@ -1524,7 +1524,7 @@ npm run scrape:zip -- --keyword "plumbing" --zip 32825</textarea>
         }
 
         header('Content-Type: text/csv; charset=utf-8');
-        header('Content-Disposition: attachment; filename="webnique-backend-leads-' . $job_id . '.csv"');
+        header('Content-Disposition: attachment; filename="golden-web-marketing-backend-leads-' . $job_id . '.csv"');
         echo $response['body'];
         exit;
     }
@@ -1743,7 +1743,7 @@ npm run scrape:zip -- --keyword "plumbing" --zip 32825</textarea>
             if ($website) {
                 $resp = wp_remote_get($website, [
                     'timeout'             => 8,
-                    'user-agent'          => 'Mozilla/5.0 (compatible; WebNique/1.0; +https://webnique.com)',
+                    'user-agent'          => 'Mozilla/5.0 (compatible; GoldenWebMarketing/1.0; +https://goldenwebmarketing.com)',
                     'sslverify'           => false,
                     'redirection'         => 3,
                     'limit_response_size' => 300000,

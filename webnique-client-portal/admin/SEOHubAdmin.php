@@ -5,7 +5,7 @@
  * Tabs:
  *   dashboard | clients | keywords | content | audits | reports | api | settings
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Admin;
@@ -521,7 +521,7 @@ final class SEOHubAdmin
             echo '</div>';
             if (!empty($agents_need_update)) {
                 echo '<div style="margin:18px 0;padding:12px 14px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;font-weight:700;">';
-                echo 'This client has a connected site running an older WebNique SEO Agent. Service + City drafts require agent version ' . esc_html(ServiceCityPageGenerator::MIN_AGENT_VERSION) . ' or newer.';
+                echo 'This client has a connected site running an older Golden Web Marketing SEO Agent. Service + City drafts require agent version ' . esc_html(ServiceCityPageGenerator::MIN_AGENT_VERSION) . ' or newer.';
                 echo '</div>';
             }
 
@@ -1061,7 +1061,7 @@ jQuery(function($) {
         if (empty($clients)) {
             echo '<div class="wnq-hub-card" style="padding:24px;margin-top:18px;">';
             echo '<strong>No Analytics clients configured yet.</strong>';
-            echo '<p style="margin:8px 0 0;color:#6b7280;">Reports use WebNique Portal Analytics clients as their source of truth. Add clients under WebNique Portal → Analytics → Clients.</p>';
+            echo '<p style="margin:8px 0 0;color:#6b7280;">Reports use Golden Web Marketing Portal Analytics clients as their source of truth. Add clients under Golden Web Marketing Portal → Analytics → Clients.</p>';
             echo '</div>';
         }
 
@@ -1242,7 +1242,7 @@ jQuery(function($) {
 
         echo '<div class="wnq-hub-section">';
         echo '<h2>Agent API Keys</h2>';
-        echo '<p class="wnq-muted">Each client WordPress site needs an API key to communicate with this hub. Install the <strong>WebNique SEO Agent</strong> plugin on the client site and enter the Hub URL above plus the key generated here.</p>';
+        echo '<p class="wnq-muted">Each client WordPress site needs an API key to communicate with this hub. Install the <strong>Golden Web Marketing SEO Agent</strong> plugin on the client site and enter the Hub URL above plus the key generated here.</p>';
 
         // Notices (generated/revoked)
         if (!empty($_GET['generated'])) {
@@ -1319,7 +1319,7 @@ jQuery(function($) {
         echo '<li>Zip the <code>webnique-seo-agent</code> folder from this repo into <code>webnique-seo-agent.zip</code></li>';
         echo '<li>On the <strong>client\'s</strong> WordPress site go to <em>Plugins → Add New → Upload Plugin</em></li>';
         echo '<li>Upload and activate <code>webnique-seo-agent.zip</code></li>';
-        echo '<li>Go to <em>Settings → WebNique SEO Agent</em> on the client site</li>';
+        echo '<li>Go to <em>Settings → Golden Web Marketing SEO Agent</em> on the client site</li>';
         echo '<li>Set <strong>Hub URL</strong> to: <code>' . esc_html($hub_url) . '</code></li>';
         echo '<li>Set <strong>API Key</strong> to the key generated in the table above for that client</li>';
         echo '<li>Click <strong>Save Settings</strong> then <strong>Test Connection</strong></li>';
@@ -1353,7 +1353,7 @@ jQuery(function($) {
         if (str_contains($current_host, 'cloudwaysapps.com') || str_contains($current_host, 'staging') || str_contains($current_host, 'localhost')) {
             echo '<div style="background:#fffbeb;border-left:4px solid #d97706;padding:14px 20px;margin:0;">';
             echo '<strong>🔧 Testing Environment Detected:</strong> Hub is running at <code>' . esc_html(site_url()) . '</code>. ';
-            echo 'When you move to production (web-nique.com), regenerate API keys and update the Hub URL in each client plugin.<br>';
+            echo 'When you move to production, regenerate API keys and update the Hub URL in each client plugin.<br>';
             echo '<small style="color:#92400e;">The <code>_load_textdomain_just_in_time</code> notice you may see in debug mode is from the <strong>Cloudways Breeze caching plugin</strong> — it is unrelated to the SEO OS and can be safely ignored.</small>';
             echo '</div>';
         }
@@ -1763,7 +1763,7 @@ jQuery(function($) {
     {
         echo '<div class="wrap wnq-hub-wrap">';
         echo '<div class="wnq-hub-masthead">';
-        echo '<div class="wnq-hub-logo">🔭 WebNique<span>SEO OS</span></div>';
+        echo '<div class="wnq-hub-logo">🔭 Golden Web Marketing<span>SEO OS</span></div>';
         echo '<nav class="wnq-hub-nav">';
         $nav_items = [
             'wnq-seo-hub'          => 'Dashboard',

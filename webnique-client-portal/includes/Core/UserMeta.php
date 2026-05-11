@@ -28,14 +28,14 @@ final class UserMeta
     $clientId = (string) get_user_meta($user->ID, 'wnq_client_id', true);
     $clientId = esc_attr($clientId);
     ?>
-    <h2>WebNique Portal</h2>
+    <h2>Golden Web Marketing Portal</h2>
     <table class="form-table" role="presentation">
       <tr>
         <th><label for="wnq_client_id">Client ID</label></th>
         <td>
           <input type="text" name="wnq_client_id" id="wnq_client_id" value="<?php echo $clientId; ?>" class="regular-text" />
           <p class="description">
-            Internal tenant ID used by the WebNique Client Portal. (v1: 1 WP user → 1 client)
+            Internal tenant ID used by the Golden Web Marketing Client Portal. (v1: 1 WP user → 1 client)
           </p>
         </td>
       </tr>

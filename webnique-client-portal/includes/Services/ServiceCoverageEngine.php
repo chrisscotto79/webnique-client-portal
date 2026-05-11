@@ -12,7 +12,7 @@
  *   1 = Partial match (only service or only location)
  *   0 = No match — gap, page needs to be built
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;

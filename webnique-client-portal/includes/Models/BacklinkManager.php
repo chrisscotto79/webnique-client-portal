@@ -7,7 +7,7 @@
  *  - Opportunities: guest posts, resource pages, sponsors, press
  *  - All Links   : aggregated view with live-verification status
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Models;

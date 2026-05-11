@@ -11,7 +11,7 @@
  *  - Rate limiting per provider
  *  - Swappable provider via settings
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;

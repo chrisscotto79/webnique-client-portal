@@ -5,7 +5,7 @@
  * Calls the PageSpeed Insights API to fetch performance scores and
  * Core Web Vitals (LCP, CLS, FID/INP, FCP, TTFB) for client pages.
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;

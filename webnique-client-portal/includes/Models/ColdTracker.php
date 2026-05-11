@@ -5,7 +5,7 @@
  * Handles database operations for cold call KPI tracking.
  * Table: wp_wnq_cold_calls
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Models;

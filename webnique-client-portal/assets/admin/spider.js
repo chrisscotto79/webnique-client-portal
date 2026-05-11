@@ -1,5 +1,5 @@
 /**
- * WebNique SEO Spider — Admin JS
+ * Golden Web Marketing SEO Spider — Admin JS
  * Handles: progressive crawl polling, PSI analysis, intent classification
  */
 (function ($) {

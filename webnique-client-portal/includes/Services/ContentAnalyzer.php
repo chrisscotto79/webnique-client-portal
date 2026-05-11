@@ -5,7 +5,7 @@
  * Provides: readability scoring (Flesch-Kincaid), duplicate title/meta detection,
  * keyword intent classification, and near-duplicate content flagging.
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;

@@ -4,10 +4,10 @@
  *
  * Endpoint: POST /wp-json/wnq-agent/v1/create-service-city-page
  *
- * Creates draft child pages from the WebNique SEO OS hub. Pages are never
+ * Creates draft child pages from the Golden Web Marketing SEO OS hub. Pages are never
  * published automatically.
  *
- * @package WebNique SEO Agent
+ * @package Golden Web Marketing SEO Agent
  */
 
 namespace WNQA;

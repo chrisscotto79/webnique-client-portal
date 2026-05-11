@@ -21,7 +21,7 @@
  *   Phase 2 – processNextManual(batch_id, filter_params)
  *     Called once per URL by the browser (looped via JS).
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;
@@ -712,7 +712,7 @@ final class LeadFinderEngine
     {
         $response = wp_remote_get($url, [
             'timeout'             => 8,
-            'user-agent'          => 'Mozilla/5.0 (compatible; WebNique/1.0; +https://webnique.com)',
+            'user-agent'          => 'Mozilla/5.0 (compatible; GoldenWebMarketing/1.0; +https://goldenwebmarketing.com)',
             'sslverify'           => false,
             'redirection'         => 3,
             'limit_response_size' => 512000, // 500 KB

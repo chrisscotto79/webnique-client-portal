@@ -3,11 +3,11 @@
  * API Sync
  *
  * Handles secure communication between the client WordPress site
- * and the WebNique SEO Hub. All requests are authenticated via API key.
+ * and the Golden Web Marketing SEO Hub. All requests are authenticated via API key.
  *
  * The plugin is a DATA RELAY only. No SEO analysis runs here.
  *
- * @package WebNique SEO Agent
+ * @package Golden Web Marketing SEO Agent
  */
 
 namespace WNQA;
@@ -144,7 +144,7 @@ class APISync
             'headers' => [
                 'X-WNQ-Api-Key' => $this->api_key,
                 'Content-Type'  => 'application/json',
-                'User-Agent'    => 'WebNique-SEO-Agent/' . WNQA_VERSION,
+                'User-Agent'    => 'GoldenWebMarketing-SEO-Agent/' . WNQA_VERSION,
             ],
             'body' => wp_json_encode($data),
         ]);
@@ -159,7 +159,7 @@ class APISync
             'timeout' => $this->timeout,
             'headers' => [
                 'X-WNQ-Api-Key' => $this->api_key,
-                'User-Agent'    => 'WebNique-SEO-Agent/' . WNQA_VERSION,
+                'User-Agent'    => 'GoldenWebMarketing-SEO-Agent/' . WNQA_VERSION,
             ],
         ]);
 

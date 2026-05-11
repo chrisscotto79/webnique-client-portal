@@ -5,7 +5,7 @@
  * Manages the wp_wnq_leads database table used by the Lead Finder system.
  * Stores qualified business prospects discovered via Google Places API.
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Models;
@@ -493,7 +493,7 @@ final class Lead
                 $row['state'],
                 $row['zip'],
                 implode(', ', $tags),
-                'WebNique Lead Finder',
+                'Golden Web Marketing Lead Finder',
                 $row['notes'],
                 $row['social_facebook'],
                 $row['social_instagram'],

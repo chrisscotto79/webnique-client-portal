@@ -536,7 +536,7 @@ async function selectThread(thread) {
         submitBtn.textContent = 'Sending...';
 
         try {
-          const userName = window.WNQ_ADMIN_CONFIG?.user?.name || 'WebNique Team';
+          const userName = window.WNQ_ADMIN_CONFIG?.user?.name || 'Golden Web Marketing Team';
           await sendMessage(thread.id, content, userName);
 
           replyInput.value = '';

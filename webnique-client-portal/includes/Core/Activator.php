@@ -17,7 +17,7 @@ final class Activator
       $admin->add_cap('wnq_view_all_clients');
     }
 
-    // Optional: create a “WebNique Manager” role later.
+    // Optional: create a “Golden Web Marketing Manager” role later.
     // For v1, keep it to administrators only.
   }
 }

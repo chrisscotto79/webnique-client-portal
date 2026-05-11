@@ -226,7 +226,7 @@ export async function createThread(clientId, subject, firstMessage, authorName) 
       created_at: serverTimestamp(),
       last_updated: serverTimestamp(),
       last_message: firstMessage ? firstMessage.substring(0, 100) : '',
-      assigned_to: 'WebNique Team',
+      assigned_to: 'Golden Web Marketing Team',
       related_service: '',
     };
 

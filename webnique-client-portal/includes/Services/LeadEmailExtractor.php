@@ -7,7 +7,7 @@
  * Prefers non-generic addresses (owner@, firstname@) over generic ones
  * (info@, support@, admin@, etc.).
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;
@@ -69,7 +69,7 @@ final class LeadEmailExtractor
     {
         $response = wp_remote_get($url, [
             'timeout'             => 4,
-            'user-agent'          => 'Mozilla/5.0 (compatible; WebNique/1.0; +https://webnique.com)',
+            'user-agent'          => 'Mozilla/5.0 (compatible; GoldenWebMarketing/1.0; +https://goldenwebmarketing.com)',
             'sslverify'           => false,
             'redirection'         => 2,
             'limit_response_size' => 256000,

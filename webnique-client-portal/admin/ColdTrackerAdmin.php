@@ -5,7 +5,7 @@
  * Interactive cold call KPI tracker with monthly calendar, day modals,
  * weekly analytics, monthly analytics, and smart coaching suggestions.
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Admin;

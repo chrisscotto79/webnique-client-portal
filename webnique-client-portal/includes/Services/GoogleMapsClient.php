@@ -14,7 +14,7 @@
  *   $info = GoogleMapsClient::getPlaceDetails('https://www.google.com/maps/place/...');
  *   // $info = [phone, website, review_count, rating, address]
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;

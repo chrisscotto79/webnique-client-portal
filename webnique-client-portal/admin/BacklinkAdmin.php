@@ -15,7 +15,7 @@
  *   All Links     — Full tracker table with batch live-verification,
  *                   editable notes, status dropdown, and delete.
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Admin;
@@ -1045,7 +1045,7 @@ final class BacklinkAdmin
     {
         $host     = esc_attr(get_option('wnq_smtp_host', 'smtp.hostinger.com'));
         $port     = esc_attr(get_option('wnq_smtp_port', '587'));
-        $user     = esc_attr(get_option('wnq_smtp_user', 'chris@web-nique.com'));
+        $user     = esc_attr(get_option('wnq_smtp_user', 'hello@goldenwebmarketing.com'));
         $has_pass = !empty(get_option('wnq_smtp_pass', ''));
         ?>
         <div class="wnq-bl-card">
@@ -1066,7 +1066,7 @@ final class BacklinkAdmin
                     </div>
                     <div>
                         <label>Username (Email Address)</label>
-                        <input type="email" name="smtp_user" value="<?php echo $user; ?>" placeholder="chris@web-nique.com">
+                        <input type="email" name="smtp_user" value="<?php echo $user; ?>" placeholder="hello@goldenwebmarketing.com">
                     </div>
                     <div>
                         <label>Password <?php echo $has_pass ? '<span style="color:#16a34a;font-weight:400;">(saved)</span>' : ''; ?></label>
@@ -1230,11 +1230,11 @@ final class BacklinkAdmin
                     BacklinkManager::update($link_id, ['contact_email' => $to]);
                 }
                 $sender_client = Client::getByClientId($client_id);
-                $from_name     = $sender_client['company'] ?? get_bloginfo('name') ?: 'WebNique';
+                $from_name     = $sender_client['company'] ?? get_bloginfo('name') ?: 'Golden Web Marketing';
                 $headers       = [
                     'Content-Type: text/plain; charset=UTF-8',
-                    'From: ' . $from_name . ' <chris@web-nique.com>',
-                    'Reply-To: chris@web-nique.com',
+                    'From: ' . $from_name . ' <hello@goldenwebmarketing.com>',
+                    'Reply-To: hello@goldenwebmarketing.com',
                 ];
                 $subject = 'Link Building Opportunity — ' . $from_name;
                 $sent    = wp_mail($to, $subject, $row['outreach_email'], $headers);

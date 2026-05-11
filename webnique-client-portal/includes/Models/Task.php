@@ -9,7 +9,7 @@
  * - Completion tracking
  * - Advanced queries
  * 
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Models;

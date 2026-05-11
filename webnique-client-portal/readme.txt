@@ -1,6 +1,6 @@
-WebNique Client Portal
+Golden Web Marketing Client Portal
 
-Contributors: webnique
+Contributors: goldenwebmarketing
 Author: Christopehr Scotto
 Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
@@ -8,13 +8,13 @@ Tested up to: 6.5
 Requires PHP: 8.0
 Stable tag: 2.2.6
 License: Proprietary
-License URI: https://web-nique.com
+License URI: https://goldenwebmarketing.com
 
 Description
 
-WebNique Client Portal is a custom WordPress plugin built exclusively for WebNique to provide clients with a centralized, secure dashboard for viewing SEO performance, subscription status, tasks, and direct communication.
+Golden Web Marketing Client Portal is a custom WordPress plugin built exclusively for Golden Web Marketing to provide clients with a centralized, secure dashboard for viewing SEO performance, subscription status, tasks, and direct communication.
 
-This plugin is designed as a multi-tenant client portal hosted on web-nique.com, where each client logs in using standard WordPress credentials and accesses only their own data.
+This plugin is designed as a multi-tenant client portal hosted by Golden Web Marketing, where each client logs in using standard WordPress credentials and accesses only their own data.
 
 The portal is intentionally built in phases, starting with a clean v1 foundation and expanding over time to support advanced SEO analytics, reporting, audits, and Google Ads.
 
@@ -26,7 +26,7 @@ Centralize SEO performance visibility
 
 Display subscription and billing status
 
-Create a single place for client ↔ WebNique communication
+Create a single place for client ↔ Golden Web Marketing communication
 
 Replace scattered emails, PDFs, and screenshots with a live dashboard
 
@@ -59,13 +59,13 @@ Client-Facing
 
 - SEO analytics placeholders (Search Console / GA4 later)
 
-- Task list (client requests + WebNique actions)
+- Task list (client requests + Golden Web Marketing actions)
 
 - Messaging threads (ticket-style communication)
 
 - Account settings (basic)
 
-Admin-Facing (WebNique Only)
+Admin-Facing (Golden Web Marketing Only)
 
 - Client management
 
@@ -216,9 +216,9 @@ Google Ads performance
 
 Support
 
-This plugin is private and maintained internally by WebNique.
+This plugin is private and maintained internally by Golden Web Marketing.
 
-For development questions, roadmap changes, or feature requests, contact the WebNique development team.
+For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
 2.1.0 - SEO Operating System
@@ -226,7 +226,7 @@ Changelog
 Complete AI-powered SEO OS integrated into hub:
 - 8 new database tables for SEO OS
 - SEO Hub admin menu (Dashboard, Clients, Keywords, Service City Pages, Technical Audits, Reports, API Management, AI Settings)
-- WebNique SEO Agent client plugin (separate installable)
+- Golden Web Marketing SEO Agent client plugin (separate installable)
 - Groq/OpenAI/Together AI modular engine with free tier support
 - Nightly audit system via WP-Cron (missing H1, thin content, schema, alt text, declining ranks)
 - Monthly report auto-generation with AI executive summaries
@@ -247,11 +247,11 @@ Initial plugin scaffolding
 SEO OS Architecture Notes
 
 Hub (current test URL: https://wordpress-1502434-5752021.cloudwaysapps.com/):
-  Production hub: web-nique.com (once DNS is pointed)
+  Production hub: Golden Web Marketing SEO OS hub (once DNS is pointed)
   All SEO intelligence, analysis, AI, automation, reporting runs here
   Hub URL is always = site_url() of the WordPress install hosting this plugin
 
-Client Sites (WebNique SEO Agent plugin):
+Client Sites (Golden Web Marketing SEO Agent plugin):
   Data collection and relay only — no SEO logic on client sites
   Authenticates via API key (X-WNQ-Api-Key header)
   Syncs twice daily via WP-Cron

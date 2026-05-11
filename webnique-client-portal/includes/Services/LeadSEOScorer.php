@@ -14,7 +14,7 @@
  *   no_schema              — No structured data (JSON-LD or microdata)
  *   no_viewport            — No mobile viewport meta tag
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;
@@ -52,7 +52,7 @@ final class LeadSEOScorer
 
         $response = wp_remote_get($url, [
             'timeout'    => 12,
-            'user-agent' => 'Mozilla/5.0 (compatible; WebNique/1.0; +https://webnique.com)',
+            'user-agent' => 'Mozilla/5.0 (compatible; GoldenWebMarketing/1.0; +https://goldenwebmarketing.com)',
             'sslverify'  => false,
             'redirection'=> 5,
         ]);

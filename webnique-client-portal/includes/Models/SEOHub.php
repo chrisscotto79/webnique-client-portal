@@ -11,7 +11,7 @@
  *  wnq_seo_reports        - Monthly performance reports
  *  wnq_seo_automation_log - Traceability log for all automation actions
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Models;

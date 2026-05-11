@@ -31,7 +31,7 @@ async function fetchHtml(url: string): Promise<{ html: string; url: string }> {
       redirect: 'follow',
       signal: AbortSignal.timeout(10_000),
       headers: {
-        'user-agent': 'Mozilla/5.0 (compatible; WebNiqueLeadBot/1.0; +https://webnique.com)'
+        'user-agent': 'Mozilla/5.0 (compatible; GoldenWebMarketingLeadBot/1.0; +https://goldenwebmarketing.com)'
       }
     });
     const contentType = response.headers.get('content-type') || '';

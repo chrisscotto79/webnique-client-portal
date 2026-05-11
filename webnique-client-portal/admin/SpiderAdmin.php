@@ -4,7 +4,7 @@
  *
  * Tabs: Spider | Page Speed | Content | Competitors | Local SEO
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Admin;
@@ -70,7 +70,7 @@ final class SpiderAdmin
 
         echo '<div class="wrap wnq-hub-wrap">';
         echo '<div class="wnq-hub-masthead">';
-        echo '<div class="wnq-hub-logo">🔭 WebNique<span>SEO OS</span></div>';
+        echo '<div class="wnq-hub-logo">🔭 Golden Web Marketing<span>SEO OS</span></div>';
         echo '<nav class="wnq-hub-nav">';
         $nav = ['wnq-seo-hub' => 'Dashboard', 'wnq-seo-hub-clients' => 'Clients',
                 'wnq-seo-hub-keywords' => 'Keywords', 'wnq-seo-hub-content' => 'Service City Pages',

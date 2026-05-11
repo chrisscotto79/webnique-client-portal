@@ -5,7 +5,7 @@
  * Generates one imported CSV row at a time and pushes the result to the
  * connected client site as an Elementor draft child page.
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;
@@ -54,7 +54,7 @@ final class ServiceCityPageGenerator
             $agent_version = trim((string)($agent['plugin_version'] ?? ''));
             return self::fail(
                 $row_id,
-                'This connected site is running WebNique SEO Agent version ' . ($agent_version ?: 'unknown') .
+                'This connected site is running Golden Web Marketing SEO Agent version ' . ($agent_version ?: 'unknown') .
                 '. Service + City drafts require version ' . self::MIN_AGENT_VERSION .
                 ' or newer. Update the agent plugin on that site, click Test Connection, then try Generate Draft again.'
             );
@@ -300,7 +300,7 @@ final class ServiceCityPageGenerator
             'headers' => [
                 'X-WNQ-Api-Key' => $api_key,
                 'Content-Type'  => 'application/json',
-                'User-Agent'    => 'WebNique-SEO-OS/1.0',
+                'User-Agent'    => 'GoldenWebMarketing-SEO-OS/1.0',
             ],
             'body' => wp_json_encode($payload),
         ]);
@@ -321,7 +321,7 @@ final class ServiceCityPageGenerator
         $error_code = (string)($body['code'] ?? '');
 
         if ($code === 404 && ($error_code === 'rest_no_route' || stripos($message, 'No route was found') !== false)) {
-            $message = 'The connected client site needs the updated WebNique SEO Agent plugin. Install or update the agent on that site, then click Generate Draft again.';
+            $message = 'The connected client site needs the updated Golden Web Marketing SEO Agent plugin. Install or update the agent on that site, then click Generate Draft again.';
         }
 
         return ['success' => false, 'message' => $message];
