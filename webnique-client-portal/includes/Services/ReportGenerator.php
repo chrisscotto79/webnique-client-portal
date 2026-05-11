@@ -72,7 +72,7 @@ final class ReportGenerator
     /**
      * Generate reports for all active clients
      */
-    public static function generateAllMonthlyReports(string $month = '', bool $send_email = true, bool $force_new = false): array
+    public static function generateAllMonthlyReports(string $month = '', bool $send_email = false, bool $force_new = false): array
     {
         $clients = AnalyticsConfig::getAllClients();
         $period = self::resolveMonthlyPeriod($month);
@@ -159,14 +159,21 @@ final class ReportGenerator
         $subject = sprintf('%s Monthly Analytics Report - %s', $period, $client_name);
         $body = self::renderReportHTML($report_id);
         $headers = ['Content-Type: text/html; charset=UTF-8'];
+        $pdf_attachment = self::writeReportPdfAttachment($report_id, $report);
+        $attachments = $pdf_attachment ? [$pdf_attachment] : [];
 
-        $sent = wp_mail($recipients, $subject, $body, $headers);
+        $sent = wp_mail($recipients, $subject, $body, $headers, $attachments);
+        if ($pdf_attachment && file_exists($pdf_attachment)) {
+            @unlink($pdf_attachment);
+        }
+
         SEOHub::log($sent ? 'monthly_report_emailed' : 'monthly_report_email_failed', [
             'client_id' => $report['client_id'],
             'entity_id' => $report_id,
             'entity_type' => 'report',
             'recipients' => $recipients,
             'period' => $period,
+            'pdf_attached' => !empty($pdf_attachment),
         ], $sent ? 'success' : 'failed');
 
         if ($sent) {
@@ -519,7 +526,509 @@ final class ReportGenerator
         return ob_get_clean();
     }
 
+    /**
+     * Render report as a dependency-free PDF download.
+     */
+    public static function renderReportPDF(int $report_id): string
+    {
+        $report = SEOHub::getReport($report_id);
+        if (!$report) return '';
+
+        $data = is_array($report['report_data'] ?? null) ? $report['report_data'] : [];
+        $period = $data['period'] ?? [];
+        $client = $data['client'] ?? [];
+        $analytics = $data['analytics'] ?? [];
+        $search_console = $analytics['search_console'] ?? [];
+
+        $pdf = self::pdfCreateContext();
+        self::pdfStartPage($pdf);
+
+        self::pdfRect($pdf, 0, 0, 612, 118, [30, 58, 95]);
+        self::pdfText($pdf, 'Analytics Performance Report', 48, 42, 24, [255, 255, 255], true);
+        self::pdfText($pdf, (string)($client['name'] ?? 'Client') . '  |  ' . (string)($period['label'] ?? ''), 48, 74, 11, [219, 234, 254]);
+        self::pdfText($pdf, 'Reporting Period: ' . (string)($period['start'] ?? '') . ' - ' . (string)($period['end'] ?? ''), 48, 92, 10, [191, 219, 254]);
+        $pdf['y'] = 142;
+
+        if (!empty($report['summary_html'])) {
+            self::pdfSectionTitle($pdf, 'Executive Summary');
+            self::pdfParagraph($pdf, self::pdfHtmlToText((string)$report['summary_html']), 10.5, 516, 16);
+            $pdf['y'] += 8;
+        }
+
+        self::pdfSectionTitle($pdf, 'GA4 Analytics');
+        if (!empty($analytics['configured'])) {
+            $overview = $analytics['overview'] ?? [];
+            $key_events = $analytics['key_events'] ?? [];
+            $traffic_sources = $analytics['traffic_sources'] ?? [];
+            $top_pages = $analytics['top_pages'] ?? [];
+            $visitor_trends = $analytics['visitors_over_time'] ?? [];
+
+            self::pdfMetricCards($pdf, [
+                ['label' => 'Visitors', 'value' => number_format((int)($overview['total_users'] ?? 0)), 'color' => [13, 83, 158]],
+                ['label' => 'Sessions', 'value' => number_format((int)($overview['sessions'] ?? 0)), 'color' => [37, 99, 235]],
+                ['label' => 'Page Views', 'value' => number_format((int)($overview['page_views'] ?? 0)), 'color' => [124, 58, 237]],
+                ['label' => 'Bounce Rate', 'value' => number_format((float)($overview['bounce_rate'] ?? 0), 1) . '%', 'color' => [217, 119, 6]],
+                ['label' => 'Key Events', 'value' => number_format((int)($analytics['total_key_events'] ?? 0)), 'color' => [22, 163, 74]],
+            ]);
+
+            self::pdfLineChart($pdf, $visitor_trends, 'Visitors Over Time', 'users', [37, 99, 235]);
+            self::pdfBarChart($pdf, $traffic_sources, 'channel', 'sessions', 'Sessions by Channel', [13, 148, 136]);
+            self::pdfBarChart($pdf, $top_pages, 'title', 'views', 'Top Pages by Views', [124, 58, 237]);
+            self::pdfBarChart($pdf, $key_events, 'label', 'count', 'Key Events', [22, 163, 74]);
+        } else {
+            self::pdfNote($pdf, 'GA4 analytics data was not available for this client during report generation. ' . (string)($analytics['error'] ?? ''));
+        }
+
+        self::pdfSectionTitle($pdf, 'Google Search Console');
+        if (!empty($search_console['configured'])) {
+            $gsc_overview = $search_console['overview'] ?? [];
+            $gsc_keywords = $search_console['top_keywords'] ?? [];
+            $gsc_pages = $search_console['top_pages'] ?? [];
+            $gsc_trends = $search_console['performance_over_time'] ?? [];
+
+            self::pdfMetricCards($pdf, [
+                ['label' => 'Organic Clicks', 'value' => number_format((int)($gsc_overview['clicks']['value'] ?? 0)), 'color' => [13, 83, 158]],
+                ['label' => 'Impressions', 'value' => number_format((int)($gsc_overview['impressions']['value'] ?? 0)), 'color' => [124, 58, 237]],
+                ['label' => 'Average CTR', 'value' => number_format((float)($gsc_overview['ctr']['value'] ?? 0), 1) . '%', 'color' => [22, 163, 74]],
+                ['label' => 'Avg Position', 'value' => number_format((float)($gsc_overview['position']['value'] ?? 0), 1), 'color' => [217, 119, 6]],
+            ]);
+
+            self::pdfLineChart($pdf, $gsc_trends, 'Organic Clicks Over Time', 'clicks', [37, 99, 235]);
+            self::pdfLineChart($pdf, $gsc_trends, 'Search Impressions Over Time', 'impressions', [124, 58, 237]);
+            self::pdfDualBarChart($pdf, $gsc_keywords, 'keyword', 'clicks', 'impressions', 'Top Search Queries', 'Clicks', 'Impressions');
+            self::pdfDualBarChart($pdf, $gsc_pages, 'page', 'clicks', 'impressions', 'Top Search Pages', 'Clicks', 'Impressions');
+        } else {
+            self::pdfNote($pdf, 'Google Search Console data was not available for this client during report generation. ' . (string)($search_console['error'] ?? ''));
+        }
+
+        self::pdfNote($pdf, 'Exact table data is available in the web report view. This PDF is formatted for quick client review and easy sharing.');
+        self::pdfClosePage($pdf);
+
+        return self::pdfBuildDocument($pdf['pages']);
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────
+
+    private static function pdfCreateContext(): array
+    {
+        return [
+            'pages' => [],
+            'stream' => '',
+            'y' => 48,
+            'width' => 612,
+            'height' => 792,
+            'margin' => 48,
+            'bottom' => 54,
+        ];
+    }
+
+    private static function pdfStartPage(array &$pdf): void
+    {
+        if (!empty($pdf['stream'])) {
+            self::pdfClosePage($pdf);
+        }
+
+        $pdf['stream'] = '';
+        $pdf['y'] = 48;
+    }
+
+    private static function pdfClosePage(array &$pdf): void
+    {
+        if (!isset($pdf['stream'])) {
+            return;
+        }
+
+        self::pdfText($pdf, 'Generated by WebNique SEO Operating System | ' . date('F j, Y') . ' | Confidential', 48, 760, 8, [148, 163, 184]);
+        $pdf['pages'][] = $pdf['stream'];
+        $pdf['stream'] = '';
+    }
+
+    private static function pdfEnsureSpace(array &$pdf, float $height): void
+    {
+        if (($pdf['y'] + $height) > ($pdf['height'] - $pdf['bottom'])) {
+            self::pdfStartPage($pdf);
+        }
+    }
+
+    private static function pdfSectionTitle(array &$pdf, string $title): void
+    {
+        self::pdfEnsureSpace($pdf, 36);
+        self::pdfRect($pdf, 48, $pdf['y'] + 3, 4, 18, [13, 83, 158]);
+        self::pdfText($pdf, $title, 60, $pdf['y'], 17, [30, 58, 95], true);
+        $pdf['y'] += 34;
+    }
+
+    private static function pdfMetricCards(array &$pdf, array $cards): void
+    {
+        $columns = 3;
+        $gap = 12;
+        $card_width = (516 - ($gap * ($columns - 1))) / $columns;
+        $card_height = 66;
+
+        foreach (array_chunk($cards, $columns) as $row) {
+            self::pdfEnsureSpace($pdf, $card_height + 14);
+            $x = 48;
+            foreach ($row as $card) {
+                $color = $card['color'] ?? [13, 83, 158];
+                self::pdfRect($pdf, $x, $pdf['y'], $card_width, $card_height, [240, 249, 255], [186, 230, 253]);
+                self::pdfText($pdf, (string)($card['value'] ?? '0'), $x + 14, $pdf['y'] + 15, 20, $color, true);
+                self::pdfText($pdf, strtoupper((string)($card['label'] ?? 'Metric')), $x + 14, $pdf['y'] + 45, 8, [100, 116, 139], true);
+                $x += $card_width + $gap;
+            }
+            $pdf['y'] += $card_height + 14;
+        }
+    }
+
+    private static function pdfLineChart(array &$pdf, array $rows, string $title, string $metric_key, array $color): void
+    {
+        $series = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $series[] = [
+                'date' => (string)($row['date'] ?? ''),
+                'label' => self::formatChartDate((string)($row['date'] ?? '')),
+                'value' => max(0.0, (float)($row[$metric_key] ?? 0)),
+            ];
+        }
+
+        if (!self::hasNumericChartRows($series, ['value'])) {
+            return;
+        }
+
+        $all_values = array_map(fn($point) => (float)$point['value'], $series);
+        $peak = max($all_values);
+        $total = array_sum($all_values);
+        $series = self::sampleChartSeries($series, 16);
+        $max_value = max(1, (float)ceil($peak * 1.15));
+
+        $card_height = 182;
+        self::pdfEnsureSpace($pdf, $card_height + 18);
+
+        $x = 48;
+        $y = $pdf['y'];
+        self::pdfRect($pdf, $x, $y, 516, $card_height, [255, 255, 255], [226, 232, 240]);
+        self::pdfText($pdf, $title, $x + 16, $y + 16, 12, [30, 58, 95], true);
+        self::pdfText($pdf, 'Total ' . self::formatChartValue((float)$total) . ' | Peak ' . self::formatChartValue((float)$peak), $x + 16, $y + 34, 8.5, [100, 116, 139]);
+
+        $chart_x = $x + 46;
+        $chart_y = $y + 56;
+        $chart_w = 444;
+        $chart_h = 88;
+        $baseline = $chart_y + $chart_h;
+
+        foreach ([1, 0.5, 0] as $scale) {
+            $line_y = $baseline - ($scale * $chart_h);
+            self::pdfLine($pdf, $chart_x, $line_y, $chart_x + $chart_w, $line_y, [226, 232, 240], 0.5);
+            self::pdfText($pdf, self::formatChartValue($max_value * $scale), $x + 14, $line_y - 6, 7, [100, 116, 139]);
+        }
+
+        $points = [];
+        $count = count($series);
+        foreach ($series as $index => $point) {
+            $px = $count === 1 ? $chart_x + ($chart_w / 2) : $chart_x + (($chart_w / max(1, $count - 1)) * $index);
+            $py = $baseline - (((float)$point['value'] / $max_value) * $chart_h);
+            $points[] = [$px, $py];
+        }
+
+        for ($i = 1; $i < count($points); $i++) {
+            self::pdfLine($pdf, $points[$i - 1][0], $points[$i - 1][1], $points[$i][0], $points[$i][1], $color, 2.2);
+        }
+        foreach ($points as $point) {
+            self::pdfCircle($pdf, $point[0], $point[1], 2.2, $color);
+        }
+
+        $last_index = max(0, $count - 1);
+        $mid_index = (int)floor($last_index / 2);
+        self::pdfText($pdf, (string)($series[0]['label'] ?? ''), $chart_x, $baseline + 13, 7.5, [100, 116, 139]);
+        self::pdfText($pdf, (string)($series[$mid_index]['label'] ?? ''), $chart_x + ($chart_w / 2) - 16, $baseline + 13, 7.5, [100, 116, 139]);
+        self::pdfText($pdf, (string)($series[$last_index]['label'] ?? ''), $chart_x + $chart_w - 30, $baseline + 13, 7.5, [100, 116, 139]);
+
+        $pdf['y'] += $card_height + 18;
+    }
+
+    private static function pdfBarChart(array &$pdf, array $rows, string $label_key, string $value_key, string $title, array $color, int $limit = 6): void
+    {
+        $items = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $value = max(0.0, (float)($row[$value_key] ?? 0));
+            if ($value <= 0) {
+                continue;
+            }
+            $items[] = ['label' => self::resolveChartLabel($row, $label_key), 'value' => $value];
+        }
+
+        if (empty($items)) {
+            return;
+        }
+
+        usort($items, fn($a, $b) => $b['value'] <=> $a['value']);
+        $items = array_slice($items, 0, $limit);
+        $max_value = max(1, max(array_column($items, 'value')));
+        $card_height = 58 + (count($items) * 31);
+        self::pdfEnsureSpace($pdf, $card_height + 16);
+
+        $x = 48;
+        $y = $pdf['y'];
+        self::pdfRect($pdf, $x, $y, 516, $card_height, [255, 255, 255], [226, 232, 240]);
+        self::pdfText($pdf, $title, $x + 16, $y + 16, 12, [30, 58, 95], true);
+        self::pdfText($pdf, 'Top ' . count($items) . ' by volume', $x + 16, $y + 34, 8.5, [100, 116, 139]);
+
+        $bar_x = $x + 210;
+        $bar_w = 280;
+        $row_y = $y + 58;
+        foreach ($items as $item) {
+            $width = ($item['value'] / $max_value) * $bar_w;
+            self::pdfText($pdf, self::shortChartLabel((string)$item['label'], 38), $x + 16, $row_y - 2, 8.2, [51, 65, 85], true);
+            self::pdfText($pdf, self::formatChartValue((float)$item['value']), $bar_x + $bar_w - 40, $row_y - 2, 8, [100, 116, 139]);
+            self::pdfRect($pdf, $bar_x, $row_y + 8, $bar_w, 7, [237, 242, 247]);
+            self::pdfRect($pdf, $bar_x, $row_y + 8, max(4, $width), 7, $color);
+            $row_y += 31;
+        }
+
+        $pdf['y'] += $card_height + 16;
+    }
+
+    private static function pdfDualBarChart(array &$pdf, array $rows, string $label_key, string $primary_key, string $secondary_key, string $title, string $primary_label, string $secondary_label, int $limit = 6): void
+    {
+        $items = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $primary = max(0.0, (float)($row[$primary_key] ?? 0));
+            $secondary = max(0.0, (float)($row[$secondary_key] ?? 0));
+            if ($primary <= 0 && $secondary <= 0) {
+                continue;
+            }
+            $items[] = ['label' => self::resolveChartLabel($row, $label_key), 'primary' => $primary, 'secondary' => $secondary];
+        }
+
+        if (empty($items)) {
+            return;
+        }
+
+        usort($items, fn($a, $b) => (($b['primary'] <=> $a['primary']) ?: ($b['secondary'] <=> $a['secondary'])));
+        $items = array_slice($items, 0, $limit);
+        $max_primary = max(1, max(array_column($items, 'primary')));
+        $max_secondary = max(1, max(array_column($items, 'secondary')));
+        $card_height = 72 + (count($items) * 38);
+        self::pdfEnsureSpace($pdf, $card_height + 16);
+
+        $x = 48;
+        $y = $pdf['y'];
+        self::pdfRect($pdf, $x, $y, 516, $card_height, [255, 255, 255], [226, 232, 240]);
+        self::pdfText($pdf, $title, $x + 16, $y + 16, 12, [30, 58, 95], true);
+        self::pdfText($pdf, $primary_label . ' and ' . $secondary_label, $x + 16, $y + 34, 8.5, [100, 116, 139]);
+        self::pdfRect($pdf, $x + 376, $y + 21, 8, 8, [37, 99, 235]);
+        self::pdfText($pdf, $primary_label, $x + 388, $y + 18, 7.5, [100, 116, 139]);
+        self::pdfRect($pdf, $x + 438, $y + 21, 8, 8, [124, 58, 237]);
+        self::pdfText($pdf, $secondary_label, $x + 450, $y + 18, 7.5, [100, 116, 139]);
+
+        $bar_x = $x + 210;
+        $bar_w = 280;
+        $row_y = $y + 64;
+        foreach ($items as $item) {
+            $primary_w = ($item['primary'] / $max_primary) * $bar_w;
+            $secondary_w = ($item['secondary'] / $max_secondary) * $bar_w;
+            self::pdfText($pdf, self::shortChartLabel((string)$item['label'], 34), $x + 16, $row_y, 8, [51, 65, 85], true);
+            self::pdfText($pdf, self::formatChartValue((float)$item['primary']) . ' / ' . self::formatChartValue((float)$item['secondary']), $bar_x + $bar_w - 54, $row_y, 7.5, [100, 116, 139]);
+            self::pdfRect($pdf, $bar_x, $row_y + 10, $bar_w, 6, [237, 242, 247]);
+            self::pdfRect($pdf, $bar_x, $row_y + 10, max(4, $primary_w), 6, [37, 99, 235]);
+            self::pdfRect($pdf, $bar_x, $row_y + 20, $bar_w, 6, [237, 242, 247]);
+            self::pdfRect($pdf, $bar_x, $row_y + 20, max(4, $secondary_w), 6, [124, 58, 237]);
+            $row_y += 38;
+        }
+
+        $pdf['y'] += $card_height + 16;
+    }
+
+    private static function pdfNote(array &$pdf, string $message): void
+    {
+        $text = trim(self::pdfCleanText($message));
+        if ($text === '') {
+            return;
+        }
+
+        $lines = self::pdfWrapText($text, 10, 480);
+        $height = 28 + (count($lines) * 14);
+        self::pdfEnsureSpace($pdf, $height + 8);
+        self::pdfRect($pdf, 48, $pdf['y'], 516, $height, [255, 251, 235], [253, 230, 138]);
+        $y = $pdf['y'] + 16;
+        foreach ($lines as $line) {
+            self::pdfText($pdf, $line, 64, $y, 9.5, [146, 64, 14]);
+            $y += 14;
+        }
+        $pdf['y'] += $height + 12;
+    }
+
+    private static function pdfParagraph(array &$pdf, string $text, float $font_size, float $width, float $line_height): void
+    {
+        $paragraphs = preg_split('/\n{2,}/', trim(self::pdfCleanText($text))) ?: [];
+        foreach ($paragraphs as $paragraph) {
+            $lines = self::pdfWrapText($paragraph, $font_size, $width);
+            foreach ($lines as $line) {
+                self::pdfEnsureSpace($pdf, $line_height + 4);
+                self::pdfText($pdf, $line, 48, $pdf['y'], $font_size, [31, 41, 55]);
+                $pdf['y'] += $line_height;
+            }
+            $pdf['y'] += 6;
+        }
+    }
+
+    private static function pdfWrapText(string $text, float $font_size, float $width): array
+    {
+        $text = preg_replace('/\s+/', ' ', trim($text)) ?: '';
+        if ($text === '') {
+            return [];
+        }
+
+        $chars = max(24, (int)floor($width / ($font_size * 0.52)));
+        return explode("\n", wordwrap($text, $chars, "\n", true));
+    }
+
+    private static function pdfHtmlToText(string $html): string
+    {
+        $html = str_ireplace(['<br>', '<br/>', '<br />', '</p>', '</div>', '</li>'], "\n\n", $html);
+        return wp_strip_all_tags($html);
+    }
+
+    private static function pdfText(array &$pdf, string $text, float $x, float $top_y, float $size, array $rgb, bool $bold = false): void
+    {
+        $font = $bold ? 'F2' : 'F1';
+        $y = $pdf['height'] - $top_y - $size;
+        $pdf['stream'] .= self::pdfColor($rgb, 'rg') . sprintf(" BT /%s %s Tf 1 0 0 1 %s %s Tm (%s) Tj ET\n",
+            $font,
+            self::pdfNum($size),
+            self::pdfNum($x),
+            self::pdfNum($y),
+            self::pdfEscape(self::pdfCleanText($text))
+        );
+    }
+
+    private static function pdfRect(array &$pdf, float $x, float $top_y, float $width, float $height, array $fill_rgb, ?array $stroke_rgb = null): void
+    {
+        $y = $pdf['height'] - $top_y - $height;
+        if ($stroke_rgb) {
+            $pdf['stream'] .= 'q ' . self::pdfColor($fill_rgb, 'rg') . ' ' . self::pdfColor($stroke_rgb, 'RG') . ' 1 w ' .
+                self::pdfNum($x) . ' ' . self::pdfNum($y) . ' ' . self::pdfNum($width) . ' ' . self::pdfNum($height) . " re B Q\n";
+            return;
+        }
+
+        $pdf['stream'] .= 'q ' . self::pdfColor($fill_rgb, 'rg') . ' ' . self::pdfNum($x) . ' ' . self::pdfNum($y) . ' ' .
+            self::pdfNum($width) . ' ' . self::pdfNum($height) . " re f Q\n";
+    }
+
+    private static function pdfLine(array &$pdf, float $x1, float $top_y1, float $x2, float $top_y2, array $rgb, float $width = 1): void
+    {
+        $y1 = $pdf['height'] - $top_y1;
+        $y2 = $pdf['height'] - $top_y2;
+        $pdf['stream'] .= 'q ' . self::pdfColor($rgb, 'RG') . ' ' . self::pdfNum($width) . ' w ' .
+            self::pdfNum($x1) . ' ' . self::pdfNum($y1) . ' m ' . self::pdfNum($x2) . ' ' . self::pdfNum($y2) . " l S Q\n";
+    }
+
+    private static function pdfCircle(array &$pdf, float $x, float $top_y, float $radius, array $rgb): void
+    {
+        $y = $pdf['height'] - $top_y;
+        $k = 0.5522847498;
+        $c = $radius * $k;
+        $pdf['stream'] .= 'q ' . self::pdfColor($rgb, 'rg') . ' ' .
+            self::pdfNum($x + $radius) . ' ' . self::pdfNum($y) . ' m ' .
+            self::pdfNum($x + $radius) . ' ' . self::pdfNum($y + $c) . ' ' . self::pdfNum($x + $c) . ' ' . self::pdfNum($y + $radius) . ' ' . self::pdfNum($x) . ' ' . self::pdfNum($y + $radius) . ' c ' .
+            self::pdfNum($x - $c) . ' ' . self::pdfNum($y + $radius) . ' ' . self::pdfNum($x - $radius) . ' ' . self::pdfNum($y + $c) . ' ' . self::pdfNum($x - $radius) . ' ' . self::pdfNum($y) . ' c ' .
+            self::pdfNum($x - $radius) . ' ' . self::pdfNum($y - $c) . ' ' . self::pdfNum($x - $c) . ' ' . self::pdfNum($y - $radius) . ' ' . self::pdfNum($x) . ' ' . self::pdfNum($y - $radius) . ' c ' .
+            self::pdfNum($x + $c) . ' ' . self::pdfNum($y - $radius) . ' ' . self::pdfNum($x + $radius) . ' ' . self::pdfNum($y - $c) . ' ' . self::pdfNum($x + $radius) . ' ' . self::pdfNum($y) . " c f Q\n";
+    }
+
+    private static function pdfBuildDocument(array $pages): string
+    {
+        if (empty($pages)) {
+            return '';
+        }
+
+        $objects = [];
+        $objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
+        $objects[3] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+        $objects[4] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>';
+
+        $page_refs = [];
+        $next_id = 5;
+        foreach ($pages as $stream) {
+            $page_id = $next_id++;
+            $content_id = $next_id++;
+            $page_refs[] = $page_id . ' 0 R';
+            $objects[$page_id] = '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ' . $content_id . ' 0 R >>';
+            $objects[$content_id] = "<< /Length " . strlen($stream) . " >>\nstream\n" . $stream . "endstream";
+        }
+
+        $objects[2] = '<< /Type /Pages /Kids [' . implode(' ', $page_refs) . '] /Count ' . count($page_refs) . ' >>';
+        ksort($objects);
+
+        $pdf = "%PDF-1.4\n%\xC2\xA5\xC2\xB1\xC3\xAB\n";
+        $offsets = [0 => 0];
+        foreach ($objects as $id => $object) {
+            $offsets[$id] = strlen($pdf);
+            $pdf .= $id . " 0 obj\n" . $object . "\nendobj\n";
+        }
+
+        $xref_offset = strlen($pdf);
+        $max_id = max(array_keys($objects));
+        $pdf .= "xref\n0 " . ($max_id + 1) . "\n";
+        $pdf .= "0000000000 65535 f \n";
+        for ($i = 1; $i <= $max_id; $i++) {
+            $pdf .= sprintf("%010d 00000 n \n", $offsets[$i] ?? 0);
+        }
+
+        $pdf .= "trailer\n<< /Size " . ($max_id + 1) . " /Root 1 0 R >>\nstartxref\n" . $xref_offset . "\n%%EOF";
+        return $pdf;
+    }
+
+    private static function pdfCleanText(string $text): string
+    {
+        $text = html_entity_decode(wp_strip_all_tags($text), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text = str_replace(["\r\n", "\r"], "\n", $text);
+        $replacements = [
+            "\xE2\x80\x93" => '-',
+            "\xE2\x80\x94" => '-',
+            "\xE2\x80\x98" => "'",
+            "\xE2\x80\x99" => "'",
+            "\xE2\x80\x9C" => '"',
+            "\xE2\x80\x9D" => '"',
+            "\xE2\x80\xA2" => '-',
+            "\xC2\xA0" => ' ',
+        ];
+        $text = str_replace(array_keys($replacements), array_values($replacements), $text);
+
+        if (function_exists('iconv')) {
+            $converted = @iconv('UTF-8', 'Windows-1252//TRANSLIT//IGNORE', $text);
+            if (is_string($converted)) {
+                return $converted;
+            }
+        }
+
+        return preg_replace('/[^\x09\x0A\x0D\x20-\x7E]/', '', $text) ?: '';
+    }
+
+    private static function pdfEscape(string $text): string
+    {
+        return str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $text);
+    }
+
+    private static function pdfColor(array $rgb, string $operator): string
+    {
+        return self::pdfNum(((float)($rgb[0] ?? 0)) / 255) . ' ' .
+               self::pdfNum(((float)($rgb[1] ?? 0)) / 255) . ' ' .
+               self::pdfNum(((float)($rgb[2] ?? 0)) / 255) . ' ' . $operator;
+    }
+
+    private static function pdfNum(float $value): string
+    {
+        return rtrim(rtrim(number_format($value, 3, '.', ''), '0'), '.') ?: '0';
+    }
 
     private static function renderLineChart(array $rows, string $title, string $metric_key, string $color = '#0d539e'): string
     {
@@ -1301,6 +1810,34 @@ final class ReportGenerator
         }
 
         return array_values(array_unique($recipients));
+    }
+
+    private static function writeReportPdfAttachment(int $report_id, array $report): string
+    {
+        $pdf = self::renderReportPDF($report_id);
+        if ($pdf === '') {
+            return '';
+        }
+
+        $uploads = wp_upload_dir();
+        $base_dir = $uploads['basedir'] ?? '';
+        if (!$base_dir) {
+            return '';
+        }
+
+        $dir = trailingslashit($base_dir) . 'wnq-report-pdfs';
+        if (!wp_mkdir_p($dir)) {
+            return '';
+        }
+
+        $generated = !empty($report['generated_at']) ? strtotime((string)$report['generated_at']) : time();
+        $filename = sanitize_file_name(
+            'seo-report-' . ($report['client_id'] ?? 'client') . '-' . date('Y-m-d-His', $generated) . '-id-' . $report_id . '.pdf'
+        );
+        $path = trailingslashit($dir) . $filename;
+
+        $written = file_put_contents($path, $pdf);
+        return $written === false ? '' : $path;
     }
 
     private static function formatDuration(float $seconds): string
