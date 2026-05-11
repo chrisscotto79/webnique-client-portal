@@ -52,7 +52,7 @@ final class GoogleSearchConsole
         $cache_key = "gsc_overview_{$this->site_url}_{$start_date}_{$end_date}";
         
         $cached = $this->getFromCache($cache_key);
-        if ($cached !== false) {
+        if (is_array($cached)) {
             return $cached;
         }
 
@@ -116,7 +116,7 @@ final class GoogleSearchConsole
         $cache_key = "gsc_keywords_{$this->site_url}_{$start_date}_{$end_date}_{$limit}";
         
         $cached = $this->getFromCache($cache_key);
-        if ($cached !== false) {
+        if (is_array($cached)) {
             return $cached;
         }
 
@@ -171,7 +171,7 @@ final class GoogleSearchConsole
         $cache_key = "gsc_pages_{$this->site_url}_{$start_date}_{$end_date}_{$limit}";
         
         $cached = $this->getFromCache($cache_key);
-        if ($cached !== false) {
+        if (is_array($cached)) {
             return $cached;
         }
 
@@ -225,7 +225,7 @@ final class GoogleSearchConsole
         $cache_key = "gsc_performance_time_{$this->site_url}_{$start_date}_{$end_date}";
         
         $cached = $this->getFromCache($cache_key);
-        if ($cached !== false) {
+        if (is_array($cached)) {
             return $cached;
         }
 
@@ -279,7 +279,7 @@ final class GoogleSearchConsole
         $cache_key = "gsc_devices_{$this->site_url}_{$start_date}_{$end_date}";
         
         $cached = $this->getFromCache($cache_key);
-        if ($cached !== false) {
+        if (is_array($cached)) {
             return $cached;
         }
 
@@ -329,7 +329,7 @@ final class GoogleSearchConsole
         $cache_key = "gsc_countries_{$this->site_url}_{$start_date}_{$end_date}_{$limit}";
         
         $cached = $this->getFromCache($cache_key);
-        if ($cached !== false) {
+        if (is_array($cached)) {
             return $cached;
         }
 
@@ -397,29 +397,42 @@ final class GoogleSearchConsole
      */
     private function makeApiRequest(string $url, array $body): array
     {
-        $access_token = $this->getAccessToken();
+        $cache_key = 'gsc_access_token_' . md5($this->credentials['client_email']);
 
-        $response = wp_remote_post($url, [
-            'headers' => [
-                'Authorization' => 'Bearer ' . $access_token,
-                'Content-Type' => 'application/json',
-            ],
-            'body' => wp_json_encode($body),
-            'timeout' => 30,
-        ]);
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            $access_token = $this->getAccessToken();
 
-        if (is_wp_error($response)) {
-            throw new \Exception('API request failed: ' . $response->get_error_message());
+            $response = wp_remote_post($url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $access_token,
+                    'Content-Type' => 'application/json',
+                ],
+                'body' => wp_json_encode($body),
+                'timeout' => 30,
+            ]);
+
+            if (is_wp_error($response)) {
+                throw new \Exception('API request failed: ' . $response->get_error_message());
+            }
+
+            $code = wp_remote_retrieve_response_code($response);
+            $response_body = wp_remote_retrieve_body($response);
+            $data = json_decode($response_body, true);
+
+            if ($code === 200 && is_array($data) && !isset($data['error'])) {
+                return $data;
+            }
+
+            if (in_array((int)$code, [401, 403], true) && $attempt === 0) {
+                delete_transient($cache_key);
+                continue;
+            }
+
+            $error_msg = is_array($data) ? ($data['error']['message'] ?? 'Unknown error') : 'Invalid JSON response';
+            throw new \Exception('API error: ' . $error_msg);
         }
 
-        $response_body = wp_remote_retrieve_body($response);
-        $data = json_decode($response_body, true);
-
-        if (isset($data['error'])) {
-            throw new \Exception('API error: ' . ($data['error']['message'] ?? 'Unknown error'));
-        }
-
-        return $data;
+        throw new \Exception('API request failed after refreshing the access token');
     }
 
     /**
@@ -430,17 +443,17 @@ final class GoogleSearchConsole
         $cache_key = 'gsc_access_token_' . md5($this->credentials['client_email']);
         $cached = get_transient($cache_key);
         
-        if ($cached) {
+        if (is_string($cached) && $cached !== '') {
             return $cached;
         }
 
         // Create JWT
         $now = time();
-        $jwt_header = base64_encode(wp_json_encode(['alg' => 'RS256', 'typ' => 'JWT']));
+        $jwt_header = self::base64UrlEncode(wp_json_encode(['alg' => 'RS256', 'typ' => 'JWT']));
         
-        $jwt_claim = base64_encode(wp_json_encode([
+        $jwt_claim = self::base64UrlEncode(wp_json_encode([
             'iss' => $this->credentials['client_email'],
-            'scope' => 'https://www.googleapis.com/auth/webmasters.readonly',
+            'scope' => 'https://www.googleapis.com/auth/analytics.readonly https://www.googleapis.com/auth/webmasters.readonly',
             'aud' => 'https://oauth2.googleapis.com/token',
             'exp' => $now + 3600,
             'iat' => $now,
@@ -449,8 +462,10 @@ final class GoogleSearchConsole
         $jwt_signature = '';
         $sign_input = $jwt_header . '.' . $jwt_claim;
         
-        openssl_sign($sign_input, $jwt_signature, $this->credentials['private_key'], 'SHA256');
-        $jwt_signature = base64_encode($jwt_signature);
+        if (!openssl_sign($sign_input, $jwt_signature, $this->credentials['private_key'], 'SHA256')) {
+            throw new \Exception('JWT signing failed. Check the private_key in your service account JSON.');
+        }
+        $jwt_signature = self::base64UrlEncode($jwt_signature);
 
         $jwt = $jwt_header . '.' . $jwt_claim . '.' . $jwt_signature;
 
@@ -470,7 +485,7 @@ final class GoogleSearchConsole
         $data = json_decode($body, true);
 
         if (!isset($data['access_token'])) {
-            throw new \Exception('Failed to get access token');
+            throw new \Exception('Failed to get access token: ' . ($data['error_description'] ?? $data['error'] ?? 'Unknown'));
         }
 
         // Cache for 50 minutes
@@ -574,5 +589,10 @@ final class GoogleSearchConsole
     private function saveToCache(string $key, $data, int $expiration = 3600): void
     {
         set_transient('wnq_gsc_' . md5($key), $data, $expiration);
+    }
+
+    private static function base64UrlEncode(string $data): string
+    {
+        return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
     }
 }

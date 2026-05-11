@@ -320,7 +320,7 @@ final class ReportGenerator
       <h3 style="font-size:16px;color:#374151;margin:6px 0 12px;">Top Pages</h3>
       <div class="table-wrap" style="margin-bottom:24px;">
         <table>
-          <thead><tr><th>Page</th><th>Views</th><th>Avg Time</th><th>Bounce</th></tr></thead>
+          <thead><tr><th>Page</th><th>Views</th><th>Bounce</th></tr></thead>
           <tbody>
             <?php foreach (array_slice($top_pages, 0, 8) as $page): ?>
             <tr>
@@ -329,7 +329,6 @@ final class ReportGenerator
                 <span style="font-size:12px;color:#6b7280;"><?php echo esc_html($page['path'] ?? ''); ?></span>
               </td>
               <td><?php echo number_format((int)($page['views'] ?? 0)); ?></td>
-              <td><?php echo esc_html(self::formatDuration((float)($page['avg_time'] ?? 0))); ?></td>
               <td><?php echo number_format((float)($page['bounce_rate'] ?? 0), 1); ?>%</td>
             </tr>
             <?php endforeach; ?>
