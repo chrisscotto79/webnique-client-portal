@@ -8,11 +8,11 @@
 
   // ── AJAX Wrapper ─────────────────────────────────────────────────────────
 
-  window.wnqHubAjax = function (action, clientId, entityId) {
+  window.wnqHubAjax = function (action, clientId, entityId, btn) {
     const $result = $('#wnq-action-result');
     $result.removeClass('success error').text('').hide();
 
-    const $btn = $('[onclick*="' + action + '"]').first();
+    const $btn = btn ? $(btn) : $('[onclick*="' + action + '"]').first();
     const origText = $btn.html();
     $btn.html('⏳ Working...').prop('disabled', true);
 

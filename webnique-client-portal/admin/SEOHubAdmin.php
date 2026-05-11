@@ -1049,44 +1049,161 @@ jQuery(function($) {
         }
         echo '</select>';
         if ($client_id) {
-            echo ' &nbsp;<button class="wnq-btn wnq-btn-primary" onclick="wnqHubAjax(\'generate_report\', \'' . esc_js($client_id) . '\')">📊 Generate New Report</button>';
-            echo ' &nbsp;<button class="wnq-btn" onclick="wnqHubAjax(\'generate_all_reports\', \'\')">📊 Generate New Reports for All Clients</button>';
+            echo ' &nbsp;<button class="wnq-btn wnq-btn-primary" onclick="wnqHubAjax(\'generate_report\', \'' . esc_js($client_id) . '\', 0, this)">Generate New Report</button>';
+            echo ' &nbsp;<button class="wnq-btn" onclick="wnqHubAjax(\'generate_all_reports\', \'\', 0, this)">Generate All Client Reports</button>';
         }
         echo '</div>';
 
         if ($client_id) {
             $reports = SEOHub::getReports($client_id);
 
-            echo '<table class="wnq-hub-table"><thead><tr><th>Report</th><th>Period</th><th>Data Sources</th><th>Status</th><th>Generated</th><th>Actions</th></tr></thead><tbody>';
+            echo '<div class="wnq-hub-table-wrap"><table class="wnq-hub-table wnq-report-table"><thead><tr><th>Report</th><th>Period</th><th>Data Sources</th><th>Status</th><th>Generated</th><th>Actions</th></tr></thead><tbody>';
             if (empty($reports)) {
                 echo '<tr><td colspan="6" style="text-align:center;padding:40px;color:#6b7280;">No reports generated yet. Click "Generate New Report" above.</td></tr>';
             }
             foreach ($reports as $r) {
-                $rdata  = is_string($r['report_data']) ? json_decode($r['report_data'], true) : [];
-                $analytics = $rdata['analytics'] ?? [];
-                $sources = [];
-                $sources[] = !empty($analytics['configured'])
-                    ? '<span class="wnq-badge-green">GA4</span>'
-                    : '<span class="wnq-badge-gray">GA4 missing</span>';
-                $sources[] = !empty($analytics['search_console']['configured'])
-                    ? '<span class="wnq-badge-green">GSC</span>'
-                    : '<span class="wnq-badge-gray">GSC missing</span>';
+                $view = self::buildReportRowView($r);
 
                 echo '<tr>';
-                echo '<td><strong>' . esc_html($r['title']) . '</strong></td>';
-                echo '<td>' . esc_html($r['period_start']) . ' – ' . esc_html($r['period_end']) . '</td>';
-                echo '<td>' . implode(' ', $sources) . '</td>';
-                echo '<td><span class="wnq-badge-green">' . esc_html($r['status']) . '</span></td>';
-                echo '<td>' . esc_html($r['generated_at']) . '</td>';
-                echo '<td>';
-                echo '<a class="wnq-btn wnq-btn-sm" href="' . admin_url('admin-post.php?action=wnq_export_report&report_id=' . $r['id'] . '&_wpnonce=' . wp_create_nonce('wnq_export_report')) . '" target="_blank">View Report</a>';
+                echo '<td class="wnq-report-name"><strong>' . esc_html($view['title']) . '</strong><small>Report #' . (int)$r['id'] . ' &middot; ' . esc_html($view['type']) . '</small></td>';
+                echo '<td class="wnq-report-period"><strong>' . esc_html($view['period_label']) . '</strong><small>' . esc_html($view['period_range']) . '</small></td>';
+                echo '<td class="wnq-report-sources">' . $view['sources_html'] . '</td>';
+                echo '<td class="wnq-report-status"><span class="' . esc_attr($view['status_class']) . '">' . esc_html($view['status_label']) . '</span><small>' . esc_html($view['status_help']) . '</small></td>';
+                echo '<td class="wnq-report-generated"><strong>' . esc_html($view['generated_date']) . '</strong><small>' . esc_html($view['generated_time']) . '</small></td>';
+                echo '<td class="wnq-report-actions">';
+                echo '<a class="wnq-btn wnq-btn-sm wnq-btn-primary" href="' . esc_url($view['report_url']) . '" target="_blank" rel="noopener">View Report</a>';
+                echo '<button type="button" class="wnq-btn wnq-btn-sm" onclick="wnqHubAjax(\'generate_report\', \'' . esc_js($client_id) . '\', 0, this)">Regenerate</button>';
                 echo '</td></tr>';
             }
-            echo '</tbody></table>';
+            echo '</tbody></table></div>';
         }
 
         echo '</div>';
         self::renderFooter();
+    }
+
+    private static function buildReportRowView(array $report): array
+    {
+        $data = is_string($report['report_data'] ?? null) ? json_decode((string)$report['report_data'], true) : ($report['report_data'] ?? []);
+        $data = is_array($data) ? $data : [];
+        $analytics = is_array($data['analytics'] ?? null) ? $data['analytics'] : [];
+        $sources = self::normalizeReportSources($analytics);
+        $status = (string)($report['status'] ?? 'ready');
+        [$status_label, $status_class, $status_help] = self::formatReportStatus($status, $sources);
+
+        $start = (string)($report['period_start'] ?? '');
+        $end = (string)($report['period_end'] ?? '');
+        $start_ts = strtotime($start);
+        $end_ts = strtotime($end);
+        $generated_ts = strtotime((string)($report['generated_at'] ?? '')) ?: 0;
+
+        return [
+            'title' => (string)(($report['title'] ?? '') ?: 'Monthly Analytics Report'),
+            'type' => ucwords(str_replace('_', ' ', (string)($report['report_type'] ?? 'monthly'))),
+            'period_label' => $start_ts ? date('F Y', $start_ts) : 'Unknown period',
+            'period_range' => ($start_ts && $end_ts) ? date('M j, Y', $start_ts) . ' - ' . date('M j, Y', $end_ts) : trim($start . ' - ' . $end, ' -'),
+            'sources_html' => self::renderReportSource('GA4', $sources['ga4']) . self::renderReportSource('GSC', $sources['gsc']),
+            'status_label' => $status_label,
+            'status_class' => $status_class,
+            'status_help' => $status_help,
+            'generated_date' => $generated_ts ? date('M j, Y', $generated_ts) : 'Not recorded',
+            'generated_time' => $generated_ts ? date('g:i A', $generated_ts) : '',
+            'report_url' => admin_url('admin-post.php?action=wnq_export_report&report_id=' . (int)($report['id'] ?? 0) . '&_wpnonce=' . wp_create_nonce('wnq_export_report')),
+        ];
+    }
+
+    private static function normalizeReportSources(array $analytics): array
+    {
+        $sources = is_array($analytics['sources'] ?? null) ? $analytics['sources'] : [];
+
+        if (empty($sources['ga4'])) {
+            $sources['ga4'] = !empty($analytics['configured'])
+                ? ['status' => 'connected', 'label' => 'Connected', 'error' => '', 'metrics' => [
+                    'visitors' => (int)($analytics['overview']['total_users'] ?? 0),
+                    'sessions' => (int)($analytics['overview']['sessions'] ?? 0),
+                    'key_events' => (int)($analytics['total_key_events'] ?? 0),
+                ]]
+                : ['status' => 'missing_config', 'label' => 'Not configured', 'error' => (string)($analytics['error'] ?? ''), 'metrics' => []];
+        }
+
+        if (empty($sources['gsc'])) {
+            $gsc = is_array($analytics['search_console'] ?? null) ? $analytics['search_console'] : [];
+            $sources['gsc'] = !empty($gsc['configured'])
+                ? ['status' => 'connected', 'label' => 'Connected', 'error' => '', 'metrics' => [
+                    'clicks' => (int)($gsc['overview']['clicks']['value'] ?? 0),
+                    'impressions' => (int)($gsc['overview']['impressions']['value'] ?? 0),
+                    'queries' => count((array)($gsc['top_keywords'] ?? [])),
+                ]]
+                : ['status' => 'missing_config', 'label' => 'Not configured', 'error' => (string)($gsc['error'] ?? ''), 'metrics' => []];
+        }
+
+        return [
+            'ga4' => is_array($sources['ga4']) ? $sources['ga4'] : ['status' => 'missing_config', 'label' => 'Not configured', 'metrics' => []],
+            'gsc' => is_array($sources['gsc']) ? $sources['gsc'] : ['status' => 'missing_config', 'label' => 'Not configured', 'metrics' => []],
+        ];
+    }
+
+    private static function renderReportSource(string $name, array $source): string
+    {
+        $status = (string)($source['status'] ?? 'missing_config');
+        $metrics = is_array($source['metrics'] ?? null) ? $source['metrics'] : [];
+        $class = match ($status) {
+            'connected' => 'wnq-source-card good',
+            'partial', 'no_data' => 'wnq-source-card warning',
+            'failed' => 'wnq-source-card bad',
+            default => 'wnq-source-card muted',
+        };
+
+        if ($name === 'GA4') {
+            $metric_line = !empty($metrics)
+                ? number_format((int)($metrics['visitors'] ?? 0)) . ' visitors, ' . number_format((int)($metrics['sessions'] ?? 0)) . ' sessions, ' . number_format((int)($metrics['key_events'] ?? 0)) . ' events'
+                : 'No GA4 metrics';
+        } else {
+            $metric_line = !empty($metrics)
+                ? number_format((int)($metrics['clicks'] ?? 0)) . ' clicks, ' . number_format((int)($metrics['impressions'] ?? 0)) . ' impressions, ' . number_format((int)($metrics['queries'] ?? 0)) . ' queries'
+                : 'No GSC metrics';
+        }
+
+        $error = trim((string)($source['error'] ?? ''));
+        $html = '<div class="' . esc_attr($class) . '">';
+        $html .= '<div><strong>' . esc_html($name) . '</strong><span>' . esc_html((string)($source['label'] ?? 'Unknown')) . '</span></div>';
+        $html .= '<small>' . esc_html($metric_line) . '</small>';
+        if ($error !== '') {
+            $html .= '<em title="' . esc_attr($error) . '">' . esc_html(wp_trim_words($error, 12, '...')) . '</em>';
+        }
+        $html .= '</div>';
+        return $html;
+    }
+
+    private static function formatReportStatus(string $status, array $sources): array
+    {
+        $statuses = [
+            $sources['ga4']['status'] ?? '',
+            $sources['gsc']['status'] ?? '',
+        ];
+
+        if ($status === 'sent') {
+            return ['Sent', 'wnq-status-pill good', 'Report was emailed'];
+        }
+        if (in_array('failed', $statuses, true)) {
+            return ['Needs attention', 'wnq-status-pill bad', 'A data source returned an error'];
+        }
+        if (!array_diff($statuses, ['missing_config', 'missing_credentials', ''])) {
+            return ['Needs setup', 'wnq-status-pill muted', 'Connect GA4/GSC for this client'];
+        }
+        if (array_intersect($statuses, ['missing_config', 'missing_credentials', 'partial'])) {
+            return ['Partial', 'wnq-status-pill warning', 'Some analytics data is available'];
+        }
+        if ($status === 'ready') {
+            return ['Ready', 'wnq-status-pill good', 'GA4 and GSC data available'];
+        }
+        if ($status === 'partial') {
+            return ['Partial', 'wnq-status-pill warning', 'Some analytics data is available'];
+        }
+        if ($status === 'needs_attention') {
+            return ['Needs attention', 'wnq-status-pill bad', 'A data source returned an error'];
+        }
+        return ['Needs setup', 'wnq-status-pill muted', 'Connect GA4/GSC for this client'];
     }
 
     // ── API Management ─────────────────────────────────────────────────────

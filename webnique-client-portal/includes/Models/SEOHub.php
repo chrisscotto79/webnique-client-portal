@@ -720,7 +720,7 @@ final class SEOHub
      *  REPORT METHODS
      * ═══════════════════════════════════════════ */
 
-    public static function createReport(string $client_id, string $type, string $start, string $end, array $data, string $summary_html = ''): int|false
+    public static function createReport(string $client_id, string $type, string $start, string $end, array $data, string $summary_html = '', string $status = 'ready'): int|false
     {
         self::ensureReportSchema();
 
@@ -731,10 +731,10 @@ final class SEOHub
             'report_type'  => $type,
             'period_start' => $start,
             'period_end'   => $end,
-            'title'        => "Analytics Report: " . date('F Y', strtotime($start)),
+            'title'        => "Monthly Analytics Report: " . date('F Y', strtotime($start)),
             'report_data'  => wp_json_encode($data),
             'summary_html' => $summary_html,
-            'status'       => 'ready',
+            'status'       => $status,
             'generated_at' => current_time('mysql'),
         ]);
         return $wpdb->insert_id ?: false;
