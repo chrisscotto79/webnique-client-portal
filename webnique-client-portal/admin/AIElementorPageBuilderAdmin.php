@@ -10,6 +10,8 @@
 
 namespace WNQ\Admin;
 
+use WNQ\Models\Client;
+use WNQ\Models\SEOHub;
 use WNQ\Services\AIElementorPageBuilder;
 
 if (!defined('ABSPATH')) {
@@ -43,18 +45,25 @@ final class AIElementorPageBuilderAdmin
         self::renderHeader('AI Elementor Page Builder');
 
         $created = isset($_GET['created']) ? absint($_GET['created']) : 0;
-        $post_id = isset($_GET['post_id']) ? absint($_GET['post_id']) : 0;
         $error = isset($_GET['error']) ? sanitize_text_field(wp_unslash($_GET['error'])) : '';
+        $result = $created ? get_transient(self::resultTransientKey()) : false;
+        if (is_array($result)) {
+            delete_transient(self::resultTransientKey());
+        }
 
-        if ($created && $post_id) {
-            $elementor_url = admin_url('post.php?post=' . $post_id . '&action=elementor');
-            $edit_url = get_edit_post_link($post_id, 'raw');
-            echo '<div class="wnq-hub-notice success"><p><strong>Draft created.</strong> ';
-            echo '<a href="' . esc_url($elementor_url) . '">Edit with Elementor</a>';
-            if ($edit_url) {
-                echo ' or <a href="' . esc_url($edit_url) . '">open the WordPress editor</a>';
+        if ($created && is_array($result)) {
+            echo '<div class="wnq-hub-notice success"><p><strong>Draft created on:</strong> ' . esc_html($result['site_url'] ?? 'Client site') . '</p>';
+            echo '<p style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">';
+            if (!empty($result['elementor_url'])) {
+                echo '<a class="wnq-btn wnq-btn-primary" target="_blank" rel="noopener" href="' . esc_url($result['elementor_url']) . '">Edit Draft</a>';
             }
-            echo '.</p></div>';
+            if (!empty($result['preview_url'])) {
+                echo '<a class="wnq-btn" target="_blank" rel="noopener" href="' . esc_url($result['preview_url']) . '">Preview</a>';
+            }
+            if (!empty($result['pages_url'])) {
+                echo '<a class="wnq-btn" target="_blank" rel="noopener" href="' . esc_url($result['pages_url']) . '">Open Pages</a>';
+            }
+            echo '</p></div>';
         }
 
         if ($error !== '') {
@@ -73,6 +82,35 @@ final class AIElementorPageBuilderAdmin
   <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" enctype="multipart/form-data" class="wnq-ai-elementor-form">
     <?php wp_nonce_field('wnq_ai_elementor_generate'); ?>
     <input type="hidden" name="action" value="wnq_ai_elementor_generate">
+
+    <?php $agents = self::connectedAgents(); ?>
+    <div class="wnq-ai-elementor-target">
+      <label for="wnq_agent_key_id"><strong>Select Client / WordPress Site</strong></label>
+      <select id="wnq_agent_key_id" name="agent_key_id" required>
+        <option value="">Choose a connected client site...</option>
+        <?php foreach ($agents as $agent): ?>
+          <?php
+            $site_label = ($agent['site_name'] ?? '') ?: parse_url($agent['site_url'] ?? '', PHP_URL_HOST) ?: ($agent['site_url'] ?? '');
+            $label = trim(($agent['client_label'] ?? '') . ' - ' . $site_label);
+            $meta = [];
+            if (!empty($agent['plugin_version'])) {
+                $meta[] = 'Agent ' . $agent['plugin_version'];
+            }
+            if (!empty($agent['last_ping'])) {
+                $meta[] = 'Last ping ' . $agent['last_ping'];
+            }
+          ?>
+          <option value="<?php echo (int)$agent['id']; ?>">
+            <?php echo esc_html($label . ($meta ? ' (' . implode(', ', $meta) . ')' : '')); ?>
+          </option>
+        <?php endforeach; ?>
+      </select>
+      <?php if (empty($agents)): ?>
+        <p class="description">No active connected client sites were found. Add one under <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-seo-hub-api')); ?>">SEO OS API Management</a>.</p>
+      <?php else: ?>
+        <p class="description">This controls which client WordPress application receives the draft. The API key stays server-side.</p>
+      <?php endif; ?>
+    </div>
 
     <div class="wnq-ai-elementor-grid">
       <div class="wnq-ai-elementor-field">
@@ -97,7 +135,7 @@ final class AIElementorPageBuilderAdmin
       </label>
       <label>
         <strong>Optional Featured Image ID</strong>
-        <input type="number" min="1" step="1" name="featured_image_id" placeholder="WordPress attachment ID">
+        <input type="number" min="1" step="1" name="featured_image_id" placeholder="Client site WordPress attachment ID">
       </label>
     </div>
 
@@ -128,8 +166,16 @@ final class AIElementorPageBuilderAdmin
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   }
   .wnq-ai-elementor-field textarea,
-  .wnq-ai-elementor-options input {
+  .wnq-ai-elementor-options input,
+  .wnq-ai-elementor-target select {
     width: 100%;
+  }
+  .wnq-ai-elementor-target {
+    margin-bottom: 20px;
+  }
+  .wnq-ai-elementor-target select {
+    max-width: 760px;
+    margin-top: 8px;
   }
   .wnq-ai-elementor-field textarea {
     margin-top: 10px;
@@ -172,6 +218,7 @@ final class AIElementorPageBuilderAdmin
         self::checkCap();
         check_admin_referer('wnq_ai_elementor_generate');
 
+        $agent_key_id = absint($_POST['agent_key_id'] ?? 0);
         $template_json = self::readTextInputOrFile('elementor_template', 'elementor_template_file');
         $variables_json = self::readTextInputOrFile('variables_json', 'variables_json_file');
         $variables = json_decode(trim($variables_json), true);
@@ -180,7 +227,7 @@ final class AIElementorPageBuilderAdmin
             self::redirectWithError('Invalid variable JSON: ' . json_last_error_msg());
         }
 
-        $result = AIElementorPageBuilder::generateDraft($template_json, $variables, [
+        $result = AIElementorPageBuilder::generateRemoteDraft($agent_key_id, $template_json, $variables, [
             'post_title'        => sanitize_text_field(wp_unslash($_POST['post_title'] ?? '')),
             'featured_image_id' => absint($_POST['featured_image_id'] ?? 0),
         ]);
@@ -189,10 +236,11 @@ final class AIElementorPageBuilderAdmin
             self::redirectWithError((string)($result['message'] ?? 'Draft generation failed.'));
         }
 
+        set_transient(self::resultTransientKey(), $result, 10 * MINUTE_IN_SECONDS);
+
         wp_safe_redirect(add_query_arg([
             'page'    => 'wnq-seo-hub-ai-elementor',
             'created' => 1,
-            'post_id' => (int)$result['post_id'],
         ], admin_url('admin.php')));
         exit;
     }
@@ -259,6 +307,42 @@ final class AIElementorPageBuilderAdmin
         if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
             wp_die('You do not have permission to access this page.');
         }
+    }
+
+    private static function resultTransientKey(): string
+    {
+        return 'wnq_ai_elementor_result_' . get_current_user_id();
+    }
+
+    private static function connectedAgents(): array
+    {
+        $client_labels = [];
+        foreach (Client::getAll() as $client) {
+            $client_id = (string)($client['client_id'] ?? '');
+            if ($client_id === '') {
+                continue;
+            }
+            $client_labels[$client_id] = $client['company'] ?: $client['name'] ?: $client_id;
+        }
+
+        $agents = [];
+        foreach (SEOHub::getAllAgentKeys() as $agent) {
+            if (($agent['status'] ?? '') !== 'active') {
+                continue;
+            }
+            $client_id = (string)($agent['client_id'] ?? '');
+            $agent['client_label'] = $client_labels[$client_id] ?? $client_id;
+            $agents[] = $agent;
+        }
+
+        usort($agents, static function ($a, $b) {
+            return strcasecmp(
+                (string)($a['client_label'] ?? '') . (string)($a['site_url'] ?? ''),
+                (string)($b['client_label'] ?? '') . (string)($b['site_url'] ?? '')
+            );
+        });
+
+        return $agents;
     }
 
     private static function exampleVariables(): array

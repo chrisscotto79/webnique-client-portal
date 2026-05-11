@@ -17,6 +17,8 @@ if (!defined('ABSPATH')) {
 
 final class AIElementorPageBuilder
 {
+    public const MIN_REMOTE_AGENT_VERSION = '1.1.5';
+
     /**
      * Generate a draft page from an Elementor JSON template and variables.
      *
@@ -26,6 +28,79 @@ final class AIElementorPageBuilder
      * @return array
      */
     public static function generateDraft(string $template_json, array $variables, array $options = []): array
+    {
+        $built = self::buildPagePayload($template_json, $variables, $options);
+        if (empty($built['success'])) {
+            return $built;
+        }
+
+        $title = $built['title'];
+        $slug = self::uniquePageSlug($built['slug']);
+
+        $post_id = wp_insert_post([
+            'post_type'    => 'page',
+            'post_status'  => 'draft',
+            'post_title'   => $title,
+            'post_name'    => $slug,
+            'post_content' => $built['post_content'],
+            'post_excerpt' => $built['meta_description'],
+        ], true);
+
+        if (is_wp_error($post_id)) {
+            return [
+                'success' => false,
+                'message' => 'Page creation failed: ' . $post_id->get_error_message(),
+            ];
+        }
+
+        self::saveElementorMeta((int)$post_id, $built['elementor_data'], $built['template']);
+        self::saveRankMathMeta((int)$post_id, $built['variables']);
+        self::maybeSetFeaturedImage((int)$post_id, $built['variables'], $options);
+        self::clearElementorCache((int)$post_id);
+
+        return [
+            'success'       => true,
+            'message'       => 'Draft page created.',
+            'post_id'       => (int)$post_id,
+            'post_title'    => $title,
+            'post_slug'     => $slug,
+            'elementor_url' => admin_url('post.php?post=' . (int)$post_id . '&action=elementor'),
+            'edit_url'      => get_edit_post_link((int)$post_id, 'raw'),
+            'preview_url'   => get_preview_post_link((int)$post_id) ?: get_permalink((int)$post_id),
+            'pages_url'     => admin_url('edit.php?post_type=page'),
+        ];
+    }
+
+    public static function generateRemoteDraft(int $agent_key_id, string $template_json, array $variables, array $options = []): array
+    {
+        $agent = self::getAgent($agent_key_id);
+        if (!$agent) {
+            return [
+                'success' => false,
+                'message' => 'Select an active connected client WordPress site first.',
+            ];
+        }
+
+        $built = self::buildPagePayload($template_json, $variables, $options);
+        if (empty($built['success'])) {
+            return $built;
+        }
+
+        return self::pushToAgent($agent, [
+            'title'             => $built['title'],
+            'slug'              => $built['slug'],
+            'post_content'      => $built['post_content'],
+            'elementor_data'    => wp_json_encode($built['elementor_data'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+            'page_settings'     => $built['page_settings'],
+            'title_tag'         => $built['title_tag'],
+            'meta_description'  => $built['meta_description'],
+            'h1'                => $built['h1'],
+            'focus_keyword'     => $built['focus_keyword'],
+            'featured_image_id' => absint($options['featured_image_id'] ?? $built['variables']['featured_image_id'] ?? 0),
+        ]);
+    }
+
+    private static function buildPagePayload(string $template_json, array $variables, array $options = []): array
     {
         $decoded = self::decodeTemplate($template_json);
         if (!$decoded['success']) {
@@ -43,40 +118,21 @@ final class AIElementorPageBuilder
 
         $variables = self::normalizeVariables($variables);
         $elementor_data = self::replacePlaceholdersRecursive($content, self::buildTokenMap($variables));
-
         $title = self::resolvePostTitle($variables, $options);
-        $slug = self::uniquePageSlug(self::generateSlug($variables, $title));
-
-        $post_id = wp_insert_post([
-            'post_type'    => 'page',
-            'post_status'  => 'draft',
-            'post_title'   => $title,
-            'post_name'    => $slug,
-            'post_content' => self::buildPostContentFallback($variables),
-            'post_excerpt' => sanitize_textarea_field((string)($variables['meta_description'] ?? '')),
-        ], true);
-
-        if (is_wp_error($post_id)) {
-            return [
-                'success' => false,
-                'message' => 'Page creation failed: ' . $post_id->get_error_message(),
-            ];
-        }
-
-        self::saveElementorMeta((int)$post_id, $elementor_data, $template);
-        self::saveRankMathMeta((int)$post_id, $variables);
-        self::maybeSetFeaturedImage((int)$post_id, $variables, $options);
-        self::clearElementorCache((int)$post_id);
 
         return [
-            'success'       => true,
-            'message'       => 'Draft page created.',
-            'post_id'       => (int)$post_id,
-            'post_title'    => $title,
-            'post_slug'     => $slug,
-            'elementor_url' => admin_url('post.php?post=' . (int)$post_id . '&action=elementor'),
-            'edit_url'      => get_edit_post_link((int)$post_id, 'raw'),
-            'preview_url'   => get_preview_post_link((int)$post_id) ?: get_permalink((int)$post_id),
+            'success'          => true,
+            'template'         => $template,
+            'variables'        => $variables,
+            'elementor_data'   => $elementor_data,
+            'page_settings'    => isset($template['page_settings']) && is_array($template['page_settings']) ? $template['page_settings'] : [],
+            'title'            => $title,
+            'slug'             => self::generateSlug($variables, $title),
+            'post_content'     => self::buildPostContentFallback($variables),
+            'title_tag'        => sanitize_text_field((string)($variables['title_tag'] ?? $title)),
+            'meta_description' => sanitize_textarea_field((string)($variables['meta_description'] ?? '')),
+            'h1'               => sanitize_text_field((string)($variables['h1'] ?? $title)),
+            'focus_keyword'    => sanitize_text_field((string)($variables['primary_keyword'] ?? $variables['h1'] ?? '')),
         ];
     }
 
@@ -318,6 +374,82 @@ final class AIElementorPageBuilder
     private static function isRankMathActive(): bool
     {
         return defined('RANK_MATH_VERSION') || class_exists('\RankMath') || function_exists('rank_math');
+    }
+
+    private static function getAgent(int $agent_key_id): ?array
+    {
+        if ($agent_key_id <= 0) {
+            return null;
+        }
+
+        global $wpdb;
+        return $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT * FROM {$wpdb->prefix}wnq_seo_agent_keys
+                 WHERE id=%d AND status='active'
+                 LIMIT 1",
+                $agent_key_id
+            ),
+            ARRAY_A
+        ) ?: null;
+    }
+
+    private static function pushToAgent(array $agent, array $payload): array
+    {
+        $site_url = rtrim((string)($agent['site_url'] ?? ''), '/');
+        $api_key = (string)($agent['api_key'] ?? '');
+
+        if ($site_url === '' || $api_key === '') {
+            return [
+                'success' => false,
+                'message' => 'The selected client site is missing its site URL or agent API key.',
+            ];
+        }
+
+        $response = wp_remote_post($site_url . '/wp-json/wnq-agent/v1/create-elementor-page', [
+            'timeout' => 90,
+            'headers' => [
+                'X-WNQ-Api-Key' => $api_key,
+                'Content-Type'  => 'application/json',
+                'User-Agent'    => 'WebNique-SEO-OS/1.0',
+            ],
+            'body' => wp_json_encode($payload),
+        ]);
+
+        if (is_wp_error($response)) {
+            return [
+                'success' => false,
+                'message' => 'Client site request failed: ' . $response->get_error_message(),
+            ];
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        $raw = wp_remote_retrieve_body($response);
+        $body = json_decode($raw, true);
+        if (!is_array($body)) {
+            $body = [];
+        }
+
+        if ($code >= 200 && $code < 300) {
+            return array_merge([
+                'success' => true,
+                'message' => 'Draft created on the selected client site.',
+                'site_url' => $site_url,
+                'agent_key_id' => (int)($agent['id'] ?? 0),
+            ], $body);
+        }
+
+        $message = $body['message'] ?? $body['error'] ?? ('HTTP ' . $code . ' - ' . substr($raw, 0, 250));
+        $error_code = (string)($body['code'] ?? '');
+
+        if ($code === 404 && ($error_code === 'rest_no_route' || stripos($message, 'No route was found') !== false)) {
+            $message = 'The selected client site needs WebNique SEO Agent ' . self::MIN_REMOTE_AGENT_VERSION . ' or newer. Update the agent plugin on that site, then try again.';
+        }
+
+        return [
+            'success' => false,
+            'message' => 'Client draft creation failed: ' . $message,
+        ];
     }
 
     private static function maybeSetFeaturedImage(int $post_id, array $variables, array $options): void
