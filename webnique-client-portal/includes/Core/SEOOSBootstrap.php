@@ -38,6 +38,7 @@ final class SEOOSBootstrap
             \WNQ\Admin\BlogSchedulerAdmin::register();
             \WNQ\Admin\SpiderAdmin::register();
             \WNQ\Admin\LeadFinderAdmin::register();
+            \WNQ\Admin\AIElementorPageBuilderAdmin::register();
         }
 
         // Create blog tables if not yet created (schema migration for existing installs)
@@ -81,6 +82,7 @@ final class SEOOSBootstrap
             'includes/Services/BlogPublisher.php',
             'includes/Services/BacklinkVerifier.php',
             'includes/Services/ServiceCityPageGenerator.php',
+            'includes/Services/AIElementorPageBuilder.php',
             'includes/Services/SEOHealthFixer.php',
             // Spider & Analysis Services
             'includes/Services/CrawlEngine.php',
@@ -105,6 +107,7 @@ final class SEOOSBootstrap
             'admin/BlogSchedulerAdmin.php',
             'admin/SpiderAdmin.php',
             'admin/LeadFinderAdmin.php',
+            'admin/AIElementorPageBuilderAdmin.php',
         ];
 
         foreach ($files as $f) {
@@ -137,6 +140,7 @@ final class SEOOSBootstrap
             'includes/Services/BlogPublisher.php'     => 'WNQ\\Services\\BlogPublisher',
             'includes/Services/BacklinkVerifier.php'  => 'WNQ\\Services\\BacklinkVerifier',
             'includes/Services/ServiceCityPageGenerator.php' => 'WNQ\\Services\\ServiceCityPageGenerator',
+            'includes/Services/AIElementorPageBuilder.php' => 'WNQ\\Services\\AIElementorPageBuilder',
             'includes/Services/SEOHealthFixer.php'   => 'WNQ\\Services\\SEOHealthFixer',
             'includes/Controllers/SEOAgentController.php' => 'WNQ\\Controllers\\SEOAgentController',
             'includes/Core/CronScheduler.php'             => 'WNQ\\Core\\CronScheduler',
@@ -158,6 +162,7 @@ final class SEOOSBootstrap
             'admin/BlogSchedulerAdmin.php'                    => 'WNQ\\Admin\\BlogSchedulerAdmin',
             'admin/SpiderAdmin.php'                           => 'WNQ\\Admin\\SpiderAdmin',
             'admin/LeadFinderAdmin.php'                       => 'WNQ\\Admin\\LeadFinderAdmin',
+            'admin/AIElementorPageBuilderAdmin.php'           => 'WNQ\\Admin\\AIElementorPageBuilderAdmin',
         ];
         return $map[$file] ?? '';
     }

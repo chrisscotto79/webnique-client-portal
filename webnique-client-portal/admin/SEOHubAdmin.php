@@ -1773,6 +1773,7 @@ jQuery(function($) {
             'wnq-seo-hub-audits'   => 'Audits',
             'wnq-seo-hub-reports'  => 'Reports',
             'wnq-seo-hub-blog'     => 'Blog Scheduler',
+            'wnq-seo-hub-ai-elementor' => 'AI Elementor Builder',
             'wnq-seo-hub-api'      => 'API',
             'wnq-seo-hub-settings' => 'Settings',
         ];
