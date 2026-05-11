@@ -217,6 +217,25 @@ final class ReportGenerator
   .metric-card.danger .value { color: #dc2626; }
   .metric-card.success { background: #f0fdf4; border-color: #86efac; }
   .metric-card.success .value { color: #16a34a; }
+  .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin: 8px 0 28px; }
+  .chart-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 18px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06); }
+  .chart-title { color: #1e3a5f; font-size: 15px; font-weight: 800; margin-bottom: 4px; }
+  .chart-subtitle { color: #64748b; font-size: 12px; margin-bottom: 14px; }
+  .chart-svg { width: 100%; height: auto; display: block; overflow: visible; }
+  .chart-axis-label { fill: #64748b; font-size: 11px; }
+  .chart-grid-line { stroke: #e5e7eb; stroke-width: 1; }
+  .chart-point { stroke: #ffffff; stroke-width: 2; }
+  .bar-list { display: flex; flex-direction: column; gap: 12px; }
+  .bar-row { display: flex; flex-direction: column; gap: 6px; }
+  .bar-meta { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 12px; }
+  .bar-label { color: #334155; font-weight: 700; line-height: 1.35; }
+  .bar-value { color: #64748b; white-space: nowrap; }
+  .bar-track { width: 100%; height: 10px; background: #edf2f7; border-radius: 999px; overflow: hidden; }
+  .bar-fill { display: block; height: 100%; min-width: 4px; border-radius: 999px; }
+  .dual-bars { display: grid; grid-template-columns: 1fr; gap: 5px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; color: #64748b; font-size: 12px; }
+  .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
   .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   th { background: #f1f5f9; text-align: left; padding: 10px 12px; font-weight: 600; color: #374151; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -283,6 +302,20 @@ final class ReportGenerator
           <div class="label">Key Events</div>
         </div>
       </div>
+
+      <?php if (self::hasNumericChartRows($visitor_trends, ['users']) || self::hasNumericChartRows($traffic_sources, ['sessions'])): ?>
+      <div class="chart-grid">
+        <?php echo self::renderLineChart($visitor_trends, 'Visitors Over Time', 'users', '#2563eb'); ?>
+        <?php echo self::renderBarChart($traffic_sources, 'channel', 'sessions', 'Sessions by Channel', '#0d9488'); ?>
+      </div>
+      <?php endif; ?>
+
+      <?php if (self::hasNumericChartRows($top_pages, ['views']) || self::hasNumericChartRows($key_events, ['count'])): ?>
+      <div class="chart-grid">
+        <?php echo self::renderBarChart($top_pages, 'title', 'views', 'Top Pages by Views', '#7c3aed'); ?>
+        <?php echo self::renderBarChart($key_events, 'label', 'count', 'Key Events', '#16a34a'); ?>
+      </div>
+      <?php endif; ?>
 
       <?php if (!empty($traffic_sources)): ?>
       <h3 style="font-size:16px;color:#374151;margin:6px 0 12px;">Traffic Sources</h3>
@@ -396,6 +429,20 @@ final class ReportGenerator
         </div>
       </div>
 
+      <?php if (self::hasNumericChartRows($gsc_trends, ['clicks']) || self::hasNumericChartRows($gsc_trends, ['impressions'])): ?>
+      <div class="chart-grid">
+        <?php echo self::renderLineChart($gsc_trends, 'Organic Clicks Over Time', 'clicks', '#2563eb'); ?>
+        <?php echo self::renderLineChart($gsc_trends, 'Search Impressions Over Time', 'impressions', '#7c3aed'); ?>
+      </div>
+      <?php endif; ?>
+
+      <?php if (self::hasNumericChartRows($gsc_keywords, ['clicks', 'impressions']) || self::hasNumericChartRows($gsc_pages, ['clicks', 'impressions'])): ?>
+      <div class="chart-grid">
+        <?php echo self::renderDualMetricBars($gsc_keywords, 'keyword', 'clicks', 'impressions', 'Top Queries', 'Clicks', 'Impressions'); ?>
+        <?php echo self::renderDualMetricBars($gsc_pages, 'page', 'clicks', 'impressions', 'Top Search Pages', 'Clicks', 'Impressions'); ?>
+      </div>
+      <?php endif; ?>
+
       <?php if (!empty($gsc_trends)): ?>
       <h3 style="font-size:16px;color:#374151;margin:6px 0 12px;">Search Performance Over Time</h3>
       <div class="table-wrap" style="margin-bottom:24px;">
@@ -473,6 +520,304 @@ final class ReportGenerator
     }
 
     // ── Private helpers ────────────────────────────────────────────────────
+
+    private static function renderLineChart(array $rows, string $title, string $metric_key, string $color = '#0d539e'): string
+    {
+        $series = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $series[] = [
+                'date' => (string)($row['date'] ?? ''),
+                'label' => self::formatChartDate((string)($row['date'] ?? '')),
+                'value' => max(0.0, (float)($row[$metric_key] ?? 0)),
+            ];
+        }
+
+        if (!self::hasNumericChartRows($series, ['value'])) {
+            return '';
+        }
+
+        $all_values = array_map(fn($point) => (float)$point['value'], $series);
+        $total = array_sum($all_values);
+        $peak = max($all_values);
+        $series = self::sampleChartSeries($series, 18);
+        $max_value = max(1, (float)ceil($peak * 1.15));
+
+        $svg_width = 760;
+        $svg_height = 250;
+        $left = 48;
+        $right = 18;
+        $top = 22;
+        $bottom = 42;
+        $chart_width = $svg_width - $left - $right;
+        $chart_height = $svg_height - $top - $bottom;
+        $baseline = $top + $chart_height;
+        $count = count($series);
+
+        $points = [];
+        $point_nodes = '';
+        $label_nodes = '';
+        foreach ($series as $index => $point) {
+            $x = $count === 1 ? $left + ($chart_width / 2) : $left + (($chart_width / max(1, $count - 1)) * $index);
+            $y = $baseline - (((float)$point['value'] / $max_value) * $chart_height);
+            $points[] = round($x, 1) . ',' . round($y, 1);
+            $point_nodes .= sprintf(
+                '<circle class="chart-point" cx="%s" cy="%s" r="4" fill="%s"><title>%s: %s</title></circle>',
+                esc_attr((string)round($x, 1)),
+                esc_attr((string)round($y, 1)),
+                esc_attr($color),
+                esc_attr((string)$point['label']),
+                esc_attr(self::formatChartValue((float)$point['value']))
+            );
+        }
+
+        $label_indexes = array_values(array_unique([0, (int)floor(($count - 1) / 2), max(0, $count - 1)]));
+        foreach ($label_indexes as $label_index) {
+            $x = $count === 1 ? $left + ($chart_width / 2) : $left + (($chart_width / max(1, $count - 1)) * $label_index);
+            $anchor = $label_index === 0 ? 'start' : ($label_index === max(0, $count - 1) ? 'end' : 'middle');
+            $label_nodes .= sprintf(
+                '<text class="chart-axis-label" x="%s" y="%s" text-anchor="%s">%s</text>',
+                esc_attr((string)round($x, 1)),
+                esc_attr((string)($svg_height - 12)),
+                esc_attr($anchor),
+                esc_html((string)($series[$label_index]['label'] ?? ''))
+            );
+        }
+
+        $grid_nodes = '';
+        foreach ([1, 0.5, 0] as $scale) {
+            $y = $baseline - ($scale * $chart_height);
+            $grid_nodes .= sprintf(
+                '<line class="chart-grid-line" x1="%s" y1="%s" x2="%s" y2="%s"></line><text class="chart-axis-label" x="0" y="%s">%s</text>',
+                esc_attr((string)$left),
+                esc_attr((string)round($y, 1)),
+                esc_attr((string)($left + $chart_width)),
+                esc_attr((string)round($y, 1)),
+                esc_attr((string)round($y + 4, 1)),
+                esc_html(self::formatChartValue($max_value * $scale))
+            );
+        }
+
+        $first_x = $count === 1 ? $left + ($chart_width / 2) : $left;
+        $last_x = $count === 1 ? $first_x : $left + $chart_width;
+        $area_points = round($first_x, 1) . ',' . round($baseline, 1) . ' ' . implode(' ', $points) . ' ' . round($last_x, 1) . ',' . round($baseline, 1);
+
+        return sprintf(
+            '<div class="chart-card"><div class="chart-title">%s</div><div class="chart-subtitle">Total %s &bull; Peak %s</div><svg class="chart-svg" viewBox="0 0 %d %d" role="img" aria-label="%s">%s<polygon points="%s" fill="%s" opacity="0.12"></polygon><polyline points="%s" fill="none" stroke="%s" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></polyline>%s%s</svg></div>',
+            esc_html($title),
+            esc_html(self::formatChartValue((float)$total)),
+            esc_html(self::formatChartValue((float)$peak)),
+            $svg_width,
+            $svg_height,
+            esc_attr($title),
+            $grid_nodes,
+            esc_attr($area_points),
+            esc_attr($color),
+            esc_attr(implode(' ', $points)),
+            esc_attr($color),
+            $point_nodes,
+            $label_nodes
+        );
+    }
+
+    private static function renderBarChart(array $rows, string $label_key, string $value_key, string $title, string $color = '#0d539e', int $limit = 6): string
+    {
+        $items = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $value = max(0.0, (float)($row[$value_key] ?? 0));
+            if ($value <= 0) {
+                continue;
+            }
+
+            $items[] = [
+                'label' => self::resolveChartLabel($row, $label_key),
+                'value' => $value,
+            ];
+        }
+
+        if (empty($items)) {
+            return '';
+        }
+
+        usort($items, fn($a, $b) => $b['value'] <=> $a['value']);
+        $items = array_slice($items, 0, $limit);
+        $max_value = max(1, max(array_column($items, 'value')));
+        $bars = '';
+
+        foreach ($items as $item) {
+            $width = max(4, min(100, (int)round(((float)$item['value'] / $max_value) * 100)));
+            $bars .= sprintf(
+                '<div class="bar-row"><div class="bar-meta"><span class="bar-label">%s</span><span class="bar-value">%s</span></div><div class="bar-track"><span class="bar-fill" style="width:%d%%;background:%s;"></span></div></div>',
+                esc_html(self::shortChartLabel((string)$item['label'])),
+                esc_html(self::formatChartValue((float)$item['value'])),
+                $width,
+                esc_attr($color)
+            );
+        }
+
+        return sprintf(
+            '<div class="chart-card"><div class="chart-title">%s</div><div class="chart-subtitle">Top %d by volume</div><div class="bar-list">%s</div></div>',
+            esc_html($title),
+            count($items),
+            $bars
+        );
+    }
+
+    private static function renderDualMetricBars(array $rows, string $label_key, string $primary_key, string $secondary_key, string $title, string $primary_label, string $secondary_label, int $limit = 6): string
+    {
+        $items = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $primary = max(0.0, (float)($row[$primary_key] ?? 0));
+            $secondary = max(0.0, (float)($row[$secondary_key] ?? 0));
+            if ($primary <= 0 && $secondary <= 0) {
+                continue;
+            }
+
+            $items[] = [
+                'label' => self::resolveChartLabel($row, $label_key),
+                'primary' => $primary,
+                'secondary' => $secondary,
+            ];
+        }
+
+        if (empty($items)) {
+            return '';
+        }
+
+        usort($items, fn($a, $b) => (($b['primary'] <=> $a['primary']) ?: ($b['secondary'] <=> $a['secondary'])));
+        $items = array_slice($items, 0, $limit);
+        $max_primary = max(1, max(array_column($items, 'primary')));
+        $max_secondary = max(1, max(array_column($items, 'secondary')));
+        $bars = '';
+
+        foreach ($items as $item) {
+            $primary_width = max(3, min(100, (int)round(((float)$item['primary'] / $max_primary) * 100)));
+            $secondary_width = max(3, min(100, (int)round(((float)$item['secondary'] / $max_secondary) * 100)));
+            $bars .= sprintf(
+                '<div class="bar-row"><div class="bar-meta"><span class="bar-label">%s</span><span class="bar-value">%s %s &bull; %s %s</span></div><div class="dual-bars"><div class="bar-track"><span class="bar-fill" style="width:%d%%;background:#2563eb;"></span></div><div class="bar-track"><span class="bar-fill" style="width:%d%%;background:#7c3aed;"></span></div></div></div>',
+                esc_html(self::shortChartLabel((string)$item['label'])),
+                esc_html(self::formatChartValue((float)$item['primary'])),
+                esc_html(strtolower($primary_label)),
+                esc_html(self::formatChartValue((float)$item['secondary'])),
+                esc_html(strtolower($secondary_label)),
+                $primary_width,
+                $secondary_width
+            );
+        }
+
+        return sprintf(
+            '<div class="chart-card"><div class="chart-title">%s</div><div class="chart-subtitle">Organic search visibility leaders</div><div class="legend"><span class="legend-item"><span class="legend-dot" style="background:#2563eb;"></span>%s</span><span class="legend-item"><span class="legend-dot" style="background:#7c3aed;"></span>%s</span></div><div class="bar-list">%s</div></div>',
+            esc_html($title),
+            esc_html($primary_label),
+            esc_html($secondary_label),
+            $bars
+        );
+    }
+
+    private static function hasNumericChartRows(array $rows, array $keys): bool
+    {
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            foreach ($keys as $key) {
+                if ((float)($row[$key] ?? 0) > 0) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static function sampleChartSeries(array $series, int $max_points): array
+    {
+        $count = count($series);
+        if ($count <= $max_points || $max_points < 2) {
+            return $series;
+        }
+
+        $sampled = [];
+        $seen = [];
+        for ($i = 0; $i < $max_points; $i++) {
+            $index = (int)round(($i * ($count - 1)) / ($max_points - 1));
+            if (isset($seen[$index])) {
+                continue;
+            }
+            $seen[$index] = true;
+            $sampled[] = $series[$index];
+        }
+
+        return $sampled;
+    }
+
+    private static function resolveChartLabel(array $row, string $preferred_key): string
+    {
+        $label = trim((string)($row[$preferred_key] ?? ''));
+        if ($label !== '') {
+            return $label;
+        }
+
+        foreach (['title', 'path', 'page', 'keyword', 'channel', 'label', 'event_name'] as $fallback_key) {
+            $label = trim((string)($row[$fallback_key] ?? ''));
+            if ($label !== '') {
+                return $label;
+            }
+        }
+
+        return 'Unknown';
+    }
+
+    private static function shortChartLabel(string $label, int $limit = 74): string
+    {
+        $label = preg_replace('/\s+/', ' ', wp_strip_all_tags($label)) ?: '';
+        $label = trim($label);
+        if ($label === '') {
+            return 'Unknown';
+        }
+
+        if (function_exists('mb_strlen') && function_exists('mb_substr')) {
+            return mb_strlen($label) > $limit ? rtrim(mb_substr($label, 0, $limit - 3)) . '...' : $label;
+        }
+
+        return strlen($label) > $limit ? rtrim(substr($label, 0, $limit - 3)) . '...' : $label;
+    }
+
+    private static function formatChartDate(string $date): string
+    {
+        $timestamp = strtotime($date);
+        return $timestamp ? date('M j', $timestamp) : $date;
+    }
+
+    private static function formatChartValue(float $value): string
+    {
+        $abs = abs($value);
+        if ($abs >= 1000000) {
+            return rtrim(rtrim(number_format($value / 1000000, 1), '0'), '.') . 'M';
+        }
+
+        if ($abs >= 1000) {
+            return rtrim(rtrim(number_format($value / 1000, 1), '0'), '.') . 'K';
+        }
+
+        if (floor($value) === $value) {
+            return number_format((int)$value);
+        }
+
+        return number_format($value, 1);
+    }
 
     private static function resolveMonthlyPeriod(string $month = ''): array
     {
