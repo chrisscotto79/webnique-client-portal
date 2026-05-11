@@ -20,6 +20,7 @@ final class GoogleSearchConsole
 {
     private array $credentials;
     private string $site_url;
+    private array $errors = [];
 
     /**
      * Initialize with credentials
@@ -93,6 +94,7 @@ final class GoogleSearchConsole
             return $result;
 
         } catch (\Exception $e) {
+            $this->recordError('overview', $e->getMessage());
             error_log('GSC Overview Error: ' . $e->getMessage());
             return $this->getEmptyOverviewStats();
         }
@@ -148,6 +150,7 @@ final class GoogleSearchConsole
             return $result;
 
         } catch (\Exception $e) {
+            $this->recordError('keywords', $e->getMessage());
             error_log('GSC Keywords Error: ' . $e->getMessage());
             return [];
         }
@@ -203,6 +206,7 @@ final class GoogleSearchConsole
             return $result;
 
         } catch (\Exception $e) {
+            $this->recordError('pages', $e->getMessage());
             error_log('GSC Pages Error: ' . $e->getMessage());
             return [];
         }
@@ -257,6 +261,7 @@ final class GoogleSearchConsole
             return $result;
 
         } catch (\Exception $e) {
+            $this->recordError('performance_over_time', $e->getMessage());
             error_log('GSC Performance Over Time Error: ' . $e->getMessage());
             return [];
         }
@@ -306,6 +311,7 @@ final class GoogleSearchConsole
             return $result;
 
         } catch (\Exception $e) {
+            $this->recordError('devices', $e->getMessage());
             error_log('GSC Device Breakdown Error: ' . $e->getMessage());
             return [];
         }
@@ -362,6 +368,7 @@ final class GoogleSearchConsole
             return $result;
 
         } catch (\Exception $e) {
+            $this->recordError('countries', $e->getMessage());
             error_log('GSC Country Breakdown Error: ' . $e->getMessage());
             return [];
         }
@@ -589,6 +596,21 @@ final class GoogleSearchConsole
     private function saveToCache(string $key, $data, int $expiration = 3600): void
     {
         set_transient('wnq_gsc_' . md5($key), $data, $expiration);
+    }
+
+    public function getErrors(): array
+    {
+        return $this->errors;
+    }
+
+    public function hasErrors(): bool
+    {
+        return !empty($this->errors);
+    }
+
+    private function recordError(string $context, string $message): void
+    {
+        $this->errors[$context] = $message;
     }
 
     private static function base64UrlEncode(string $data): string

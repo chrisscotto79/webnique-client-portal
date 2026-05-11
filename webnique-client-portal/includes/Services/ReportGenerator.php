@@ -42,11 +42,12 @@ final class ReportGenerator
             'period'         => ['start' => $period_start, 'end' => $period_end, 'label' => date('F Y', strtotime($period_start))],
             'generated_at'   => current_time('mysql'),
         ];
+        $report_status = self::resolveReportStatus($report_data);
 
         // AI-generated executive summary
         $summary_html = self::generateAISummary($client, $profile, $report_data);
 
-        $report_id = SEOHub::createReport($client_id, 'monthly', $period_start, $period_end, $report_data, $summary_html);
+        $report_id = SEOHub::createReport($client_id, 'monthly', $period_start, $period_end, $report_data, $summary_html, $report_status);
 
         if ($report_id) {
             SEOHub::log('monthly_report_generated', [
@@ -490,20 +491,33 @@ final class ReportGenerator
             ? self::getSearchConsoleSummary($client_id, $config, $start, $end)
             : [
                 'configured' => false,
+                'source' => self::sourceStatus('missing_config', 'Not configured', 'Google Search Console is not configured for this client.'),
                 'error' => 'Google Search Console is not configured for this client.',
             ];
 
         if (!$config || empty($config['ga4_property_id'])) {
+            $ga4_source = self::sourceStatus('missing_config', 'Not configured', 'GA4 is not configured for this client.');
             return [
                 'configured' => false,
+                'source' => $ga4_source,
+                'sources' => [
+                    'ga4' => $ga4_source,
+                    'gsc' => $search_console['source'] ?? self::sourceStatus('missing_config', 'Not configured', $search_console['error'] ?? ''),
+                ],
                 'error' => 'GA4 is not configured for this client.',
                 'search_console' => $search_console,
             ];
         }
 
         if (!$credentials) {
+            $ga4_source = self::sourceStatus('missing_credentials', 'Credentials missing', 'Google Analytics service account credentials are not configured.');
             return [
                 'configured' => false,
+                'source' => $ga4_source,
+                'sources' => [
+                    'ga4' => $ga4_source,
+                    'gsc' => $search_console['source'] ?? self::sourceStatus('missing_credentials', 'Credentials missing', $search_console['error'] ?? ''),
+                ],
                 'error' => 'Google Analytics service account credentials are not configured.',
                 'search_console' => $search_console,
             ];
@@ -511,17 +525,29 @@ final class ReportGenerator
 
         try {
             $analytics = new GoogleAnalytics($client_id);
+            $overview = $analytics->getOverviewStats($start, $end);
+            $visitor_trends = $analytics->getVisitorTrends($start, $end);
+            $traffic_sources = $analytics->getTrafficSources($start, $end);
+            $top_pages = $analytics->getTopPages($start, $end, 10);
             $key_events = self::getAnalyticsKeyEvents($analytics, $start, $end);
+            $ga4_errors = $analytics->getErrors();
+            $ga4_source = self::buildGa4SourceSummary($config, $overview, $key_events, $ga4_errors);
 
             return [
-                'configured' => true,
+                'configured' => in_array($ga4_source['status'], ['connected', 'partial', 'no_data'], true),
+                'source' => $ga4_source,
+                'sources' => [
+                    'ga4' => $ga4_source,
+                    'gsc' => $search_console['source'] ?? self::sourceStatus('missing_config', 'Not configured', $search_console['error'] ?? ''),
+                ],
                 'ga4_property_id' => $config['ga4_property_id'],
-                'overview' => $analytics->getOverviewStats($start, $end),
-                'visitors_over_time' => $analytics->getVisitorTrends($start, $end),
-                'traffic_sources' => $analytics->getTrafficSources($start, $end),
-                'top_pages' => $analytics->getTopPages($start, $end, 10),
+                'overview' => $overview,
+                'visitors_over_time' => $visitor_trends,
+                'traffic_sources' => $traffic_sources,
+                'top_pages' => $top_pages,
                 'key_events' => $key_events,
                 'total_key_events' => array_sum(array_map(fn($event) => (int)($event['count'] ?? 0), $key_events)),
+                'error' => $ga4_source['error'] ?? '',
                 'search_console' => $search_console,
             ];
         } catch (\Throwable $e) {
@@ -530,8 +556,17 @@ final class ReportGenerator
                 'error' => $e->getMessage(),
             ], 'failed');
 
+            $ga4_source = self::sourceStatus('failed', 'API failed', $e->getMessage(), [
+                'property_id' => (string)($config['ga4_property_id'] ?? ''),
+            ]);
+
             return [
                 'configured' => false,
+                'source' => $ga4_source,
+                'sources' => [
+                    'ga4' => $ga4_source,
+                    'gsc' => $search_console['source'] ?? self::sourceStatus('missing_config', 'Not configured', $search_console['error'] ?? ''),
+                ],
                 'error' => $e->getMessage(),
                 'search_console' => $search_console,
             ];
@@ -541,21 +576,39 @@ final class ReportGenerator
     private static function getSearchConsoleSummary(string $client_id, array $config, string $start, string $end): array
     {
         if (empty($config['search_console_url'])) {
+            $source = self::sourceStatus('missing_config', 'Not configured', 'Google Search Console is not configured for this client.');
             return [
                 'configured' => false,
+                'source' => $source,
                 'error' => 'Google Search Console is not configured for this client.',
+            ];
+        }
+
+        if (!AnalyticsConfig::getCredentials()) {
+            $source = self::sourceStatus('missing_credentials', 'Credentials missing', 'Google service account credentials are not configured.');
+            return [
+                'configured' => false,
+                'source' => $source,
+                'error' => 'Google service account credentials are not configured.',
             ];
         }
 
         try {
             $gsc = new GoogleSearchConsole($client_id);
+            $overview = $gsc->getOverviewStats($start, $end);
+            $performance = $gsc->getPerformanceOverTime($start, $end);
+            $keywords = $gsc->getKeywordRankings($start, $end, 10);
+            $pages = $gsc->getTopPages($start, $end, 10);
+            $source = self::buildGscSourceSummary($config, $overview, $keywords, $gsc->getErrors());
 
             return [
-                'configured' => true,
-                'overview' => $gsc->getOverviewStats($start, $end),
-                'performance_over_time' => $gsc->getPerformanceOverTime($start, $end),
-                'top_keywords' => $gsc->getKeywordRankings($start, $end, 10),
-                'top_pages' => $gsc->getTopPages($start, $end, 10),
+                'configured' => in_array($source['status'], ['connected', 'partial', 'no_data'], true),
+                'source' => $source,
+                'overview' => $overview,
+                'performance_over_time' => $performance,
+                'top_keywords' => $keywords,
+                'top_pages' => $pages,
+                'error' => $source['error'] ?? '',
             ];
         } catch (\Throwable $e) {
             SEOHub::log('monthly_report_gsc_failed', [
@@ -563,8 +616,13 @@ final class ReportGenerator
                 'error' => $e->getMessage(),
             ], 'failed');
 
+            $source = self::sourceStatus('failed', 'API failed', $e->getMessage(), [
+                'property' => (string)($config['search_console_url'] ?? ''),
+            ]);
+
             return [
                 'configured' => false,
+                'source' => $source,
                 'error' => $e->getMessage(),
             ];
         }
@@ -598,6 +656,105 @@ final class ReportGenerator
             array_keys($events),
             $events
         );
+    }
+
+    private static function buildGa4SourceSummary(array $config, array $overview, array $key_events, array $errors): array
+    {
+        $visitors = (int)($overview['total_users'] ?? 0);
+        $sessions = (int)($overview['sessions'] ?? 0);
+        $page_views = (int)($overview['page_views'] ?? 0);
+        $events = array_sum(array_map(fn($event) => (int)($event['count'] ?? 0), $key_events));
+        $error = self::firstSourceError($errors);
+
+        if ($error && ($visitors > 0 || $sessions > 0 || $page_views > 0 || $events > 0)) {
+            $status = 'partial';
+            $label = 'Partial data';
+        } elseif ($error) {
+            $status = 'failed';
+            $label = 'API failed';
+        } elseif ($visitors <= 0 && $sessions <= 0 && $page_views <= 0 && $events <= 0) {
+            $status = 'no_data';
+            $label = 'Connected, no traffic';
+        } else {
+            $status = 'connected';
+            $label = 'Connected';
+        }
+
+        return self::sourceStatus($status, $label, $error, [
+            'property_id' => (string)($config['ga4_property_id'] ?? ''),
+            'visitors' => $visitors,
+            'sessions' => $sessions,
+            'page_views' => $page_views,
+            'key_events' => $events,
+        ]);
+    }
+
+    private static function buildGscSourceSummary(array $config, array $overview, array $keywords, array $errors): array
+    {
+        $clicks = (int)($overview['clicks']['value'] ?? 0);
+        $impressions = (int)($overview['impressions']['value'] ?? 0);
+        $keyword_count = count($keywords);
+        $error = self::firstSourceError($errors);
+
+        if ($error && ($clicks > 0 || $impressions > 0 || $keyword_count > 0)) {
+            $status = 'partial';
+            $label = 'Partial data';
+        } elseif ($error) {
+            $status = 'failed';
+            $label = 'API failed';
+        } elseif ($clicks <= 0 && $impressions <= 0 && $keyword_count <= 0) {
+            $status = 'no_data';
+            $label = 'Connected, no search data';
+        } else {
+            $status = 'connected';
+            $label = 'Connected';
+        }
+
+        return self::sourceStatus($status, $label, $error, [
+            'property' => (string)($config['search_console_url'] ?? ''),
+            'clicks' => $clicks,
+            'impressions' => $impressions,
+            'queries' => $keyword_count,
+        ]);
+    }
+
+    private static function sourceStatus(string $status, string $label, string $error = '', array $metrics = []): array
+    {
+        return [
+            'status' => $status,
+            'label' => $label,
+            'error' => $error,
+            'metrics' => $metrics,
+        ];
+    }
+
+    private static function firstSourceError(array $errors): string
+    {
+        $errors = array_filter(array_map('strval', $errors));
+        return $errors ? reset($errors) : '';
+    }
+
+    private static function resolveReportStatus(array $report_data): string
+    {
+        $analytics = $report_data['analytics'] ?? [];
+        $sources = $analytics['sources'] ?? [];
+        $ga4_status = $sources['ga4']['status'] ?? (!empty($analytics['configured']) ? 'connected' : 'missing_config');
+        $gsc_status = $sources['gsc']['status'] ?? (!empty($analytics['search_console']['configured']) ? 'connected' : 'missing_config');
+        $statuses = [$ga4_status, $gsc_status];
+
+        if (array_intersect($statuses, ['failed'])) {
+            return 'needs_attention';
+        }
+
+        if (!array_intersect($statuses, ['missing_config', 'missing_credentials', 'partial']) && !array_diff($statuses, ['connected', 'no_data'])) {
+            return 'ready';
+        }
+
+        if (array_intersect($statuses, ['connected', 'partial', 'no_data'])) {
+            return 'partial';
+        }
+
+        return 'needs_setup';
     }
 
     private static function getReportRecipients(array $client): array

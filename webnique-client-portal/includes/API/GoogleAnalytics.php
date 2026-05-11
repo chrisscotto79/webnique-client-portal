@@ -20,6 +20,7 @@ final class GoogleAnalytics
 {
     private array $credentials;
     private string $property_id;
+    private array $errors = [];
     /**
      * Constructor
      */
@@ -78,6 +79,7 @@ final class GoogleAnalytics
             return $result;
 
         } catch (\Throwable $e) {
+            $this->recordError('overview', $e->getMessage());
             error_log('GA Overview Error: ' . $e->getMessage());
             return $this->getEmptyOverview();
         }
@@ -119,6 +121,7 @@ final class GoogleAnalytics
             return $result;
 
         } catch (\Throwable $e) {
+            $this->recordError('traffic_sources', $e->getMessage());
             error_log('GA Traffic Sources Error: ' . $e->getMessage());
             return [];
         }
@@ -161,6 +164,7 @@ final class GoogleAnalytics
             return $result;
 
         } catch (\Throwable $e) {
+            $this->recordError('top_pages', $e->getMessage());
             error_log('GA Top Pages Error: ' . $e->getMessage());
             return [];
         }
@@ -202,6 +206,7 @@ final class GoogleAnalytics
             return $result;
 
         } catch (\Throwable $e) {
+            $this->recordError('visitor_trends', $e->getMessage());
             error_log('GA Visitor Trends Error: ' . $e->getMessage());
             return [];
         }
@@ -239,6 +244,7 @@ final class GoogleAnalytics
             return $result;
 
         } catch (\Throwable $e) {
+            $this->recordError('devices', $e->getMessage());
             error_log('GA Device Stats Error: ' . $e->getMessage());
             return [];
         }
@@ -325,6 +331,7 @@ final class GoogleAnalytics
                 }
             }
         } catch (\Throwable $e) {
+            $this->recordError('key_events', $e->getMessage());
             error_log('GA Key Events Error: ' . $e->getMessage());
         }
 
@@ -457,6 +464,21 @@ final class GoogleAnalytics
     {
         $property_id = trim($property_id);
         return str_starts_with($property_id, 'properties/') ? $property_id : 'properties/' . $property_id;
+    }
+
+    public function getErrors(): array
+    {
+        return $this->errors;
+    }
+
+    public function hasErrors(): bool
+    {
+        return !empty($this->errors);
+    }
+
+    private function recordError(string $context, string $message): void
+    {
+        $this->errors[$context] = $message;
     }
 
     /**
