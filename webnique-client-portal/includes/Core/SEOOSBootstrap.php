@@ -268,7 +268,7 @@ final class SEOOSBootstrap
             'keyword_clusters'  => $kw_clusters,
             'brand_notes'       => sanitize_textarea_field($_POST['brand_notes'] ?? ''),
             'content_tone'      => sanitize_text_field($_POST['content_tone'] ?? 'professional'),
-            'gsc_property'      => esc_url_raw($_POST['gsc_property'] ?? ''),
+            'gsc_property'      => sanitize_text_field($_POST['gsc_property'] ?? ''),
             'ga_property'       => sanitize_text_field($_POST['ga_property'] ?? ''),
         ]);
 

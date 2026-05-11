@@ -35,10 +35,12 @@ final class ReportGenerator
 
         if (!$client) return false;
 
+        $analytics_context = self::resolveAnalyticsContext($client_id, $client, $profile);
+
         // Gather all report data
         $report_data = [
             'client'         => self::getClientSummary($client, $profile),
-            'analytics'      => self::getAnalyticsSummary($client_id, $period_start, $period_end),
+            'analytics'      => self::getAnalyticsSummary($analytics_context, $period_start, $period_end),
             'period'         => ['start' => $period_start, 'end' => $period_end, 'label' => date('F Y', strtotime($period_start))],
             'generated_at'   => current_time('mysql'),
         ];
@@ -483,10 +485,15 @@ final class ReportGenerator
         ];
     }
 
-    private static function getAnalyticsSummary(string $client_id, string $start, string $end): array
+    private static function getAnalyticsSummary(array $context, string $start, string $end): array
     {
-        $config = AnalyticsConfig::getClientConfig($client_id);
+        $client_id = (string)($context['client_id'] ?? '');
+        $config = $context['config'] ?? null;
         $credentials = AnalyticsConfig::getCredentials();
+        $base = [
+            'analytics_client_id' => $client_id,
+            'analytics_match_reason' => (string)($context['match_reason'] ?? 'unknown'),
+        ];
         $search_console = $config
             ? self::getSearchConsoleSummary($client_id, $config, $start, $end)
             : [
@@ -497,7 +504,7 @@ final class ReportGenerator
 
         if (!$config || empty($config['ga4_property_id'])) {
             $ga4_source = self::sourceStatus('missing_config', 'Not configured', 'GA4 is not configured for this client.');
-            return [
+            return $base + [
                 'configured' => false,
                 'source' => $ga4_source,
                 'sources' => [
@@ -511,7 +518,7 @@ final class ReportGenerator
 
         if (!$credentials) {
             $ga4_source = self::sourceStatus('missing_credentials', 'Credentials missing', 'Google Analytics service account credentials are not configured.');
-            return [
+            return $base + [
                 'configured' => false,
                 'source' => $ga4_source,
                 'sources' => [
@@ -533,7 +540,7 @@ final class ReportGenerator
             $ga4_errors = $analytics->getErrors();
             $ga4_source = self::buildGa4SourceSummary($config, $overview, $key_events, $ga4_errors);
 
-            return [
+            return $base + [
                 'configured' => in_array($ga4_source['status'], ['connected', 'partial', 'no_data'], true),
                 'source' => $ga4_source,
                 'sources' => [
@@ -560,7 +567,7 @@ final class ReportGenerator
                 'property_id' => (string)($config['ga4_property_id'] ?? ''),
             ]);
 
-            return [
+            return $base + [
                 'configured' => false,
                 'source' => $ga4_source,
                 'sources' => [
@@ -755,6 +762,99 @@ final class ReportGenerator
         }
 
         return 'needs_setup';
+    }
+
+    private static function resolveAnalyticsContext(string $seo_client_id, ?array $client, array $profile): array
+    {
+        $exact = AnalyticsConfig::getClientConfig($seo_client_id);
+        if ($exact) {
+            return [
+                'client_id' => (string)$exact['client_id'],
+                'config' => $exact,
+                'match_reason' => 'Exact client ID match',
+            ];
+        }
+
+        $configs = AnalyticsConfig::getAllClients();
+        $target_id = self::normalizeMatchToken($seo_client_id);
+        foreach ($configs as $config) {
+            if ($target_id !== '' && self::normalizeMatchToken((string)($config['client_id'] ?? '')) === $target_id) {
+                return [
+                    'client_id' => (string)$config['client_id'],
+                    'config' => $config,
+                    'match_reason' => 'Matched client ID without punctuation',
+                ];
+            }
+        }
+
+        $target_domains = array_filter(array_unique([
+            self::normalizeDomain((string)($client['website'] ?? '')),
+            self::normalizeDomain((string)($client['google_search_console_site_url'] ?? '')),
+            self::normalizeDomain((string)($profile['gsc_property'] ?? '')),
+        ]));
+
+        foreach ($configs as $config) {
+            $config_domains = array_filter(array_unique([
+                self::normalizeDomain((string)($config['website_url'] ?? '')),
+                self::normalizeDomain((string)($config['search_console_url'] ?? '')),
+            ]));
+
+            if ($target_domains && array_intersect($target_domains, $config_domains)) {
+                return [
+                    'client_id' => (string)$config['client_id'],
+                    'config' => $config,
+                    'match_reason' => 'Matched website/Search Console domain',
+                ];
+            }
+        }
+
+        $target_names = array_filter(array_unique([
+            self::normalizeMatchToken((string)($client['company'] ?? '')),
+            self::normalizeMatchToken((string)($client['name'] ?? '')),
+        ]));
+
+        foreach ($configs as $config) {
+            if ($target_names && in_array(self::normalizeMatchToken((string)($config['client_name'] ?? '')), $target_names, true)) {
+                return [
+                    'client_id' => (string)$config['client_id'],
+                    'config' => $config,
+                    'match_reason' => 'Matched client name',
+                ];
+            }
+        }
+
+        return [
+            'client_id' => $seo_client_id,
+            'config' => null,
+            'match_reason' => 'No matching Analytics client config found',
+        ];
+    }
+
+    private static function normalizeMatchToken(string $value): string
+    {
+        return preg_replace('/[^a-z0-9]+/', '', strtolower(trim($value))) ?: '';
+    }
+
+    private static function normalizeDomain(string $value): string
+    {
+        $value = strtolower(trim($value));
+        if ($value === '') {
+            return '';
+        }
+
+        if (str_starts_with($value, 'sc-domain:')) {
+            $value = substr($value, strlen('sc-domain:'));
+        }
+
+        if (str_contains($value, '://')) {
+            $host = parse_url($value, PHP_URL_HOST);
+            $value = is_string($host) ? $host : $value;
+        } else {
+            $value = preg_replace('/\/.*$/', '', $value) ?: $value;
+        }
+
+        $value = preg_replace('/^www\./', '', $value) ?: $value;
+        return trim($value, " \t\n\r\0\x0B/");
     }
 
     private static function getReportRecipients(array $client): array
