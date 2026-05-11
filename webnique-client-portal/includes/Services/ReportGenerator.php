@@ -30,12 +30,19 @@ final class ReportGenerator
         $period_start = $period['start'];
         $period_end = $period['end'];
 
-        $client  = Client::getByClientId($client_id);
-        $profile = SEOHub::getProfile($client_id) ?? [];
-
+        $analytics_config = AnalyticsConfig::getClientConfig($client_id);
+        $client = self::resolveReportClient($client_id, $analytics_config);
         if (!$client) return false;
 
-        $analytics_context = self::resolveAnalyticsContext($client_id, $client, $profile);
+        $profile = self::resolveReportProfile($client_id, $client, $analytics_config);
+        $analytics_context = $analytics_config
+            ? [
+                'client_id' => (string)$analytics_config['client_id'],
+                'config' => $analytics_config,
+                'match_reason' => 'Selected WebNique Portal Analytics client',
+            ]
+            : self::resolveAnalyticsContext($client_id, $client, $profile);
+        $report_client_id = (string)($analytics_context['client_id'] ?? $client_id);
 
         // Gather all report data
         $report_data = [
@@ -49,11 +56,11 @@ final class ReportGenerator
         // AI-generated executive summary
         $summary_html = self::generateAISummary($client, $profile, $report_data);
 
-        $report_id = SEOHub::createReport($client_id, 'monthly', $period_start, $period_end, $report_data, $summary_html, $report_status);
+        $report_id = SEOHub::createReport($report_client_id, 'monthly', $period_start, $period_end, $report_data, $summary_html, $report_status);
 
         if ($report_id) {
             SEOHub::log('monthly_report_generated', [
-                'client_id' => $client_id,
+                'client_id' => $report_client_id,
                 'entity_id' => $report_id,
                 'period'    => $period_start . ' to ' . $period_end,
             ]);
@@ -67,7 +74,7 @@ final class ReportGenerator
      */
     public static function generateAllMonthlyReports(string $month = '', bool $send_email = true, bool $force_new = false): array
     {
-        $clients = Client::getByStatus('active');
+        $clients = AnalyticsConfig::getAllClients();
         $period = self::resolveMonthlyPeriod($month);
         $results = [
             'generated' => 0,
@@ -80,11 +87,6 @@ final class ReportGenerator
 
         foreach ($clients as $client) {
             $client_id = $client['client_id'];
-            $profile   = SEOHub::getProfile($client_id);
-            if (!$profile) {
-                $results['skipped']++;
-                continue;
-            }
 
             $existing = SEOHub::getReportForPeriod($client_id, 'monthly', $period['start'], $period['end']);
             if (!$force_new && $existing && ($existing['status'] ?? '') === 'sent') {
@@ -131,7 +133,8 @@ final class ReportGenerator
             return 'skipped';
         }
 
-        $client = Client::getByClientId((string)$report['client_id']);
+        $analytics_config = AnalyticsConfig::getClientConfig((string)$report['client_id']);
+        $client = self::resolveReportClient((string)$report['client_id'], $analytics_config);
         if (!$client) {
             SEOHub::log('monthly_report_email_failed', [
                 'client_id' => $report['client_id'],
@@ -764,6 +767,91 @@ final class ReportGenerator
         return 'needs_setup';
     }
 
+    private static function resolveReportClient(string $client_id, ?array $analytics_config): ?array
+    {
+        $client = Client::getByClientId($client_id);
+        if (!$client && $analytics_config) {
+            $client = self::findPortalClientForAnalyticsConfig($analytics_config);
+        }
+
+        if (!$analytics_config) {
+            return $client ?: null;
+        }
+
+        return [
+            'client_id' => (string)$analytics_config['client_id'],
+            'name' => (string)(($client['name'] ?? '') ?: ($analytics_config['client_name'] ?? $analytics_config['client_id'])),
+            'company' => (string)(($client['company'] ?? '') ?: ($analytics_config['client_name'] ?? '')),
+            'email' => (string)($client['email'] ?? ''),
+            'billing_email' => (string)($client['billing_email'] ?? ''),
+            'website' => (string)(($analytics_config['website_url'] ?? '') ?: ($client['website'] ?? '')),
+            'google_analytics_property_id' => (string)($analytics_config['ga4_property_id'] ?? ''),
+            'google_search_console_site_url' => (string)($analytics_config['search_console_url'] ?? ''),
+        ];
+    }
+
+    private static function resolveReportProfile(string $client_id, array $client, ?array $analytics_config): array
+    {
+        $profile = SEOHub::getProfile($client_id);
+        if ($profile) {
+            return $profile;
+        }
+
+        if ($analytics_config) {
+            $matched_client = self::findPortalClientForAnalyticsConfig($analytics_config);
+            if ($matched_client && !empty($matched_client['client_id'])) {
+                $profile = SEOHub::getProfile((string)$matched_client['client_id']);
+                if ($profile) {
+                    return $profile;
+                }
+            }
+        }
+
+        $client_profile_id = (string)($client['client_id'] ?? '');
+        if ($client_profile_id !== '' && $client_profile_id !== $client_id) {
+            $profile = SEOHub::getProfile($client_profile_id);
+            if ($profile) {
+                return $profile;
+            }
+        }
+
+        return [];
+    }
+
+    private static function findPortalClientForAnalyticsConfig(array $analytics_config): ?array
+    {
+        $target_id = self::normalizeMatchToken((string)($analytics_config['client_id'] ?? ''));
+        $target_name = self::normalizeMatchToken((string)($analytics_config['client_name'] ?? ''));
+        $target_domains = array_filter(array_unique([
+            self::normalizeDomain((string)($analytics_config['website_url'] ?? '')),
+            self::normalizeDomain((string)($analytics_config['search_console_url'] ?? '')),
+        ]));
+
+        foreach (Client::getAll() as $client) {
+            $client_tokens = array_filter(array_unique([
+                self::normalizeMatchToken((string)($client['client_id'] ?? '')),
+                self::normalizeMatchToken((string)($client['company'] ?? '')),
+                self::normalizeMatchToken((string)($client['name'] ?? '')),
+            ]));
+            $client_domains = array_filter(array_unique([
+                self::normalizeDomain((string)($client['website'] ?? '')),
+                self::normalizeDomain((string)($client['google_search_console_site_url'] ?? '')),
+            ]));
+
+            if ($target_id !== '' && in_array($target_id, $client_tokens, true)) {
+                return $client;
+            }
+            if ($target_name !== '' && in_array($target_name, $client_tokens, true)) {
+                return $client;
+            }
+            if ($target_domains && array_intersect($target_domains, $client_domains)) {
+                return $client;
+            }
+        }
+
+        return null;
+    }
+
     private static function resolveAnalyticsContext(string $seo_client_id, ?array $client, array $profile): array
     {
         $exact = AnalyticsConfig::getClientConfig($seo_client_id);
@@ -905,7 +993,7 @@ final class ReportGenerator
     private static function getClientSummary(array $client, array $profile): array
     {
         return [
-            'name'      => $client['company'] ?? $client['name'],
+            'name'      => ($client['company'] ?? '') ?: ($client['name'] ?? ''),
             'website'   => $client['website'] ?? '',
             'services'  => $profile['primary_services'] ?? [],
             'locations' => $profile['service_locations'] ?? [],
@@ -923,7 +1011,7 @@ final class ReportGenerator
         $period  = $data['period'] ?? [];
 
         $vars = [
-            'client_name'       => $client['company'] ?? $client['name'] ?? '',
+            'client_name'       => ($client['company'] ?? '') ?: ($client['name'] ?? ''),
             'period'            => $period['label'] ?? '',
             'traffic_change'    => self::formatTrafficChange($overview, $comparison),
             'visitors'          => number_format((int)($overview['total_users'] ?? 0)),
