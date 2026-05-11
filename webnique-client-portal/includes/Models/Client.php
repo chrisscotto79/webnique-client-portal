@@ -4,7 +4,7 @@
  * 
  * Handles database operations for client records
  * 
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Models;

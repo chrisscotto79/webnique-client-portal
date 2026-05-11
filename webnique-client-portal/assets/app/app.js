@@ -1,7 +1,7 @@
 /**
- * WebNique Portal - Main Application Entry Point
+ * Golden Web Marketing Portal - Main Application Entry Point
  * 
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  * @requires WordPress REST API
  * @requires wp_localize_script with WNQ_PORTAL config
  */

@@ -1,5 +1,5 @@
 /**
- * WebNique SEO OS — Admin JavaScript
+ * Golden Web Marketing SEO OS — Admin JavaScript
  * Handles AJAX calls, tabs, and SEO OS admin interactions.
  */
 

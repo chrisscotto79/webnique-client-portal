@@ -11,7 +11,7 @@
  * - Financial overview with stats
  * - Complete client management
  * 
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Admin;

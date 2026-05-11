@@ -1,7 +1,7 @@
 /**
  * Application State Initialization
  * 
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 /**

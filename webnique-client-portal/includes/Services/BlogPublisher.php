@@ -11,7 +11,7 @@
  *  6. Push to client site via POST {site_url}/wp-json/wnq-agent/v1/publish-post
  *  7. Update schedule record, fire hub notification
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;
@@ -573,7 +573,7 @@ final class BlogPublisher
     /**
      * Recursively walk Elementor element tree and inject generated blog content.
      *
-     * Known injection points (from the WebNique blog template):
+     * Known injection points (from the Golden Web Marketing blog template):
      *  5af58bd2 → heading widget  → settings.title  (H1)
      *  5b794435 → text-editor     → settings.editor (body HTML)
      *  4861ee91 → text-editor     → settings.editor (TOC HTML)
@@ -955,7 +955,7 @@ final class BlogPublisher
             'headers' => [
                 'X-WNQ-Api-Key' => $api_key,
                 'Content-Type'  => 'application/json',
-                'User-Agent'    => 'WebNique-SEO-OS/1.0',
+                'User-Agent'    => 'GoldenWebMarketing-SEO-OS/1.0',
             ],
             'body' => wp_json_encode($post_data),
         ]);

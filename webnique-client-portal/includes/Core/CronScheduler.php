@@ -6,7 +6,7 @@
  *  - wnq_seo_nightly_audit    (daily at ~2am)
  *  - wnq_seo_monthly_reports  (monthly, 1st of month)
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Core;

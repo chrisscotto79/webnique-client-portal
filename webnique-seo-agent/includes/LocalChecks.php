@@ -13,7 +13,7 @@
  *  - Thin content (word count below threshold)
  *  - Orphan pages (no internal links pointing to them)
  *
- * @package WebNique SEO Agent
+ * @package Golden Web Marketing SEO Agent
  */
 
 namespace WNQA;

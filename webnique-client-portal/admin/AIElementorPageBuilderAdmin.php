@@ -5,7 +5,7 @@
  * MVP admin screen for generating editable Elementor draft pages from a
  * reusable Elementor JSON template and a JSON variable payload.
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Admin;
@@ -287,7 +287,7 @@ final class AIElementorPageBuilderAdmin
 
         echo '<div class="wrap wnq-hub-wrap">';
         echo '<div class="wnq-hub-masthead">';
-        echo '<div class="wnq-hub-logo">WebNique<span>SEO OS</span></div>';
+        echo '<div class="wnq-hub-logo">Golden Web Marketing<span>SEO OS</span></div>';
         echo '<nav class="wnq-hub-nav">';
         foreach ($nav_items as $slug => $label) {
             $class = $current === $slug ? 'active' : '';

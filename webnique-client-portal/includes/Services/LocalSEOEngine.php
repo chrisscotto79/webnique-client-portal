@@ -5,7 +5,7 @@
  * Tracks local SEO health: service areas, NAP consistency checks,
  * local keyword tracking, and GMB status per client.
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;

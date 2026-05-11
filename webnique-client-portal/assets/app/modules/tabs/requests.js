@@ -356,7 +356,7 @@ function createHeader(instance, state, shell) {
   
   titleSection.appendChild(
     el("p", {
-      text: "Communicate with the WebNique team about your website.",
+      text: "Communicate with the Golden Web Marketing team about your website.",
       style: {
         fontSize: "16px",
         color: "#6b7280",
@@ -944,7 +944,7 @@ function createMessageBubble(message, state) {
   // Author name
   bubble.appendChild(
     el("div", {
-      text: escapeHtml(message.author_name || (isClient ? "You" : "WebNique Team")),
+      text: escapeHtml(message.author_name || (isClient ? "You" : "Golden Web Marketing Team")),
       style: {
         fontSize: "13px",
         fontWeight: "700",

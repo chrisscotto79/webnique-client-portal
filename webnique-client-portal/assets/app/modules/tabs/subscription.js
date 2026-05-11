@@ -286,7 +286,7 @@ function createServicesIncluded(services) {
   if (!services || services.length === 0) {
     card.appendChild(
       el("p", {
-        text: "No services data available. Contact WebNique to review your plan.",
+        text: "No services data available. Contact Golden Web Marketing to review your plan.",
         style: { color: "#6b7280", fontSize: "14px", padding: "16px 0" },
       })
     );

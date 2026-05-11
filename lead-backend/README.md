@@ -1,4 +1,4 @@
-# WebNique Lead Backend
+# Golden Web Marketing Lead Backend
 
 Backend for scalable ZIP sweeps. Maps discovery is self-hosted through Puppeteer and website parsing uses Cheerio; no paid scraper API is required.
 

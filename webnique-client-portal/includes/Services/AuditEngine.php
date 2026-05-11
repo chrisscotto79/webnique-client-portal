@@ -19,7 +19,7 @@
  *  - duplicate_meta      warning  (same meta description on multiple pages)
  *  - keyword_cannibalization warning (same focus_keyword on multiple pages)
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;

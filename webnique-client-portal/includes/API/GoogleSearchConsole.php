@@ -5,7 +5,7 @@
  * Fetches keyword rankings, clicks, impressions, CTR
  * Position tracking and page performance in search
  * 
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\API;

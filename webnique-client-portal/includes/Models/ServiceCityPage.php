@@ -5,7 +5,7 @@
  * Stores CSV-imported service-area page rows before they are generated as
  * Elementor draft child pages on a connected client WordPress site.
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Models;

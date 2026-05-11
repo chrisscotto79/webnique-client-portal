@@ -2,7 +2,7 @@
 /**
  * SEO OS Bootstrap
  *
- * Initializes the SEO Operating System within the WebNique Portal plugin.
+ * Initializes the SEO Operating System within the Golden Web Marketing Portal plugin.
  * Loaded from the main plugin file via plugins_loaded hook.
  *
  * Registers:
@@ -12,7 +12,7 @@
  *  - CronScheduler jobs
  *  - All form POST handlers
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Core;

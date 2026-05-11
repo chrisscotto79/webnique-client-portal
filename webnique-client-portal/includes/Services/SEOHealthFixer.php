@@ -21,7 +21,7 @@
  * (default 5) and returns a `remaining` count so the UI can keep pulsing
  * until done = true.
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;

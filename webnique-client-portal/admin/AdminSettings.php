@@ -2,7 +2,7 @@
 /**
  * Admin Settings Page
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Admin;
@@ -35,7 +35,7 @@ final class AdminSettings
             <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
 
             <?php if ($saved): ?>
-                <div class="notice notice-success is-dismissible"><p>WebNique Portal settings saved.</p></div>
+                <div class="notice notice-success is-dismissible"><p>Golden Web Marketing Portal settings saved.</p></div>
             <?php endif; ?>
 
             <div class="wnq-settings-layout">

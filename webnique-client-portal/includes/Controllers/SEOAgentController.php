@@ -2,7 +2,7 @@
 /**
  * SEO Agent REST Controller
  *
- * Handles incoming requests from the WebNique SEO Agent plugin installed
+ * Handles incoming requests from the Golden Web Marketing SEO Agent plugin installed
  * on client WordPress sites. All routes require a valid API key.
  *
  * Endpoints (base: /wp-json/wnq/v1/agent):
@@ -11,7 +11,7 @@
  *  GET  /instructions  - Reserved compatibility endpoint
  *  POST /ack           - Reserved compatibility acknowledgement endpoint
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Controllers;

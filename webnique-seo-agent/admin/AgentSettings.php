@@ -2,10 +2,10 @@
 /**
  * Agent Settings Page
  *
- * WordPress admin settings for the WebNique SEO Agent plugin.
- * Located at: Settings → WebNique SEO Agent
+ * WordPress admin settings for the Golden Web Marketing SEO Agent plugin.
+ * Located at: Settings → Golden Web Marketing SEO Agent
  *
- * @package WebNique SEO Agent
+ * @package Golden Web Marketing SEO Agent
  */
 
 namespace WNQA\Admin;
@@ -29,8 +29,8 @@ final class AgentSettings
     public static function addSettingsPage(): void
     {
         add_options_page(
-            'WebNique SEO Agent',
-            'WebNique SEO Agent',
+            'Golden Web Marketing SEO Agent',
+            'Golden Web Marketing SEO Agent',
             'manage_options',
             WNQA_SLUG,
             [self::class, 'renderPage']
@@ -115,8 +115,8 @@ final class AgentSettings
 
         ?>
 <div class="wrap wnqa-wrap">
-  <h1>🔭 WebNique SEO Agent</h1>
-  <p style="color:#6b7280;">Version <?php echo WNQA_VERSION; ?> &bull; Data relay to WebNique SEO OS Hub</p>
+  <h1>🔭 Golden Web Marketing SEO Agent</h1>
+  <p style="color:#6b7280;">Version <?php echo WNQA_VERSION; ?> &bull; Data relay to Golden Web Marketing SEO OS Hub</p>
 
   <?php if ($sync_status === 'success'): ?>
   <div class="wnqa-success">✅ Sync successful! <?php echo esc_html($msg); ?></div>
@@ -168,8 +168,8 @@ final class AgentSettings
       <div class="wnqa-form-row">
         <label>Hub URL</label>
         <div>
-          <input type="url" name="wnqa_config[hub_url]" value="<?php echo esc_attr($config['hub_url'] ?? ''); ?>" placeholder="https://web-nique.com" required>
-          <p class="description">URL of your WebNique SEO OS hub (your web-nique.com site)</p>
+          <input type="url" name="wnqa_config[hub_url]" value="<?php echo esc_attr($config['hub_url'] ?? ''); ?>" placeholder="https://goldenwebmarketing.com" required>
+          <p class="description">URL of your Golden Web Marketing SEO OS hub site.</p>
         </div>
       </div>
 
@@ -266,7 +266,7 @@ final class AgentSettings
     <p>This plugin is a <strong>lightweight data relay</strong>. It:</p>
     <ul style="list-style:disc;margin-left:20px;line-height:2;">
       <li>Collects SEO data from your WordPress content</li>
-      <li>Sends it securely to your WebNique SEO OS hub</li>
+      <li>Sends it securely to your Golden Web Marketing SEO OS hub</li>
       <li>Receives hub-triggered blog publishing and SEO fix requests</li>
       <li>Runs lightweight local checks (H1, alt text, thin content)</li>
     </ul>

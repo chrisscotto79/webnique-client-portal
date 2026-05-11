@@ -2,9 +2,9 @@
 /**
  * Core Plugin Class
  * 
- * Main initialization and bootstrap for WebNique Client Portal
+ * Main initialization and bootstrap for Golden Web Marketing Client Portal
  * 
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Core;
@@ -175,7 +175,7 @@ final class Plugin
 
         // Log activation
         if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('WebNique Portal: Plugin activated');
+            error_log('Golden Web Marketing Portal: Plugin activated');
         }
     }
 
@@ -189,7 +189,7 @@ final class Plugin
 
         // Log deactivation
         if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('WebNique Portal: Plugin deactivated');
+            error_log('Golden Web Marketing Portal: Plugin deactivated');
         }
     }
 }

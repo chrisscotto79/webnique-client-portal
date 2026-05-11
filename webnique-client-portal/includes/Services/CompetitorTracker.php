@@ -4,7 +4,7 @@
  *
  * Tracks competitor domains per client and compares keyword rankings.
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;

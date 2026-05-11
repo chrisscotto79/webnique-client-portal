@@ -19,7 +19,7 @@
  * - Export tasks to CSV
  * - Delete all tasks by service type (for re-import)
  * 
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Models;
@@ -775,10 +775,10 @@ final class SEO
                 'Set up titles and tag descriptions',
                 'Push sitemap in Google Search Console',
             ],
-            'WebNique Client Setup' => [
-                'Import site to Clients in WebNique',
+            'Golden Web Marketing Client Setup' => [
+                'Import site to Clients in Golden Web Marketing',
                 'Set up payment for plugin',
-                'Make a blog for client site on WebNique',
+                'Make a blog for client site on Golden Web Marketing',
             ],
         ];
     }

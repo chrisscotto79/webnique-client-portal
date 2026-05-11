@@ -2,7 +2,7 @@
 /**
  * Public Shortcode Handler
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\PublicSite;
@@ -89,7 +89,7 @@ final class Shortcode
             '<div class="wnq-portal-notice wnq-portal-notice--warning">
                 <p>%s</p>
             </div>',
-            esc_html__('Your account is not linked to a client yet. Please contact WebNique for access.', 'webnique-portal')
+            esc_html__('Your account is not linked to a client yet. Please contact Golden Web Marketing for access.', 'webnique-portal')
         );
     }
 

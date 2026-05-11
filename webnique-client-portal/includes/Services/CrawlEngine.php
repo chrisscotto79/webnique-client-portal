@@ -6,7 +6,7 @@
  * Detects: broken links, redirect chains, duplicate content, missing tags,
  * robots/noindex, canonical issues, thin content, missing alt text.
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;
@@ -309,7 +309,7 @@ final class CrawlEngine
         $response = wp_remote_get($url, [
             'timeout'     => self::CRAWL_TIMEOUT,
             'redirection' => 0,
-            'user-agent'  => 'WebNique-SEO-Spider/1.0 (+https://web-nique.com/bot)',
+            'user-agent'  => 'GoldenWebMarketing-SEO-Spider/1.0 (+https://goldenwebmarketing.com/bot)',
             'headers'     => ['Accept' => 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8'],
         ]);
 

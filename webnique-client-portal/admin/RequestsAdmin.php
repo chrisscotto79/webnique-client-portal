@@ -4,7 +4,7 @@
  * 
  * Allows admin to view and reply to client web requests from Firebase
  * 
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Admin;
@@ -20,7 +20,7 @@ if (!defined('ABSPATH')) {
 final class RequestsAdmin
 {
     /**
-     * Register as submenu under WebNique Portal
+     * Register as submenu under Golden Web Marketing Portal
      */
     public static function register(): void
     {
@@ -29,7 +29,7 @@ final class RequestsAdmin
     }
 
     /**
-     * Add submenu page under WebNique Portal
+     * Add submenu page under Golden Web Marketing Portal
      */
     public static function addSubmenu(): void
     {

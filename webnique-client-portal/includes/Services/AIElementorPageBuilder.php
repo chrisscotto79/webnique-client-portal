@@ -6,7 +6,7 @@
  * template and a JSON variable payload. This service never invents layouts;
  * it preserves the provided Elementor tree and only replaces placeholders.
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Services;
@@ -411,7 +411,7 @@ final class AIElementorPageBuilder
             'headers' => [
                 'X-WNQ-Api-Key' => $api_key,
                 'Content-Type'  => 'application/json',
-                'User-Agent'    => 'WebNique-SEO-OS/1.0',
+                'User-Agent'    => 'GoldenWebMarketing-SEO-OS/1.0',
             ],
             'body' => wp_json_encode($payload),
         ]);
@@ -443,7 +443,7 @@ final class AIElementorPageBuilder
         $error_code = (string)($body['code'] ?? '');
 
         if ($code === 404 && ($error_code === 'rest_no_route' || stripos($message, 'No route was found') !== false)) {
-            $message = 'The selected client site needs WebNique SEO Agent ' . self::MIN_REMOTE_AGENT_VERSION . ' or newer. Update the agent plugin on that site, then try again.';
+            $message = 'The selected client site needs Golden Web Marketing SEO Agent ' . self::MIN_REMOTE_AGENT_VERSION . ' or newer. Update the agent plugin on that site, then try again.';
         }
 
         return [

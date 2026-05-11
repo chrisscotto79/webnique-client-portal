@@ -8,7 +8,7 @@
  *  wnq_blog_schedule      - Post queue (titles, status, scheduled dates, generated content)
  *  wnq_hub_notifications  - In-hub notification log
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Models;

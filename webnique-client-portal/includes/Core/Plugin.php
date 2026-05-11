@@ -36,7 +36,7 @@ final class Plugin
     add_action('init', [\WNQ\Core\UserMeta::class, 'register']);
 
     /**
-     * Admin (WebNique-only)
+     * Admin (Golden Web Marketing-only)
      */
     if (is_admin()) {
       add_action('admin_menu', [\WNQ\Admin\AdminMenu::class, 'register']);

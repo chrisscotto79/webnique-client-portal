@@ -1,7 +1,7 @@
 /**
  * UI Helper Functions and Shell Mounting
  * 
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 /**

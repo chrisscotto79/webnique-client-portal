@@ -4,7 +4,7 @@
  *
  * Tracks portal income and expenses for client revenue reporting.
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Models;

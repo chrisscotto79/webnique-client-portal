@@ -2,7 +2,7 @@
 /**
  * Admin Menu Handler
  * 
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Admin;
@@ -37,8 +37,8 @@ final class AdminMenu
 
         // Add main menu page
         add_menu_page(
-            'WebNique Portal',                    // Page title
-            'WebNique Portal',                    // Menu title
+            'Golden Web Marketing Portal',                    // Page title
+            'Golden Web Marketing Portal',                    // Menu title
             $capability,                          // Capability
             'wnq-portal',                        // Menu slug
             [AdminSettings::class, 'render'],    // Callback

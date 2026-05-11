@@ -18,7 +18,7 @@
  *  - images_without_lazy (count of img tags without loading="lazy")
  *  - title_length (character count of SEO title)
  *
- * @package WebNique SEO Agent
+ * @package Golden Web Marketing SEO Agent
  */
 
 namespace WNQA;

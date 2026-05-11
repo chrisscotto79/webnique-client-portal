@@ -7,7 +7,7 @@
  *   generate  — AI batch title generator
  *   settings  — Elementor template management
  *
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Admin;
@@ -695,7 +695,7 @@ jQuery(function($) {
         echo '</div>';
 
         $settings_agents = BlogScheduler::getClientAgents($client_id);
-        $widget_hint = '<p style="color:#6b7280;font-size:12px;"><strong>Template injection:</strong> The scheduler supports the WebNique IDs <code>5af58bd2</code> H1, <code>5b794435</code> body, <code>4861ee91</code> TOC, <code>1b605b78</code> image, King Sheds IDs <code>50bd83b1</code> H1, <code>1820731f</code> body, <code>4098b8ca</code> TOC, <code>3e6a4048</code> image, and Executive Auto body <code>68ad1734</code>. It also detects H1/page-title widgets, article-style text editors, TOC text editors, and first image widgets.</p>';
+        $widget_hint = '<p style="color:#6b7280;font-size:12px;"><strong>Template injection:</strong> The scheduler supports the Golden Web Marketing IDs <code>5af58bd2</code> H1, <code>5b794435</code> body, <code>4861ee91</code> TOC, <code>1b605b78</code> image, King Sheds IDs <code>50bd83b1</code> H1, <code>1820731f</code> body, <code>4098b8ca</code> TOC, <code>3e6a4048</code> image, and Executive Auto body <code>68ad1734</code>. It also detects H1/page-title widgets, article-style text editors, TOC text editors, and first image widgets.</p>';
 
         echo '<div class="wnq-blog-card">';
         echo '<h3>Template ID Importer</h3>';
@@ -964,7 +964,7 @@ jQuery(function($) {
     {
         echo '<div class="wrap wnq-hub-wrap">';
         echo '<div class="wnq-hub-masthead">';
-        echo '<div class="wnq-hub-logo">🔭 WebNique<span>SEO OS</span></div>';
+        echo '<div class="wnq-hub-logo">🔭 Golden Web Marketing<span>SEO OS</span></div>';
         echo '<nav class="wnq-hub-nav">';
         $nav_items = [
             'wnq-seo-hub'          => 'Dashboard',

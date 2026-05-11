@@ -1,9 +1,9 @@
 <?php
 /**
- * Plugin Name: WebNique SEO Agent
- * Description: Lightweight data relay and execution endpoint for the WebNique SEO Operating System hub. Collects site data and syncs with web-nique.com.
+ * Plugin Name: Golden Web Marketing SEO Agent
+ * Description: Lightweight data relay and execution endpoint for the Golden Web Marketing SEO Operating System hub.
  * Version: 1.1.5
- * Author: WebNique
+ * Author: Golden Web Marketing
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Text Domain: webnique-seo-agent

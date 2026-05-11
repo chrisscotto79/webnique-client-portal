@@ -5,7 +5,7 @@
  * Caches API responses to improve performance
  * Uses WordPress transients for storage
  * 
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\API;

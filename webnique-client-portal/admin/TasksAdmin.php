@@ -6,12 +6,12 @@
  * - Working drag & drop with smooth animations
  * - User filtering system
  * - Beautiful modern UI
- * - Task categories (Client/WebNique/General)
+ * - Task categories (Client/Golden Web Marketing/General)
  * - Countdown timers
  * - Archive system
  * - Enhanced stats
  * 
- * @package WebNique Portal
+ * @package Golden Web Marketing Portal
  */
 
 namespace WNQ\Admin;
@@ -256,7 +256,7 @@ final class TasksAdmin
                         </a>
                         <a href="<?php echo admin_url('admin.php?page=wnq-tasks&filter=webnique' . ($filter_user ? '&user=' . $filter_user : '')); ?>" 
                            class="filter-btn <?php echo $filter_type === 'webnique' ? 'active' : ''; ?>">
-                            🏪 WebNique <span class="badge"><?php echo $type_counts['webnique']; ?></span>
+                            🏪 Golden Web Marketing <span class="badge"><?php echo $type_counts['webnique']; ?></span>
                         </a>
                         <a href="<?php echo admin_url('admin.php?page=wnq-tasks&filter=general' . ($filter_user ? '&user=' . $filter_user : '')); ?>" 
                            class="filter-btn <?php echo $filter_type === 'general' ? 'active' : ''; ?>">
@@ -422,7 +422,7 @@ final class TasksAdmin
                 <?php
                 $type_badges = [
                     'client' => ['icon' => '🏢', 'label' => 'Client', 'bg' => '#dbeafe', 'color' => '#1e40af'],
-                    'webnique' => ['icon' => '🏪', 'label' => 'WebNique', 'bg' => '#d1fae5', 'color' => '#065f46'],
+                    'webnique' => ['icon' => '🏪', 'label' => 'Golden Web Marketing', 'bg' => '#d1fae5', 'color' => '#065f46'],
                     'general' => ['icon' => '📝', 'label' => 'General', 'bg' => '#f3f4f6', 'color' => '#374151'],
                 ];
                 $type_info = $type_badges[$task_type] ?? $type_badges['general'];
@@ -798,7 +798,7 @@ final class TasksAdmin
                                 <?php
                                 $types = [
                                     'client' => ['icon' => '🏢', 'label' => 'Client', 'bg' => '#dbeafe', 'color' => '#1e40af'],
-                                    'webnique' => ['icon' => '🏪', 'label' => 'WebNique', 'bg' => '#d1fae5', 'color' => '#065f46'],
+                                    'webnique' => ['icon' => '🏪', 'label' => 'Golden Web Marketing', 'bg' => '#d1fae5', 'color' => '#065f46'],
                                     'general' => ['icon' => '📝', 'label' => 'General', 'bg' => '#f3f4f6', 'color' => '#374151'],
                                 ];
                                 $type_info = $types[$task['task_type'] ?? 'general'];
@@ -2451,7 +2451,7 @@ final class TasksAdmin
                             <select name="task_type" id="task_type" class="regular-text">
                                 <option value="general" <?php selected($task['task_type'] ?? 'general', 'general'); ?>>📝 General</option>
                                 <option value="client" <?php selected($task['task_type'] ?? '', 'client'); ?>>🏢 Client Task</option>
-                                <option value="webnique" <?php selected($task['task_type'] ?? '', 'webnique'); ?>>🏪 WebNique Task</option>
+                                <option value="webnique" <?php selected($task['task_type'] ?? '', 'webnique'); ?>>🏪 Golden Web Marketing Task</option>
                             </select>
                         </td>
                     </tr>
@@ -3304,9 +3304,9 @@ final class TasksAdmin
             3 => ['day' => 'Wednesday', 'color' => '#10b981', 'light' => '#d1fae5',
                   'focus' => "Work on Sam's site",      'media' => 'Post YouTube Video'],
             4 => ['day' => 'Thursday',  'color' => '#f59e0b', 'light' => '#fef3c7',
-                  'focus' => "Work on WebNique's site", 'media' => 'Record YouTube Video'],
+                  'focus' => "Work on Golden Web Marketing's site", 'media' => 'Record YouTube Video'],
             5 => ['day' => 'Friday',    'color' => '#ef4444', 'light' => '#fee2e2',
-                  'focus' => 'WebNique development',    'media' => 'Post YouTube Video'],
+                  'focus' => 'Golden Web Marketing development',    'media' => 'Post YouTube Video'],
             6 => ['day' => 'Saturday',  'color' => '#8b5cf6', 'light' => '#ede9fe',
                   'focus' => 'Catch up on past tasks',  'media' => 'Record YouTube Video'],
             7 => ['day' => 'Sunday',    'color' => '#64748b', 'light' => '#f1f5f9',

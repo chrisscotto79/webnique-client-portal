@@ -124,7 +124,7 @@ export async function jobRoutes(app: FastifyInstance) {
     const csv = [headers, ...rows].map(row => row.map(csvCell).join(',')).join('\n');
     return reply
       .header('Content-Type', 'text/csv; charset=utf-8')
-      .header('Content-Disposition', `attachment; filename="webnique-leads-${jobId}.csv"`)
+      .header('Content-Disposition', `attachment; filename="golden-web-marketing-leads-${jobId}.csv"`)
       .send(csv);
   });
 }

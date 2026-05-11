@@ -3,13 +3,13 @@
  * Blog Receiver
  *
  * Registers a REST endpoint on the client WordPress site that the
- * WebNique SEO OS hub calls to publish AI-generated blog posts.
+ * Golden Web Marketing SEO OS hub calls to publish AI-generated blog posts.
  *
  * Endpoint: POST /wp-json/wnq-agent/v1/publish-post
  *
  * Auth: X-WNQ-Api-Key header must match the API key stored in wnqa_config.
  *
- * @package WebNique SEO Agent
+ * @package Golden Web Marketing SEO Agent
  */
 
 namespace WNQA;
