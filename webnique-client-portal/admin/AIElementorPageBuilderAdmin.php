@@ -13,7 +13,9 @@ namespace WNQ\Admin;
 use WNQ\Models\Client;
 use WNQ\Models\SEOHub;
 use WNQ\Services\AIElementorPageBuilder;
+use WNQ\Services\AIEngine;
 use WNQ\Services\ElementorSectionLibrary;
+use WNQ\Services\ElementorTemplateLibrary;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -25,6 +27,9 @@ final class AIElementorPageBuilderAdmin
     {
         add_action('admin_menu', [self::class, 'addMenuPage'], 22);
         add_action('admin_post_wnq_ai_elementor_generate', [self::class, 'handleGenerate']);
+        add_action('admin_post_wnq_ai_elementor_save_template', [self::class, 'handleSaveTemplate']);
+        add_action('admin_post_wnq_ai_elementor_delete_template', [self::class, 'handleDeleteTemplate']);
+        add_action('admin_post_wnq_ai_elementor_generate_variables', [self::class, 'handleGenerateVariables']);
     }
 
     public static function addMenuPage(): void
@@ -47,10 +52,15 @@ final class AIElementorPageBuilderAdmin
 
         $created = isset($_GET['created']) ? absint($_GET['created']) : 0;
         $error = isset($_GET['error']) ? sanitize_text_field(wp_unslash($_GET['error'])) : '';
+        $notice = isset($_GET['notice']) ? sanitize_text_field(wp_unslash($_GET['notice'])) : '';
         $section_templates = ElementorSectionLibrary::templates();
         $result = $created ? get_transient(self::resultTransientKey()) : false;
+        $ai_payload = $notice === 'ai_payload' ? get_transient(self::aiPayloadTransientKey()) : false;
         if (is_array($result)) {
             delete_transient(self::resultTransientKey());
+        }
+        if (is_array($ai_payload)) {
+            delete_transient(self::aiPayloadTransientKey());
         }
 
         if ($created && is_array($result)) {
@@ -85,8 +95,150 @@ final class AIElementorPageBuilderAdmin
         if ($error !== '') {
             echo '<div class="wnq-hub-notice error"><p>' . esc_html($error) . '</p></div>';
         }
+        if ($notice === 'template_saved') {
+            echo '<div class="wnq-hub-notice success"><p>Template saved to the library.</p></div>';
+        } elseif ($notice === 'template_deleted') {
+            echo '<div class="wnq-hub-notice success"><p>Template deleted from the library.</p></div>';
+        }
+        if (is_array($ai_payload)) {
+            echo '<div class="wnq-hub-notice success"><p><strong>AI variable payload generated.</strong> Copy this into the JSON Variable Payload box, review it, then generate the draft.</p>';
+            echo '<textarea class="wnq-ai-generated-payload" rows="18" readonly spellcheck="false">' . esc_textarea((string)($ai_payload['json'] ?? '')) . '</textarea>';
+            echo '</div>';
+        }
 
         ?>
+<div class="wnq-hub-section">
+  <div class="wnq-hub-section-header">
+    <div>
+      <h2>Template Library</h2>
+      <p>Upload reusable Elementor JSON sections or pages. The software scans placeholders automatically and adds the saved template to the builder.</p>
+    </div>
+  </div>
+
+  <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" enctype="multipart/form-data" class="wnq-ai-template-form">
+    <?php wp_nonce_field('wnq_ai_elementor_save_template'); ?>
+    <input type="hidden" name="action" value="wnq_ai_elementor_save_template">
+
+    <div class="wnq-ai-template-meta">
+      <label>
+        <strong>Template Name</strong>
+        <input type="text" name="template_name" placeholder="Dark Hero - Local Service" required>
+      </label>
+      <label>
+        <strong>Category</strong>
+        <input type="text" name="template_category" placeholder="Hero, CTA, FAQ, Process">
+      </label>
+      <label>
+        <strong>Theme</strong>
+        <select name="template_theme">
+          <option value="any">Any</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+          <option value="brand">Brand Specific</option>
+        </select>
+      </label>
+    </div>
+
+    <label class="wnq-ai-template-description">
+      <strong>Description</strong>
+      <input type="text" name="template_description" placeholder="Short note about when to use this section">
+    </label>
+
+    <div class="wnq-ai-elementor-grid">
+      <div class="wnq-ai-elementor-field">
+        <label><strong>Upload Elementor JSON</strong></label>
+        <input type="file" name="library_template_file" accept=".json,application/json">
+        <p class="description">A file upload overrides pasted JSON.</p>
+      </div>
+      <div class="wnq-ai-elementor-field">
+        <label for="wnq_library_template_json"><strong>Or Paste Elementor JSON</strong></label>
+        <textarea id="wnq_library_template_json" name="library_template_json" rows="8" spellcheck="false" placeholder='{"content":[...],"page_settings":{"hide_title":"yes"}}'></textarea>
+      </div>
+    </div>
+
+    <p><button type="submit" class="wnq-btn wnq-btn-primary">Save Template to Library</button></p>
+  </form>
+
+  <?php $saved_templates = ElementorTemplateLibrary::all(); ?>
+  <?php if ($saved_templates): ?>
+    <div class="wnq-ai-template-library-list">
+      <?php foreach ($saved_templates as $key => $template): ?>
+        <div class="wnq-ai-template-card">
+          <div>
+            <strong><?php echo esc_html((string)($template['name'] ?? $key)); ?></strong>
+            <span><?php echo esc_html((string)($template['category'] ?? 'Custom')); ?> / <?php echo esc_html(ucfirst((string)($template['theme'] ?? 'any'))); ?></span>
+            <?php if (!empty($template['description'])): ?>
+              <p><?php echo esc_html((string)$template['description']); ?></p>
+            <?php endif; ?>
+            <?php if (!empty($template['variables'])): ?>
+              <div class="wnq-ai-variable-chips">
+                <?php foreach ((array)$template['variables'] as $variable): ?>
+                  <code>{{<?php echo esc_html((string)$variable); ?>}}</code>
+                <?php endforeach; ?>
+              </div>
+            <?php endif; ?>
+          </div>
+          <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" onsubmit="return confirm('Delete this saved template?');">
+            <?php wp_nonce_field('wnq_ai_elementor_delete_template_' . $key); ?>
+            <input type="hidden" name="action" value="wnq_ai_elementor_delete_template">
+            <input type="hidden" name="template_key" value="<?php echo esc_attr((string)$key); ?>">
+            <button type="submit" class="button">Delete</button>
+          </form>
+        </div>
+      <?php endforeach; ?>
+    </div>
+  <?php endif; ?>
+</div>
+
+<div class="wnq-hub-section">
+  <div class="wnq-hub-section-header">
+    <div>
+      <h2>AI Variable Payload Generator</h2>
+      <p>Select the templates you want to use, describe the page, and AI will generate the JSON variables for those placeholders.</p>
+    </div>
+  </div>
+
+  <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="wnq-ai-variable-form">
+    <?php wp_nonce_field('wnq_ai_elementor_generate_variables'); ?>
+    <input type="hidden" name="action" value="wnq_ai_elementor_generate_variables">
+
+    <div class="wnq-ai-elementor-template-source">
+      <strong>Templates to write for</strong>
+      <div class="wnq-ai-elementor-section-list">
+        <?php foreach ($section_templates as $key => $template): ?>
+          <label>
+            <input type="checkbox" name="ai_section_template_keys[]" value="<?php echo esc_attr($key); ?>" <?php checked(in_array($key, [ElementorSectionLibrary::LOCAL_SERVICE_HERO, ElementorSectionLibrary::CONTENT_IMAGE], true)); ?>>
+            <span><?php echo esc_html($template['label'] ?? $key); ?></span>
+            <?php if (!empty($template['description'])): ?>
+              <small><?php echo esc_html($template['description']); ?></small>
+            <?php endif; ?>
+          </label>
+        <?php endforeach; ?>
+      </div>
+    </div>
+
+    <div class="wnq-ai-template-meta">
+      <label><strong>Business Name</strong><input type="text" name="ai_business_name" placeholder="Golden Web Marketing"></label>
+      <label><strong>Service</strong><input type="text" name="ai_service" placeholder="Website Design"></label>
+      <label><strong>City</strong><input type="text" name="ai_city" placeholder="Orlando"></label>
+      <label><strong>State</strong><input type="text" name="ai_state" placeholder="FL"></label>
+      <label><strong>Tone</strong><input type="text" name="ai_tone" value="professional, clear, conversion-focused"></label>
+      <label><strong>Theme Style</strong><input type="text" name="ai_theme_style" placeholder="dark, premium, gold accent"></label>
+    </div>
+
+    <label class="wnq-ai-template-description">
+      <strong>Page Goal</strong>
+      <input type="text" name="ai_page_goal" placeholder="Generate more calls and strategy call bookings from local service businesses">
+    </label>
+    <label class="wnq-ai-template-description">
+      <strong>Brand Notes</strong>
+      <textarea name="ai_brand_notes" rows="5" placeholder="Company details, audience, differentiators, CTA preferences, service notes."></textarea>
+    </label>
+
+    <p><button type="submit" class="wnq-btn wnq-btn-primary">Generate JSON Variable Payload</button></p>
+  </form>
+</div>
+
 <div class="wnq-hub-section">
   <div class="wnq-hub-section-header">
     <div>
@@ -189,6 +341,20 @@ final class AIElementorPageBuilderAdmin
       </div>
     </div>
 
+    <div class="wnq-ai-elementor-image-uploads">
+      <h3>Custom Image Upload Mappings</h3>
+      <p class="description">For your uploaded templates, enter the placeholder name such as <code>gallery_image_1_url</code>, then upload the image. This supports any custom <code>{{*_image_url}}</code> placeholder.</p>
+      <div class="wnq-ai-custom-image-grid">
+        <?php for ($i = 1; $i <= 6; $i++): ?>
+          <label>
+            <strong>Custom image <?php echo (int)$i; ?></strong>
+            <input type="text" name="<?php echo esc_attr('custom_image_field_' . $i); ?>" placeholder="example_image_url">
+            <input type="file" name="<?php echo esc_attr('custom_image_upload_' . $i); ?>" accept="image/jpeg,image/png,image/gif,image/webp">
+          </label>
+        <?php endfor; ?>
+      </div>
+    </div>
+
     <p>
       <button type="submit" class="wnq-btn wnq-btn-primary">Generate Draft Page</button>
     </p>
@@ -218,7 +384,69 @@ final class AIElementorPageBuilderAdmin
   }
   .wnq-ai-elementor-field textarea,
   .wnq-ai-elementor-options input,
+  .wnq-ai-template-form input[type="text"],
+  .wnq-ai-template-form select,
+  .wnq-ai-template-description input,
+  .wnq-ai-template-description textarea,
+  .wnq-ai-variable-form input[type="text"],
+  .wnq-ai-variable-form textarea,
   .wnq-ai-elementor-target select {
+    width: 100%;
+  }
+  .wnq-ai-template-meta {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    margin-bottom: 14px;
+  }
+  .wnq-ai-template-meta input,
+  .wnq-ai-template-meta select,
+  .wnq-ai-template-description input,
+  .wnq-ai-template-description textarea,
+  .wnq-ai-custom-image-grid input[type="text"] {
+    margin-top: 8px;
+  }
+  .wnq-ai-template-description {
+    display: block;
+    margin: 14px 0;
+  }
+  .wnq-ai-template-library-list {
+    display: grid;
+    gap: 12px;
+    margin-top: 20px;
+  }
+  .wnq-ai-template-card {
+    align-items: flex-start;
+    border: 1px solid #d7dde8;
+    border-radius: 10px;
+    display: flex;
+    gap: 16px;
+    justify-content: space-between;
+    padding: 14px;
+  }
+  .wnq-ai-template-card span,
+  .wnq-ai-template-card p {
+    color: #667085;
+    display: block;
+    font-size: 13px;
+    margin: 4px 0 0;
+  }
+  .wnq-ai-variable-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .wnq-ai-variable-chips code {
+    background: #eef4ff;
+    border-radius: 999px;
+    color: #2454a6;
+    padding: 4px 8px;
+  }
+  .wnq-ai-generated-payload {
+    box-sizing: border-box;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    margin-top: 10px;
     width: 100%;
   }
   .wnq-ai-elementor-target {
@@ -288,7 +516,14 @@ final class AIElementorPageBuilderAdmin
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
     margin-top: 12px;
   }
-  .wnq-ai-elementor-image-grid label {
+  .wnq-ai-custom-image-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    margin-top: 12px;
+  }
+  .wnq-ai-elementor-image-grid label,
+  .wnq-ai-custom-image-grid label {
     border: 1px solid #d7dde8;
     border-radius: 8px;
     display: grid;
@@ -353,7 +588,15 @@ final class AIElementorPageBuilderAdmin
             self::redirectWithError($uploaded_images->get_error_message());
         }
         if ($uploaded_images) {
-            $variables = array_merge($variables, $uploaded_images);
+            $variables = self::mergeVariables($variables, $uploaded_images);
+        }
+
+        $custom_uploaded_images = self::customUploadedImageVariables($variables);
+        if (is_wp_error($custom_uploaded_images)) {
+            self::redirectWithError($custom_uploaded_images->get_error_message());
+        }
+        if ($custom_uploaded_images) {
+            $variables = self::mergeVariables($variables, $custom_uploaded_images);
         }
 
         $result = AIElementorPageBuilder::generateRemoteDraft($agent_key_id, $template_json, $variables, [
@@ -374,6 +617,103 @@ final class AIElementorPageBuilderAdmin
         exit;
     }
 
+    public static function handleSaveTemplate(): void
+    {
+        self::checkCap();
+        check_admin_referer('wnq_ai_elementor_save_template');
+
+        $json = self::readTextInputOrFile('library_template_json', 'library_template_file');
+        $result = ElementorTemplateLibrary::save(
+            sanitize_text_field(wp_unslash($_POST['template_name'] ?? '')),
+            sanitize_text_field(wp_unslash($_POST['template_category'] ?? 'Custom')),
+            sanitize_key(wp_unslash($_POST['template_theme'] ?? 'any')),
+            sanitize_textarea_field(wp_unslash($_POST['template_description'] ?? '')),
+            $json
+        );
+
+        if (empty($result['success'])) {
+            self::redirectWithError((string)($result['message'] ?? 'Template could not be saved.'));
+        }
+
+        wp_safe_redirect(add_query_arg([
+            'page'   => 'wnq-seo-hub-ai-elementor',
+            'notice' => 'template_saved',
+        ], admin_url('admin.php')));
+        exit;
+    }
+
+    public static function handleDeleteTemplate(): void
+    {
+        self::checkCap();
+        $key = sanitize_key(wp_unslash($_POST['template_key'] ?? ''));
+        check_admin_referer('wnq_ai_elementor_delete_template_' . $key);
+
+        ElementorTemplateLibrary::delete($key);
+
+        wp_safe_redirect(add_query_arg([
+            'page'   => 'wnq-seo-hub-ai-elementor',
+            'notice' => 'template_deleted',
+        ], admin_url('admin.php')));
+        exit;
+    }
+
+    public static function handleGenerateVariables(): void
+    {
+        self::checkCap();
+        check_admin_referer('wnq_ai_elementor_generate_variables');
+
+        $keys = isset($_POST['ai_section_template_keys']) && is_array($_POST['ai_section_template_keys'])
+            ? array_map('sanitize_key', wp_unslash($_POST['ai_section_template_keys']))
+            : [ElementorSectionLibrary::LOCAL_SERVICE_HERO, ElementorSectionLibrary::CONTENT_IMAGE];
+        $keys = array_values(array_filter($keys));
+
+        $template = ElementorSectionLibrary::compose($keys);
+        if (!$template) {
+            self::redirectWithError('Select at least one template for the AI variable payload.');
+        }
+
+        $variables = ElementorTemplateLibrary::scanVariables($template);
+        if (!$variables) {
+            self::redirectWithError('The selected template does not contain any {{variables}} for AI to fill.');
+        }
+
+        $image_variables = ElementorTemplateLibrary::imageFieldsFromVariables($variables);
+        $result = AIEngine::generate('elementor_variable_payload', [
+            'business_name'   => sanitize_text_field(wp_unslash($_POST['ai_business_name'] ?? '')),
+            'brand_notes'     => sanitize_textarea_field(wp_unslash($_POST['ai_brand_notes'] ?? '')),
+            'service'         => sanitize_text_field(wp_unslash($_POST['ai_service'] ?? '')),
+            'city'            => sanitize_text_field(wp_unslash($_POST['ai_city'] ?? '')),
+            'state'           => sanitize_text_field(wp_unslash($_POST['ai_state'] ?? '')),
+            'audience'        => 'local service business customers',
+            'page_goal'       => sanitize_text_field(wp_unslash($_POST['ai_page_goal'] ?? '')),
+            'tone'            => sanitize_text_field(wp_unslash($_POST['ai_tone'] ?? 'professional, clear, conversion-focused')),
+            'theme_style'     => sanitize_text_field(wp_unslash($_POST['ai_theme_style'] ?? '')),
+            'variables'       => implode("\n", array_map(static fn($key) => '- ' . $key, $variables)),
+            'image_variables' => $image_variables ? implode("\n", array_map(static fn($key) => '- ' . $key, $image_variables)) : 'None',
+        ], '', [
+            'max_tokens'  => 3000,
+            'temperature' => 0.45,
+            'no_cache'    => true,
+        ]);
+
+        if (empty($result['success'])) {
+            self::redirectWithError('AI variable generation failed: ' . (string)($result['error'] ?? 'unknown error'));
+        }
+
+        $json = self::extractJsonObject((string)($result['content'] ?? ''));
+        if ($json === '') {
+            self::redirectWithError('AI did not return a valid JSON object. Try again or check AI settings.');
+        }
+
+        set_transient(self::aiPayloadTransientKey(), ['json' => $json], 10 * MINUTE_IN_SECONDS);
+
+        wp_safe_redirect(add_query_arg([
+            'page'   => 'wnq-seo-hub-ai-elementor',
+            'notice' => 'ai_payload',
+        ], admin_url('admin.php')));
+        exit;
+    }
+
     private static function readTextInputOrFile(string $text_field, string $file_field): string
     {
         if (
@@ -388,6 +728,21 @@ final class AIElementorPageBuilderAdmin
         }
 
         return (string)wp_unslash($_POST[$text_field] ?? '');
+    }
+
+    private static function mergeVariables(array $base, array $incoming): array
+    {
+        $uploaded = array_merge(
+            (array)($base['uploaded_image_fields'] ?? []),
+            (array)($incoming['uploaded_image_fields'] ?? [])
+        );
+
+        $merged = array_merge($base, $incoming);
+        if ($uploaded) {
+            $merged['uploaded_image_fields'] = array_values(array_unique(array_map([self::class, 'cleanPlaceholderKey'], $uploaded)));
+        }
+
+        return $merged;
     }
 
     private static function redirectWithError(string $message): void
@@ -441,6 +796,11 @@ final class AIElementorPageBuilderAdmin
     private static function resultTransientKey(): string
     {
         return 'wnq_ai_elementor_result_' . get_current_user_id();
+    }
+
+    private static function aiPayloadTransientKey(): string
+    {
+        return 'wnq_ai_elementor_payload_' . get_current_user_id();
     }
 
     private static function connectedAgents(): array
@@ -548,6 +908,74 @@ final class AIElementorPageBuilderAdmin
         return $variables;
     }
 
+    private static function customUploadedImageVariables(array $existing_variables = [])
+    {
+        $variables = [];
+        $max_bytes = 5 * 1024 * 1024;
+
+        for ($i = 1; $i <= 6; $i++) {
+            $field = self::cleanPlaceholderKey((string)wp_unslash($_POST['custom_image_field_' . $i] ?? ''));
+            $input = 'custom_image_upload_' . $i;
+
+            if ($field === '') {
+                continue;
+            }
+            if (empty($_FILES[$input]) || !is_array($_FILES[$input])) {
+                continue;
+            }
+
+            $file = $_FILES[$input];
+            $error = (int)($file['error'] ?? UPLOAD_ERR_NO_FILE);
+            if ($error === UPLOAD_ERR_NO_FILE) {
+                continue;
+            }
+            if ($error !== UPLOAD_ERR_OK) {
+                return new \WP_Error('wnq_custom_image_upload_failed', 'Custom image ' . $i . ' upload failed.');
+            }
+
+            $tmp_name = (string)($file['tmp_name'] ?? '');
+            $name = sanitize_file_name((string)($file['name'] ?? $field));
+            $size = (int)($file['size'] ?? 0);
+            if ($tmp_name === '' || !is_uploaded_file($tmp_name)) {
+                return new \WP_Error('wnq_custom_image_upload_invalid', 'Custom image ' . $i . ' was not a valid uploaded file.');
+            }
+            if ($size <= 0 || $size > $max_bytes) {
+                return new \WP_Error('wnq_custom_image_upload_size', 'Custom image ' . $i . ' must be 5 MB or smaller.');
+            }
+
+            $mime = self::detectUploadedImageMime($tmp_name, $name);
+            if ($mime === '') {
+                return new \WP_Error('wnq_custom_image_upload_type', 'Custom image ' . $i . ' must be a JPG, PNG, GIF, or WebP image.');
+            }
+
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+            require_once ABSPATH . 'wp-admin/includes/media.php';
+            require_once ABSPATH . 'wp-admin/includes/image.php';
+
+            $attachment_id = media_handle_upload($input, 0, [], ['test_form' => false]);
+            if (is_wp_error($attachment_id)) {
+                return new \WP_Error('wnq_custom_image_upload_media', 'Custom image ' . $i . ' could not be added to the hub Media Library: ' . $attachment_id->get_error_message());
+            }
+
+            $url = wp_get_attachment_url((int)$attachment_id);
+            if (!$url) {
+                return new \WP_Error('wnq_custom_image_upload_url', 'Custom image ' . $i . ' was uploaded, but WordPress did not return a media URL.');
+            }
+
+            $variables[$field] = esc_url_raw((string)$url);
+            $variables['uploaded_image_fields'][] = $field;
+
+            $alt_field = preg_replace('/_url$/', '_alt', $field);
+            if (is_string($alt_field) && $alt_field !== $field && empty($existing_variables[$alt_field])) {
+                $alt = preg_replace('/\.[a-z0-9]+$/i', '', str_replace(['-', '_'], ' ', $name));
+                $variables[$alt_field] = $alt;
+                update_post_meta((int)$attachment_id, '_wp_attachment_image_alt', sanitize_text_field((string)$alt));
+            }
+        }
+
+        return $variables;
+    }
+
     private static function detectUploadedImageMime(string $tmp_name, string $name): string
     {
         $mime = '';
@@ -572,6 +1000,42 @@ final class AIElementorPageBuilderAdmin
 
         $allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
         return in_array($mime, $allowed, true) ? $mime : '';
+    }
+
+    private static function cleanPlaceholderKey(string $key): string
+    {
+        $key = strtolower(trim($key));
+        $key = preg_replace('/[^a-z0-9_]/', '_', $key);
+        $key = preg_replace('/_+/', '_', (string)$key);
+
+        return trim((string)$key, '_');
+    }
+
+    private static function extractJsonObject(string $raw): string
+    {
+        $raw = trim($raw);
+        $raw = preg_replace('/^```(?:json)?\s*/i', '', $raw);
+        $raw = preg_replace('/\s*```$/', '', (string)$raw);
+        $raw = trim((string)$raw);
+
+        $decoded = json_decode($raw, true);
+        if (is_array($decoded)) {
+            return (string)wp_json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        }
+
+        $start = strpos($raw, '{');
+        $end = strrpos($raw, '}');
+        if ($start === false || $end === false || $end <= $start) {
+            return '';
+        }
+
+        $candidate = substr($raw, $start, $end - $start + 1);
+        $decoded = json_decode($candidate, true);
+        if (!is_array($decoded)) {
+            return '';
+        }
+
+        return (string)wp_json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
     private static function exampleVariables(): array
