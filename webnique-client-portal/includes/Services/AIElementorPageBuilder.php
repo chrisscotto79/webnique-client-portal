@@ -118,6 +118,7 @@ final class AIElementorPageBuilder
 
         $variables = self::normalizeVariables($variables);
         $elementor_data = self::replacePlaceholdersRecursive($content, self::buildTokenMap($variables));
+        $elementor_data = self::regenerateElementorIds($elementor_data);
         $title = self::resolvePostTitle($variables, $options);
 
         return [
@@ -336,6 +337,63 @@ final class AIElementorPageBuilder
         ]);
 
         return implode("\n\n", $parts);
+    }
+
+    private static function regenerateElementorIds($value)
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+
+        if (isset($value['elType']) && isset($value['id']) && is_string($value['id'])) {
+            $value['id'] = self::newElementorId();
+        }
+
+        if (isset($value['settings']) && is_array($value['settings'])) {
+            $value['settings'] = self::regenerateRepeaterIds($value['settings']);
+        }
+
+        if (isset($value['elements']) && is_array($value['elements'])) {
+            foreach ($value['elements'] as $index => $child) {
+                $value['elements'][$index] = self::regenerateElementorIds($child);
+            }
+        }
+
+        if (self::isListArray($value)) {
+            foreach ($value as $index => $child) {
+                $value[$index] = self::regenerateElementorIds($child);
+            }
+        }
+
+        return $value;
+    }
+
+    private static function regenerateRepeaterIds($value)
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+
+        if (isset($value['_id']) && is_string($value['_id'])) {
+            $value['_id'] = self::newElementorId();
+        }
+
+        foreach ($value as $key => $child) {
+            if (is_array($child)) {
+                $value[$key] = self::regenerateRepeaterIds($child);
+            }
+        }
+
+        return $value;
+    }
+
+    private static function newElementorId(): string
+    {
+        try {
+            return substr(bin2hex(random_bytes(4)), 0, 8);
+        } catch (\Throwable $e) {
+            return substr(md5(uniqid('', true)), 0, 8);
+        }
     }
 
     public static function saveElementorMeta(int $post_id, array $elementor_data, array $template = []): void

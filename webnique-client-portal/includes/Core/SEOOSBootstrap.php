@@ -82,6 +82,7 @@ final class SEOOSBootstrap
             'includes/Services/BlogPublisher.php',
             'includes/Services/BacklinkVerifier.php',
             'includes/Services/ServiceCityPageGenerator.php',
+            'includes/Services/ElementorSectionLibrary.php',
             'includes/Services/AIElementorPageBuilder.php',
             'includes/Services/SEOHealthFixer.php',
             // Spider & Analysis Services
@@ -140,6 +141,7 @@ final class SEOOSBootstrap
             'includes/Services/BlogPublisher.php'     => 'WNQ\\Services\\BlogPublisher',
             'includes/Services/BacklinkVerifier.php'  => 'WNQ\\Services\\BacklinkVerifier',
             'includes/Services/ServiceCityPageGenerator.php' => 'WNQ\\Services\\ServiceCityPageGenerator',
+            'includes/Services/ElementorSectionLibrary.php' => 'WNQ\\Services\\ElementorSectionLibrary',
             'includes/Services/AIElementorPageBuilder.php' => 'WNQ\\Services\\AIElementorPageBuilder',
             'includes/Services/SEOHealthFixer.php'   => 'WNQ\\Services\\SEOHealthFixer',
             'includes/Controllers/SEOAgentController.php' => 'WNQ\\Controllers\\SEOAgentController',

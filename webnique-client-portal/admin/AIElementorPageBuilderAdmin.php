@@ -13,6 +13,7 @@ namespace WNQ\Admin;
 use WNQ\Models\Client;
 use WNQ\Models\SEOHub;
 use WNQ\Services\AIElementorPageBuilder;
+use WNQ\Services\ElementorSectionLibrary;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -46,6 +47,7 @@ final class AIElementorPageBuilderAdmin
 
         $created = isset($_GET['created']) ? absint($_GET['created']) : 0;
         $error = isset($_GET['error']) ? sanitize_text_field(wp_unslash($_GET['error'])) : '';
+        $section_templates = ElementorSectionLibrary::templates();
         $result = $created ? get_transient(self::resultTransientKey()) : false;
         if (is_array($result)) {
             delete_transient(self::resultTransientKey());
@@ -75,7 +77,7 @@ final class AIElementorPageBuilderAdmin
   <div class="wnq-hub-section-header">
     <div>
       <h2>Generate Editable Elementor Draft</h2>
-      <p>Paste or upload an Elementor JSON export, then provide a JSON payload of variables. The page is always created as a draft.</p>
+      <p>Choose a reusable Elementor section or paste a custom Elementor JSON export, then provide a JSON payload of variables. The page is always created as a draft.</p>
     </div>
   </div>
 
@@ -112,17 +114,28 @@ final class AIElementorPageBuilderAdmin
       <?php endif; ?>
     </div>
 
+    <div class="wnq-ai-elementor-template-source">
+      <label for="wnq_section_template_key"><strong>Section Template</strong></label>
+      <select id="wnq_section_template_key" name="section_template_key">
+        <?php foreach ($section_templates as $key => $template): ?>
+          <option value="<?php echo esc_attr($key); ?>"><?php echo esc_html($template['label'] ?? $key); ?></option>
+        <?php endforeach; ?>
+        <option value="custom">Custom pasted/uploaded Elementor JSON</option>
+      </select>
+      <p class="description">For this first test, select the built-in hero section and only paste your variable JSON. Use Custom when you want to paste a full Elementor template.</p>
+    </div>
+
     <div class="wnq-ai-elementor-grid">
       <div class="wnq-ai-elementor-field">
-        <label for="wnq_elementor_template"><strong>Elementor JSON Template</strong></label>
-        <p class="description">Use an exported Elementor template. If a file is uploaded, it overrides the pasted text.</p>
+        <label for="wnq_elementor_template"><strong>Custom Elementor JSON Template</strong></label>
+        <p class="description">Only needed when Section Template is set to Custom. If a file is uploaded, it overrides the pasted text.</p>
         <input type="file" name="elementor_template_file" accept=".json,application/json">
         <textarea id="wnq_elementor_template" name="elementor_template" rows="18" spellcheck="false" placeholder='{"content":[...],"page_settings":{"hide_title":"yes"}}'></textarea>
       </div>
 
       <div class="wnq-ai-elementor-field">
         <label for="wnq_variables_json"><strong>JSON Variable Payload</strong></label>
-        <p class="description">Supported placeholders include primary_keyword, service, city, state, h1, cta_title, cta_text, title_tag, and meta_description.</p>
+        <p class="description">For the built-in hero, use placeholders like h1, primary_keyword, hero_subtitle, hero_description, CTA text/URLs, slide URLs, and social URL.</p>
         <input type="file" name="variables_json_file" accept=".json,application/json">
         <textarea id="wnq_variables_json" name="variables_json" rows="18" spellcheck="false" placeholder='{"service":"Land Clearing","city":"Lakeland"}'></textarea>
       </div>
@@ -147,9 +160,10 @@ final class AIElementorPageBuilderAdmin
 
 <div class="wnq-hub-section">
   <h2>Examples</h2>
+  <p class="description">This is the first reusable section AI can use. Paste the example variables, change the copy/URLs, select a client site, and generate a draft.</p>
   <div class="wnq-ai-elementor-grid">
     <details open>
-      <summary><strong>Example Elementor JSON Template</strong></summary>
+      <summary><strong>Built-in Hero Elementor JSON</strong></summary>
       <pre><?php echo esc_html(wp_json_encode(self::exampleTemplate(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)); ?></pre>
     </details>
     <details open>
@@ -172,6 +186,14 @@ final class AIElementorPageBuilderAdmin
   }
   .wnq-ai-elementor-target {
     margin-bottom: 20px;
+  }
+  .wnq-ai-elementor-template-source {
+    margin-bottom: 20px;
+    max-width: 760px;
+  }
+  .wnq-ai-elementor-template-source select {
+    width: 100%;
+    margin-top: 8px;
   }
   .wnq-ai-elementor-target select {
     max-width: 760px;
@@ -219,12 +241,23 @@ final class AIElementorPageBuilderAdmin
         check_admin_referer('wnq_ai_elementor_generate');
 
         $agent_key_id = absint($_POST['agent_key_id'] ?? 0);
-        $template_json = self::readTextInputOrFile('elementor_template', 'elementor_template_file');
+        $section_template_key = sanitize_key((string)($_POST['section_template_key'] ?? ElementorSectionLibrary::LOCAL_SERVICE_HERO));
+        $template_json = '';
         $variables_json = self::readTextInputOrFile('variables_json', 'variables_json_file');
         $variables = json_decode(trim($variables_json), true);
 
         if (!is_array($variables)) {
             self::redirectWithError('Invalid variable JSON: ' . json_last_error_msg());
+        }
+
+        if ($section_template_key === 'custom') {
+            $template_json = self::readTextInputOrFile('elementor_template', 'elementor_template_file');
+        } else {
+            $template_json = ElementorSectionLibrary::templateJson($section_template_key);
+            if ($template_json === '') {
+                self::redirectWithError('Unknown Elementor section template selected.');
+            }
+            $variables = array_merge(ElementorSectionLibrary::defaults($section_template_key), $variables);
         }
 
         $result = AIElementorPageBuilder::generateRemoteDraft($agent_key_id, $template_json, $variables, [
@@ -347,102 +380,11 @@ final class AIElementorPageBuilderAdmin
 
     private static function exampleVariables(): array
     {
-        return [
-            'primary_keyword'  => 'Land Clearing in Lakeland FL',
-            'service'          => 'Land Clearing',
-            'city'             => 'Lakeland',
-            'state'            => 'FL',
-            'title_tag'        => 'Land Clearing in Lakeland FL | Free Estimates',
-            'meta_description' => 'Need land clearing in Lakeland FL? Get fast and affordable land clearing services.',
-            'h1'               => 'Land Clearing in Lakeland FL',
-            'cta_title'        => 'Get a Free Land Clearing Estimate',
-            'cta_text'         => 'Call now for fast land clearing services in Lakeland FL.',
-        ];
+        return ElementorSectionLibrary::exampleVariables(ElementorSectionLibrary::LOCAL_SERVICE_HERO);
     }
 
     private static function exampleTemplate(): array
     {
-        return [
-            'content' => [
-                [
-                    'id'       => 'hero001',
-                    'elType'   => 'container',
-                    'settings' => [
-                        'flex_direction' => 'column',
-                        'padding' => [
-                            'unit' => 'px',
-                            'top' => '72',
-                            'right' => '40',
-                            'bottom' => '72',
-                            'left' => '40',
-                            'isLinked' => false,
-                        ],
-                    ],
-                    'elements' => [
-                        [
-                            'id' => 'heading1',
-                            'elType' => 'widget',
-                            'widgetType' => 'heading',
-                            'settings' => [
-                                'title' => '{{h1}}',
-                                'header_size' => 'h1',
-                            ],
-                            'elements' => [],
-                        ],
-                        [
-                            'id' => 'intro001',
-                            'elType' => 'widget',
-                            'widgetType' => 'text-editor',
-                            'settings' => [
-                                'editor' => '<p><strong>{{primary_keyword}}</strong> from a trusted local team. {{cta_text}}</p>',
-                            ],
-                            'elements' => [],
-                        ],
-                    ],
-                ],
-                [
-                    'id' => 'cta001',
-                    'elType' => 'container',
-                    'settings' => [
-                        'flex_direction' => 'column',
-                        'padding' => [
-                            'unit' => 'px',
-                            'top' => '48',
-                            'right' => '40',
-                            'bottom' => '48',
-                            'left' => '40',
-                            'isLinked' => false,
-                        ],
-                    ],
-                    'elements' => [
-                        [
-                            'id' => 'ctahead1',
-                            'elType' => 'widget',
-                            'widgetType' => 'heading',
-                            'settings' => [
-                                'title' => '{{cta_title}}',
-                                'header_size' => 'h2',
-                            ],
-                            'elements' => [],
-                        ],
-                        [
-                            'id' => 'ctatext1',
-                            'elType' => 'widget',
-                            'widgetType' => 'text-editor',
-                            'settings' => [
-                                'editor' => '<p>{{service}} services available in {{city}}, {{state}}.</p>',
-                            ],
-                            'elements' => [],
-                        ],
-                    ],
-                ],
-            ],
-            'page_settings' => [
-                'hide_title' => 'yes',
-            ],
-            'version' => '0.4',
-            'title' => 'Service City Template',
-            'type' => 'page',
-        ];
+        return ElementorSectionLibrary::template(ElementorSectionLibrary::LOCAL_SERVICE_HERO) ?: [];
     }
 }
