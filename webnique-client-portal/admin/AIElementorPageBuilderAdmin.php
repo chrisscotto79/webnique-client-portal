@@ -55,6 +55,16 @@ final class AIElementorPageBuilderAdmin
 
         if ($created && is_array($result)) {
             echo '<div class="wnq-hub-notice success"><p><strong>Draft created on:</strong> ' . esc_html($result['site_url'] ?? 'Client site') . '</p>';
+            if (isset($result['images_imported'])) {
+                echo '<p><strong>Images imported to client media:</strong> ' . esc_html((string)absint($result['images_imported'])) . '</p>';
+            }
+            if (!empty($result['image_import_errors']) && is_array($result['image_import_errors'])) {
+                echo '<p><strong>Image import warnings:</strong></p><ul style="margin-left:18px;">';
+                foreach ($result['image_import_errors'] as $url => $warning) {
+                    echo '<li><code>' . esc_html((string)$url) . '</code>: ' . esc_html((string)$warning) . '</li>';
+                }
+                echo '</ul>';
+            }
             echo '<p style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">';
             if (!empty($result['elementor_url'])) {
                 echo '<a class="wnq-btn wnq-btn-primary" target="_blank" rel="noopener" href="' . esc_url($result['elementor_url']) . '">Edit Draft</a>';

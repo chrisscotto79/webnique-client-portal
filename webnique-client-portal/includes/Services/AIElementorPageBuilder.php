@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
 
 final class AIElementorPageBuilder
 {
-    public const MIN_REMOTE_AGENT_VERSION = '1.1.5';
+    public const MIN_REMOTE_AGENT_VERSION = '1.1.6';
 
     /**
      * Generate a draft page from an Elementor JSON template and variables.

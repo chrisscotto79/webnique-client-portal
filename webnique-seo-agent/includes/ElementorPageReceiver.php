@@ -120,6 +120,8 @@ final class ElementorPageReceiver
             return new \WP_REST_Response(['error' => $page_id->get_error_message()], 500);
         }
 
+        $image_import = self::localizeElementorImages($elementor, (int)$page_id, $title);
+
         update_post_meta($page_id, '_elementor_edit_mode', 'builder');
         update_post_meta($page_id, '_elementor_template_type', 'wp-page');
         update_post_meta($page_id, '_elementor_version', defined('ELEMENTOR_VERSION') ? ELEMENTOR_VERSION : '3.0.0');
@@ -131,6 +133,8 @@ final class ElementorPageReceiver
 
         if ($featured_image_id > 0 && get_post_type($featured_image_id) === 'attachment') {
             set_post_thumbnail($page_id, $featured_image_id);
+        } elseif (!empty($image_import['first_id'])) {
+            set_post_thumbnail($page_id, (int)$image_import['first_id']);
         }
 
         self::saveSeoMeta((int)$page_id, $title_tag, $meta_desc, $focus_kw);
@@ -145,7 +149,173 @@ final class ElementorPageReceiver
             'edit_url'      => admin_url('post.php?post=' . (int)$page_id . '&action=edit'),
             'elementor_url' => admin_url('post.php?post=' . (int)$page_id . '&action=elementor'),
             'pages_url'     => admin_url('edit.php?post_type=page'),
+            'images_imported' => count((array)($image_import['imported'] ?? [])),
+            'image_import_errors' => (array)($image_import['errors'] ?? []),
         ], 201);
+    }
+
+    private static function localizeElementorImages(array &$elementor, int $page_id, string $title): array
+    {
+        $cache = [];
+        $result = [
+            'imported' => [],
+            'errors'   => [],
+            'first_id' => 0,
+        ];
+
+        self::walkElementorImages($elementor, $page_id, $title, $cache, $result);
+
+        return $result;
+    }
+
+    private static function walkElementorImages(&$value, int $page_id, string $title, array &$cache, array &$result): void
+    {
+        if (!is_array($value)) {
+            return;
+        }
+
+        if (self::isElementorImageValue($value)) {
+            $original_url = trim((string)($value['url'] ?? ''));
+            if (self::shouldImportImageUrl($original_url)) {
+                if (!array_key_exists($original_url, $cache)) {
+                    $cache[$original_url] = self::sideloadRemoteImage($original_url, $page_id, $title);
+                }
+
+                $import = $cache[$original_url];
+                if (is_array($import) && !empty($import['id']) && !empty($import['url'])) {
+                    $value['id'] = (int)$import['id'];
+                    $value['url'] = (string)$import['url'];
+                    if (array_key_exists('source', $value)) {
+                        $value['source'] = 'library';
+                    }
+                    if (!$result['first_id']) {
+                        $result['first_id'] = (int)$import['id'];
+                    }
+                    $result['imported'][$original_url] = $import;
+                } elseif (is_string($import) && $import !== '') {
+                    $result['errors'][$original_url] = $import;
+                }
+            }
+        }
+
+        foreach ($value as &$child) {
+            if (is_array($child)) {
+                self::walkElementorImages($child, $page_id, $title, $cache, $result);
+            }
+        }
+        unset($child);
+    }
+
+    private static function isElementorImageValue(array $value): bool
+    {
+        if (!array_key_exists('url', $value) || !is_string($value['url'])) {
+            return false;
+        }
+
+        // Link controls also contain a "url" key. Image controls have an id/source/alt/size shape.
+        if (array_key_exists('is_external', $value) || array_key_exists('nofollow', $value) || array_key_exists('custom_attributes', $value)) {
+            return false;
+        }
+
+        return array_key_exists('id', $value)
+            || array_key_exists('source', $value)
+            || array_key_exists('alt', $value)
+            || array_key_exists('size', $value);
+    }
+
+    private static function shouldImportImageUrl(string $url): bool
+    {
+        if ($url === '' || strpos($url, '{{') !== false) {
+            return false;
+        }
+
+        if (!preg_match('#^https?://#i', $url)) {
+            return false;
+        }
+
+        $source_host = strtolower((string)parse_url($url, PHP_URL_HOST));
+        $site_host = strtolower((string)parse_url(home_url('/'), PHP_URL_HOST));
+        if ($source_host !== '' && $site_host !== '' && $source_host === $site_host) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static function sideloadRemoteImage(string $url, int $page_id, string $title)
+    {
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        require_once ABSPATH . 'wp-admin/includes/media.php';
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+
+        $tmp = download_url($url, 45);
+        if (is_wp_error($tmp)) {
+            return $tmp->get_error_message();
+        }
+
+        $mime = self::detectImageMime((string)$tmp);
+        if ($mime === '') {
+            @unlink((string)$tmp);
+            return 'Downloaded file was not a supported image.';
+        }
+
+        $ext = self::extensionForMime($mime);
+        $filename = sanitize_file_name(sanitize_title($title ?: 'elementor-image') . '-' . substr(md5($url), 0, 10) . '.' . $ext);
+        $file = [
+            'name'     => $filename,
+            'type'     => $mime,
+            'tmp_name' => (string)$tmp,
+            'error'    => 0,
+            'size'     => filesize((string)$tmp) ?: 0,
+        ];
+
+        $attachment_id = media_handle_sideload($file, $page_id, $title);
+        if (is_wp_error($attachment_id)) {
+            @unlink((string)$tmp);
+            return $attachment_id->get_error_message();
+        }
+
+        update_post_meta((int)$attachment_id, '_wp_attachment_image_alt', $title);
+
+        $local_url = wp_get_attachment_url((int)$attachment_id);
+        if (!$local_url) {
+            return 'Image imported, but WordPress did not return an attachment URL.';
+        }
+
+        return [
+            'id'  => (int)$attachment_id,
+            'url' => esc_url_raw($local_url),
+        ];
+    }
+
+    private static function detectImageMime(string $file): string
+    {
+        $mime = '';
+        if (function_exists('wp_get_image_mime')) {
+            $mime = (string)wp_get_image_mime($file);
+        }
+
+        if ($mime === '' && function_exists('getimagesize')) {
+            $size = @getimagesize($file);
+            if (is_array($size) && !empty($size['mime'])) {
+                $mime = (string)$size['mime'];
+            }
+        }
+
+        $allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        return in_array($mime, $allowed, true) ? $mime : '';
+    }
+
+    private static function extensionForMime(string $mime): string
+    {
+        $map = [
+            'image/jpeg' => 'jpg',
+            'image/png'  => 'png',
+            'image/gif'  => 'gif',
+            'image/webp' => 'webp',
+        ];
+
+        return $map[$mime] ?? 'jpg';
     }
 
     private static function uniquePageSlug(string $base_slug): string
