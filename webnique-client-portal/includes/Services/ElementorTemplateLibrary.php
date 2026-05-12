@@ -145,7 +145,7 @@ final class ElementorTemplateLibrary
             return [];
         }
 
-        preg_match_all('/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/', $json, $matches);
+        preg_match_all('/\{\{\s*([^}]+?)\s*\}\}/', $json, $matches);
         $variables = array_values(array_unique(array_map([self::class, 'cleanPlaceholderKey'], $matches[1] ?? [])));
         sort($variables, SORT_NATURAL | SORT_FLAG_CASE);
 

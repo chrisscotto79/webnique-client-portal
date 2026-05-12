@@ -191,8 +191,8 @@ final class AIElementorPageBuilder
             return $value;
         }
 
-        return preg_replace_callback('/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/', static function ($matches) use ($tokens) {
-            $key = $matches[1];
+        return preg_replace_callback('/\{\{\s*([^}]+?)\s*\}\}/', static function ($matches) use ($tokens) {
+            $key = self::cleanPlaceholderKey((string)$matches[1]);
             return array_key_exists($key, $tokens) ? $tokens[$key] : $matches[0];
         }, $value);
     }
