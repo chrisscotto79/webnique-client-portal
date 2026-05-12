@@ -256,7 +256,7 @@ final class ElementorPageReceiver
         require_once ABSPATH . 'wp-admin/includes/media.php';
         require_once ABSPATH . 'wp-admin/includes/image.php';
 
-        $tmp = download_url($url, 45);
+        $tmp = self::downloadUrlAllowingConfiguredHubHost($url);
         if (is_wp_error($tmp)) {
             return $tmp->get_error_message();
         }
@@ -294,6 +294,29 @@ final class ElementorPageReceiver
             'id'  => (int)$attachment_id,
             'url' => esc_url_raw($local_url),
         ];
+    }
+
+    private static function downloadUrlAllowingConfiguredHubHost(string $url)
+    {
+        $source_host = strtolower((string)parse_url($url, PHP_URL_HOST));
+        $config = get_option('wnqa_config', []);
+        $hub_host = strtolower((string)parse_url((string)($config['hub_url'] ?? ''), PHP_URL_HOST));
+        $allow_hub_host = null;
+
+        if ($source_host !== '' && $hub_host !== '' && $source_host === $hub_host) {
+            $allow_hub_host = static function ($is_external, $host) use ($hub_host) {
+                return strtolower((string)$host) === $hub_host ? true : $is_external;
+            };
+            add_filter('http_request_host_is_external', $allow_hub_host, 10, 2);
+        }
+
+        try {
+            return download_url($url, 45);
+        } finally {
+            if ($allow_hub_host) {
+                remove_filter('http_request_host_is_external', $allow_hub_host, 10);
+            }
+        }
     }
 
     private static function isDataImageUri(string $url): bool

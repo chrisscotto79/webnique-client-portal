@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.9
+Stable tag: 2.4.10
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
