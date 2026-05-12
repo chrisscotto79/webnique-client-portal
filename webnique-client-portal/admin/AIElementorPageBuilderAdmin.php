@@ -177,7 +177,7 @@ final class AIElementorPageBuilderAdmin
 
     <div class="wnq-ai-elementor-image-uploads">
       <h3>Optional Image Uploads</h3>
-      <p class="description">Use these for ChatGPT/private image links. Uploaded files override the matching JSON image variable and are saved into the selected client site's Media Library.</p>
+      <p class="description">Use these for ChatGPT/private image links. Uploaded files are saved to this hub first, then the selected client site imports them into its own Media Library.</p>
       <div class="wnq-ai-elementor-image-grid">
         <?php foreach (self::imageUploadFields() as $field => $label): ?>
           <label>
@@ -520,16 +520,28 @@ final class AIElementorPageBuilderAdmin
                 return new \WP_Error('wnq_image_upload_type', $label . ' must be a JPG, PNG, GIF, or WebP image.');
             }
 
-            $contents = file_get_contents($tmp_name);
-            if (!is_string($contents) || $contents === '') {
-                return new \WP_Error('wnq_image_upload_read', $label . ' could not be read.');
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+            require_once ABSPATH . 'wp-admin/includes/media.php';
+            require_once ABSPATH . 'wp-admin/includes/image.php';
+
+            $attachment_id = media_handle_upload($input, 0, [], ['test_form' => false]);
+            if (is_wp_error($attachment_id)) {
+                return new \WP_Error('wnq_image_upload_media', $label . ' could not be added to the hub Media Library: ' . $attachment_id->get_error_message());
             }
 
-            $variables[$field] = 'data:' . $mime . ';base64,' . base64_encode($contents);
+            $url = wp_get_attachment_url((int)$attachment_id);
+            if (!$url) {
+                return new \WP_Error('wnq_image_upload_url', $label . ' was uploaded, but WordPress did not return a media URL.');
+            }
+
+            $variables[$field] = esc_url_raw((string)$url);
+            $variables['uploaded_image_fields'][] = $field;
 
             $alt_field = str_replace('_url', '_alt', $field);
             if (empty($existing_variables[$alt_field])) {
-                $variables[$alt_field] = preg_replace('/\.[a-z0-9]+$/i', '', str_replace(['-', '_'], ' ', $name));
+                $alt = preg_replace('/\.[a-z0-9]+$/i', '', str_replace(['-', '_'], ' ', $name));
+                $variables[$alt_field] = $alt;
+                update_post_meta((int)$attachment_id, '_wp_attachment_image_alt', sanitize_text_field((string)$alt));
             }
         }
 
