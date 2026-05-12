@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
 
 final class AIElementorPageBuilder
 {
-    public const MIN_REMOTE_AGENT_VERSION = '1.1.6';
+    public const MIN_REMOTE_AGENT_VERSION = '1.1.7';
 
     /**
      * Generate a draft page from an Elementor JSON template and variables.
@@ -243,7 +243,7 @@ final class AIElementorPageBuilder
         $aliases = [
             'section_title' => ['template_title'],
             'hero_subheadline' => ['hero_description', 'hero_subtitle', 'cta_text'],
-            'hero_background_image_url' => ['hero_background_placeholder_url', 'hero_slide_1_url'],
+            'hero_background_image_url' => ['hero_slide_1_url', 'hero_background_placeholder_url'],
             'primary_cta_text' => ['cta_button_1_text', 'cta_button_text'],
             'primary_cta_url' => ['cta_button_1_url'],
             'secondary_cta_text' => ['cta_button_2_text'],
@@ -258,7 +258,9 @@ final class AIElementorPageBuilder
                     continue;
                 }
 
-                if (!self::hasUsableVariable($variables[$target] ?? null) || self::isLegacyAlias($source)) {
+                $target_is_uploaded_image = self::isUploadedImageVariable($variables[$target] ?? null);
+                $target_needs_value = !self::hasUsableVariable($variables[$target] ?? null);
+                if (!$target_is_uploaded_image && ($target_needs_value || self::isLegacyAlias($source))) {
                     $variables[$target] = $variables[$source];
                 }
 
@@ -292,6 +294,11 @@ final class AIElementorPageBuilder
         }
 
         return trim((string)$value) !== '';
+    }
+
+    private static function isUploadedImageVariable($value): bool
+    {
+        return is_string($value) && preg_match('#^data:image/(?:jpeg|jpg|png|gif|webp);base64,#i', $value) === 1;
     }
 
     private static function isLegacyAlias(string $source): bool
@@ -533,6 +540,14 @@ final class AIElementorPageBuilder
             return [
                 'success' => false,
                 'message' => 'The selected client site is missing its site URL or agent API key.',
+            ];
+        }
+
+        $agent_version = trim((string)($agent['plugin_version'] ?? ''));
+        if ($agent_version !== '' && version_compare($agent_version, self::MIN_REMOTE_AGENT_VERSION, '<')) {
+            return [
+                'success' => false,
+                'message' => 'The selected client site needs Golden Web Marketing SEO Agent ' . self::MIN_REMOTE_AGENT_VERSION . ' or newer. Update the agent plugin on that site, then try again.',
             ];
         }
 

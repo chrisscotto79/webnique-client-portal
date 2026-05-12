@@ -61,7 +61,11 @@ final class AIElementorPageBuilderAdmin
             if (!empty($result['image_import_errors']) && is_array($result['image_import_errors'])) {
                 echo '<p><strong>Image import warnings:</strong></p><ul style="margin-left:18px;">';
                 foreach ($result['image_import_errors'] as $url => $warning) {
-                    echo '<li><code>' . esc_html((string)$url) . '</code>: ' . esc_html((string)$warning) . '</li>';
+                    $display_url = (string)$url;
+                    if (strlen($display_url) > 180) {
+                        $display_url = substr($display_url, 0, 180) . '...';
+                    }
+                    echo '<li><code>' . esc_html($display_url) . '</code>: ' . esc_html((string)$warning) . '</li>';
                 }
                 echo '</ul>';
             }
@@ -154,7 +158,7 @@ final class AIElementorPageBuilderAdmin
 
       <div class="wnq-ai-elementor-field">
         <label for="wnq_variables_json"><strong>JSON Variable Payload</strong></label>
-        <p class="description">Use the variables from the selected sections. Remote image URLs, including ChatGPT image URLs, are sent to the client site and imported into its Media Library by the agent.</p>
+        <p class="description">Use the variables from the selected sections. Public remote image URLs are imported by the client agent. ChatGPT image URLs are usually private, so use the image upload fields below for those.</p>
         <input type="file" name="variables_json_file" accept=".json,application/json">
         <textarea id="wnq_variables_json" name="variables_json" rows="18" spellcheck="false" placeholder='{"service":"Land Clearing","city":"Lakeland"}'></textarea>
       </div>
@@ -169,6 +173,20 @@ final class AIElementorPageBuilderAdmin
         <strong>Optional Featured Image ID</strong>
         <input type="number" min="1" step="1" name="featured_image_id" placeholder="Client site WordPress attachment ID">
       </label>
+    </div>
+
+    <div class="wnq-ai-elementor-image-uploads">
+      <h3>Optional Image Uploads</h3>
+      <p class="description">Use these for ChatGPT/private image links. Uploaded files override the matching JSON image variable and are saved into the selected client site's Media Library.</p>
+      <div class="wnq-ai-elementor-image-grid">
+        <?php foreach (self::imageUploadFields() as $field => $label): ?>
+          <label>
+            <strong><?php echo esc_html($label); ?></strong>
+            <code>{{<?php echo esc_html($field); ?>}}</code>
+            <input type="file" name="<?php echo esc_attr('image_upload_' . $field); ?>" accept="image/jpeg,image/png,image/gif,image/webp">
+          </label>
+        <?php endforeach; ?>
+      </div>
     </div>
 
     <p>
@@ -258,6 +276,29 @@ final class AIElementorPageBuilderAdmin
   .wnq-ai-elementor-options input {
     margin-top: 8px;
   }
+  .wnq-ai-elementor-image-uploads {
+    margin-top: 22px;
+  }
+  .wnq-ai-elementor-image-uploads h3 {
+    margin-bottom: 4px;
+  }
+  .wnq-ai-elementor-image-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    margin-top: 12px;
+  }
+  .wnq-ai-elementor-image-grid label {
+    border: 1px solid #d7dde8;
+    border-radius: 8px;
+    display: grid;
+    gap: 7px;
+    padding: 12px;
+  }
+  .wnq-ai-elementor-image-grid code {
+    color: #667085;
+    font-size: 12px;
+  }
   .wnq-ai-elementor-grid pre {
     max-height: 420px;
     overflow: auto;
@@ -305,6 +346,14 @@ final class AIElementorPageBuilderAdmin
 
             $template_json = (string)wp_json_encode($template, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
             $variables = array_merge(ElementorSectionLibrary::defaultsFor($section_template_keys), $variables);
+        }
+
+        $uploaded_images = self::uploadedImageVariables($variables);
+        if (is_wp_error($uploaded_images)) {
+            self::redirectWithError($uploaded_images->get_error_message());
+        }
+        if ($uploaded_images) {
+            $variables = array_merge($variables, $uploaded_images);
         }
 
         $result = AIElementorPageBuilder::generateRemoteDraft($agent_key_id, $template_json, $variables, [
@@ -423,6 +472,94 @@ final class AIElementorPageBuilderAdmin
         });
 
         return $agents;
+    }
+
+    private static function imageUploadFields(): array
+    {
+        return [
+            'hero_background_image_url' => 'Hero background image',
+            'hero_slide_1_url'          => 'Hero slide 1',
+            'hero_slide_2_url'          => 'Hero slide 2',
+            'hero_slide_3_url'          => 'Hero slide 3',
+            'content_image_url'         => 'Content section image',
+        ];
+    }
+
+    private static function uploadedImageVariables(array $existing_variables = [])
+    {
+        $variables = [];
+        $max_bytes = 5 * 1024 * 1024;
+
+        foreach (self::imageUploadFields() as $field => $label) {
+            $input = 'image_upload_' . $field;
+            if (empty($_FILES[$input]) || !is_array($_FILES[$input])) {
+                continue;
+            }
+
+            $file = $_FILES[$input];
+            $error = (int)($file['error'] ?? UPLOAD_ERR_NO_FILE);
+            if ($error === UPLOAD_ERR_NO_FILE) {
+                continue;
+            }
+            if ($error !== UPLOAD_ERR_OK) {
+                return new \WP_Error('wnq_image_upload_failed', $label . ' upload failed.');
+            }
+
+            $tmp_name = (string)($file['tmp_name'] ?? '');
+            $name = sanitize_file_name((string)($file['name'] ?? $field));
+            $size = (int)($file['size'] ?? 0);
+            if ($tmp_name === '' || !is_uploaded_file($tmp_name)) {
+                return new \WP_Error('wnq_image_upload_invalid', $label . ' was not a valid uploaded file.');
+            }
+            if ($size <= 0 || $size > $max_bytes) {
+                return new \WP_Error('wnq_image_upload_size', $label . ' must be 5 MB or smaller.');
+            }
+
+            $mime = self::detectUploadedImageMime($tmp_name, $name);
+            if ($mime === '') {
+                return new \WP_Error('wnq_image_upload_type', $label . ' must be a JPG, PNG, GIF, or WebP image.');
+            }
+
+            $contents = file_get_contents($tmp_name);
+            if (!is_string($contents) || $contents === '') {
+                return new \WP_Error('wnq_image_upload_read', $label . ' could not be read.');
+            }
+
+            $variables[$field] = 'data:' . $mime . ';base64,' . base64_encode($contents);
+
+            $alt_field = str_replace('_url', '_alt', $field);
+            if (empty($existing_variables[$alt_field])) {
+                $variables[$alt_field] = preg_replace('/\.[a-z0-9]+$/i', '', str_replace(['-', '_'], ' ', $name));
+            }
+        }
+
+        return $variables;
+    }
+
+    private static function detectUploadedImageMime(string $tmp_name, string $name): string
+    {
+        $mime = '';
+
+        if (!function_exists('wp_check_filetype_and_ext')) {
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+        }
+
+        if (function_exists('wp_check_filetype_and_ext')) {
+            $checked = wp_check_filetype_and_ext($tmp_name, $name);
+            if (is_array($checked) && !empty($checked['type'])) {
+                $mime = (string)$checked['type'];
+            }
+        }
+
+        if ($mime === '' && function_exists('getimagesize')) {
+            $size = @getimagesize($tmp_name);
+            if (is_array($size) && !empty($size['mime'])) {
+                $mime = (string)$size['mime'];
+            }
+        }
+
+        $allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        return in_array($mime, $allowed, true) ? $mime : '';
     }
 
     private static function exampleVariables(): array
