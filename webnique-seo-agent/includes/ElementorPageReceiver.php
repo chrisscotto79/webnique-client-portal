@@ -191,9 +191,9 @@ final class ElementorPageReceiver
                     if (!$result['first_id']) {
                         $result['first_id'] = (int)$import['id'];
                     }
-                    $result['imported'][$original_url] = $import;
+                    $result['imported'][self::imageResultKey($original_url)] = $import;
                 } elseif (is_string($import) && $import !== '') {
-                    $result['errors'][$original_url] = $import;
+                    $result['errors'][self::imageResultKey($original_url)] = $import;
                 }
             }
         }
@@ -229,6 +229,10 @@ final class ElementorPageReceiver
             return false;
         }
 
+        if (self::isDataImageUri($url)) {
+            return true;
+        }
+
         if (!preg_match('#^https?://#i', $url)) {
             return false;
         }
@@ -244,6 +248,10 @@ final class ElementorPageReceiver
 
     private static function sideloadRemoteImage(string $url, int $page_id, string $title)
     {
+        if (self::isDataImageUri($url)) {
+            return self::sideloadDataImage($url, $page_id, $title);
+        }
+
         require_once ABSPATH . 'wp-admin/includes/file.php';
         require_once ABSPATH . 'wp-admin/includes/media.php';
         require_once ABSPATH . 'wp-admin/includes/image.php';
@@ -264,6 +272,89 @@ final class ElementorPageReceiver
         $file = [
             'name'     => $filename,
             'type'     => $mime,
+            'tmp_name' => (string)$tmp,
+            'error'    => 0,
+            'size'     => filesize((string)$tmp) ?: 0,
+        ];
+
+        $attachment_id = media_handle_sideload($file, $page_id, $title);
+        if (is_wp_error($attachment_id)) {
+            @unlink((string)$tmp);
+            return $attachment_id->get_error_message();
+        }
+
+        update_post_meta((int)$attachment_id, '_wp_attachment_image_alt', $title);
+
+        $local_url = wp_get_attachment_url((int)$attachment_id);
+        if (!$local_url) {
+            return 'Image imported, but WordPress did not return an attachment URL.';
+        }
+
+        return [
+            'id'  => (int)$attachment_id,
+            'url' => esc_url_raw($local_url),
+        ];
+    }
+
+    private static function isDataImageUri(string $url): bool
+    {
+        return preg_match('#^data:image/(?:jpeg|jpg|png|gif|webp);base64,#i', $url) === 1;
+    }
+
+    private static function imageResultKey(string $url): string
+    {
+        if (self::isDataImageUri($url)) {
+            return 'uploaded-image-' . substr(md5($url), 0, 10);
+        }
+
+        return $url;
+    }
+
+    private static function sideloadDataImage(string $data_uri, int $page_id, string $title)
+    {
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        require_once ABSPATH . 'wp-admin/includes/media.php';
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+
+        if (!preg_match('#^data:(image/(?:jpeg|jpg|png|gif|webp));base64,(.+)$#is', $data_uri, $matches)) {
+            return 'Uploaded image data was not a supported image.';
+        }
+
+        $mime = strtolower($matches[1]);
+        if ($mime === 'image/jpg') {
+            $mime = 'image/jpeg';
+        }
+
+        $binary = base64_decode(preg_replace('/\s+/', '', (string)$matches[2]), true);
+        if (!is_string($binary) || $binary === '') {
+            return 'Uploaded image data could not be decoded.';
+        }
+
+        if (strlen($binary) > 5 * 1024 * 1024) {
+            return 'Uploaded image must be 5 MB or smaller.';
+        }
+
+        $ext = self::extensionForMime($mime);
+        $tmp = wp_tempnam('wnq-elementor-image.' . $ext);
+        if (!$tmp) {
+            return 'Could not create a temporary file for uploaded image.';
+        }
+
+        if (file_put_contents($tmp, $binary) === false) {
+            @unlink($tmp);
+            return 'Could not write uploaded image to a temporary file.';
+        }
+
+        $detected = self::detectImageMime((string)$tmp);
+        if ($detected === '') {
+            @unlink($tmp);
+            return 'Uploaded file was not a supported image.';
+        }
+
+        $filename = sanitize_file_name(sanitize_title($title ?: 'elementor-image') . '-' . substr(md5($data_uri), 0, 10) . '.' . self::extensionForMime($detected));
+        $file = [
+            'name'     => $filename,
+            'type'     => $detected,
             'tmp_name' => (string)$tmp,
             'error'    => 0,
             'size'     => filesize((string)$tmp) ?: 0,
