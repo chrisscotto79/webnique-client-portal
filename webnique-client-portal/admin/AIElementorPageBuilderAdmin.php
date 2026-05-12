@@ -106,11 +106,46 @@ final class AIElementorPageBuilderAdmin
             echo '</div>';
         }
 
+        $saved_templates = ElementorTemplateLibrary::all();
+        $agents = self::connectedAgents();
+        $saved_template_count = count($saved_templates);
+        $connected_site_count = count($agents);
+        $available_template_count = count($section_templates);
+
         ?>
-<div class="wnq-hub-section">
+<div class="wnq-ai-builder-page">
+  <div class="wnq-ai-builder-hero">
+    <div class="wnq-ai-builder-hero-copy">
+      <span class="wnq-ai-eyebrow">Golden Web Marketing AI Builder</span>
+      <h2>Build editable Elementor drafts from reusable sections.</h2>
+      <p>Upload your section templates, let AI fill the variables, then send clean Elementor drafts to the selected client WordPress site.</p>
+      <div class="wnq-ai-quick-links" aria-label="AI builder workflow links">
+        <a href="#wnq-template-library">Template Library</a>
+        <a href="#wnq-ai-payload">AI Payload</a>
+        <a href="#wnq-draft-builder">Draft Builder</a>
+      </div>
+    </div>
+    <div class="wnq-ai-builder-stats">
+      <div>
+        <strong><?php echo esc_html((string)$connected_site_count); ?></strong>
+        <span>Connected Sites</span>
+      </div>
+      <div>
+        <strong><?php echo esc_html((string)$available_template_count); ?></strong>
+        <span>Templates Ready</span>
+      </div>
+      <div>
+        <strong><?php echo esc_html((string)$saved_template_count); ?></strong>
+        <span>Saved Uploads</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="wnq-ai-workflow-grid">
+    <div class="wnq-hub-section wnq-ai-card" id="wnq-template-library">
   <div class="wnq-hub-section-header">
     <div>
-      <h2>Template Library</h2>
+      <h2><span class="wnq-ai-step">1</span>Template Library</h2>
       <p>Upload reusable Elementor JSON sections or pages. The software scans placeholders automatically and adds the saved template to the builder.</p>
     </div>
   </div>
@@ -159,7 +194,6 @@ final class AIElementorPageBuilderAdmin
     <p><button type="submit" class="wnq-btn wnq-btn-primary">Save Template to Library</button></p>
   </form>
 
-  <?php $saved_templates = ElementorTemplateLibrary::all(); ?>
   <?php if ($saved_templates): ?>
     <div class="wnq-ai-template-library-list">
       <?php foreach ($saved_templates as $key => $template): ?>
@@ -187,13 +221,18 @@ final class AIElementorPageBuilderAdmin
         </div>
       <?php endforeach; ?>
     </div>
+  <?php else: ?>
+    <div class="wnq-ai-empty-state">
+      <strong>No custom templates saved yet.</strong>
+      <span>Upload your first Elementor JSON section to start building a reusable library.</span>
+    </div>
   <?php endif; ?>
 </div>
 
-<div class="wnq-hub-section">
+<div class="wnq-hub-section wnq-ai-card" id="wnq-ai-payload">
   <div class="wnq-hub-section-header">
     <div>
-      <h2>AI Variable Payload Generator</h2>
+      <h2><span class="wnq-ai-step">2</span>AI Variable Payload Generator</h2>
       <p>Select the templates you want to use, describe the page, and AI will generate the JSON variables for those placeholders.</p>
     </div>
   </div>
@@ -239,10 +278,10 @@ final class AIElementorPageBuilderAdmin
   </form>
 </div>
 
-<div class="wnq-hub-section">
+<div class="wnq-hub-section wnq-ai-card wnq-ai-card-wide" id="wnq-draft-builder">
   <div class="wnq-hub-section-header">
     <div>
-      <h2>Generate Editable Elementor Draft</h2>
+      <h2><span class="wnq-ai-step">3</span>Generate Editable Elementor Draft</h2>
       <p>Choose one or more reusable Elementor sections or paste a custom Elementor JSON export, then provide a JSON payload of variables. The page is always created as a draft.</p>
     </div>
   </div>
@@ -251,7 +290,6 @@ final class AIElementorPageBuilderAdmin
     <?php wp_nonce_field('wnq_ai_elementor_generate'); ?>
     <input type="hidden" name="action" value="wnq_ai_elementor_generate">
 
-    <?php $agents = self::connectedAgents(); ?>
     <div class="wnq-ai-elementor-target">
       <label for="wnq_agent_key_id"><strong>Select Client / WordPress Site</strong></label>
       <select id="wnq_agent_key_id" name="agent_key_id" required>
@@ -360,8 +398,9 @@ final class AIElementorPageBuilderAdmin
     </p>
   </form>
 </div>
+  </div>
 
-<div class="wnq-hub-section">
+<div class="wnq-hub-section wnq-ai-card wnq-ai-examples">
   <h2>Examples</h2>
   <p class="description">These reusable sections can be stacked into one draft. Paste the example variables, change the copy/URLs, select a client site, and generate a draft.</p>
   <div class="wnq-ai-elementor-grid">
@@ -375,61 +414,290 @@ final class AIElementorPageBuilderAdmin
     </details>
   </div>
 </div>
+</div>
 
 <style>
-  .wnq-ai-elementor-grid {
+  .wnq-ai-builder-page {
+    --ai-bg: #070909;
+    --ai-panel: #101314;
+    --ai-panel-2: #15191b;
+    --ai-line: rgba(217, 190, 66, 0.18);
+    --ai-line-strong: rgba(217, 190, 66, 0.42);
+    --ai-gold: #d9be42;
+    --ai-gold-2: #f1d572;
+    --ai-text: #f6f2df;
+    --ai-muted: #a6acb3;
+    --ai-muted-2: #7d858e;
+    --ai-input: #0b0e10;
+    background:
+      radial-gradient(circle at 18% 0%, rgba(217, 190, 66, 0.13), transparent 30%),
+      linear-gradient(135deg, #070909 0%, #111517 52%, #080909 100%);
+    border: 1px solid rgba(217, 190, 66, 0.16);
+    border-radius: 22px;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.24);
+    color: var(--ai-text);
+    margin: 18px 0 30px;
+    overflow: hidden;
+    padding: 22px;
+  }
+  .wnq-ai-builder-page * {
+    box-sizing: border-box;
+  }
+  .wnq-ai-builder-page .description,
+  .wnq-ai-builder-page .wnq-hub-section-header p {
+    color: var(--ai-muted);
+  }
+  .wnq-ai-builder-hero {
+    align-items: stretch;
+    border: 1px solid var(--ai-line);
+    border-radius: 20px;
+    display: grid;
+    gap: 20px;
+    grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.75fr);
+    margin-bottom: 20px;
+    padding: 24px;
+    background:
+      linear-gradient(135deg, rgba(217, 190, 66, 0.12), rgba(217, 190, 66, 0.02)),
+      rgba(255, 255, 255, 0.02);
+  }
+  .wnq-ai-eyebrow {
+    color: var(--ai-gold-2);
+    display: inline-flex;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+  }
+  .wnq-ai-builder-hero h2 {
+    color: var(--ai-text);
+    font-size: clamp(28px, 4vw, 44px);
+    line-height: 1.03;
+    margin: 0;
+    max-width: 820px;
+  }
+  .wnq-ai-builder-hero p {
+    color: #d9dde2;
+    font-size: 15px;
+    margin: 12px 0 0;
+    max-width: 720px;
+  }
+  .wnq-ai-quick-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 20px;
+  }
+  .wnq-ai-quick-links a {
+    border: 1px solid var(--ai-line);
+    border-radius: 999px;
+    color: var(--ai-text);
+    padding: 8px 12px;
+    text-decoration: none;
+  }
+  .wnq-ai-quick-links a:hover,
+  .wnq-ai-quick-links a:focus {
+    border-color: var(--ai-gold);
+    color: var(--ai-gold-2);
+  }
+  .wnq-ai-builder-stats {
+    align-content: stretch;
+    display: grid;
+    gap: 12px;
+  }
+  .wnq-ai-builder-stats div {
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid var(--ai-line);
+    border-radius: 16px;
+    padding: 16px;
+  }
+  .wnq-ai-builder-stats strong {
+    color: var(--ai-gold-2);
+    display: block;
+    font-size: 28px;
+    line-height: 1;
+  }
+  .wnq-ai-builder-stats span {
+    color: var(--ai-muted);
+    display: block;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    margin-top: 7px;
+    text-transform: uppercase;
+  }
+  .wnq-ai-workflow-grid {
     display: grid;
     gap: 18px;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
-  .wnq-ai-elementor-field textarea,
-  .wnq-ai-elementor-options input,
-  .wnq-ai-template-form input[type="text"],
-  .wnq-ai-template-form select,
-  .wnq-ai-template-description input,
-  .wnq-ai-template-description textarea,
-  .wnq-ai-variable-form input[type="text"],
-  .wnq-ai-variable-form textarea,
-  .wnq-ai-elementor-target select {
-    width: 100%;
+  .wnq-ai-card {
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent),
+      var(--ai-panel);
+    border: 1px solid var(--ai-line);
+    border-radius: 18px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    margin: 0;
+    padding: 18px;
   }
-  .wnq-ai-template-meta {
+  .wnq-ai-card-wide {
+    grid-column: 1 / -1;
+  }
+  .wnq-ai-examples {
+    margin-top: 18px;
+  }
+  .wnq-ai-builder-page .wnq-hub-section-header {
+    border-bottom: 1px solid rgba(217, 190, 66, 0.12);
+    margin-bottom: 16px;
+    padding-bottom: 14px;
+  }
+  .wnq-ai-builder-page .wnq-hub-section-header h2,
+  .wnq-ai-builder-page > .wnq-ai-card h2 {
+    align-items: center;
+    color: var(--ai-text);
+    display: flex;
+    gap: 10px;
+    margin: 0;
+  }
+  .wnq-ai-step {
+    align-items: center;
+    border: 1px solid var(--ai-gold);
+    border-radius: 999px;
+    color: var(--ai-gold-2);
+    display: inline-flex;
+    flex: 0 0 auto;
+    font-size: 14px;
+    height: 34px;
+    justify-content: center;
+    width: 34px;
+  }
+  .wnq-ai-builder-page label strong,
+  .wnq-ai-elementor-template-source > strong,
+  .wnq-ai-elementor-image-uploads h3 {
+    color: var(--ai-text);
+  }
+  .wnq-ai-elementor-grid,
+  .wnq-ai-template-meta,
+  .wnq-ai-elementor-options,
+  .wnq-ai-elementor-image-grid,
+  .wnq-ai-custom-image-grid {
     display: grid;
     gap: 14px;
+  }
+  .wnq-ai-elementor-grid {
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  }
+  .wnq-ai-template-meta,
+  .wnq-ai-elementor-options {
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     margin-bottom: 14px;
   }
-  .wnq-ai-template-meta input,
-  .wnq-ai-template-meta select,
-  .wnq-ai-template-description input,
-  .wnq-ai-template-description textarea,
-  .wnq-ai-custom-image-grid input[type="text"] {
+  .wnq-ai-elementor-image-grid,
+  .wnq-ai-custom-image-grid {
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    margin-top: 12px;
+  }
+  .wnq-ai-builder-page input[type="text"],
+  .wnq-ai-builder-page input[type="number"],
+  .wnq-ai-builder-page select,
+  .wnq-ai-builder-page textarea {
+    background: var(--ai-input);
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    border-radius: 10px;
+    box-shadow: none;
+    color: var(--ai-text);
     margin-top: 8px;
+    min-height: 42px;
+    width: 100%;
+  }
+  .wnq-ai-builder-page input[type="text"]:focus,
+  .wnq-ai-builder-page input[type="number"]:focus,
+  .wnq-ai-builder-page select:focus,
+  .wnq-ai-builder-page textarea:focus {
+    border-color: var(--ai-gold);
+    box-shadow: 0 0 0 2px rgba(217, 190, 66, 0.18);
+    outline: none;
+  }
+  .wnq-ai-builder-page textarea,
+  .wnq-ai-generated-payload {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .wnq-ai-builder-page input[type="file"] {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px dashed var(--ai-line-strong);
+    border-radius: 12px;
+    color: var(--ai-muted);
+    display: block;
+    margin-top: 8px;
+    padding: 12px;
+    width: 100%;
+  }
+  .wnq-ai-builder-page .wnq-btn,
+  .wnq-ai-builder-page .button {
+    border-radius: 10px;
+    font-weight: 800;
+  }
+  .wnq-ai-builder-page .wnq-btn-primary {
+    background: linear-gradient(135deg, var(--ai-gold-2), #b78924);
+    border: 0;
+    box-shadow: 0 10px 25px rgba(217, 190, 66, 0.2);
+    color: #161100;
+    padding: 11px 18px;
+  }
+  .wnq-ai-builder-page .wnq-btn-primary:hover,
+  .wnq-ai-builder-page .wnq-btn-primary:focus {
+    filter: brightness(1.06);
+    transform: translateY(-1px);
   }
   .wnq-ai-template-description {
     display: block;
     margin: 14px 0;
   }
-  .wnq-ai-template-library-list {
+  .wnq-ai-template-library-list,
+  .wnq-ai-elementor-section-list {
     display: grid;
-    gap: 12px;
-    margin-top: 20px;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .wnq-ai-template-card,
+  .wnq-ai-elementor-section-list label,
+  .wnq-ai-elementor-custom-toggle,
+  .wnq-ai-elementor-image-grid label,
+  .wnq-ai-custom-image-grid label,
+  .wnq-ai-empty-state {
+    background: var(--ai-panel-2);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 14px;
+    padding: 13px;
   }
   .wnq-ai-template-card {
     align-items: flex-start;
-    border: 1px solid #d7dde8;
-    border-radius: 10px;
     display: flex;
     gap: 16px;
     justify-content: space-between;
-    padding: 14px;
+  }
+  .wnq-ai-template-card:hover,
+  .wnq-ai-elementor-section-list label:hover,
+  .wnq-ai-elementor-custom-toggle:hover,
+  .wnq-ai-elementor-image-grid label:hover,
+  .wnq-ai-custom-image-grid label:hover {
+    border-color: var(--ai-line-strong);
   }
   .wnq-ai-template-card span,
-  .wnq-ai-template-card p {
-    color: #667085;
+  .wnq-ai-template-card p,
+  .wnq-ai-elementor-section-list small,
+  .wnq-ai-empty-state span {
+    color: var(--ai-muted);
     display: block;
     font-size: 13px;
     margin: 4px 0 0;
+  }
+  .wnq-ai-empty-state strong {
+    color: var(--ai-text);
+    display: block;
   }
   .wnq-ai-variable-chips {
     display: flex;
@@ -437,111 +705,84 @@ final class AIElementorPageBuilderAdmin
     gap: 6px;
     margin-top: 10px;
   }
-  .wnq-ai-variable-chips code {
-    background: #eef4ff;
+  .wnq-ai-variable-chips code,
+  .wnq-ai-elementor-image-grid code,
+  .wnq-ai-builder-page code {
+    background: rgba(217, 190, 66, 0.12);
+    border: 1px solid rgba(217, 190, 66, 0.18);
     border-radius: 999px;
-    color: #2454a6;
+    color: var(--ai-gold-2);
     padding: 4px 8px;
-  }
-  .wnq-ai-generated-payload {
-    box-sizing: border-box;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    margin-top: 10px;
-    width: 100%;
-  }
-  .wnq-ai-elementor-target {
-    margin-bottom: 20px;
-  }
-  .wnq-ai-elementor-template-source {
-    margin-bottom: 20px;
-    max-width: 760px;
-  }
-  .wnq-ai-elementor-target select {
-    max-width: 760px;
-    margin-top: 8px;
-  }
-  .wnq-ai-elementor-section-list {
-    display: grid;
-    gap: 10px;
-    margin-top: 10px;
   }
   .wnq-ai-elementor-section-list label,
   .wnq-ai-elementor-custom-toggle {
     align-items: flex-start;
-    border: 1px solid #d7dde8;
-    border-radius: 8px;
     display: grid;
     gap: 4px 10px;
     grid-template-columns: auto 1fr;
-    padding: 10px 12px;
   }
   .wnq-ai-elementor-section-list small {
-    color: #667085;
     grid-column: 2;
   }
-  .wnq-ai-elementor-custom-toggle {
-    margin-top: 12px;
+  .wnq-ai-elementor-section-list input[type="checkbox"],
+  .wnq-ai-elementor-custom-toggle input[type="checkbox"] {
+    accent-color: var(--ai-gold);
+    margin-top: 3px;
+  }
+  .wnq-ai-elementor-target,
+  .wnq-ai-elementor-template-source,
+  .wnq-ai-elementor-image-uploads {
+    margin-bottom: 20px;
   }
   .wnq-ai-elementor-field textarea {
     margin-top: 10px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 13px;
-    line-height: 1.45;
   }
-  .wnq-ai-elementor-field input[type="file"] {
-    display: block;
-    margin-top: 8px;
+  .wnq-ai-builder-page details {
+    background: var(--ai-panel-2);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 14px;
+    overflow: hidden;
   }
-  .wnq-ai-elementor-options {
-    display: grid;
-    gap: 16px;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    margin-top: 18px;
-  }
-  .wnq-ai-elementor-options label {
-    display: block;
-  }
-  .wnq-ai-elementor-options input {
-    margin-top: 8px;
-  }
-  .wnq-ai-elementor-image-uploads {
-    margin-top: 22px;
-  }
-  .wnq-ai-elementor-image-uploads h3 {
-    margin-bottom: 4px;
-  }
-  .wnq-ai-elementor-image-grid {
-    display: grid;
-    gap: 12px;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    margin-top: 12px;
-  }
-  .wnq-ai-custom-image-grid {
-    display: grid;
-    gap: 12px;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    margin-top: 12px;
-  }
-  .wnq-ai-elementor-image-grid label,
-  .wnq-ai-custom-image-grid label {
-    border: 1px solid #d7dde8;
-    border-radius: 8px;
-    display: grid;
-    gap: 7px;
-    padding: 12px;
-  }
-  .wnq-ai-elementor-image-grid code {
-    color: #667085;
-    font-size: 12px;
+  .wnq-ai-builder-page summary {
+    color: var(--ai-text);
+    cursor: pointer;
+    padding: 13px 14px;
   }
   .wnq-ai-elementor-grid pre {
+    background: #080a0b;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    color: #dfe6e9;
+    margin: 0;
     max-height: 420px;
     overflow: auto;
     padding: 16px;
-    border: 1px solid #d7dde8;
-    border-radius: 8px;
-    background: #f8fafc;
     white-space: pre-wrap;
+  }
+  .wnq-ai-generated-payload {
+    background: #080a0b;
+    border: 1px solid rgba(217, 190, 66, 0.24);
+    color: var(--ai-text);
+    margin-top: 10px;
+    width: 100%;
+  }
+  @media (max-width: 1180px) {
+    .wnq-ai-builder-hero,
+    .wnq-ai-workflow-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  @media (max-width: 782px) {
+    .wnq-ai-builder-page {
+      border-radius: 14px;
+      padding: 14px;
+    }
+    .wnq-ai-builder-hero,
+    .wnq-ai-card {
+      padding: 16px;
+    }
+    .wnq-ai-template-card {
+      display: grid;
+    }
   }
 </style>
         <?php
