@@ -116,7 +116,7 @@ final class AIElementorPageBuilder
             ];
         }
 
-        $variables = self::normalizeVariables($variables);
+        $variables = self::applyVariableAliases(self::normalizeVariables($variables));
         $elementor_data = self::replacePlaceholdersRecursive($content, self::buildTokenMap($variables));
         $elementor_data = self::regenerateElementorIds($elementor_data);
         $title = self::resolvePostTitle($variables, $options);
@@ -236,6 +236,74 @@ final class AIElementorPageBuilder
             }
         }
         return $normalized;
+    }
+
+    private static function applyVariableAliases(array $variables): array
+    {
+        $aliases = [
+            'section_title' => ['template_title'],
+            'hero_subheadline' => ['hero_description', 'hero_subtitle', 'cta_text'],
+            'hero_background_image_url' => ['hero_background_placeholder_url', 'hero_slide_1_url'],
+            'primary_cta_text' => ['cta_button_1_text', 'cta_button_text'],
+            'primary_cta_url' => ['cta_button_1_url'],
+            'secondary_cta_text' => ['cta_button_2_text'],
+            'secondary_cta_url' => ['cta_button_2_url'],
+        ];
+
+        foreach ($aliases as $target => $sources) {
+            foreach ($sources as $source) {
+                if (!self::hasUsableVariable($variables[$source] ?? null)) {
+                    continue;
+                }
+
+                if (!self::hasUsableVariable($variables[$target] ?? null) || self::isLegacyAlias($source)) {
+                    $variables[$target] = $variables[$source];
+                }
+
+                break;
+            }
+        }
+
+        if (!self::hasUsableVariable($variables['hero_background_image_alt'] ?? null)) {
+            $variables['hero_background_image_alt'] = $variables['h1'] ?? $variables['primary_keyword'] ?? '';
+        }
+
+        if (!self::hasUsableVariable($variables['hero_overlay_image_alt'] ?? null)) {
+            $variables['hero_overlay_image_alt'] = $variables['hero_background_image_alt'] ?? '';
+        }
+
+        if (!self::hasUsableVariable($variables['hero_background_video_alt'] ?? null)) {
+            $variables['hero_background_video_alt'] = $variables['hero_background_image_alt'] ?? '';
+        }
+
+        if (!self::hasUsableVariable($variables['h1'] ?? null) && self::hasUsableVariable($variables['primary_keyword'] ?? null)) {
+            $variables['h1'] = $variables['primary_keyword'];
+        }
+
+        return $variables;
+    }
+
+    private static function hasUsableVariable($value): bool
+    {
+        if (is_array($value)) {
+            return !empty($value);
+        }
+
+        return trim((string)$value) !== '';
+    }
+
+    private static function isLegacyAlias(string $source): bool
+    {
+        return in_array($source, [
+            'hero_description',
+            'hero_subtitle',
+            'hero_background_placeholder_url',
+            'cta_button_1_text',
+            'cta_button_1_url',
+            'cta_button_2_text',
+            'cta_button_2_url',
+            'cta_button_text',
+        ], true);
     }
 
     private static function cleanPlaceholderKey(string $key): string
