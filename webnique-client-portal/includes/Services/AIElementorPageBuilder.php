@@ -248,6 +248,8 @@ final class AIElementorPageBuilder
             'primary_cta_url' => ['cta_button_1_url'],
             'secondary_cta_text' => ['cta_button_2_text'],
             'secondary_cta_url' => ['cta_button_2_url'],
+            'content_image_url' => ['hero_slide_2_url', 'hero_slide_3_url', 'hero_background_image_url', 'hero_background_placeholder_url'],
+            'content_image_alt' => ['hero_background_image_alt', 'h1', 'primary_keyword'],
         ];
 
         foreach ($aliases as $target => $sources) {
@@ -303,6 +305,8 @@ final class AIElementorPageBuilder
             'cta_button_2_text',
             'cta_button_2_url',
             'cta_button_text',
+            'hero_slide_2_url',
+            'hero_slide_3_url',
         ], true);
     }
 
