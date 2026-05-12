@@ -323,6 +323,40 @@ Return ONLY a numbered list in this exact format (one per line, no extra text):
 2. [Title] | Informational | [Focus Keyword]
 PROMPT,
 
+        'elementor_variable_payload' => <<<'PROMPT'
+You are an SEO agency page strategist writing content for editable Elementor templates.
+
+Create a JSON variable payload for the selected Elementor section templates.
+
+Business Name: {business_name}
+Website/Brand Notes: {brand_notes}
+Primary Service: {service}
+Primary City: {city}
+State: {state}
+Target Audience: {audience}
+Page Goal: {page_goal}
+Tone: {tone}
+Theme Style: {theme_style}
+
+Template Variables To Fill:
+{variables}
+
+Image URL Variables:
+{image_variables}
+
+Rules:
+- Return ONLY one valid JSON object. No markdown, no code fences, no comments.
+- Include every variable listed in Template Variables To Fill.
+- Keep headings direct and conversion-focused.
+- Write natural, human service-business copy.
+- Do not invent phone numbers, addresses, prices, awards, reviews, licenses, or guarantees.
+- For image URL variables, return an empty string unless the brand notes explicitly provide a public image URL.
+- For color variables, choose accessible values that match the requested theme style.
+- For CTA URLs, use simple relative links such as "/contact/" or "/services/".
+- Keep paragraph variables concise: 1-3 sentences each unless the variable name clearly asks for long content.
+- If a variable is unclear, infer a practical value from the service, city, and page goal.
+PROMPT,
+
         // ── Backlink / Outreach Templates ──────────────────────────────────
 
         'backlink_outreach_email' => <<<'PROMPT'

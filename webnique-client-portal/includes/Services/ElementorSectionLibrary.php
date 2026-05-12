@@ -31,7 +31,7 @@ final class ElementorSectionLibrary
                 'label'       => 'Text + CTA + Right Image',
                 'description' => 'Two-column content section with heading, short copy, CTA button, and an image that can be imported into client media.',
             ],
-        ];
+        ] + (class_exists(ElementorTemplateLibrary::class) ? ElementorTemplateLibrary::templateChoices() : []);
     }
 
     public static function template(string $key): ?array
@@ -42,7 +42,7 @@ final class ElementorSectionLibrary
             case self::CONTENT_IMAGE:
                 return self::contentImageTemplate();
             default:
-                return null;
+                return class_exists(ElementorTemplateLibrary::class) ? ElementorTemplateLibrary::template($key) : null;
         }
     }
 
@@ -95,7 +95,7 @@ final class ElementorSectionLibrary
             case self::CONTENT_IMAGE:
                 return self::contentImageDefaults();
             default:
-                return [];
+                return class_exists(ElementorTemplateLibrary::class) ? ElementorTemplateLibrary::defaults($key) : [];
         }
     }
 

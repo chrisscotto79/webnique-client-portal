@@ -1,0 +1,234 @@
+<?php
+/**
+ * Saved Elementor Template Library
+ *
+ * Stores agency-uploaded Elementor section/page JSON templates and exposes
+ * them to the AI Elementor builder as reusable building blocks.
+ *
+ * @package Golden Web Marketing Portal
+ */
+
+namespace WNQ\Services;
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+final class ElementorTemplateLibrary
+{
+    private const OPTION_KEY = 'wnq_ai_elementor_template_library';
+
+    public static function all(): array
+    {
+        $templates = get_option(self::OPTION_KEY, []);
+        return is_array($templates) ? $templates : [];
+    }
+
+    public static function templateChoices(): array
+    {
+        $choices = [];
+        foreach (self::all() as $key => $template) {
+            $name = trim((string)($template['name'] ?? $key));
+            $category = trim((string)($template['category'] ?? 'Custom'));
+            $theme = trim((string)($template['theme'] ?? 'Any'));
+            $description = trim((string)($template['description'] ?? ''));
+
+            $choices[$key] = [
+                'label'       => $name,
+                'description' => trim($category . ' / ' . ucfirst($theme) . ($description !== '' ? ' - ' . $description : '')),
+                'source'      => 'saved',
+                'category'    => $category,
+                'theme'       => $theme,
+                'variables'   => (array)($template['variables'] ?? []),
+                'image_fields'=> (array)($template['image_fields'] ?? []),
+            ];
+        }
+
+        return $choices;
+    }
+
+    public static function template(string $key): ?array
+    {
+        $templates = self::all();
+        if (empty($templates[$key]['template']) || !is_array($templates[$key]['template'])) {
+            return null;
+        }
+
+        return $templates[$key]['template'];
+    }
+
+    public static function defaults(string $key): array
+    {
+        $templates = self::all();
+        $variables = (array)($templates[$key]['variables'] ?? []);
+        $defaults = [];
+
+        foreach ($variables as $variable) {
+            $clean = self::cleanPlaceholderKey((string)$variable);
+            if ($clean !== '') {
+                $defaults[$clean] = '';
+            }
+        }
+
+        return $defaults;
+    }
+
+    public static function save(string $name, string $category, string $theme, string $description, string $json): array
+    {
+        $name = sanitize_text_field($name);
+        $category = sanitize_text_field($category ?: 'Custom');
+        $theme = sanitize_key($theme ?: 'any');
+        $description = sanitize_textarea_field($description);
+
+        if ($name === '') {
+            return ['success' => false, 'message' => 'Template name is required.'];
+        }
+
+        $decoded = json_decode(trim($json), true);
+        if (!is_array($decoded)) {
+            return ['success' => false, 'message' => 'Invalid Elementor JSON: ' . json_last_error_msg()];
+        }
+
+        $normalized = self::normalizeElementorTemplate($decoded, $name);
+        if (!$normalized) {
+            return ['success' => false, 'message' => 'Template must contain Elementor content, a single Elementor element, or an Elementor element list.'];
+        }
+
+        $variables = self::scanVariables($normalized);
+        $image_fields = self::imageFieldsFromVariables($variables);
+        $templates = self::all();
+        $key = self::uniqueKey($name, $templates);
+        $now = current_time('mysql');
+
+        $templates[$key] = [
+            'key'          => $key,
+            'name'         => $name,
+            'category'     => $category,
+            'theme'        => $theme,
+            'description'  => $description,
+            'variables'    => $variables,
+            'image_fields' => $image_fields,
+            'template'     => $normalized,
+            'created_at'   => $now,
+            'updated_at'   => $now,
+        ];
+
+        update_option(self::OPTION_KEY, $templates, false);
+
+        return [
+            'success'      => true,
+            'message'      => 'Template saved.',
+            'key'          => $key,
+            'variables'    => $variables,
+            'image_fields' => $image_fields,
+        ];
+    }
+
+    public static function delete(string $key): bool
+    {
+        $key = sanitize_key($key);
+        $templates = self::all();
+        if (!isset($templates[$key])) {
+            return false;
+        }
+
+        unset($templates[$key]);
+        update_option(self::OPTION_KEY, $templates, false);
+
+        return true;
+    }
+
+    public static function scanVariables($value): array
+    {
+        $json = wp_json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if (!is_string($json) || $json === '') {
+            return [];
+        }
+
+        preg_match_all('/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/', $json, $matches);
+        $variables = array_values(array_unique(array_map([self::class, 'cleanPlaceholderKey'], $matches[1] ?? [])));
+        sort($variables, SORT_NATURAL | SORT_FLAG_CASE);
+
+        return array_values(array_filter($variables));
+    }
+
+    public static function imageFieldsFromVariables(array $variables): array
+    {
+        $image_fields = [];
+        foreach ($variables as $variable) {
+            $key = self::cleanPlaceholderKey((string)$variable);
+            if ($key === '') {
+                continue;
+            }
+            if (preg_match('/(?:^|_)image_url$/', $key) || preg_match('/^hero_slide_\d+_url$/', $key)) {
+                $image_fields[] = $key;
+            }
+        }
+
+        return array_values(array_unique($image_fields));
+    }
+
+    private static function normalizeElementorTemplate(array $template, string $name): ?array
+    {
+        if (isset($template['content']) && is_array($template['content']) && !empty($template['content'])) {
+            return $template;
+        }
+
+        if (self::isListArray($template)) {
+            return [
+                'content'       => $template,
+                'page_settings' => ['hide_title' => 'yes'],
+                'version'       => '0.4',
+                'title'         => $name,
+                'type'          => 'container',
+            ];
+        }
+
+        if (($template['elType'] ?? '') !== '') {
+            return [
+                'content'       => [$template],
+                'page_settings' => ['hide_title' => 'yes'],
+                'version'       => '0.4',
+                'title'         => $name,
+                'type'          => 'container',
+            ];
+        }
+
+        return null;
+    }
+
+    private static function uniqueKey(string $name, array $templates): string
+    {
+        $base = 'saved_' . sanitize_key($name);
+        if ($base === 'saved_') {
+            $base = 'saved_template';
+        }
+
+        $key = $base;
+        $index = 2;
+        while (isset($templates[$key])) {
+            $key = $base . '_' . $index;
+            $index++;
+        }
+
+        return $key;
+    }
+
+    public static function cleanPlaceholderKey(string $key): string
+    {
+        $key = strtolower(trim($key));
+        $key = preg_replace('/[^a-z0-9_]/', '_', $key);
+        $key = preg_replace('/_+/', '_', (string)$key);
+
+        return trim((string)$key, '_');
+    }
+
+    private static function isListArray(array $array): bool
+    {
+        if ($array === []) {
+            return true;
+        }
+
+        return array_keys($array) === range(0, count($array) - 1);
+    }
+}
