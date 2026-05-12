@@ -18,6 +18,7 @@ if (!defined('ABSPATH')) {
 final class ElementorSectionLibrary
 {
     public const LOCAL_SERVICE_HERO = 'local_service_hero';
+    public const CONTENT_IMAGE = 'content_image';
 
     public static function templates(): array
     {
@@ -26,16 +27,23 @@ final class ElementorSectionLibrary
                 'label'       => 'Simple Local Hero',
                 'description' => 'Simple Elementor container hero with one background image, H1, subheadline, and two CTA buttons.',
             ],
+            self::CONTENT_IMAGE => [
+                'label'       => 'Text + CTA + Right Image',
+                'description' => 'Two-column content section with heading, short copy, CTA button, and an image that can be imported into client media.',
+            ],
         ];
     }
 
     public static function template(string $key): ?array
     {
-        if ($key !== self::LOCAL_SERVICE_HERO) {
-            return null;
+        switch ($key) {
+            case self::LOCAL_SERVICE_HERO:
+                return self::localServiceHeroTemplate();
+            case self::CONTENT_IMAGE:
+                return self::contentImageTemplate();
+            default:
+                return null;
         }
-
-        return self::localServiceHeroTemplate();
     }
 
     public static function templateJson(string $key): string
@@ -48,62 +56,74 @@ final class ElementorSectionLibrary
         return (string)wp_json_encode($template, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
-    public static function defaults(string $key): array
+    public static function compose(array $keys): ?array
     {
-        if ($key !== self::LOCAL_SERVICE_HERO) {
-            return [];
+        $content = [];
+        $valid_keys = [];
+
+        foreach ($keys as $key) {
+            $key = sanitize_key((string)$key);
+            $template = self::template($key);
+            if (!$template || empty($template['content']) || !is_array($template['content'])) {
+                continue;
+            }
+
+            $valid_keys[] = $key;
+            foreach ($template['content'] as $section) {
+                $content[] = $section;
+            }
+        }
+
+        if (!$content) {
+            return null;
         }
 
         return [
-            'section_title'                   => '',
-            'template_title'                  => 'Simple Local Hero Section',
-            'primary_keyword'                 => '',
-            'service'                         => '',
-            'city'                            => '',
-            'state'                           => '',
-            'h1'                              => '',
-            'hero_subheadline'                => '',
-            'hero_background_image_url'       => '',
-            'hero_background_image_alt'       => '',
-            'hero_overlay_image_url'          => '',
-            'hero_overlay_image_alt'          => '',
-            'hero_slide_1_url'                => '',
-            'hero_slide_2_url'                => '',
-            'hero_slide_3_url'                => '',
-            'primary_cta_text'                => 'Get a Free Estimate',
-            'primary_cta_url'                 => '/contact/',
-            'secondary_cta_text'              => 'View Services',
-            'secondary_cta_url'               => '/services/',
-            'accent_color'                    => '#D9BE42',
-            'hero_background_color'           => '#111111',
-            'hero_gradient_secondary_color'   => '#2D2900',
-            'hero_overlay_color'              => 'rgba(0,0,0,0.55)',
-            'hero_overlay_color_secondary'    => 'rgba(0,0,0,0.15)',
-            'hero_heading_color'              => '#FFFFFF',
-            'body_font_family'                => 'Roboto',
-            'button_font_family'              => 'Roboto',
-            'hero_background_video_url'       => '',
-            'hero_background_video_fallback_url' => '',
-            'hero_background_video_alt'       => '',
-
-            // Backward-compatible aliases from the first hero test.
-            'hero_description'                => '',
-            'hero_background_placeholder_url' => '',
-            'cta_button_1_text'               => '',
-            'cta_button_1_url'                => '',
-            'cta_button_2_text'               => '',
-            'cta_button_2_url'                => '',
+            'content'       => $content,
+            'page_settings' => ['hide_title' => 'yes'],
+            'version'       => '0.4',
+            'title'         => count($valid_keys) > 1 ? '{{template_title}}' : (self::template($valid_keys[0])['title'] ?? '{{template_title}}'),
+            'type'          => 'container',
         ];
+    }
+
+    public static function defaults(string $key): array
+    {
+        switch ($key) {
+            case self::LOCAL_SERVICE_HERO:
+                return self::heroDefaults();
+            case self::CONTENT_IMAGE:
+                return self::contentImageDefaults();
+            default:
+                return [];
+        }
+    }
+
+    public static function defaultsFor(array $keys): array
+    {
+        $defaults = [];
+        foreach ($keys as $key) {
+            $defaults = array_merge($defaults, self::defaults((string)$key));
+        }
+        return $defaults;
     }
 
     public static function exampleVariables(string $key = self::LOCAL_SERVICE_HERO): array
     {
-        if ($key !== self::LOCAL_SERVICE_HERO) {
-            return [];
+        if ($key === self::CONTENT_IMAGE) {
+            return array_merge(self::contentImageDefaults(), [
+                'content_heading'     => 'Turn Your Website Into a Lead-Generating Machine',
+                'content_paragraph_1' => 'Many service businesses struggle with outdated websites that load slowly, fail to engage visitors, or do not support real growth. A weak online presence can make it harder for potential customers to find you, trust you, or take action.',
+                'content_paragraph_2' => 'Whether you are starting fresh or improving an existing site, our approach is built around long-term results. We offer clear, predictable plans that support ongoing improvements, updates, and performance so your website continues to grow with your business.',
+                'content_cta_text'    => 'Book a Discovery Call',
+                'content_cta_url'     => '/contact/',
+                'content_image_url'   => 'https://goldenwebmarketing.com/wp-content/uploads/content-section-example.jpg',
+                'content_image_alt'   => 'Golden Web Marketing website strategy preview',
+            ]);
         }
 
-        return array_merge(self::defaults($key), [
-            'template_title'            => 'Golden Web Marketing Homepage Hero',
+        return array_merge(self::heroDefaults(), self::contentImageDefaults(), [
+            'template_title'            => 'Golden Web Marketing Homepage',
             'section_title'             => 'Golden Web Marketing Hero',
             'primary_keyword'           => 'Websites, SEO & PPC That Generate More Leads',
             'service'                   => 'Website Design',
@@ -117,9 +137,80 @@ final class ElementorSectionLibrary
             'primary_cta_url'           => '/contact/',
             'secondary_cta_text'        => 'View Our Services',
             'secondary_cta_url'         => '/services/',
+            'content_heading'           => 'Turn Your Website Into a Lead-Generating Machine',
+            'content_paragraph_1'       => 'Many service businesses struggle with outdated websites that load slowly, fail to engage visitors, or do not support real growth.',
+            'content_paragraph_2'       => 'Whether you are starting fresh or improving an existing site, our approach is built around long-term results.',
+            'content_cta_text'          => 'Book a Discovery Call',
+            'content_cta_url'           => '/contact/',
+            'content_image_url'         => 'https://goldenwebmarketing.com/wp-content/uploads/content-section-example.jpg',
+            'content_image_alt'         => 'Golden Web Marketing website strategy preview',
             'title_tag'                 => 'Golden Web Marketing | Websites, SEO & PPC That Generate Leads',
             'meta_description'          => 'Golden Web Marketing helps local businesses grow with high-converting websites, SEO, and PPC campaigns designed to generate more calls, leads, and revenue.',
         ]);
+    }
+
+    private static function heroDefaults(): array
+    {
+        return [
+            'section_title'                      => '',
+            'template_title'                     => 'Simple Local Hero Section',
+            'primary_keyword'                    => '',
+            'service'                            => '',
+            'city'                               => '',
+            'state'                              => '',
+            'h1'                                 => '',
+            'hero_subheadline'                   => '',
+            'hero_background_image_url'          => '',
+            'hero_background_image_alt'          => '',
+            'hero_overlay_image_url'             => '',
+            'hero_overlay_image_alt'             => '',
+            'hero_slide_1_url'                   => '',
+            'hero_slide_2_url'                   => '',
+            'hero_slide_3_url'                   => '',
+            'primary_cta_text'                   => 'Get a Free Estimate',
+            'primary_cta_url'                    => '/contact/',
+            'secondary_cta_text'                 => 'View Services',
+            'secondary_cta_url'                  => '/services/',
+            'accent_color'                       => '#D9BE42',
+            'hero_background_color'              => '#111111',
+            'hero_gradient_secondary_color'      => '#2D2900',
+            'hero_overlay_color'                 => 'rgba(0,0,0,0.55)',
+            'hero_overlay_color_secondary'       => 'rgba(0,0,0,0.15)',
+            'hero_heading_color'                 => '#FFFFFF',
+            'body_font_family'                   => 'Roboto',
+            'button_font_family'                 => 'Roboto',
+            'hero_background_video_url'          => '',
+            'hero_background_video_fallback_url' => '',
+            'hero_background_video_alt'          => '',
+
+            // Backward-compatible aliases from the first hero test.
+            'hero_description'                   => '',
+            'hero_background_placeholder_url'    => '',
+            'cta_button_1_text'                  => '',
+            'cta_button_1_url'                   => '',
+            'cta_button_2_text'                  => '',
+            'cta_button_2_url'                   => '',
+        ];
+    }
+
+    private static function contentImageDefaults(): array
+    {
+        return [
+            'content_section_title'  => 'Text + CTA + Right Image',
+            'content_heading'        => 'Turn Your Website Into a Lead-Generating Machine',
+            'content_paragraph_1'    => 'Many service businesses struggle with outdated websites that load slowly, fail to engage visitors, or do not support real growth. A weak online presence can make it harder for potential customers to find you, trust you, or take action.',
+            'content_paragraph_2'    => 'Whether you are starting fresh or improving an existing site, our approach is built around long-term results. We offer clear, predictable plans that support ongoing improvements, updates, and performance so your website continues to grow with your business.',
+            'content_cta_text'       => 'Book a Discovery Call',
+            'content_cta_url'        => '/contact/',
+            'content_image_url'      => '',
+            'content_image_alt'      => '',
+            'content_heading_color'  => '#111111',
+            'content_text_color'     => '#222222',
+            'content_background_color' => '#FFFFFF',
+            'accent_color'           => '#D9BE42',
+            'body_font_family'       => 'Roboto',
+            'button_font_family'     => 'Poppins',
+        ];
     }
 
     private static function localServiceHeroTemplate(): array
@@ -203,6 +294,39 @@ final class ElementorSectionLibrary
         ];
     }
 
+    private static function contentImageTemplate(): array
+    {
+        return [
+            'content' => [
+                [
+                    'id'       => '1272057d',
+                    'settings' => [
+                        'flex_direction'    => 'row',
+                        'flex_wrap_tablet'  => 'wrap',
+                        'flex_wrap_mobile'  => 'wrap',
+                        'flex_gap'          => ['unit' => 'px', 'size' => 0, 'column' => '0', 'row' => '0'],
+                        'padding'           => ['unit' => 'px', 'top' => '70', 'right' => '40', 'bottom' => '90', 'left' => '40', 'isLinked' => false],
+                        'padding_tablet'    => ['unit' => 'px', 'top' => '60', 'right' => '30', 'bottom' => '70', 'left' => '30', 'isLinked' => false],
+                        'padding_mobile'    => ['unit' => 'px', 'top' => '50', 'right' => '22', 'bottom' => '60', 'left' => '22', 'isLinked' => false],
+                        'background_background' => 'classic',
+                        'background_color'  => '{{content_background_color}}',
+                        '_title'            => '{{content_section_title}}',
+                    ],
+                    'elements' => [
+                        self::contentImageTextColumn(),
+                        self::contentImageMediaColumn(),
+                    ],
+                    'isInner' => false,
+                    'elType'  => 'container',
+                ],
+            ],
+            'page_settings' => ['hide_title' => 'yes'],
+            'version'       => '0.4',
+            'title'         => '{{template_title}}',
+            'type'          => 'container',
+        ];
+    }
+
     private static function simpleHeroContentContainer(): array
     {
         return [
@@ -234,8 +358,6 @@ final class ElementorSectionLibrary
                         'typography_font_size_mobile' => ['unit' => 'px', 'size' => 34, 'sizes' => []],
                         'typography_font_weight'      => '700',
                         'typography_line_height'      => ['unit' => 'em', 'size' => 1.08, 'sizes' => []],
-                        '_padding_tablet'             => ['unit' => '%', 'top' => '11', 'right' => '0', 'bottom' => '0', 'left' => '0', 'isLinked' => false],
-                        '_padding_mobile'             => ['unit' => '%', 'top' => '14', 'right' => '0', 'bottom' => '0', 'left' => '0', 'isLinked' => false],
                     ],
                     'elements'   => [],
                     'isInner'    => false,
@@ -324,6 +446,134 @@ final class ElementorSectionLibrary
             'isInner'    => false,
             'widgetType' => 'button',
             'elType'     => 'widget',
+        ];
+    }
+
+    private static function contentImageTextColumn(): array
+    {
+        return [
+            'id'       => '1a664ffa',
+            'settings' => [
+                'flex_direction'       => 'column',
+                'content_width'        => 'full',
+                'width'                => ['unit' => '%', 'size' => 54.417],
+                'width_tablet'         => ['unit' => '%', 'size' => 100],
+                'width_mobile'         => ['unit' => '%', 'size' => 100],
+                '_flex_size'           => 'none',
+                '_element_width'       => 'initial',
+                'flex_gap'             => ['unit' => 'px', 'size' => 18, 'column' => '18', 'row' => '18'],
+            ],
+            'elements' => [
+                [
+                    'id'       => '1fb233f2',
+                    'settings' => [
+                        'title'                       => '{{content_heading}}',
+                        'align'                       => 'left',
+                        'title_color'                 => '{{content_heading_color}}',
+                        'typography_typography'       => 'custom',
+                        'typography_font_family'      => '{{body_font_family}}',
+                        'typography_font_size'        => ['unit' => 'px', 'size' => 44, 'sizes' => []],
+                        'typography_font_size_tablet' => ['unit' => 'px', 'size' => 34, 'sizes' => []],
+                        'typography_font_size_mobile' => ['unit' => 'px', 'size' => 30, 'sizes' => []],
+                        'typography_font_weight'      => '700',
+                        'typography_line_height'      => ['unit' => 'em', 'size' => 1.12, 'sizes' => []],
+                    ],
+                    'elements'   => [],
+                    'isInner'    => false,
+                    'widgetType' => 'heading',
+                    'elType'     => 'widget',
+                ],
+                [
+                    'id'       => '6567b5f8',
+                    'settings' => [
+                        'editor'                      => '<div><p>{{content_paragraph_1}}</p><p>{{content_paragraph_2}}</p></div>',
+                        'align'                       => 'left',
+                        'text_color'                  => '{{content_text_color}}',
+                        'typography_typography'       => 'custom',
+                        'typography_font_family'      => '{{body_font_family}}',
+                        'typography_font_size'        => ['unit' => 'px', 'size' => 17, 'sizes' => []],
+                        'typography_font_size_tablet' => ['unit' => 'px', 'size' => 15, 'sizes' => []],
+                        'typography_font_weight'      => '400',
+                        'typography_line_height'      => ['unit' => 'em', 'size' => 1.5, 'sizes' => []],
+                        '_element_width'             => 'initial',
+                        '_element_custom_width'      => ['unit' => '%', 'size' => 92, 'sizes' => []],
+                    ],
+                    'elements'   => [],
+                    'isInner'    => false,
+                    'widgetType' => 'text-editor',
+                    'elType'     => 'widget',
+                ],
+                [
+                    'id'       => '66b93fcb',
+                    'settings' => [
+                        'text'                         => '{{content_cta_text}}',
+                        'align'                        => 'left',
+                        'button_text_color'            => '#111111',
+                        'background_color'             => '{{accent_color}}',
+                        'hover_color'                  => '{{accent_color}}',
+                        'button_background_hover_color'=> '#02010100',
+                        'border_border'                => 'solid',
+                        'border_width'                 => ['unit' => 'px', 'top' => '2', 'right' => '2', 'bottom' => '2', 'left' => '2', 'isLinked' => true],
+                        'border_color'                 => '{{accent_color}}',
+                        'border_radius'                => ['unit' => 'px', 'top' => '10', 'right' => '10', 'bottom' => '10', 'left' => '10', 'isLinked' => true],
+                        'text_padding'                 => ['unit' => 'px', 'top' => '16', 'right' => '55', 'bottom' => '16', 'left' => '55', 'isLinked' => false],
+                        '_margin'                      => ['unit' => 'px', 'top' => '20', 'right' => '0', 'bottom' => '0', 'left' => '0', 'isLinked' => false],
+                        'link'                         => ['url' => '{{content_cta_url}}', 'is_external' => '', 'nofollow' => '', 'custom_attributes' => ''],
+                        'typography_typography'        => 'custom',
+                        'typography_font_family'       => '{{button_font_family}}',
+                        'typography_font_size'         => ['unit' => 'px', 'size' => 18, 'sizes' => []],
+                        'typography_font_size_tablet'  => ['unit' => 'px', 'size' => 14, 'sizes' => []],
+                        'typography_font_weight'       => '600',
+                        'typography_text_transform'    => 'capitalize',
+                        'typography_line_height'       => ['unit' => 'em', 'size' => 1, 'sizes' => []],
+                        'selected_icon'                => ['value' => 'fas fa-arrow-right', 'library' => 'fa-solid'],
+                        'icon_align'                   => 'row-reverse',
+                    ],
+                    'elements'   => [],
+                    'isInner'    => false,
+                    'widgetType' => 'button',
+                    'elType'     => 'widget',
+                ],
+            ],
+            'isInner' => true,
+            'elType'  => 'container',
+        ];
+    }
+
+    private static function contentImageMediaColumn(): array
+    {
+        return [
+            'id'       => '4219a17e',
+            'settings' => [
+                'flex_direction'       => 'column',
+                'content_width'        => 'full',
+                'width'                => ['unit' => '%', 'size' => 45.583],
+                'width_tablet'         => ['unit' => '%', 'size' => 100],
+                'width_mobile'         => ['unit' => '%', 'size' => 100],
+                'flex_justify_content' => 'center',
+                'padding_mobile'       => ['unit' => 'px', 'top' => '24', 'right' => '0', 'bottom' => '0', 'left' => '0', 'isLinked' => false],
+            ],
+            'elements' => [
+                [
+                    'id'       => '25ec102b',
+                    'settings' => [
+                        'image' => [
+                            'id'     => '',
+                            'url'    => '{{content_image_url}}',
+                            'alt'    => '{{content_image_alt}}',
+                            'source' => 'library',
+                            'size'   => '',
+                        ],
+                        'image_border_radius' => ['unit' => 'px', 'top' => '14', 'right' => '14', 'bottom' => '14', 'left' => '14', 'isLinked' => true],
+                    ],
+                    'elements'   => [],
+                    'isInner'    => false,
+                    'widgetType' => 'image',
+                    'elType'     => 'widget',
+                ],
+            ],
+            'isInner' => true,
+            'elType'  => 'container',
         ];
     }
 }

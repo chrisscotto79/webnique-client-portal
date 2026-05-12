@@ -87,7 +87,7 @@ final class AIElementorPageBuilderAdmin
   <div class="wnq-hub-section-header">
     <div>
       <h2>Generate Editable Elementor Draft</h2>
-      <p>Choose a reusable Elementor section or paste a custom Elementor JSON export, then provide a JSON payload of variables. The page is always created as a draft.</p>
+      <p>Choose one or more reusable Elementor sections or paste a custom Elementor JSON export, then provide a JSON payload of variables. The page is always created as a draft.</p>
     </div>
   </div>
 
@@ -125,14 +125,23 @@ final class AIElementorPageBuilderAdmin
     </div>
 
     <div class="wnq-ai-elementor-template-source">
-      <label for="wnq_section_template_key"><strong>Section Template</strong></label>
-      <select id="wnq_section_template_key" name="section_template_key">
+      <strong>Section Templates</strong>
+      <div class="wnq-ai-elementor-section-list">
         <?php foreach ($section_templates as $key => $template): ?>
-          <option value="<?php echo esc_attr($key); ?>"><?php echo esc_html($template['label'] ?? $key); ?></option>
+          <label>
+            <input type="checkbox" name="section_template_keys[]" value="<?php echo esc_attr($key); ?>" <?php checked(in_array($key, [ElementorSectionLibrary::LOCAL_SERVICE_HERO, ElementorSectionLibrary::CONTENT_IMAGE], true)); ?>>
+            <span><?php echo esc_html($template['label'] ?? $key); ?></span>
+            <?php if (!empty($template['description'])): ?>
+              <small><?php echo esc_html($template['description']); ?></small>
+            <?php endif; ?>
+          </label>
         <?php endforeach; ?>
-        <option value="custom">Custom pasted/uploaded Elementor JSON</option>
-      </select>
-      <p class="description">For this first test, select the built-in hero section and only paste your variable JSON. Use Custom when you want to paste a full Elementor template.</p>
+      </div>
+      <label class="wnq-ai-elementor-custom-toggle">
+        <input type="checkbox" name="use_custom_template" value="1">
+        Use custom pasted/uploaded Elementor JSON instead
+      </label>
+      <p class="description">Select multiple built-in sections to generate a full draft page in that order. Use custom only when you want to paste a complete Elementor export.</p>
     </div>
 
     <div class="wnq-ai-elementor-grid">
@@ -145,7 +154,7 @@ final class AIElementorPageBuilderAdmin
 
       <div class="wnq-ai-elementor-field">
         <label for="wnq_variables_json"><strong>JSON Variable Payload</strong></label>
-        <p class="description">For the built-in hero, use placeholders like h1, primary_keyword, hero_subtitle, hero_description, CTA text/URLs, slide URLs, and social URL.</p>
+        <p class="description">Use the variables from the selected sections. Remote image URLs, including ChatGPT image URLs, are sent to the client site and imported into its Media Library by the agent.</p>
         <input type="file" name="variables_json_file" accept=".json,application/json">
         <textarea id="wnq_variables_json" name="variables_json" rows="18" spellcheck="false" placeholder='{"service":"Land Clearing","city":"Lakeland"}'></textarea>
       </div>
@@ -170,7 +179,7 @@ final class AIElementorPageBuilderAdmin
 
 <div class="wnq-hub-section">
   <h2>Examples</h2>
-  <p class="description">This is the first reusable section AI can use. Paste the example variables, change the copy/URLs, select a client site, and generate a draft.</p>
+  <p class="description">These reusable sections can be stacked into one draft. Paste the example variables, change the copy/URLs, select a client site, and generate a draft.</p>
   <div class="wnq-ai-elementor-grid">
     <details open>
       <summary><strong>Built-in Hero Elementor JSON</strong></summary>
@@ -201,13 +210,31 @@ final class AIElementorPageBuilderAdmin
     margin-bottom: 20px;
     max-width: 760px;
   }
-  .wnq-ai-elementor-template-source select {
-    width: 100%;
-    margin-top: 8px;
-  }
   .wnq-ai-elementor-target select {
     max-width: 760px;
     margin-top: 8px;
+  }
+  .wnq-ai-elementor-section-list {
+    display: grid;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .wnq-ai-elementor-section-list label,
+  .wnq-ai-elementor-custom-toggle {
+    align-items: flex-start;
+    border: 1px solid #d7dde8;
+    border-radius: 8px;
+    display: grid;
+    gap: 4px 10px;
+    grid-template-columns: auto 1fr;
+    padding: 10px 12px;
+  }
+  .wnq-ai-elementor-section-list small {
+    color: #667085;
+    grid-column: 2;
+  }
+  .wnq-ai-elementor-custom-toggle {
+    margin-top: 12px;
   }
   .wnq-ai-elementor-field textarea {
     margin-top: 10px;
@@ -251,7 +278,11 @@ final class AIElementorPageBuilderAdmin
         check_admin_referer('wnq_ai_elementor_generate');
 
         $agent_key_id = absint($_POST['agent_key_id'] ?? 0);
-        $section_template_key = sanitize_key((string)($_POST['section_template_key'] ?? ElementorSectionLibrary::LOCAL_SERVICE_HERO));
+        $use_custom_template = !empty($_POST['use_custom_template']);
+        $section_template_keys = isset($_POST['section_template_keys']) && is_array($_POST['section_template_keys'])
+            ? array_map('sanitize_key', wp_unslash($_POST['section_template_keys']))
+            : [ElementorSectionLibrary::LOCAL_SERVICE_HERO];
+        $section_template_keys = array_values(array_filter($section_template_keys));
         $template_json = '';
         $variables_json = self::readTextInputOrFile('variables_json', 'variables_json_file');
         $variables = json_decode(trim($variables_json), true);
@@ -260,14 +291,20 @@ final class AIElementorPageBuilderAdmin
             self::redirectWithError('Invalid variable JSON: ' . json_last_error_msg());
         }
 
-        if ($section_template_key === 'custom') {
+        if ($use_custom_template) {
             $template_json = self::readTextInputOrFile('elementor_template', 'elementor_template_file');
         } else {
-            $template_json = ElementorSectionLibrary::templateJson($section_template_key);
-            if ($template_json === '') {
+            if (!$section_template_keys) {
+                self::redirectWithError('Select at least one Elementor section template.');
+            }
+
+            $template = ElementorSectionLibrary::compose($section_template_keys);
+            if (!$template) {
                 self::redirectWithError('Unknown Elementor section template selected.');
             }
-            $variables = array_merge(ElementorSectionLibrary::defaults($section_template_key), $variables);
+
+            $template_json = (string)wp_json_encode($template, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $variables = array_merge(ElementorSectionLibrary::defaultsFor($section_template_keys), $variables);
         }
 
         $result = AIElementorPageBuilder::generateRemoteDraft($agent_key_id, $template_json, $variables, [
@@ -395,6 +432,9 @@ final class AIElementorPageBuilderAdmin
 
     private static function exampleTemplate(): array
     {
-        return ElementorSectionLibrary::template(ElementorSectionLibrary::LOCAL_SERVICE_HERO) ?: [];
+        return ElementorSectionLibrary::compose([
+            ElementorSectionLibrary::LOCAL_SERVICE_HERO,
+            ElementorSectionLibrary::CONTENT_IMAGE,
+        ]) ?: [];
     }
 }
