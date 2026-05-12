@@ -251,6 +251,8 @@ final class AIElementorPageBuilder
             'content_image_url' => ['hero_slide_2_url', 'hero_slide_3_url', 'hero_background_image_url', 'hero_background_placeholder_url'],
             'content_image_alt' => ['hero_background_image_alt', 'h1', 'primary_keyword'],
         ];
+        $uploaded_image_fields = array_map([self::class, 'cleanPlaceholderKey'], (array)($variables['uploaded_image_fields'] ?? []));
+        $image_targets = ['hero_background_image_url', 'content_image_url'];
 
         foreach ($aliases as $target => $sources) {
             foreach ($sources as $source) {
@@ -258,9 +260,10 @@ final class AIElementorPageBuilder
                     continue;
                 }
 
-                $target_is_uploaded_image = self::isUploadedImageVariable($variables[$target] ?? null);
+                $target_is_uploaded_image = in_array($target, $uploaded_image_fields, true) || self::isUploadedImageVariable($variables[$target] ?? null);
                 $target_needs_value = !self::hasUsableVariable($variables[$target] ?? null);
-                if (!$target_is_uploaded_image && ($target_needs_value || self::isLegacyAlias($source))) {
+                $target_is_image_url = in_array($target, $image_targets, true);
+                if (!$target_is_uploaded_image && ($target_needs_value || (!$target_is_image_url && self::isLegacyAlias($source)))) {
                     $variables[$target] = $variables[$source];
                 }
 
