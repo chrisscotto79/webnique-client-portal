@@ -156,6 +156,7 @@ final class AgentSettings
         <input type="hidden" name="action" value="wnqa_test_connection">
         <button type="submit" class="button">🔌 Test Connection</button>
       </form>
+      <a class="button" href="<?php echo esc_url(admin_url('options-general.php?page=webnique-seo-agent-image-optimizer')); ?>">🖼️ Image Optimizer</a>
     </div>
   </div>
 
@@ -269,6 +270,7 @@ final class AgentSettings
       <li>Sends it securely to your Golden Web Marketing SEO OS hub</li>
       <li>Receives hub-triggered blog publishing and SEO fix requests</li>
       <li>Runs lightweight local checks (H1, alt text, thin content)</li>
+      <li>Optimizes this site's local Media Library images from the client install</li>
     </ul>
     <p style="margin-top:8px;">All SEO analysis, AI content generation, keyword tracking, and reporting happens on your hub. This plugin does NOT slow down your site.</p>
   </div>

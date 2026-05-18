@@ -128,6 +128,7 @@ final class ImageOptimizerAdmin
     <span id="wnq-image-batch-progress" class="wnq-image-progress"></span>
   </div>
 
+  <div class="wnq-image-table-scroll" role="region" aria-label="Image optimizer audit table" tabindex="0">
   <table class="widefat striped wnq-image-table">
     <thead>
       <tr>
@@ -157,6 +158,7 @@ final class ImageOptimizerAdmin
       <?php endif; ?>
     </tbody>
   </table>
+  </div>
 
   <?php self::renderPagination((int)$result['page'], (int)$result['total_pages'], $filter, $sort, $order, $per_page); ?>
 </div>
@@ -234,13 +236,19 @@ final class ImageOptimizerAdmin
         check_admin_referer('wnq_image_optimizer_export');
 
         $filter = sanitize_key(wp_unslash($_GET['image_filter'] ?? 'all'));
-        $result = ImageScanner::getRows([
-            'page'     => 1,
-            'per_page' => 2000,
-            'filter'   => $filter,
-            'sort'     => 'file_name',
-            'order'    => 'asc',
-        ]);
+        $export_rows = [];
+        $page = 1;
+        do {
+            $result = ImageScanner::getRows([
+                'page'     => $page,
+                'per_page' => 50,
+                'filter'   => $filter,
+                'sort'     => 'file_name',
+                'order'    => 'asc',
+            ]);
+            $export_rows = array_merge($export_rows, (array)$result['rows']);
+            $page++;
+        } while ($page <= (int)$result['total_pages'] && $page <= 40);
 
         nocache_headers();
         header('Content-Type: text/csv; charset=utf-8');
@@ -268,7 +276,7 @@ final class ImageOptimizerAdmin
             'Recommended action',
         ]);
 
-        foreach ($result['rows'] as $row) {
+        foreach ($export_rows as $row) {
             fputcsv($output, [
                 (int)$row['id'],
                 $row['file_name'],
@@ -544,6 +552,10 @@ final class ImageOptimizerAdmin
         echo '</nav></div>';
         echo '<h1 class="wnq-hub-page-title">' . esc_html($title) . '</h1>';
         echo '<style>
+            .wnq-hub-wrap{max-width:100%;overflow:hidden;box-sizing:border-box}
+            .wnq-hub-masthead{max-width:100%;overflow-x:auto}
+            .wnq-hub-nav{flex-wrap:wrap}
+            .wnq-image-optimizer{max-width:100%;overflow:hidden}
             .wnq-image-summary{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:14px;margin:18px 0 22px}
             .wnq-image-card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:18px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
             .wnq-image-card .value{display:block;font-size:30px;line-height:1;font-weight:800;color:#1f5aa6}
@@ -554,7 +566,17 @@ final class ImageOptimizerAdmin
             .wnq-image-filter-form,.wnq-image-toolbar-actions{display:flex;gap:10px;align-items:end;flex-wrap:wrap}
             .wnq-image-filter-form label,.wnq-image-batch-bar label{font-weight:700;color:#374151}
             .wnq-image-filter-form select,.wnq-image-batch-bar select{display:block;min-width:145px;margin-top:4px}
-            .wnq-image-table th,.wnq-image-table td{vertical-align:middle}
+            .wnq-image-table-scroll{width:100%;max-width:100%;overflow-x:auto;background:#fff;border:1px solid #d1d5db;border-radius:10px}
+            .wnq-image-table{min-width:1320px;border:0;table-layout:fixed}
+            .wnq-image-table th,.wnq-image-table td{vertical-align:middle;word-break:break-word}
+            .wnq-image-table th:nth-child(1),.wnq-image-table td:nth-child(1){width:36px}
+            .wnq-image-table th:nth-child(2),.wnq-image-table td:nth-child(2){width:76px}
+            .wnq-image-table th:nth-child(3),.wnq-image-table td:nth-child(3){width:82px}
+            .wnq-image-table th:nth-child(4),.wnq-image-table td:nth-child(4){width:210px}
+            .wnq-image-table th:nth-child(6),.wnq-image-table td:nth-child(6){width:88px}
+            .wnq-image-table th:nth-child(7),.wnq-image-table td:nth-child(7){width:112px}
+            .wnq-image-table th:nth-child(13),.wnq-image-table td:nth-child(13){width:150px}
+            .wnq-image-table th:nth-child(14),.wnq-image-table td:nth-child(14){width:150px}
             .wnq-image-thumb{width:58px;height:58px;object-fit:cover;border-radius:8px;background:#f3f4f6;border:1px solid #e5e7eb}
             .wnq-image-pill{display:inline-block;border-radius:999px;padding:3px 9px;font-size:12px;font-weight:800}
             .wnq-image-pill.good{background:#dcfce7;color:#166534}.wnq-image-pill.warning{background:#fef3c7;color:#92400e}.wnq-image-pill.danger{background:#fee2e2;color:#991b1b}.wnq-image-pill.neutral{background:#f3f4f6;color:#4b5563}
