@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Golden Web Marketing SEO Agent
  * Description: Lightweight data relay and execution endpoint for the Golden Web Marketing SEO Operating System hub.
- * Version: 1.1.8
+ * Version: 1.1.9
  * Author: Golden Web Marketing
  * Requires at least: 6.0
  * Requires PHP: 7.4
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WNQA_VERSION', '1.1.8');
+define('WNQA_VERSION', '1.1.9');
 define('WNQA_PATH', plugin_dir_path(__FILE__));
 define('WNQA_URL', plugin_dir_url(__FILE__));
 define('WNQA_SLUG', 'webnique-seo-agent');
@@ -25,7 +25,10 @@ require_once WNQA_PATH . 'includes/BlogReceiver.php';
 require_once WNQA_PATH . 'includes/ServiceCityReceiver.php';
 require_once WNQA_PATH . 'includes/ElementorPageReceiver.php';
 require_once WNQA_PATH . 'includes/SEOFixer.php';
+require_once WNQA_PATH . 'includes/ImageScanner.php';
+require_once WNQA_PATH . 'includes/ImageOptimizer.php';
 require_once WNQA_PATH . 'admin/AgentSettings.php';
+require_once WNQA_PATH . 'admin/ImageOptimizerAdmin.php';
 
 register_activation_hook(__FILE__,   'wnqa_activate');
 register_deactivation_hook(__FILE__, 'wnqa_deactivate');
@@ -73,6 +76,7 @@ add_action('plugins_loaded', function () {
     // Admin settings page
     if (is_admin()) {
         \WNQA\Admin\AgentSettings::register();
+        \WNQA\Admin\ImageOptimizerAdmin::register();
     }
 
     // Register blog receiver REST endpoint (hub → agent publishing)
