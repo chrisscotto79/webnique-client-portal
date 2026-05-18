@@ -144,13 +144,14 @@ final class ImageOptimizerAdmin
         <th>Oversized</th>
         <th>WebP</th>
         <th>Optimized</th>
+        <th>Before / After</th>
         <th>Recommended Action</th>
         <th>Actions</th>
       </tr>
     </thead>
     <tbody>
       <?php if (empty($result['rows'])): ?>
-        <tr><td colspan="14" class="wnq-image-empty">No image attachments found for this filter.</td></tr>
+        <tr><td colspan="15" class="wnq-image-empty">No image attachments found for this filter.</td></tr>
       <?php else: ?>
         <?php foreach ($result['rows'] as $row): ?>
           <?php self::renderImageRow($row); ?>
@@ -388,6 +389,7 @@ final class ImageOptimizerAdmin
       <span class="wnq-image-pill neutral">Not yet</span>
     <?php endif; ?>
   </td>
+  <td><?php self::renderSizeChange($row); ?></td>
   <td><span class="wnq-image-recommend <?php echo esc_attr($priority); ?>"><?php echo esc_html($row['recommendation']); ?></span></td>
   <td class="wnq-image-row-actions">
     <a class="wnq-mini-btn" href="<?php echo esc_url(self::actionUrl((int)$row['id'], 'generate_webp')); ?>">WebP</a>
@@ -402,6 +404,30 @@ final class ImageOptimizerAdmin
   </td>
 </tr>
         <?php
+    }
+
+    private static function renderSizeChange(array $row): void
+    {
+        $before = (int)($row['original_size'] ?? 0);
+        $after = (int)($row['current_size'] ?? $row['file_size'] ?? 0);
+        $savings_percent = (float)($row['savings_percent'] ?? 0);
+
+        if ($before <= 0 && empty($row['optimized'])) {
+            echo '<span class="wnq-muted">Not optimized yet</span>';
+            return;
+        }
+
+        echo '<span class="wnq-image-size-change">';
+        if ($before > 0) {
+            echo '<strong>Before:</strong> ' . esc_html(self::formatBytes($before)) . '<br>';
+        } else {
+            echo '<strong>Before:</strong> <span class="wnq-muted">Not recorded</span><br>';
+        }
+        echo '<strong>After:</strong> ' . esc_html(self::formatBytes($after));
+        if ($savings_percent > 0) {
+            echo '<br><small>' . esc_html((string)$savings_percent) . '% saved</small>';
+        }
+        echo '</span>';
     }
 
     private static function renderPagination(int $page, int $total_pages, string $filter, string $sort, string $order, int $per_page): void
@@ -567,7 +593,7 @@ final class ImageOptimizerAdmin
             .wnq-image-filter-form label,.wnq-image-batch-bar label{font-weight:700;color:#374151}
             .wnq-image-filter-form select,.wnq-image-batch-bar select{display:block;min-width:145px;margin-top:4px}
             .wnq-image-table-scroll{width:100%;max-width:100%;overflow-x:auto;background:#fff;border:1px solid #d1d5db;border-radius:10px}
-            .wnq-image-table{min-width:1320px;border:0;table-layout:fixed}
+            .wnq-image-table{min-width:1450px;border:0;table-layout:fixed}
             .wnq-image-table th,.wnq-image-table td{vertical-align:middle;word-break:break-word}
             .wnq-image-table th:nth-child(1),.wnq-image-table td:nth-child(1){width:36px}
             .wnq-image-table th:nth-child(2),.wnq-image-table td:nth-child(2){width:76px}
@@ -577,6 +603,8 @@ final class ImageOptimizerAdmin
             .wnq-image-table th:nth-child(7),.wnq-image-table td:nth-child(7){width:112px}
             .wnq-image-table th:nth-child(13),.wnq-image-table td:nth-child(13){width:150px}
             .wnq-image-table th:nth-child(14),.wnq-image-table td:nth-child(14){width:150px}
+            .wnq-image-table th:nth-child(15),.wnq-image-table td:nth-child(15){width:150px}
+            .wnq-image-size-change{display:block;line-height:1.5}
             .wnq-image-thumb{width:58px;height:58px;object-fit:cover;border-radius:8px;background:#f3f4f6;border:1px solid #e5e7eb}
             .wnq-image-pill{display:inline-block;border-radius:999px;padding:3px 9px;font-size:12px;font-weight:800}
             .wnq-image-pill.good{background:#dcfce7;color:#166534}.wnq-image-pill.warning{background:#fef3c7;color:#92400e}.wnq-image-pill.danger{background:#fee2e2;color:#991b1b}.wnq-image-pill.neutral{background:#f3f4f6;color:#4b5563}
