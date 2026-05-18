@@ -17,6 +17,7 @@ use WNQ\Models\BlogScheduler;
 use WNQ\Models\ServiceCityPage;
 use WNQ\Services\AuditEngine;
 use WNQ\Services\AIEngine;
+use WNQ\Services\ImageScanner;
 use WNQ\Services\ServiceCityPageGenerator;
 
 if (!defined('ABSPATH')) {
@@ -52,14 +53,17 @@ final class SEOHubAdmin
             ['Keywords',          'wnq-seo-hub-keywords',    [self::class, 'renderKeywords']],
             ['Service City Pages','wnq-seo-hub-content',     [self::class, 'renderContent']],
             ['Technical Audits',  'wnq-seo-hub-audits',      [self::class, 'renderAudits']],
+            ['Image Optimizer',   'wnq-seo-hub-images',      ['WNQ\\Admin\\ImageOptimizerAdmin', 'renderPage'], 'manage_options'],
             ['Reports',           'wnq-seo-hub-reports',     [self::class, 'renderReports']],
             ['Blog Scheduler',    'wnq-seo-hub-blog',        ['WNQ\\Admin\\BlogSchedulerAdmin', 'renderPage']],
             ['API Management',    'wnq-seo-hub-api',         [self::class, 'renderAPI']],
             ['AI Settings',       'wnq-seo-hub-settings',    [self::class, 'renderSettings']],
         ];
 
-        foreach ($pages as [$title, $slug, $callback]) {
-            add_submenu_page('wnq-seo-hub', $title, $title, $cap, $slug, $callback);
+        foreach ($pages as $page) {
+            [$title, $slug, $callback] = $page;
+            $page_cap = $page[3] ?? $cap;
+            add_submenu_page('wnq-seo-hub', $title, $title, $page_cap, $slug, $callback);
         }
     }
 
@@ -94,6 +98,7 @@ final class SEOHubAdmin
         $total_clients = count($seo_clients);
         $total_pages   = array_sum(array_column(array_column($seo_clients, 'stats'), 'total_pages'));
         $total_critical = array_sum(array_column(array_column($seo_clients, 'audit'), 'critical'));
+        $image_stats = ImageScanner::getStats();
 
         self::renderHeader('SEO Operating System — Dashboard');
         ?>
@@ -132,6 +137,49 @@ final class SEOHubAdmin
       </a>
     </div>
     <div id="wnq-action-result" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="wnq-hub-section">
+    <h2>Image Optimizer Snapshot</h2>
+    <div class="wnq-hub-stats-bar">
+      <div class="wnq-hub-stat">
+        <span class="value"><?php echo number_format((int)$image_stats['total']); ?></span>
+        <span class="label">Image Attachments</span>
+      </div>
+      <div class="wnq-hub-stat">
+        <span class="value"><?php echo number_format((int)$image_stats['over_warning']); ?></span>
+        <span class="label">Images Over 300 KB</span>
+      </div>
+      <div class="wnq-hub-stat">
+        <span class="value"><?php echo number_format((int)$image_stats['over_high']); ?></span>
+        <span class="label">Images Over 500 KB</span>
+      </div>
+      <div class="wnq-hub-stat <?php echo (int)$image_stats['over_critical'] > 0 ? 'danger' : ''; ?>">
+        <span class="value"><?php echo number_format((int)$image_stats['over_critical']); ?></span>
+        <span class="label">Images Over 1 MB</span>
+      </div>
+      <div class="wnq-hub-stat">
+        <span class="value"><?php echo number_format((int)$image_stats['missing_alt']); ?></span>
+        <span class="label">Missing Alt Text</span>
+      </div>
+      <div class="wnq-hub-stat">
+        <span class="value"><?php echo number_format((int)$image_stats['oversized']); ?></span>
+        <span class="label">Oversized Images</span>
+      </div>
+      <div class="wnq-hub-stat">
+        <span class="value"><?php echo number_format((int)$image_stats['with_webp']); ?></span>
+        <span class="label">With WebP Version</span>
+      </div>
+      <div class="wnq-hub-stat">
+        <span class="value"><?php echo number_format((int)$image_stats['optimized']); ?></span>
+        <span class="label">Optimized by SEO OS</span>
+      </div>
+      <div class="wnq-hub-stat">
+        <span class="value"><?php echo esc_html(self::formatBytes((int)$image_stats['estimated_savings'])); ?></span>
+        <span class="label">Estimated Savings</span>
+      </div>
+    </div>
+    <p><a class="wnq-btn" href="<?php echo esc_url(admin_url('admin.php?page=wnq-seo-hub-images')); ?>">Open Image Optimizer</a></p>
   </div>
 
   <!-- Client Grid -->
@@ -1347,6 +1395,9 @@ jQuery(function($) {
         if (!empty($_GET['reset'])) {
             echo '<div style="background:#dcfce7;color:#166534;border:1px solid #86efac;padding:12px 20px;font-weight:600;">✅ Prompt templates reset to defaults.</div>';
         }
+        if (!empty($_GET['image_optimizer_saved'])) {
+            echo '<div style="background:#dcfce7;color:#166534;border:1px solid #86efac;padding:12px 20px;font-weight:600;">Image Optimizer settings saved successfully.</div>';
+        }
 
         // Cloudways/environment notice (shown on non-production domains)
         $current_host = parse_url(site_url(), PHP_URL_HOST) ?? '';
@@ -1469,6 +1520,10 @@ jQuery(function($) {
 
         echo '</form>';
         echo '</div>';
+
+        if (class_exists('WNQ\\Admin\\ImageOptimizerAdmin')) {
+            \WNQ\Admin\ImageOptimizerAdmin::renderSettingsSection();
+        }
 
         // Prompt Templates
         echo '<div class="wnq-hub-section">';
@@ -1694,6 +1749,17 @@ jQuery(function($) {
         return                    ['letter' => 'F',  'color' => '#ef4444', 'bg' => '#fee2e2', 'label' => 'Critical'];
     }
 
+    private static function formatBytes(int $bytes): string
+    {
+        if ($bytes >= 1048576) {
+            return round($bytes / 1048576, 2) . ' MB';
+        }
+        if ($bytes >= 1024) {
+            return round($bytes / 1024, 1) . ' KB';
+        }
+        return $bytes . ' B';
+    }
+
     private static function renderRadarSVG(array $scores): string
     {
         $cx = 130; $cy = 130; $r = 90; $n = 5;
@@ -1771,6 +1837,7 @@ jQuery(function($) {
             'wnq-seo-hub-keywords' => 'Keywords',
             'wnq-seo-hub-content'  => 'Service City Pages',
             'wnq-seo-hub-audits'   => 'Audits',
+            'wnq-seo-hub-images'   => 'Image Optimizer',
             'wnq-seo-hub-reports'  => 'Reports',
             'wnq-seo-hub-blog'     => 'Blog Scheduler',
             'wnq-seo-hub-ai-elementor' => 'AI Elementor Builder',

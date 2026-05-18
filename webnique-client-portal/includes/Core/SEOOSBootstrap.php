@@ -39,6 +39,7 @@ final class SEOOSBootstrap
             \WNQ\Admin\SpiderAdmin::register();
             \WNQ\Admin\LeadFinderAdmin::register();
             \WNQ\Admin\AIElementorPageBuilderAdmin::register();
+            \WNQ\Admin\ImageOptimizerAdmin::register();
         }
 
         // Create blog tables if not yet created (schema migration for existing installs)
@@ -85,6 +86,8 @@ final class SEOOSBootstrap
             'includes/Services/ElementorTemplateLibrary.php',
             'includes/Services/ElementorSectionLibrary.php',
             'includes/Services/AIElementorPageBuilder.php',
+            'includes/Services/ImageScanner.php',
+            'includes/Services/ImageOptimizer.php',
             'includes/Services/SEOHealthFixer.php',
             // Spider & Analysis Services
             'includes/Services/CrawlEngine.php',
@@ -110,6 +113,7 @@ final class SEOOSBootstrap
             'admin/SpiderAdmin.php',
             'admin/LeadFinderAdmin.php',
             'admin/AIElementorPageBuilderAdmin.php',
+            'admin/ImageOptimizerAdmin.php',
         ];
 
         foreach ($files as $f) {
@@ -145,6 +149,8 @@ final class SEOOSBootstrap
             'includes/Services/ElementorTemplateLibrary.php' => 'WNQ\\Services\\ElementorTemplateLibrary',
             'includes/Services/ElementorSectionLibrary.php' => 'WNQ\\Services\\ElementorSectionLibrary',
             'includes/Services/AIElementorPageBuilder.php' => 'WNQ\\Services\\AIElementorPageBuilder',
+            'includes/Services/ImageScanner.php' => 'WNQ\\Services\\ImageScanner',
+            'includes/Services/ImageOptimizer.php' => 'WNQ\\Services\\ImageOptimizer',
             'includes/Services/SEOHealthFixer.php'   => 'WNQ\\Services\\SEOHealthFixer',
             'includes/Controllers/SEOAgentController.php' => 'WNQ\\Controllers\\SEOAgentController',
             'includes/Core/CronScheduler.php'             => 'WNQ\\Core\\CronScheduler',
@@ -167,6 +173,7 @@ final class SEOOSBootstrap
             'admin/SpiderAdmin.php'                           => 'WNQ\\Admin\\SpiderAdmin',
             'admin/LeadFinderAdmin.php'                       => 'WNQ\\Admin\\LeadFinderAdmin',
             'admin/AIElementorPageBuilderAdmin.php'           => 'WNQ\\Admin\\AIElementorPageBuilderAdmin',
+            'admin/ImageOptimizerAdmin.php'                    => 'WNQ\\Admin\\ImageOptimizerAdmin',
         ];
         return $map[$file] ?? '';
     }
@@ -247,6 +254,12 @@ final class SEOOSBootstrap
         add_action('admin_post_wnq_blog_save_template',    [self::class, 'handleBlogSaveTemplate']);
         add_action('admin_post_wnq_blog_mark_all_read',    [self::class, 'handleBlogMarkAllRead']);
         add_action('wp_ajax_wnq_blog_add_batch',           [self::class, 'ajaxBlogAddBatch']);
+
+        // Google Business Profile Scheduler handlers
+        add_action('admin_post_wnq_gbp_add_post',          [self::class, 'handleGbpAddPost']);
+        add_action('admin_post_wnq_gbp_update_post',       [self::class, 'handleGbpUpdatePost']);
+        add_action('admin_post_wnq_gbp_delete_post',       [self::class, 'handleGbpDeletePost']);
+        add_action('admin_post_wnq_gbp_delete_all',        [self::class, 'handleGbpDeleteAll']);
     }
 
     // ── Form Handlers ───────────────────────────────────────────────────────
@@ -712,6 +725,99 @@ final class SEOOSBootstrap
         wp_send_json_success(['added' => $added]);
     }
 
+    // ── GBP Scheduler Form Handlers ────────────────────────────────────────
+
+    public static function handleGbpAddPost(): void
+    {
+        check_admin_referer('wnq_gbp_add_post');
+        self::requireCap();
+
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $summary = wp_kses_post(wp_unslash($_POST['summary'] ?? ''));
+
+        if ($client_id === '' || trim(wp_strip_all_tags($summary)) === '') {
+            wp_die('Missing required fields');
+        }
+
+        \WNQ\Models\BlogScheduler::addGbpPost($client_id, [
+            'post_type'       => sanitize_key($_POST['post_type'] ?? 'update'),
+            'summary'         => $summary,
+            'cta_type'        => sanitize_text_field($_POST['cta_type'] ?? 'LEARN_MORE'),
+            'cta_url'         => esc_url_raw($_POST['cta_url'] ?? ''),
+            'image_url'       => esc_url_raw($_POST['image_url'] ?? ''),
+            'image_alt'       => sanitize_text_field($_POST['image_alt'] ?? ''),
+            'scheduled_at'    => self::normalizeDateTimeLocal($_POST['scheduled_at'] ?? ''),
+            'gbp_account_id'  => sanitize_text_field($_POST['gbp_account_id'] ?? ''),
+            'gbp_location_id' => sanitize_text_field($_POST['gbp_location_id'] ?? ''),
+            'status'          => 'scheduled',
+        ]);
+
+        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=gbp&client_id=' . urlencode($client_id) . '&notice=gbp_added'));
+        exit;
+    }
+
+    public static function handleGbpUpdatePost(): void
+    {
+        $post_id = (int)($_POST['post_id'] ?? 0);
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        check_admin_referer('wnq_gbp_edit_' . $post_id);
+        self::requireCap();
+
+        $post = $post_id ? \WNQ\Models\BlogScheduler::getGbpPost($post_id) : null;
+        if (!$post || $post['client_id'] !== $client_id) {
+            wp_die('Invalid GBP post');
+        }
+
+        $summary = wp_kses_post(wp_unslash($_POST['summary'] ?? ''));
+        if (trim(wp_strip_all_tags($summary)) === '') {
+            wp_die('Post copy is required');
+        }
+
+        \WNQ\Models\BlogScheduler::updateGbpPost($post_id, [
+            'post_type'       => sanitize_key($_POST['post_type'] ?? 'update'),
+            'summary'         => $summary,
+            'cta_type'        => sanitize_text_field($_POST['cta_type'] ?? 'LEARN_MORE'),
+            'cta_url'         => esc_url_raw($_POST['cta_url'] ?? ''),
+            'image_url'       => esc_url_raw($_POST['image_url'] ?? ''),
+            'image_alt'       => sanitize_text_field($_POST['image_alt'] ?? ''),
+            'scheduled_at'    => self::normalizeDateTimeLocal($_POST['scheduled_at'] ?? ''),
+            'gbp_account_id'  => sanitize_text_field($_POST['gbp_account_id'] ?? ''),
+            'gbp_location_id' => sanitize_text_field($_POST['gbp_location_id'] ?? ''),
+            'status'          => sanitize_key($_POST['status'] ?? 'scheduled'),
+        ]);
+
+        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=gbp&client_id=' . urlencode($client_id) . '&notice=gbp_updated'));
+        exit;
+    }
+
+    public static function handleGbpDeletePost(): void
+    {
+        $post_id = (int)($_POST['post_id'] ?? 0);
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        check_admin_referer('wnq_gbp_delete_' . $post_id);
+        self::requireCap();
+
+        $post = $post_id ? \WNQ\Models\BlogScheduler::getGbpPost($post_id) : null;
+        if ($post && $post['client_id'] === $client_id) {
+            \WNQ\Models\BlogScheduler::deleteGbpPost($post_id);
+        }
+
+        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=gbp&client_id=' . urlencode($client_id) . '&notice=gbp_deleted'));
+        exit;
+    }
+
+    public static function handleGbpDeleteAll(): void
+    {
+        check_admin_referer('wnq_gbp_delete_all');
+        self::requireCap();
+
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $deleted = \WNQ\Models\BlogScheduler::deleteGbpPostsByClient($client_id);
+
+        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=gbp&client_id=' . urlencode($client_id) . '&notice=gbp_bulk_deleted&deleted=' . $deleted));
+        exit;
+    }
+
     // ── Competitor Handlers ──────────────────────────────────────────────────
 
     public static function handleSaveCompetitors(): void
@@ -846,7 +952,7 @@ final class SEOOSBootstrap
     {
         $current = get_option('wnq_blog_schema_ver', '0');
 
-        if ($current === '3') {
+        if ($current === '4') {
             return; // already up to date
         }
 
@@ -872,8 +978,29 @@ final class SEOOSBootstrap
                 }
             }
 
-            update_option('wnq_blog_schema_ver', '3');
+            // v3 → v4: BlogScheduler::createTables() creates the GBP schedule table.
+
+            update_option('wnq_blog_schema_ver', '4');
         }
+    }
+
+    private static function normalizeDateTimeLocal(string $value): ?string
+    {
+        $value = sanitize_text_field(wp_unslash($value));
+        if ($value === '') {
+            return null;
+        }
+
+        $formats = ['Y-m-d\TH:i', 'Y-m-d H:i:s', 'Y-m-d H:i'];
+        foreach ($formats as $format) {
+            $dt = \DateTimeImmutable::createFromFormat($format, $value, wp_timezone());
+            if ($dt instanceof \DateTimeImmutable) {
+                return $dt->format('Y-m-d H:i:s');
+            }
+        }
+
+        $timestamp = strtotime($value);
+        return $timestamp ? date('Y-m-d H:i:s', $timestamp) : null;
     }
 
     // ── Table Creation (called on activation) ──────────────────────────────
