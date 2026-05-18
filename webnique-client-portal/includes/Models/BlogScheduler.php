@@ -7,6 +7,7 @@
  * Tables:
  *  wnq_blog_schedule      - Post queue (titles, status, scheduled dates, generated content)
  *  wnq_hub_notifications  - In-hub notification log
+ *  wnq_gbp_schedule       - Google Business Profile post queue
  *
  * @package Golden Web Marketing Portal
  */
@@ -73,6 +74,29 @@ final class BlogScheduler
             KEY client_id (client_id),
             KEY is_read (is_read),
             KEY created_at (created_at)
+        ) $c;");
+
+        dbDelta("CREATE TABLE IF NOT EXISTS {$wpdb->prefix}wnq_gbp_schedule (
+            id              bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            client_id       varchar(100) NOT NULL,
+            post_type       varchar(30) DEFAULT 'update' COMMENT 'update|event|offer',
+            summary         text NOT NULL,
+            cta_type        varchar(50) DEFAULT 'LEARN_MORE',
+            cta_url         varchar(1000) DEFAULT NULL,
+            image_url       varchar(1000) DEFAULT NULL,
+            image_alt       varchar(255) DEFAULT NULL,
+            scheduled_at    datetime DEFAULT NULL,
+            status          varchar(30) DEFAULT 'scheduled' COMMENT 'scheduled|ready|published|failed',
+            gbp_account_id  varchar(255) DEFAULT NULL,
+            gbp_location_id varchar(255) DEFAULT NULL,
+            gbp_post_name   varchar(500) DEFAULT NULL,
+            error_message   text DEFAULT NULL,
+            created_at      datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at      datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY client_id (client_id),
+            KEY status (status),
+            KEY scheduled_at (scheduled_at)
         ) $c;");
     }
 
@@ -220,6 +244,190 @@ final class BlogScheduler
             ),
             ARRAY_A
         ) ?: [];
+    }
+
+    /* ═══════════════════════════════════════════
+     *  GBP SCHEDULE CRUD
+     * ═══════════════════════════════════════════ */
+
+    public static function addGbpPost(string $client_id, array $data): int
+    {
+        global $wpdb;
+
+        $wpdb->insert(
+            $wpdb->prefix . 'wnq_gbp_schedule',
+            [
+                'client_id'       => $client_id,
+                'post_type'       => self::cleanGbpPostType((string)($data['post_type'] ?? 'update')),
+                'summary'         => wp_kses_post($data['summary'] ?? ''),
+                'cta_type'        => self::cleanGbpCtaType((string)($data['cta_type'] ?? 'LEARN_MORE')),
+                'cta_url'         => esc_url_raw($data['cta_url'] ?? ''),
+                'image_url'       => esc_url_raw($data['image_url'] ?? ''),
+                'image_alt'       => sanitize_text_field($data['image_alt'] ?? ''),
+                'scheduled_at'    => !empty($data['scheduled_at']) ? sanitize_text_field($data['scheduled_at']) : null,
+                'status'          => self::cleanGbpStatus((string)($data['status'] ?? 'scheduled')),
+                'gbp_account_id'  => sanitize_text_field($data['gbp_account_id'] ?? ''),
+                'gbp_location_id' => sanitize_text_field($data['gbp_location_id'] ?? ''),
+                'error_message'   => sanitize_textarea_field($data['error_message'] ?? ''),
+            ]
+        );
+
+        return (int)$wpdb->insert_id;
+    }
+
+    public static function updateGbpPost(int $id, array $data): void
+    {
+        global $wpdb;
+
+        $allowed = [
+            'post_type',
+            'summary',
+            'cta_type',
+            'cta_url',
+            'image_url',
+            'image_alt',
+            'scheduled_at',
+            'status',
+            'gbp_account_id',
+            'gbp_location_id',
+            'gbp_post_name',
+            'error_message',
+        ];
+
+        $updates = [];
+        foreach ($allowed as $key) {
+            if (!array_key_exists($key, $data)) {
+                continue;
+            }
+
+            if ($key === 'scheduled_at' && empty($data[$key])) {
+                $updates[$key] = null;
+                continue;
+            }
+
+            $updates[$key] = match ($key) {
+                'post_type'       => self::cleanGbpPostType((string)$data[$key]),
+                'summary'         => wp_kses_post($data[$key]),
+                'cta_type'        => self::cleanGbpCtaType((string)$data[$key]),
+                'cta_url',
+                'image_url'       => esc_url_raw($data[$key]),
+                'image_alt',
+                'gbp_account_id',
+                'gbp_location_id',
+                'gbp_post_name',
+                'scheduled_at'    => sanitize_text_field((string)$data[$key]),
+                'status'          => self::cleanGbpStatus((string)$data[$key]),
+                'error_message'   => sanitize_textarea_field($data[$key]),
+                default           => sanitize_text_field((string)$data[$key]),
+            };
+        }
+
+        if (empty($updates)) {
+            return;
+        }
+
+        $wpdb->update($wpdb->prefix . 'wnq_gbp_schedule', $updates, ['id' => $id]);
+    }
+
+    public static function deleteGbpPost(int $id): void
+    {
+        global $wpdb;
+        $wpdb->delete($wpdb->prefix . 'wnq_gbp_schedule', ['id' => $id]);
+    }
+
+    public static function deleteGbpPostsByClient(string $client_id): int
+    {
+        global $wpdb;
+        if ($client_id === '') {
+            return 0;
+        }
+
+        return (int)$wpdb->delete($wpdb->prefix . 'wnq_gbp_schedule', ['client_id' => $client_id]);
+    }
+
+    public static function getGbpPost(int $id): ?array
+    {
+        global $wpdb;
+        $row = $wpdb->get_row(
+            $wpdb->prepare("SELECT * FROM {$wpdb->prefix}wnq_gbp_schedule WHERE id = %d", $id),
+            ARRAY_A
+        );
+
+        return $row ?: null;
+    }
+
+    public static function getGbpPostsByClient(string $client_id, int $limit = 100): array
+    {
+        global $wpdb;
+
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM {$wpdb->prefix}wnq_gbp_schedule
+                 WHERE client_id = %s
+                 ORDER BY scheduled_at ASC, created_at DESC
+                 LIMIT %d",
+                $client_id,
+                $limit
+            ),
+            ARRAY_A
+        ) ?: [];
+    }
+
+    public static function getDueGbpPosts(int $limit = 10): array
+    {
+        global $wpdb;
+
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM {$wpdb->prefix}wnq_gbp_schedule
+                 WHERE status = 'scheduled'
+                 AND scheduled_at IS NOT NULL
+                 AND scheduled_at <= %s
+                 ORDER BY scheduled_at ASC
+                 LIMIT %d",
+                current_time('mysql'),
+                $limit
+            ),
+            ARRAY_A
+        ) ?: [];
+    }
+
+    public static function markDueGbpPostsReady(): int
+    {
+        $due = self::getDueGbpPosts(25);
+        if (empty($due)) {
+            return 0;
+        }
+
+        $count = 0;
+        foreach ($due as $post) {
+            self::updateGbpPost((int)$post['id'], [
+                'status'        => 'ready',
+                'error_message' => 'Google Business Profile API publishing is not connected yet. This post is due and ready for the live GBP publishing integration.',
+            ]);
+            $count++;
+        }
+
+        return $count;
+    }
+
+    private static function cleanGbpPostType(string $type): string
+    {
+        $type = sanitize_key($type);
+        return in_array($type, ['update', 'event', 'offer'], true) ? $type : 'update';
+    }
+
+    private static function cleanGbpStatus(string $status): string
+    {
+        $status = sanitize_key($status);
+        return in_array($status, ['scheduled', 'ready', 'published', 'failed'], true) ? $status : 'scheduled';
+    }
+
+    private static function cleanGbpCtaType(string $type): string
+    {
+        $type = strtoupper(sanitize_key($type));
+        $allowed = ['BOOK', 'ORDER', 'SHOP', 'LEARN_MORE', 'SIGN_UP', 'CALL'];
+        return in_array($type, $allowed, true) ? $type : 'LEARN_MORE';
     }
 
     /* ═══════════════════════════════════════════

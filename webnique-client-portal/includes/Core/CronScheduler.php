@@ -5,6 +5,7 @@
  * Registers and manages WP-Cron jobs for the SEO OS:
  *  - wnq_seo_nightly_audit    (daily at ~2am)
  *  - wnq_seo_monthly_reports  (monthly, 1st of month)
+ *  - wnq_gbp_scheduler        (hourly due-post check)
  *
  * @package Golden Web Marketing Portal
  */
@@ -20,6 +21,7 @@ use WNQ\Services\BacklinkVerifier;
 use WNQ\Services\BlogPublisher;
 use WNQ\Services\CrawlEngine;
 use WNQ\Services\ReportGenerator;
+use WNQ\Models\BlogScheduler;
 use WNQ\Models\SEOHub;
 
 final class CronScheduler
@@ -33,6 +35,7 @@ final class CronScheduler
         add_action('wnq_seo_nightly_audit',       [self::class, 'runNightlyAudit']);
         add_action('wnq_seo_monthly_reports',     [self::class, 'generateMonthlyReports']);
         add_action('wnq_blog_publisher',          [self::class, 'runBlogPublisher']);
+        add_action('wnq_gbp_scheduler',           [self::class, 'runGbpScheduler']);
         add_action('wnq_spider_auto_crawl',       [self::class, 'runSpiderCrawls']);
         add_action('wnq_spider_run_batch',        [self::class, 'runCronBatch'], 10, 1);
         add_action('wnq_backlink_verify',         [self::class, 'runBacklinkVerify']);
@@ -76,6 +79,11 @@ final class CronScheduler
             wp_schedule_event($next_8am, 'daily', 'wnq_blog_publisher');
         }
 
+        // GBP scheduler hourly check — marks due GBP posts as ready until live API publishing is connected
+        if (!wp_next_scheduled('wnq_gbp_scheduler')) {
+            wp_schedule_event(time() + 600, 'hourly', 'wnq_gbp_scheduler');
+        }
+
         // Spider auto-crawl check — runs hourly, starts any due schedules
         if (!wp_next_scheduled('wnq_spider_auto_crawl')) {
             wp_schedule_event(time() + 300, 'hourly', 'wnq_spider_auto_crawl');
@@ -90,7 +98,7 @@ final class CronScheduler
 
     public static function unscheduleAll(): void
     {
-        $hooks = ['wnq_seo_nightly_audit', 'wnq_seo_nightly_automation', 'wnq_seo_process_queue', 'wnq_seo_monthly_reports', 'wnq_blog_publisher', 'wnq_spider_auto_crawl', 'wnq_backlink_verify'];
+        $hooks = ['wnq_seo_nightly_audit', 'wnq_seo_nightly_automation', 'wnq_seo_process_queue', 'wnq_seo_monthly_reports', 'wnq_blog_publisher', 'wnq_gbp_scheduler', 'wnq_spider_auto_crawl', 'wnq_backlink_verify'];
         foreach ($hooks as $hook) {
             $timestamp = wp_next_scheduled($hook);
             if ($timestamp) {
@@ -160,6 +168,16 @@ final class CronScheduler
     {
         if (!self::canRun()) return;
         BlogPublisher::processDuePosts();
+    }
+
+    public static function runGbpScheduler(): void
+    {
+        if (!self::canRun()) return;
+
+        $ready = BlogScheduler::markDueGbpPostsReady();
+        if ($ready > 0) {
+            SEOHub::log('gbp_posts_ready', ['count' => $ready], 'success', 'cron');
+        }
     }
 
     public static function runBacklinkVerify(): void
@@ -246,6 +264,7 @@ final class CronScheduler
             'wnq_seo_nightly_audit'      => 'Nightly Audit (2am daily)',
             'wnq_seo_monthly_reports'    => 'Monthly Analytics Report Generator (1st at 6am)',
             'wnq_blog_publisher'         => 'Blog Auto-Publisher (8am daily)',
+            'wnq_gbp_scheduler'          => 'GBP Post Scheduler (hourly check)',
             'wnq_spider_auto_crawl'      => 'Spider Auto-Crawl Scheduler (hourly check)',
             'wnq_backlink_verify'        => 'Backlink Verifier (Sunday 4am weekly)',
         ];

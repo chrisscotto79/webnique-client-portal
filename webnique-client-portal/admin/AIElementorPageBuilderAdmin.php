@@ -111,19 +111,20 @@ final class AIElementorPageBuilderAdmin
         $saved_template_count = count($saved_templates);
         $connected_site_count = count($agents);
         $available_template_count = count($section_templates);
+        $active_tab = 'draft';
+        if (in_array($notice, ['template_saved', 'template_deleted'], true)) {
+            $active_tab = 'library';
+        } elseif ($notice === 'ai_payload') {
+            $active_tab = 'payload';
+        }
 
         ?>
-<div class="wnq-ai-builder-page">
+<div class="wnq-ai-builder-page" data-active-tab="<?php echo esc_attr($active_tab); ?>">
   <div class="wnq-ai-builder-hero">
     <div class="wnq-ai-builder-hero-copy">
       <span class="wnq-ai-eyebrow">Golden Web Marketing AI Builder</span>
       <h2>Build editable Elementor drafts from reusable sections.</h2>
-      <p>Upload your section templates, let AI fill the variables, then send clean Elementor drafts to the selected client WordPress site.</p>
-      <div class="wnq-ai-quick-links" aria-label="AI builder workflow links">
-        <a href="#wnq-template-library">Template Library</a>
-        <a href="#wnq-ai-payload">AI Payload</a>
-        <a href="#wnq-draft-builder">Draft Builder</a>
-      </div>
+      <p>Use the tabs below to upload templates, generate a clean variable payload, and create one editable draft page on the selected client WordPress site.</p>
     </div>
     <div class="wnq-ai-builder-stats">
       <div>
@@ -141,8 +142,16 @@ final class AIElementorPageBuilderAdmin
     </div>
   </div>
 
-  <div class="wnq-ai-workflow-grid">
-    <div class="wnq-hub-section wnq-ai-card" id="wnq-template-library">
+  <div class="wnq-ai-tab-shell">
+    <div class="wnq-ai-tabs" role="tablist" aria-label="AI Elementor Builder workflow">
+      <button type="button" class="wnq-ai-tab <?php echo $active_tab === 'library' ? 'is-active' : ''; ?>" data-wnq-ai-tab="library" role="tab" aria-selected="<?php echo $active_tab === 'library' ? 'true' : 'false'; ?>" aria-controls="wnq-ai-tab-library">1. Template Library</button>
+      <button type="button" class="wnq-ai-tab <?php echo $active_tab === 'payload' ? 'is-active' : ''; ?>" data-wnq-ai-tab="payload" role="tab" aria-selected="<?php echo $active_tab === 'payload' ? 'true' : 'false'; ?>" aria-controls="wnq-ai-tab-payload">2. AI Payload</button>
+      <button type="button" class="wnq-ai-tab <?php echo $active_tab === 'draft' ? 'is-active' : ''; ?>" data-wnq-ai-tab="draft" role="tab" aria-selected="<?php echo $active_tab === 'draft' ? 'true' : 'false'; ?>" aria-controls="wnq-ai-tab-draft">3. Draft Builder</button>
+    </div>
+
+    <div class="wnq-ai-tab-panels">
+      <section class="wnq-ai-tab-panel <?php echo $active_tab === 'library' ? 'is-active' : ''; ?>" id="wnq-ai-tab-library" data-wnq-ai-panel="library" role="tabpanel" <?php echo $active_tab === 'library' ? '' : 'hidden'; ?>>
+        <div class="wnq-hub-section wnq-ai-card" id="wnq-template-library">
   <div class="wnq-hub-section-header">
     <div>
       <h2><span class="wnq-ai-step">1</span>Template Library</h2>
@@ -229,7 +238,10 @@ final class AIElementorPageBuilderAdmin
   <?php endif; ?>
 </div>
 
-<div class="wnq-hub-section wnq-ai-card" id="wnq-ai-payload">
+      </section>
+
+      <section class="wnq-ai-tab-panel <?php echo $active_tab === 'payload' ? 'is-active' : ''; ?>" id="wnq-ai-tab-payload" data-wnq-ai-panel="payload" role="tabpanel" <?php echo $active_tab === 'payload' ? '' : 'hidden'; ?>>
+        <div class="wnq-hub-section wnq-ai-card" id="wnq-ai-payload">
   <div class="wnq-hub-section-header">
     <div>
       <h2><span class="wnq-ai-step">2</span>AI Variable Payload Generator</h2>
@@ -278,7 +290,10 @@ final class AIElementorPageBuilderAdmin
   </form>
 </div>
 
-<div class="wnq-hub-section wnq-ai-card wnq-ai-card-wide" id="wnq-draft-builder">
+      </section>
+
+      <section class="wnq-ai-tab-panel <?php echo $active_tab === 'draft' ? 'is-active' : ''; ?>" id="wnq-ai-tab-draft" data-wnq-ai-panel="draft" role="tabpanel" <?php echo $active_tab === 'draft' ? '' : 'hidden'; ?>>
+        <div class="wnq-hub-section wnq-ai-card wnq-ai-card-wide" id="wnq-draft-builder">
   <div class="wnq-hub-section-header">
     <div>
       <h2><span class="wnq-ai-step">3</span>Generate Editable Elementor Draft</h2>
@@ -367,7 +382,7 @@ final class AIElementorPageBuilderAdmin
 
     <div class="wnq-ai-elementor-image-uploads">
       <h3>Optional Image Uploads</h3>
-      <p class="description">Use these for ChatGPT/private image links. Uploaded files are saved to this hub first, then the selected client site imports them into its own Media Library.</p>
+      <p class="description">Use these for ChatGPT/private image links. For the fastest pages, upload compressed WebP images when possible, keep files under 5 MB, and include matching ALT variables in the JSON payload.</p>
       <div class="wnq-ai-elementor-image-grid">
         <?php foreach (self::imageUploadFields() as $field => $label): ?>
           <label>
@@ -398,22 +413,24 @@ final class AIElementorPageBuilderAdmin
     </p>
   </form>
 </div>
-  </div>
 
-<div class="wnq-hub-section wnq-ai-card wnq-ai-examples">
-  <h2>Examples</h2>
-  <p class="description">These reusable sections can be stacked into one draft. Paste the example variables, change the copy/URLs, select a client site, and generate a draft.</p>
-  <div class="wnq-ai-elementor-grid">
-    <details open>
-      <summary><strong>Built-in Hero Elementor JSON</strong></summary>
-      <pre><?php echo esc_html(wp_json_encode(self::exampleTemplate(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)); ?></pre>
-    </details>
-    <details open>
-      <summary><strong>Example JSON Variable Payload</strong></summary>
-      <pre><?php echo esc_html(wp_json_encode(self::exampleVariables(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)); ?></pre>
-    </details>
+        <details class="wnq-ai-help-details">
+          <summary><strong>Examples and copy helpers</strong></summary>
+          <p class="description">These reusable sections can be stacked into one draft. Paste the example variables, change the copy/URLs, select a client site, and generate a draft.</p>
+          <div class="wnq-ai-elementor-grid">
+            <details>
+              <summary><strong>Built-in Hero Elementor JSON</strong></summary>
+              <pre><?php echo esc_html(wp_json_encode(self::exampleTemplate(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)); ?></pre>
+            </details>
+            <details>
+              <summary><strong>Example JSON Variable Payload</strong></summary>
+              <pre><?php echo esc_html(wp_json_encode(self::exampleVariables(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)); ?></pre>
+            </details>
+          </div>
+        </details>
+      </section>
+    </div>
   </div>
-</div>
 </div>
 
 <style>
@@ -1003,6 +1020,7 @@ final class AIElementorPageBuilderAdmin
             'wnq-seo-hub-clients'      => 'Clients',
             'wnq-seo-hub-keywords'     => 'Keywords',
             'wnq-seo-hub-content'      => 'Service City Pages',
+            'wnq-seo-hub-images'       => 'Image Optimizer',
             'wnq-seo-hub-reports'      => 'Reports',
             'wnq-seo-hub-blog'         => 'Blog Scheduler',
             'wnq-seo-hub-ai-elementor' => 'AI Elementor Builder',

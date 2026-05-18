@@ -50,6 +50,9 @@ final class BlogSchedulerAdmin
             case 'generate':
                 self::renderGenerateTab();
                 break;
+            case 'gbp':
+                self::renderGbpTab();
+                break;
             case 'settings':
                 self::renderSettingsTab();
                 break;
@@ -68,6 +71,7 @@ final class BlogSchedulerAdmin
         $tabs = [
             'queue'    => '📋 Post Queue',
             'generate' => '✨ Title Generator',
+            'gbp'      => '📍 GBP Scheduler',
             'settings' => '⚙️ Settings',
         ];
         echo '<div class="wnq-blog-tabs">';
@@ -471,6 +475,192 @@ jQuery(function($) {
             }
             echo '</div></div>';
         }
+    }
+
+    // ── GBP Scheduler Tab ──────────────────────────────────────────────────
+
+    private static function renderGbpTab(): void
+    {
+        $clients   = Client::getByStatus('active');
+        $client_id = sanitize_text_field($_GET['client_id'] ?? ($clients[0]['client_id'] ?? ''));
+        $posts     = $client_id ? BlogScheduler::getGbpPostsByClient($client_id, 100) : [];
+
+        $notice = sanitize_text_field($_GET['notice'] ?? '');
+        if ($notice === 'gbp_added') {
+            echo '<div class="wnq-notice success">✅ GBP post scheduled.</div>';
+        }
+        if ($notice === 'gbp_updated') {
+            echo '<div class="wnq-notice success">✅ GBP post updated.</div>';
+        }
+        if ($notice === 'gbp_deleted') {
+            echo '<div class="wnq-notice success">✅ GBP post deleted.</div>';
+        }
+        if ($notice === 'gbp_bulk_deleted') {
+            echo '<div class="wnq-notice success">✅ ' . (int)($_GET['deleted'] ?? 0) . ' GBP post(s) deleted.</div>';
+        }
+
+        echo '<div class="wnq-blog-client-bar">';
+        echo '<form method="get" style="display:inline-flex;gap:8px;align-items:center;">';
+        echo '<input type="hidden" name="page" value="wnq-seo-hub-blog">';
+        echo '<input type="hidden" name="tab" value="gbp">';
+        echo '<select name="client_id" onchange="this.form.submit()" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;min-width:220px;">';
+        foreach ($clients as $c) {
+            $selected = $c['client_id'] === $client_id ? ' selected' : '';
+            echo '<option value="' . esc_attr($c['client_id']) . '"' . $selected . '>' . esc_html($c['company'] ?? $c['name'] ?? $c['client_id']) . '</option>';
+        }
+        echo '</select>';
+        echo '</form>';
+        echo '</div>';
+
+        if (!$client_id) {
+            echo '<p>No clients found. Add a client first.</p>';
+            return;
+        }
+
+        echo '<div class="wnq-gbp-grid">';
+        echo '<div class="wnq-blog-card">';
+        echo '<h3>📍 Schedule GBP Post</h3>';
+        echo '<p class="wnq-muted">Create a Google Business Profile post draft in the queue. Posts are saved here first; live GBP publishing can be connected in a later Google API/OAuth phase.</p>';
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" class="wnq-gbp-form">';
+        echo '<input type="hidden" name="action" value="wnq_gbp_add_post">';
+        echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+        wp_nonce_field('wnq_gbp_add_post');
+        echo '<label>Post Copy<textarea name="summary" rows="6" required placeholder="Write a short GBP update, offer, or service announcement. Keep it clear and local."></textarea></label>';
+        echo '<div class="wnq-gbp-two">';
+        echo '<label>Post Type<select name="post_type"><option value="update">Update</option><option value="event">Event</option><option value="offer">Offer</option></select></label>';
+        echo '<label>Schedule Date/Time<input type="datetime-local" name="scheduled_at"></label>';
+        echo '</div>';
+        echo '<div class="wnq-gbp-two">';
+        echo '<label>CTA Type<select name="cta_type"><option value="LEARN_MORE">Learn More</option><option value="CALL">Call</option><option value="BOOK">Book</option><option value="ORDER">Order</option><option value="SHOP">Shop</option><option value="SIGN_UP">Sign Up</option></select></label>';
+        echo '<label>CTA URL<input type="url" name="cta_url" placeholder="https://example.com/service-page/"></label>';
+        echo '</div>';
+        echo '<label>Image URL<input type="url" name="image_url" placeholder="https://example.com/wp-content/uploads/image.webp"></label>';
+        echo '<label>Image ALT Text<input type="text" name="image_alt" placeholder="Describe the image for SEO and accessibility"></label>';
+        echo '<details class="wnq-gbp-advanced"><summary>Optional GBP location IDs</summary>';
+        echo '<div class="wnq-gbp-two">';
+        echo '<label>GBP Account ID<input type="text" name="gbp_account_id" placeholder="accounts/123456789"></label>';
+        echo '<label>GBP Location ID<input type="text" name="gbp_location_id" placeholder="locations/987654321"></label>';
+        echo '</div>';
+        echo '</details>';
+        echo '<button type="submit" class="button button-primary">Schedule GBP Post</button>';
+        echo '</form>';
+        echo '</div>';
+
+        echo '<div class="wnq-blog-card wnq-gbp-side">';
+        echo '<h3>Image Speed Checklist</h3>';
+        echo '<ul>';
+        echo '<li>Use WebP or compressed JPG/PNG when possible.</li>';
+        echo '<li>Resize large images before using them in GBP posts.</li>';
+        echo '<li>Keep files lightweight, ideally under 1 MB.</li>';
+        echo '<li>Add descriptive ALT text for local SEO and accessibility.</li>';
+        echo '</ul>';
+        echo '<div class="wnq-gbp-api-note"><strong>Status:</strong> Scheduler queue is active. Google Business Profile live publishing is not connected yet, so due posts will become <code>ready</code> until API publishing is added.</div>';
+        echo '</div>';
+        echo '</div>';
+
+        echo '<div class="wnq-blog-card">';
+        echo '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">';
+        echo '<h3>Scheduled GBP Posts (' . count($posts) . ')</h3>';
+        if (!empty($posts)) {
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="margin:0;">';
+            echo '<input type="hidden" name="action" value="wnq_gbp_delete_all">';
+            echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+            wp_nonce_field('wnq_gbp_delete_all');
+            echo '<button type="submit" class="button button-small" style="border-color:#dc2626;color:#991b1b;" onclick="return confirm(\'Delete the whole GBP schedule list for this client?\')">Delete Whole List</button>';
+            echo '</form>';
+        }
+        echo '</div>';
+
+        if (empty($posts)) {
+            echo '<p class="wnq-muted">No GBP posts scheduled yet.</p>';
+        } else {
+            echo '<table class="widefat striped wnq-blog-table wnq-gbp-table">';
+            echo '<thead><tr><th>Copy</th><th>Type</th><th>CTA</th><th>Image</th><th>Scheduled</th><th>Status</th><th>Actions</th></tr></thead>';
+            echo '<tbody>';
+            foreach ($posts as $p) {
+                $status_class = match ($p['status']) {
+                    'published' => 'status-ok',
+                    'failed'    => 'status-err',
+                    'ready'     => 'status-wait',
+                    default     => 'status-pend',
+                };
+                echo '<tr>';
+                echo '<td style="max-width:360px;">' . nl2br(esc_html(wp_trim_words((string)$p['summary'], 38))) . (!empty($p['error_message']) ? '<br><small style="color:#92400e;">' . esc_html($p['error_message']) . '</small>' : '') . '</td>';
+                echo '<td>' . esc_html(ucfirst((string)$p['post_type'])) . '</td>';
+                echo '<td><strong>' . esc_html(str_replace('_', ' ', (string)$p['cta_type'])) . '</strong><br>' . (!empty($p['cta_url']) ? '<a href="' . esc_url($p['cta_url']) . '" target="_blank" rel="noopener">Open URL</a>' : '<span class="wnq-muted">No URL</span>') . '</td>';
+                echo '<td>';
+                if (!empty($p['image_url'])) {
+                    echo '<a href="' . esc_url($p['image_url']) . '" target="_blank" rel="noopener">Image</a>';
+                    if (!empty($p['image_alt'])) {
+                        echo '<br><small>' . esc_html($p['image_alt']) . '</small>';
+                    }
+                } else {
+                    echo '<span class="wnq-muted">No image</span>';
+                }
+                echo '</td>';
+                echo '<td>' . esc_html($p['scheduled_at'] ?: 'Manual') . '</td>';
+                echo '<td><span class="wnq-status-badge ' . esc_attr($status_class) . '">' . esc_html($p['status']) . '</span></td>';
+                echo '<td>';
+                echo '<button type="button" class="button button-small wnq-gbp-edit" data-id="' . (int)$p['id'] . '">Edit</button> ';
+                echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:inline;">';
+                echo '<input type="hidden" name="action" value="wnq_gbp_delete_post">';
+                echo '<input type="hidden" name="post_id" value="' . (int)$p['id'] . '">';
+                echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+                wp_nonce_field('wnq_gbp_delete_' . $p['id']);
+                echo '<button type="submit" class="button button-small" onclick="return confirm(\'Delete this GBP post?\')">Delete</button>';
+                echo '</form>';
+                echo '</td>';
+                echo '</tr>';
+
+                echo '<tr id="wnq-gbp-edit-row-' . (int)$p['id'] . '" class="wnq-edit-row" style="display:none;">';
+                echo '<td colspan="7">';
+                echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" class="wnq-gbp-edit-form">';
+                echo '<input type="hidden" name="action" value="wnq_gbp_update_post">';
+                echo '<input type="hidden" name="post_id" value="' . (int)$p['id'] . '">';
+                echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+                wp_nonce_field('wnq_gbp_edit_' . $p['id']);
+                echo '<label>Post Copy<textarea name="summary" rows="4" required>' . esc_textarea($p['summary'] ?? '') . '</textarea></label>';
+                echo '<div class="wnq-gbp-edit-grid">';
+                echo '<label>Type<select name="post_type">';
+                foreach (['update' => 'Update', 'event' => 'Event', 'offer' => 'Offer'] as $value => $label) {
+                    echo '<option value="' . esc_attr($value) . '"' . selected($p['post_type'] ?? '', $value, false) . '>' . esc_html($label) . '</option>';
+                }
+                echo '</select></label>';
+                echo '<label>Status<select name="status">';
+                foreach (['scheduled' => 'Scheduled', 'ready' => 'Ready', 'published' => 'Published', 'failed' => 'Failed'] as $value => $label) {
+                    echo '<option value="' . esc_attr($value) . '"' . selected($p['status'] ?? '', $value, false) . '>' . esc_html($label) . '</option>';
+                }
+                echo '</select></label>';
+                echo '<label>Scheduled<input type="datetime-local" name="scheduled_at" value="' . esc_attr(self::toDateTimeLocal($p['scheduled_at'] ?? '')) . '"></label>';
+                echo '<label>CTA<select name="cta_type">';
+                foreach (['LEARN_MORE' => 'Learn More', 'CALL' => 'Call', 'BOOK' => 'Book', 'ORDER' => 'Order', 'SHOP' => 'Shop', 'SIGN_UP' => 'Sign Up'] as $value => $label) {
+                    echo '<option value="' . esc_attr($value) . '"' . selected($p['cta_type'] ?? '', $value, false) . '>' . esc_html($label) . '</option>';
+                }
+                echo '</select></label>';
+                echo '<label>CTA URL<input type="url" name="cta_url" value="' . esc_attr($p['cta_url'] ?? '') . '"></label>';
+                echo '<label>Image URL<input type="url" name="image_url" value="' . esc_attr($p['image_url'] ?? '') . '"></label>';
+                echo '<label>Image ALT<input type="text" name="image_alt" value="' . esc_attr($p['image_alt'] ?? '') . '"></label>';
+                echo '<label>GBP Account ID<input type="text" name="gbp_account_id" value="' . esc_attr($p['gbp_account_id'] ?? '') . '"></label>';
+                echo '<label>GBP Location ID<input type="text" name="gbp_location_id" value="' . esc_attr($p['gbp_location_id'] ?? '') . '"></label>';
+                echo '</div>';
+                echo '<button type="submit" class="button button-primary button-small">Save GBP Post</button>';
+                echo '</form>';
+                echo '</td>';
+                echo '</tr>';
+            }
+            echo '</tbody></table>';
+        }
+        echo '</div>';
+
+        ?>
+<script>
+jQuery(function($) {
+    $(document).on('click', '.wnq-gbp-edit', function() {
+        $('#wnq-gbp-edit-row-' + $(this).data('id')).toggle();
+    });
+});
+</script>
+        <?php
     }
 
     // ── Title Generator Tab ─────────────────────────────────────────────────
@@ -951,6 +1141,16 @@ jQuery(function($) {
         return $results;
     }
 
+    private static function toDateTimeLocal(string $datetime): string
+    {
+        if ($datetime === '') {
+            return '';
+        }
+
+        $timestamp = strtotime($datetime);
+        return $timestamp ? date('Y-m-d\TH:i', $timestamp) : '';
+    }
+
     private static function checkCap(): void
     {
         if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
@@ -972,6 +1172,7 @@ jQuery(function($) {
             'wnq-seo-hub-keywords' => 'Keywords',
             'wnq-seo-hub-content'  => 'Service City Pages',
             'wnq-seo-hub-audits'   => 'Audits',
+            'wnq-seo-hub-images'   => 'Image Optimizer',
             'wnq-seo-hub-reports'  => 'Reports',
             'wnq-seo-hub-blog'     => 'Blog Scheduler',
             'wnq-seo-hub-api'      => 'API',
@@ -1024,6 +1225,24 @@ jQuery(function($) {
         .wnq-content-body { color: #1f2937; line-height: 1.65; font-size: 15px; }
         .wnq-content-body h2 { margin-top: 28px; color: #111827; }
         .wnq-content-body h3 { margin-top: 18px; color: #1f2937; }
+        .wnq-muted { color: #6b7280; }
+        .wnq-gbp-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(260px, .8fr); gap: 16px; align-items: start; }
+        .wnq-gbp-form, .wnq-gbp-edit-form { display: grid; gap: 12px; }
+        .wnq-gbp-form label, .wnq-gbp-edit-form label { display: grid; gap: 5px; color: #374151; font-weight: 600; font-size: 12px; }
+        .wnq-gbp-form input, .wnq-gbp-form select, .wnq-gbp-form textarea,
+        .wnq-gbp-edit-form input, .wnq-gbp-edit-form select, .wnq-gbp-edit-form textarea {
+            width: 100%; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px 10px; font-weight: 400;
+        }
+        .wnq-gbp-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+        .wnq-gbp-advanced { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; background: #f9fafb; }
+        .wnq-gbp-advanced summary { cursor: pointer; font-weight: 600; color: #374151; }
+        .wnq-gbp-side ul { margin-left: 18px; color: #374151; }
+        .wnq-gbp-api-note { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; color: #92400e; padding: 10px 12px; margin-top: 12px; }
+        .wnq-gbp-table small { color: #6b7280; }
+        .wnq-gbp-edit-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 10px; }
+        @media (max-width: 900px) {
+            .wnq-gbp-grid, .wnq-gbp-two, .wnq-gbp-edit-grid { grid-template-columns: 1fr; }
+        }
         </style>';
     }
 
