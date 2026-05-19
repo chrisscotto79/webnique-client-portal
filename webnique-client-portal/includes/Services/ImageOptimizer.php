@@ -88,6 +88,11 @@ final class ImageOptimizer
             self::log($attachment_id, 'backup', $old_size, $old_size, $backup->get_error_message());
             return ['success' => false, 'message' => $backup->get_error_message(), 'actions' => []];
         }
+        if (self::restoreSmallerBackupIfCurrentIsLarger($attachment_id, $path)) {
+            $result['actions'][] = 'restored_smaller_backup';
+        }
+        clearstatcache(true, $path);
+        $old_size = filesize($path) ?: $old_size;
 
         $resize = self::resize($attachment_id, false);
         if (!empty($resize['success']) && !empty($resize['changed'])) {
@@ -106,7 +111,11 @@ final class ImageOptimizer
 
         clearstatcache(true, $path);
         $new_size = file_exists($path) ? (filesize($path) ?: $old_size) : $old_size;
-        self::storeOptimizationMeta($attachment_id, $old_size, $new_size, 'optimize');
+        if ($new_size < $old_size) {
+            self::storeOptimizationMeta($attachment_id, $old_size, $new_size, 'optimize');
+        } else {
+            self::clearOptimizationMeta($attachment_id);
+        }
         self::regenerateMetadata($attachment_id, $path);
         ImageScanner::clearStatsCache();
 
@@ -154,6 +163,9 @@ final class ImageOptimizer
         $save = self::saveEditorOverOriginal($editor, $path, $validation['mime']);
         if (is_wp_error($save)) {
             self::log($attachment_id, 'resize', $old_size, $old_size, $save->get_error_message());
+            if (self::isNoSavingsError($save)) {
+                return ['success' => true, 'message' => $save->get_error_message(), 'changed' => false];
+            }
             return ['success' => false, 'message' => $save->get_error_message(), 'changed' => false];
         }
 
@@ -201,6 +213,9 @@ final class ImageOptimizer
         $save = self::saveEditorOverOriginal($editor, $path, $mime);
         if (is_wp_error($save)) {
             self::log($attachment_id, 'compress', $old_size, $old_size, $save->get_error_message());
+            if (self::isNoSavingsError($save)) {
+                return ['success' => true, 'message' => $save->get_error_message(), 'changed' => false];
+            }
             return ['success' => false, 'message' => $save->get_error_message(), 'changed' => false];
         }
 
@@ -365,12 +380,18 @@ final class ImageOptimizer
     {
         $extension = pathinfo($path, PATHINFO_EXTENSION);
         $tmp_path = $path . '.seoos-tmp.' . $extension;
+        $old_size = file_exists($path) ? (filesize($path) ?: 0) : 0;
         $saved = $editor->save($tmp_path, $mime);
         if (is_wp_error($saved)) {
             return $saved;
         }
         if (empty($saved['path']) || !file_exists($saved['path'])) {
             return new \WP_Error('save_failed', 'The optimized image file was not saved.');
+        }
+        $new_size = filesize($saved['path']) ?: 0;
+        if ($old_size > 0 && $new_size >= $old_size) {
+            @unlink($saved['path']);
+            return new \WP_Error('no_size_savings', 'The processed image would be larger, so the original was kept.');
         }
         if (!rename($saved['path'], $path)) {
             @unlink($saved['path']);
@@ -397,6 +418,44 @@ final class ImageOptimizer
         update_post_meta($attachment_id, '_seo_os_savings_percent', $percent);
         update_post_meta($attachment_id, '_seo_os_optimized_at', current_time('mysql'));
         update_post_meta($attachment_id, '_seo_os_optimization_method', $method);
+    }
+
+    private static function clearOptimizationMeta(int $attachment_id): void
+    {
+        delete_post_meta($attachment_id, '_seo_os_optimized_at');
+        delete_post_meta($attachment_id, '_seo_os_optimization_method');
+        delete_post_meta($attachment_id, '_seo_os_current_file_size');
+        delete_post_meta($attachment_id, '_seo_os_savings_bytes');
+        delete_post_meta($attachment_id, '_seo_os_savings_percent');
+    }
+
+    private static function restoreSmallerBackupIfCurrentIsLarger(int $attachment_id, string $path): bool
+    {
+        $original_size = (int)get_post_meta($attachment_id, '_seo_os_original_file_size', true);
+        $backup_path = (string)get_post_meta($attachment_id, '_seo_os_backup_path', true);
+        $current_size = file_exists($path) ? (filesize($path) ?: 0) : 0;
+
+        if ($original_size <= 0 || $current_size <= $original_size || $backup_path === '' || !file_exists($backup_path)) {
+            return false;
+        }
+
+        $uploads = wp_get_upload_dir();
+        if (!self::isPathInside($backup_path, trailingslashit($uploads['basedir']) . 'seo-os-backups')) {
+            return false;
+        }
+
+        if (copy($backup_path, $path)) {
+            self::clearOptimizationMeta($attachment_id);
+            self::log($attachment_id, 'restore_smaller_backup', $current_size, $original_size, 'Restored smaller original because optimized output was larger.');
+            return true;
+        }
+
+        return false;
+    }
+
+    private static function isNoSavingsError(\WP_Error $error): bool
+    {
+        return $error->get_error_code() === 'no_size_savings';
     }
 
     private static function storeWebpMeta(int $attachment_id, string $webp_path): void

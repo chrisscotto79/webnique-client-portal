@@ -293,6 +293,9 @@ final class ImageOptimizerAdmin
         echo '<strong>After:</strong> ' . esc_html(self::formatBytes($after));
         if ($savings_percent > 0) {
             echo '<br><small>' . esc_html((string)$savings_percent) . '% saved</small>';
+        } elseif ($before > 0 && $after > $before) {
+            $increase = round((($after - $before) / $before) * 100, 2);
+            echo '<br><small class="wnqa-size-increase">' . esc_html((string)$increase) . '% larger</small>';
         }
         echo '</span>';
     }
@@ -332,6 +335,7 @@ final class ImageOptimizerAdmin
 .wnqa-image-table-scroll{width:100%;max-width:100%;overflow-x:auto;background:#fff;border:1px solid #dcdcde;border-radius:8px}.wnqa-image-table{min-width:1300px;border:0;table-layout:fixed}.wnqa-image-table th,.wnqa-image-table td{vertical-align:middle;word-break:break-word}
 .wnqa-image-table th:nth-child(1),.wnqa-image-table td:nth-child(1){width:36px}.wnqa-image-table th:nth-child(2),.wnqa-image-table td:nth-child(2){width:74px}.wnqa-image-table th:nth-child(3),.wnqa-image-table td:nth-child(3){width:60px}.wnqa-image-table th:nth-child(4),.wnqa-image-table td:nth-child(4){width:220px}.wnqa-image-table th:nth-child(13),.wnqa-image-table td:nth-child(13){width:145px}.wnqa-image-table th:nth-child(14),.wnqa-image-table td:nth-child(14){width:155px}
 .wnqa-size-change{display:block;line-height:1.5}
+.wnqa-size-increase{color:#991b1b;font-weight:800}
 .wnqa-image-thumb{width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid #dcdcde;background:#f6f7f7}.wnqa-pill{display:inline-block;border-radius:999px;padding:3px 8px;font-size:12px;font-weight:800}.wnqa-pill.good{background:#dcfce7;color:#166534}.wnqa-pill.warning{background:#fef3c7;color:#92400e}.wnqa-pill.danger{background:#fee2e2;color:#991b1b}.wnqa-pill.neutral{background:#f3f4f6;color:#4b5563}
 .wnqa-recommend{display:inline-block;border-radius:8px;padding:6px 8px;background:#f3f4f6;font-weight:700}.wnqa-recommend.warning{background:#fef3c7;color:#92400e}.wnqa-recommend.high{background:#ffedd5;color:#9a3412}.wnqa-recommend.critical{background:#fee2e2;color:#991b1b}.wnqa-recommend.good{background:#dcfce7;color:#166534}.wnqa-row-actions{display:flex;gap:6px;flex-wrap:wrap}
 .wnqa-image-notice{border-radius:6px;padding:10px 12px;margin:12px 0;font-weight:700}.wnqa-image-notice.success{background:#dcfce7;color:#166534;border:1px solid #86efac}.wnqa-image-notice.error{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}.wnqa-image-notice.warning{background:#fef3c7;color:#92400e;border:1px solid #fcd34d}

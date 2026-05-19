@@ -426,6 +426,9 @@ final class ImageOptimizerAdmin
         echo '<strong>After:</strong> ' . esc_html(self::formatBytes($after));
         if ($savings_percent > 0) {
             echo '<br><small>' . esc_html((string)$savings_percent) . '% saved</small>';
+        } elseif ($before > 0 && $after > $before) {
+            $increase = round((($after - $before) / $before) * 100, 2);
+            echo '<br><small class="wnq-image-size-increase">' . esc_html((string)$increase) . '% larger</small>';
         }
         echo '</span>';
     }
@@ -605,6 +608,7 @@ final class ImageOptimizerAdmin
             .wnq-image-table th:nth-child(14),.wnq-image-table td:nth-child(14){width:150px}
             .wnq-image-table th:nth-child(15),.wnq-image-table td:nth-child(15){width:150px}
             .wnq-image-size-change{display:block;line-height:1.5}
+            .wnq-image-size-increase{color:#991b1b;font-weight:800}
             .wnq-image-thumb{width:58px;height:58px;object-fit:cover;border-radius:8px;background:#f3f4f6;border:1px solid #e5e7eb}
             .wnq-image-pill{display:inline-block;border-radius:999px;padding:3px 9px;font-size:12px;font-weight:800}
             .wnq-image-pill.good{background:#dcfce7;color:#166534}.wnq-image-pill.warning{background:#fef3c7;color:#92400e}.wnq-image-pill.danger{background:#fee2e2;color:#991b1b}.wnq-image-pill.neutral{background:#f3f4f6;color:#4b5563}
