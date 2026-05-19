@@ -1264,7 +1264,7 @@ final class AnalyticsAdmin
             'total_users' => isset($m[0]) ? intval($m[0]['value'])   : 0,
             'page_views'  => isset($m[1]) ? intval($m[1]['value'])   : 0,
             'sessions'    => isset($m[2]) ? intval($m[2]['value'])   : 0,
-            'bounce_rate' => isset($m[3]) ? floatval($m[3]['value']) * 100 : 0,
+            'bounce_rate' => isset($m[3]) ? self::normalizePercentageMetric($m[3]['value']) : 0,
         ];
     }
 
@@ -1338,11 +1338,33 @@ final class AnalyticsAdmin
                     'path'        => $row['dimensionValues'][0]['value'],
                     'title'       => $row['dimensionValues'][1]['value'] ?? 'Untitled',
                     'views'       => intval($row['metricValues'][0]['value']),
-                    'bounce_rate' => floatval($row['metricValues'][1]['value'] ?? 0) * 100,
+                    'bounce_rate' => self::normalizePercentageMetric($row['metricValues'][1]['value'] ?? 0),
                 ];
             }
         }
         return $pages;
+    }
+
+    /**
+     * Keep GA4 percentage metrics display-ready and prevent double-scaling.
+     *
+     * The portal displays bounce rate as a 0-100 percentage. This accepts raw
+     * GA4 ratio-style values like 0.48, percentage values like 48, and cached
+     * legacy double-scaled values like 4800.
+     */
+    private static function normalizePercentageMetric($value): float
+    {
+        $rate = is_numeric($value) ? (float)$value : 0.0;
+        if ($rate < 0) {
+            return 0.0;
+        }
+        if ($rate <= 1) {
+            $rate *= 100;
+        } elseif ($rate > 100 && $rate <= 10000) {
+            $rate /= 100;
+        }
+
+        return round(min($rate, 100), 2);
     }
 
     private static function makeGARequest(string $token, string $property_id, array $body): array

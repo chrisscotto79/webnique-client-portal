@@ -345,6 +345,9 @@ final class ImageOptimizer
 
         $existing = (string)get_post_meta($attachment_id, '_seo_os_backup_path', true);
         if ($existing !== '' && file_exists($existing)) {
+            if ((int)get_post_meta($attachment_id, '_seo_os_original_file_size', true) <= 0) {
+                update_post_meta($attachment_id, '_seo_os_original_file_size', filesize($existing) ?: 0);
+            }
             return true;
         }
 
@@ -435,7 +438,7 @@ final class ImageOptimizer
         $backup_path = (string)get_post_meta($attachment_id, '_seo_os_backup_path', true);
         $current_size = file_exists($path) ? (filesize($path) ?: 0) : 0;
 
-        if ($original_size <= 0 || $current_size <= $original_size || $backup_path === '' || !file_exists($backup_path)) {
+        if ($backup_path === '' || !file_exists($backup_path)) {
             return false;
         }
 
@@ -444,9 +447,15 @@ final class ImageOptimizer
             return false;
         }
 
+        $backup_size = filesize($backup_path) ?: 0;
+        $target_size = $backup_size > 0 ? $backup_size : $original_size;
+        if ($target_size <= 0 || $current_size <= $target_size) {
+            return false;
+        }
+
         if (copy($backup_path, $path)) {
             self::clearOptimizationMeta($attachment_id);
-            self::log($attachment_id, 'restore_smaller_backup', $current_size, $original_size, 'Restored smaller original because optimized output was larger.');
+            self::log($attachment_id, 'restore_smaller_backup', $current_size, $target_size, 'Restored smaller original because optimized output was larger.');
             return true;
         }
 

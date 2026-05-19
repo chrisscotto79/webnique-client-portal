@@ -379,7 +379,10 @@ final class ImageOptimizerAdmin
   <td><?php echo !empty($row['oversized']) ? '<span class="wnq-image-pill warning">Oversized</span>' : '<span class="wnq-image-pill good">OK</span>'; ?></td>
   <td><?php echo !empty($row['webp_exists']) ? '<span class="wnq-image-pill good">Exists</span>' : '<span class="wnq-image-pill warning">No WebP</span>'; ?></td>
   <td>
-    <?php if (!empty($row['optimized'])): ?>
+    <?php if (!empty($row['size_regression'])): ?>
+      <span class="wnq-image-pill danger">Larger</span>
+      <br><small>Run Optimize to restore backup.</small>
+    <?php elseif (!empty($row['optimized'])): ?>
       <span class="wnq-image-pill good">Optimized</span>
       <br><small><?php echo esc_html((string)$row['optimized_at']); ?></small>
       <?php if ((float)$row['savings_percent'] > 0): ?>

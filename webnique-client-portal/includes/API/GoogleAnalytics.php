@@ -48,7 +48,7 @@ final class GoogleAnalytics
         // Check cache first
         $cached = AnalyticsCache::get($cache_key);
         if (is_array($cached)) {
-            return $cached;
+            return self::normalizeOverviewPercentages($cached);
         }
 
         try {
@@ -94,7 +94,7 @@ final class GoogleAnalytics
         
         $cached = AnalyticsCache::get($cache_key);
         if (is_array($cached)) {
-            return $cached;
+            return self::normalizePagePercentages($cached);
         }
 
         try {
@@ -497,7 +497,7 @@ final class GoogleAnalytics
             'total_users' => intval($metrics[0]['value'] ?? 0),
             'page_views' => intval($metrics[1]['value'] ?? 0),
             'sessions' => intval($metrics[2]['value'] ?? 0),
-            'bounce_rate' => floatval($metrics[3]['value'] ?? 0) * 100,
+            'bounce_rate' => self::normalizePercentageMetric($metrics[3]['value'] ?? 0),
             'avg_session_duration' => 0,
             'new_users' => 0,
         ];
@@ -553,9 +553,56 @@ final class GoogleAnalytics
                 'title' => $row['dimensionValues'][1]['value'] ?? 'Untitled',
                 'views' => intval($row['metricValues'][0]['value']),
                 'avg_time' => 0,
-                'bounce_rate' => floatval($row['metricValues'][1]['value'] ?? 0) * 100,
+                'bounce_rate' => self::normalizePercentageMetric($row['metricValues'][1]['value'] ?? 0),
             ];
         }
+
+        return $pages;
+    }
+
+    /**
+     * Normalize GA4 percentage metrics for display.
+     *
+     * GA4 Data API percentage-like metrics can appear as ratios in some API
+     * contexts, while cached legacy values from older plugin versions may
+     * already be multiplied. Keep dashboard/report output in a 0-100 percent
+     * range without double-scaling bounce rate.
+     */
+    private static function normalizePercentageMetric($value): float
+    {
+        $rate = is_numeric($value) ? (float)$value : 0.0;
+        if ($rate < 0) {
+            return 0.0;
+        }
+        if ($rate <= 1) {
+            $rate *= 100;
+        } elseif ($rate > 100 && $rate <= 10000) {
+            $rate /= 100;
+        }
+
+        return round(min($rate, 100), 2);
+    }
+
+    private static function normalizeOverviewPercentages(array $overview): array
+    {
+        if (array_key_exists('bounce_rate', $overview)) {
+            $overview['bounce_rate'] = self::normalizePercentageMetric($overview['bounce_rate']);
+        }
+        if (isset($overview['comparison']) && is_array($overview['comparison'])) {
+            $overview['comparison'] = self::normalizeOverviewPercentages($overview['comparison']);
+        }
+
+        return $overview;
+    }
+
+    private static function normalizePagePercentages(array $pages): array
+    {
+        foreach ($pages as &$page) {
+            if (is_array($page) && array_key_exists('bounce_rate', $page)) {
+                $page['bounce_rate'] = self::normalizePercentageMetric($page['bounce_rate']);
+            }
+        }
+        unset($page);
 
         return $pages;
     }

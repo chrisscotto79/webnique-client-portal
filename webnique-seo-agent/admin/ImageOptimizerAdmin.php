@@ -132,6 +132,7 @@ final class ImageOptimizerAdmin
           <th>Dimensions</th>
           <th>Attached To</th>
           <th>Alt</th>
+          <th>Oversized</th>
           <th>WebP</th>
           <th>Optimized</th>
           <th>Before / After</th>
@@ -141,7 +142,7 @@ final class ImageOptimizerAdmin
       </thead>
       <tbody>
         <?php if (empty($rows['rows'])): ?>
-          <tr><td colspan="14" class="wnqa-image-empty">No images found for this filter.</td></tr>
+          <tr><td colspan="15" class="wnqa-image-empty">No images found for this filter.</td></tr>
         <?php else: ?>
           <?php foreach ($rows['rows'] as $row): ?>
             <?php self::row($row); ?>
@@ -258,8 +259,15 @@ final class ImageOptimizerAdmin
   <td><?php echo (int)$row['width']; ?> x <?php echo (int)$row['height']; ?></td>
   <td><?php echo !empty($row['attached_to']) ? '<a href="' . esc_url(get_edit_post_link((int)$row['attached_to'])) . '">' . esc_html($row['attached_to_title']) . '</a>' : '<span class="description">Unattached</span>'; ?></td>
   <td><?php echo !empty($row['missing_alt']) ? '<span class="wnqa-pill danger">Missing</span>' : '<span class="wnqa-pill good">OK</span>'; ?></td>
+  <td><?php echo !empty($row['oversized']) ? '<span class="wnqa-pill warning">Oversized</span>' : '<span class="wnqa-pill good">OK</span>'; ?></td>
   <td><?php echo !empty($row['webp_exists']) ? '<span class="wnqa-pill good">Exists</span>' : '<span class="wnqa-pill warning">No WebP</span>'; ?></td>
-  <td><?php echo !empty($row['optimized']) ? '<span class="wnqa-pill good">Optimized</span><br><small>' . esc_html((string)$row['optimized_at']) . '</small>' : '<span class="wnqa-pill neutral">Not yet</span>'; ?></td>
+  <td>
+    <?php if (!empty($row['size_regression'])): ?>
+      <span class="wnqa-pill danger">Larger</span><br><small>Run Optimize to restore backup.</small>
+    <?php else: ?>
+      <?php echo !empty($row['optimized']) ? '<span class="wnqa-pill good">Optimized</span><br><small>' . esc_html((string)$row['optimized_at']) . '</small>' : '<span class="wnqa-pill neutral">Not yet</span>'; ?>
+    <?php endif; ?>
+  </td>
   <td><?php self::sizeChange($row); ?></td>
   <td><span class="wnqa-recommend <?php echo esc_attr($priority); ?>"><?php echo esc_html($row['recommendation']); ?></span></td>
   <td class="wnqa-row-actions">
@@ -332,8 +340,8 @@ final class ImageOptimizerAdmin
 .wnqa-stat{background:#fff;border:1px solid #dcdcde;border-radius:8px;padding:14px}.wnqa-stat .val{display:block;font-size:28px;font-weight:800;color:#1f5aa6}.wnqa-stat .lbl{display:block;margin-top:6px;text-transform:uppercase;font-size:11px;font-weight:800;color:#50575e;letter-spacing:.05em}.wnqa-stat.danger .val{color:#dc2626}.wnqa-stat.warning .val{color:#d97706}
 .wnqa-image-panel,.wnqa-image-card{background:#fff;border:1px solid #dcdcde;border-radius:8px;padding:14px;margin:14px 0}.wnqa-image-panel{display:flex;justify-content:space-between;gap:12px;align-items:end;flex-wrap:wrap}
 .wnqa-image-filters{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.wnqa-image-filters label,.wnqa-image-batch label{font-weight:700}.wnqa-image-filters select,.wnqa-image-batch select{display:block;min-width:130px;margin-top:4px}
-.wnqa-image-table-scroll{width:100%;max-width:100%;overflow-x:auto;background:#fff;border:1px solid #dcdcde;border-radius:8px}.wnqa-image-table{min-width:1300px;border:0;table-layout:fixed}.wnqa-image-table th,.wnqa-image-table td{vertical-align:middle;word-break:break-word}
-.wnqa-image-table th:nth-child(1),.wnqa-image-table td:nth-child(1){width:36px}.wnqa-image-table th:nth-child(2),.wnqa-image-table td:nth-child(2){width:74px}.wnqa-image-table th:nth-child(3),.wnqa-image-table td:nth-child(3){width:60px}.wnqa-image-table th:nth-child(4),.wnqa-image-table td:nth-child(4){width:220px}.wnqa-image-table th:nth-child(13),.wnqa-image-table td:nth-child(13){width:145px}.wnqa-image-table th:nth-child(14),.wnqa-image-table td:nth-child(14){width:155px}
+.wnqa-image-table-scroll{width:100%;max-width:100%;overflow-x:auto;background:#fff;border:1px solid #dcdcde;border-radius:8px}.wnqa-image-table{min-width:1450px;border:0;table-layout:fixed}.wnqa-image-table th,.wnqa-image-table td{vertical-align:middle;word-break:break-word}
+.wnqa-image-table th:nth-child(1),.wnqa-image-table td:nth-child(1){width:36px}.wnqa-image-table th:nth-child(2),.wnqa-image-table td:nth-child(2){width:74px}.wnqa-image-table th:nth-child(3),.wnqa-image-table td:nth-child(3){width:60px}.wnqa-image-table th:nth-child(4),.wnqa-image-table td:nth-child(4){width:220px}.wnqa-image-table th:nth-child(14),.wnqa-image-table td:nth-child(14){width:145px}.wnqa-image-table th:nth-child(15),.wnqa-image-table td:nth-child(15){width:155px}
 .wnqa-size-change{display:block;line-height:1.5}
 .wnqa-size-increase{color:#991b1b;font-weight:800}
 .wnqa-image-thumb{width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid #dcdcde;background:#f6f7f7}.wnqa-pill{display:inline-block;border-radius:999px;padding:3px 8px;font-size:12px;font-weight:800}.wnqa-pill.good{background:#dcfce7;color:#166534}.wnqa-pill.warning{background:#fef3c7;color:#92400e}.wnqa-pill.danger{background:#fee2e2;color:#991b1b}.wnqa-pill.neutral{background:#f3f4f6;color:#4b5563}
