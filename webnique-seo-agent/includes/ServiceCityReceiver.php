@@ -128,6 +128,7 @@ final class ServiceCityReceiver
             $elementor = json_decode($elementor_raw, true);
             if (is_array($elementor)) {
                 update_post_meta($page_id, '_elementor_edit_mode', 'builder');
+                update_post_meta($page_id, '_elementor_template_type', 'wp-page');
                 update_post_meta($page_id, '_elementor_version', defined('ELEMENTOR_VERSION') ? ELEMENTOR_VERSION : '3.0.0');
                 update_post_meta($page_id, '_elementor_page_settings', ['hide_title' => 'yes']);
                 update_post_meta($page_id, '_elementor_data', wp_slash(wp_json_encode($elementor, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)));
@@ -155,6 +156,8 @@ final class ServiceCityReceiver
             }
         }
 
+        self::clearElementorCache($page_id);
+
         return new \WP_REST_Response([
             'status'    => 'draft_created',
             'page_id'   => (int)$page_id,
@@ -162,6 +165,27 @@ final class ServiceCityReceiver
             'page_url'  => get_permalink($page_id),
             'edit_url'  => admin_url('post.php?post=' . (int)$page_id . '&action=edit'),
         ], 201);
+    }
+
+    private static function clearElementorCache(int $page_id): void
+    {
+        if (class_exists('\Elementor\Plugin')) {
+            try {
+                $elementor = \Elementor\Plugin::$instance;
+                if (isset($elementor->files_manager) && method_exists($elementor->files_manager, 'clear_cache')) {
+                    $elementor->files_manager->clear_cache();
+                }
+                if (isset($elementor->posts_css_manager) && method_exists($elementor->posts_css_manager, 'clear_cache')) {
+                    $elementor->posts_css_manager->clear_cache();
+                }
+            } catch (\Throwable $e) {
+                error_log('WNQ ServiceCityReceiver Elementor cache clear failed: ' . $e->getMessage());
+            }
+        }
+
+        if (function_exists('clean_post_cache')) {
+            clean_post_cache($page_id);
+        }
     }
 
     private static function findExistingPageBySlug(string $slug): int

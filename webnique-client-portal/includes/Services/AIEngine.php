@@ -259,10 +259,13 @@ H1: {h1}
 CTA Title: {cta_title}
 CTA Text: {cta_text}
 Related Services: {related_services}
+Navigation Related Services: {navigation_menu_related_services}
 Nearby Cities: {nearby_cities}
+Navigation Nearby Areas: {nav_menu_nearby_areas}
 Internal Links: {internal_links}
 Geo Modifiers: {geo_modifiers}
 Commercial Intent: {commercial_intent}
+Page Type: {page_type}
 Keyword Variants: {keyword_variants}
 Tone: {tone}
 
@@ -273,7 +276,7 @@ Rules:
 - Keep paragraphs short, 2-3 sentences max.
 - Use H2s and H3s only. Do not include an H1 because the template controls the H1.
 - Naturally include the Primary Keyword in the first 100 words and in at least one H2.
-- Naturally mention relevant service variations, nearby cities, county, and geo modifiers where they make sense.
+- Naturally mention relevant service variations, related services, nearby cities/areas, county, and geo modifiers where they make sense.
 - Use the CTA Title and CTA Text once near the end.
 - If internal links are provided, mention the page topics naturally, but do not add raw URL lists.
 - Write 700-1,100 words.
