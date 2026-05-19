@@ -148,6 +148,9 @@ final class ImageScanner
         $webp_path = (string)get_post_meta($attachment_id, '_wnqa_webp_path', true);
         $webp_exists = $mime === 'image/webp' || ($webp_path !== '' && file_exists($webp_path));
         $optimized_at = (string)get_post_meta($attachment_id, '_wnqa_optimized_at', true);
+        $original_size = (int)get_post_meta($attachment_id, '_wnqa_original_file_size', true);
+        $savings_percent = (float)get_post_meta($attachment_id, '_wnqa_savings_percent', true);
+        $size_regression = $original_size > 0 && $file_size > $original_size;
 
         $row = [
             'id'                => $attachment_id,
@@ -166,11 +169,12 @@ final class ImageScanner
             'missing_alt'       => trim($alt) === '',
             'oversized'         => $width > 2000 || $height > 2000,
             'webp_exists'       => $webp_exists,
-            'optimized'         => $optimized_at !== '',
+            'optimized'         => $optimized_at !== '' && !$size_regression,
             'optimized_at'      => $optimized_at,
-            'original_size'     => (int)get_post_meta($attachment_id, '_wnqa_original_file_size', true),
+            'original_size'     => $original_size,
             'current_size'      => $file_size,
-            'savings_percent'   => (float)get_post_meta($attachment_id, '_wnqa_savings_percent', true),
+            'savings_percent'   => $savings_percent,
+            'size_regression'   => $size_regression,
             'date_uploaded'     => $post->post_date,
         ];
 
@@ -239,6 +243,7 @@ final class ImageScanner
 
     private static function priorityForRow(array $row, array $settings): string
     {
+        if (!empty($row['size_regression'])) return 'critical';
         if ($row['size_kb'] > (int)$settings['critical_threshold_kb']) return 'critical';
         if ($row['size_kb'] > (int)$settings['high_threshold_kb']) return 'high';
         if ($row['size_kb'] > (int)$settings['warning_threshold_kb']) return 'warning';
@@ -247,6 +252,7 @@ final class ImageScanner
 
     private static function recommendationForRow(array $row, array $settings): string
     {
+        if (!empty($row['size_regression'])) return 'Restore smaller backup or re-optimize';
         if ($row['size_kb'] > (int)$settings['critical_threshold_kb']) return 'Critical: replace or optimize';
         $needs_compress = $row['size_kb'] > (int)$settings['warning_threshold_kb'];
         $needs_resize = !empty($row['oversized']);
