@@ -108,6 +108,9 @@ final class AIElementorPageBuilderAdmin
 
         $saved_templates = ElementorTemplateLibrary::all();
         $agents = self::connectedAgents();
+        $section_groups = self::groupSectionTemplates($section_templates);
+        $saved_template_groups = self::groupSavedTemplates($saved_templates);
+        $category_labels = self::templateCategoryLabels();
         $saved_template_count = count($saved_templates);
         $connected_site_count = count($agents);
         $available_template_count = count($section_templates);
@@ -144,9 +147,9 @@ final class AIElementorPageBuilderAdmin
 
   <div class="wnq-ai-tab-shell">
     <div class="wnq-ai-tabs" role="tablist" aria-label="AI Elementor Builder workflow">
-      <button type="button" class="wnq-ai-tab <?php echo $active_tab === 'library' ? 'is-active' : ''; ?>" data-wnq-ai-tab="library" role="tab" aria-selected="<?php echo $active_tab === 'library' ? 'true' : 'false'; ?>" aria-controls="wnq-ai-tab-library">1. Template Library</button>
-      <button type="button" class="wnq-ai-tab <?php echo $active_tab === 'payload' ? 'is-active' : ''; ?>" data-wnq-ai-tab="payload" role="tab" aria-selected="<?php echo $active_tab === 'payload' ? 'true' : 'false'; ?>" aria-controls="wnq-ai-tab-payload">2. AI Payload</button>
-      <button type="button" class="wnq-ai-tab <?php echo $active_tab === 'draft' ? 'is-active' : ''; ?>" data-wnq-ai-tab="draft" role="tab" aria-selected="<?php echo $active_tab === 'draft' ? 'true' : 'false'; ?>" aria-controls="wnq-ai-tab-draft">3. Draft Builder</button>
+      <button type="button" class="wnq-ai-tab <?php echo $active_tab === 'library' ? 'is-active' : ''; ?>" data-wnq-ai-tab="library" role="tab" aria-selected="<?php echo $active_tab === 'library' ? 'true' : 'false'; ?>" aria-controls="wnq-ai-tab-library"><span>01</span><strong>Template Library</strong><small>Upload and organize sections</small></button>
+      <button type="button" class="wnq-ai-tab <?php echo $active_tab === 'payload' ? 'is-active' : ''; ?>" data-wnq-ai-tab="payload" role="tab" aria-selected="<?php echo $active_tab === 'payload' ? 'true' : 'false'; ?>" aria-controls="wnq-ai-tab-payload"><span>02</span><strong>AI Payload</strong><small>Generate variables for sections</small></button>
+      <button type="button" class="wnq-ai-tab <?php echo $active_tab === 'draft' ? 'is-active' : ''; ?>" data-wnq-ai-tab="draft" role="tab" aria-selected="<?php echo $active_tab === 'draft' ? 'true' : 'false'; ?>" aria-controls="wnq-ai-tab-draft"><span>03</span><strong>Draft Builder</strong><small>Create the Elementor draft</small></button>
     </div>
 
     <div class="wnq-ai-tab-panels">
@@ -170,7 +173,11 @@ final class AIElementorPageBuilderAdmin
       </label>
       <label>
         <strong>Category</strong>
-        <input type="text" name="template_category" placeholder="Hero, CTA, FAQ, Process">
+        <select name="template_category">
+          <?php foreach ($category_labels as $category_key => $category_label): ?>
+            <option value="<?php echo esc_attr($category_label); ?>" <?php selected($category_key, 'custom'); ?>><?php echo esc_html($category_label); ?></option>
+          <?php endforeach; ?>
+        </select>
       </label>
       <label>
         <strong>Theme</strong>
@@ -204,32 +211,7 @@ final class AIElementorPageBuilderAdmin
   </form>
 
   <?php if ($saved_templates): ?>
-    <div class="wnq-ai-template-library-list">
-      <?php foreach ($saved_templates as $key => $template): ?>
-        <div class="wnq-ai-template-card">
-          <div>
-            <strong><?php echo esc_html((string)($template['name'] ?? $key)); ?></strong>
-            <span><?php echo esc_html((string)($template['category'] ?? 'Custom')); ?> / <?php echo esc_html(ucfirst((string)($template['theme'] ?? 'any'))); ?></span>
-            <?php if (!empty($template['description'])): ?>
-              <p><?php echo esc_html((string)$template['description']); ?></p>
-            <?php endif; ?>
-            <?php if (!empty($template['variables'])): ?>
-              <div class="wnq-ai-variable-chips">
-                <?php foreach ((array)$template['variables'] as $variable): ?>
-                  <code>{{<?php echo esc_html((string)$variable); ?>}}</code>
-                <?php endforeach; ?>
-              </div>
-            <?php endif; ?>
-          </div>
-          <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" onsubmit="return confirm('Delete this saved template?');">
-            <?php wp_nonce_field('wnq_ai_elementor_delete_template_' . $key); ?>
-            <input type="hidden" name="action" value="wnq_ai_elementor_delete_template">
-            <input type="hidden" name="template_key" value="<?php echo esc_attr((string)$key); ?>">
-            <button type="submit" class="button">Delete</button>
-          </form>
-        </div>
-      <?php endforeach; ?>
-    </div>
+    <?php self::renderSavedTemplateGroups($saved_template_groups); ?>
   <?php else: ?>
     <div class="wnq-ai-empty-state">
       <strong>No custom templates saved yet.</strong>
@@ -255,17 +237,7 @@ final class AIElementorPageBuilderAdmin
 
     <div class="wnq-ai-elementor-template-source">
       <strong>Templates to write for</strong>
-      <div class="wnq-ai-elementor-section-list">
-        <?php foreach ($section_templates as $key => $template): ?>
-          <label>
-            <input type="checkbox" name="ai_section_template_keys[]" value="<?php echo esc_attr($key); ?>" <?php checked(in_array($key, [ElementorSectionLibrary::LOCAL_SERVICE_HERO, ElementorSectionLibrary::CONTENT_IMAGE], true)); ?>>
-            <span><?php echo esc_html($template['label'] ?? $key); ?></span>
-            <?php if (!empty($template['description'])): ?>
-              <small><?php echo esc_html($template['description']); ?></small>
-            <?php endif; ?>
-          </label>
-        <?php endforeach; ?>
-      </div>
+      <?php self::renderSectionTemplatePicker($section_groups, 'ai_section_template_keys', [ElementorSectionLibrary::LOCAL_SERVICE_HERO, ElementorSectionLibrary::CONTENT_IMAGE]); ?>
     </div>
 
     <div class="wnq-ai-template-meta">
@@ -335,17 +307,7 @@ final class AIElementorPageBuilderAdmin
 
     <div class="wnq-ai-elementor-template-source">
       <strong>Section Templates</strong>
-      <div class="wnq-ai-elementor-section-list">
-        <?php foreach ($section_templates as $key => $template): ?>
-          <label>
-            <input type="checkbox" name="section_template_keys[]" value="<?php echo esc_attr($key); ?>" <?php checked(in_array($key, [ElementorSectionLibrary::LOCAL_SERVICE_HERO, ElementorSectionLibrary::CONTENT_IMAGE], true)); ?>>
-            <span><?php echo esc_html($template['label'] ?? $key); ?></span>
-            <?php if (!empty($template['description'])): ?>
-              <small><?php echo esc_html($template['description']); ?></small>
-            <?php endif; ?>
-          </label>
-        <?php endforeach; ?>
-      </div>
+      <?php self::renderSectionTemplatePicker($section_groups, 'section_template_keys', [ElementorSectionLibrary::LOCAL_SERVICE_HERO, ElementorSectionLibrary::CONTENT_IMAGE]); ?>
       <label class="wnq-ai-elementor-custom-toggle">
         <input type="checkbox" name="use_custom_template" value="1">
         Use custom pasted/uploaded Elementor JSON instead
@@ -432,6 +394,52 @@ final class AIElementorPageBuilderAdmin
     </div>
   </div>
 </div>
+
+<script>
+(function() {
+  function setTab(root, tabName) {
+    root.querySelectorAll('[data-wnq-ai-tab]').forEach(function(button) {
+      var active = button.getAttribute('data-wnq-ai-tab') === tabName;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+
+    root.querySelectorAll('[data-wnq-ai-panel]').forEach(function(panel) {
+      var active = panel.getAttribute('data-wnq-ai-panel') === tabName;
+      panel.classList.toggle('is-active', active);
+      panel.hidden = !active;
+    });
+
+    root.setAttribute('data-active-tab', tabName);
+  }
+
+  document.querySelectorAll('.wnq-ai-builder-page').forEach(function(root) {
+    var initial = root.getAttribute('data-active-tab') || 'draft';
+    setTab(root, initial);
+
+    root.querySelectorAll('[data-wnq-ai-tab]').forEach(function(button) {
+      button.addEventListener('click', function() {
+        setTab(root, button.getAttribute('data-wnq-ai-tab') || 'draft');
+      });
+    });
+  });
+
+  document.querySelectorAll('[data-wnq-template-catalog]').forEach(function(catalog) {
+    catalog.querySelectorAll('[data-wnq-category-filter]').forEach(function(button) {
+      button.addEventListener('click', function() {
+        var category = button.getAttribute('data-wnq-category-filter') || 'all';
+        catalog.querySelectorAll('[data-wnq-category-filter]').forEach(function(other) {
+          other.classList.toggle('is-active', other === button);
+        });
+        catalog.querySelectorAll('[data-wnq-template-group]').forEach(function(group) {
+          var visible = category === 'all' || group.getAttribute('data-wnq-template-group') === category;
+          group.hidden = !visible;
+        });
+      });
+    });
+  });
+})();
+</script>
 
 <style>
   .wnq-ai-builder-page {
@@ -542,6 +550,75 @@ final class AIElementorPageBuilderAdmin
     letter-spacing: 0.08em;
     margin-top: 7px;
     text-transform: uppercase;
+  }
+  .wnq-ai-tab-shell {
+    display: grid;
+    gap: 16px;
+  }
+  .wnq-ai-tabs {
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid var(--ai-line);
+    border-radius: 18px;
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    padding: 8px;
+    position: sticky;
+    top: 32px;
+    z-index: 5;
+  }
+  .wnq-ai-tab {
+    appearance: none;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 14px;
+    color: var(--ai-muted);
+    cursor: pointer;
+    display: grid;
+    gap: 3px;
+    min-height: 72px;
+    padding: 12px 14px;
+    text-align: left;
+    transition: border-color .18s ease, background .18s ease, color .18s ease, transform .18s ease;
+  }
+  .wnq-ai-tab span {
+    color: var(--ai-gold-2);
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: .12em;
+  }
+  .wnq-ai-tab strong {
+    color: inherit;
+    font-size: 15px;
+    line-height: 1.2;
+  }
+  .wnq-ai-tab small {
+    color: var(--ai-muted-2);
+    font-size: 12px;
+    line-height: 1.25;
+  }
+  .wnq-ai-tab:hover,
+  .wnq-ai-tab:focus {
+    border-color: var(--ai-line-strong);
+    color: var(--ai-text);
+    outline: none;
+  }
+  .wnq-ai-tab.is-active {
+    background: linear-gradient(135deg, rgba(217, 190, 66, 0.18), rgba(217, 190, 66, 0.06));
+    border-color: var(--ai-line-strong);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 12px 28px rgba(0,0,0,.2);
+    color: var(--ai-text);
+  }
+  .wnq-ai-tab-panel[hidden] {
+    display: none !important;
+  }
+  .wnq-ai-tab-panel.is-active {
+    animation: wnqAiPanelIn .16s ease-out;
+    display: block;
+  }
+  @keyframes wnqAiPanelIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
   }
   .wnq-ai-workflow-grid {
     display: grid;
@@ -679,6 +756,75 @@ final class AIElementorPageBuilderAdmin
     gap: 10px;
     margin-top: 12px;
   }
+  .wnq-ai-category-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 12px 0 14px;
+  }
+  .wnq-ai-category-filters button {
+    appearance: none;
+    background: rgba(255,255,255,.035);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 999px;
+    color: var(--ai-muted);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 800;
+    padding: 7px 11px;
+  }
+  .wnq-ai-category-filters button:hover,
+  .wnq-ai-category-filters button:focus,
+  .wnq-ai-category-filters button.is-active {
+    background: rgba(217,190,66,.13);
+    border-color: var(--ai-line-strong);
+    color: var(--ai-gold-2);
+    outline: none;
+  }
+  .wnq-ai-template-groups {
+    display: grid;
+    gap: 12px;
+  }
+  .wnq-ai-elementor-template-source .wnq-ai-template-groups {
+    max-height: min(540px, 58vh);
+    overflow: auto;
+    padding-right: 4px;
+  }
+  .wnq-ai-template-group {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+  .wnq-ai-template-group > summary {
+    align-items: center;
+    background: rgba(255, 255, 255, 0.025);
+    display: flex;
+    justify-content: space-between;
+  }
+  .wnq-ai-template-group > summary em {
+    background: rgba(217,190,66,.13);
+    border: 1px solid rgba(217,190,66,.22);
+    border-radius: 999px;
+    color: var(--ai-gold-2);
+    font-style: normal;
+    font-weight: 900;
+    min-width: 28px;
+    padding: 3px 8px;
+    text-align: center;
+  }
+  .wnq-ai-template-group .wnq-ai-elementor-section-list,
+  .wnq-ai-template-group .wnq-ai-template-library-list {
+    margin: 0;
+    padding: 12px;
+  }
+  .wnq-ai-section-catalog {
+    margin-top: 10px;
+  }
+  .wnq-ai-section-option > span {
+    display: grid;
+    gap: 3px;
+  }
   .wnq-ai-template-card,
   .wnq-ai-elementor-section-list label,
   .wnq-ai-elementor-custom-toggle,
@@ -722,7 +868,14 @@ final class AIElementorPageBuilderAdmin
     gap: 6px;
     margin-top: 10px;
   }
+  .wnq-ai-mini-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 6px;
+  }
   .wnq-ai-variable-chips code,
+  .wnq-ai-mini-chips code,
   .wnq-ai-elementor-image-grid code,
   .wnq-ai-builder-page code {
     background: rgba(217, 190, 66, 0.12);
@@ -799,6 +952,10 @@ final class AIElementorPageBuilderAdmin
     }
     .wnq-ai-template-card {
       display: grid;
+    }
+    .wnq-ai-tabs {
+      grid-template-columns: 1fr;
+      position: static;
     }
   }
 </style>
@@ -1060,6 +1217,207 @@ final class AIElementorPageBuilderAdmin
     private static function aiPayloadTransientKey(): string
     {
         return 'wnq_ai_elementor_payload_' . get_current_user_id();
+    }
+
+    private static function templateCategoryLabels(): array
+    {
+        return [
+            'header'  => 'Header Templates',
+            'hero'    => 'Hero Templates',
+            'content' => 'Content Sections',
+            'cta'     => 'CTA Sections',
+            'faq'     => 'FAQ Templates',
+            'reviews' => 'Reviews Sections',
+            'process' => 'Process Sections',
+            'footer'  => 'Footer Templates',
+            'custom'  => 'Custom / Saved Templates',
+            'other'   => 'Other Templates',
+        ];
+    }
+
+    private static function groupSectionTemplates(array $templates): array
+    {
+        $groups = [];
+        foreach (self::templateCategoryLabels() as $key => $label) {
+            $groups[$key] = [
+                'label' => $label,
+                'items' => [],
+            ];
+        }
+
+        foreach ($templates as $key => $template) {
+            $group_key = self::templateCategoryKey(
+                (string)($template['category'] ?? ''),
+                (string)$key,
+                (string)($template['label'] ?? ''),
+                (string)($template['description'] ?? '')
+            );
+
+            $groups[$group_key]['items'][(string)$key] = $template;
+        }
+
+        return array_filter($groups, static fn($group) => !empty($group['items']));
+    }
+
+    private static function groupSavedTemplates(array $templates): array
+    {
+        $groups = [];
+        foreach (self::templateCategoryLabels() as $key => $label) {
+            $groups[$key] = [
+                'label' => $label,
+                'items' => [],
+            ];
+        }
+
+        foreach ($templates as $key => $template) {
+            $group_key = self::templateCategoryKey(
+                (string)($template['category'] ?? ''),
+                (string)$key,
+                (string)($template['name'] ?? ''),
+                (string)($template['description'] ?? '')
+            );
+
+            $groups[$group_key]['items'][(string)$key] = $template;
+        }
+
+        return array_filter($groups, static fn($group) => !empty($group['items']));
+    }
+
+    private static function templateCategoryKey(string $category, string $key = '', string $label = '', string $description = ''): string
+    {
+        $text = strtolower($category . ' ' . $key . ' ' . $label . ' ' . $description);
+
+        $map = [
+            'header'  => ['header', 'nav', 'navigation', 'menu'],
+            'hero'    => ['hero', 'banner', 'above fold', 'above_the_fold'],
+            'content' => ['content', 'text', 'image', 'two-column', 'two column', 'body'],
+            'cta'     => ['cta', 'call to action', 'conversion'],
+            'faq'     => ['faq', 'accordion', 'question'],
+            'reviews' => ['review', 'testimonial', 'rating'],
+            'process' => ['process', 'steps', 'how it works'],
+            'footer'  => ['footer'],
+            'custom'  => ['custom', 'saved'],
+        ];
+
+        foreach ($map as $group_key => $needles) {
+            foreach ($needles as $needle) {
+                if (strpos($text, $needle) !== false) {
+                    return $group_key;
+                }
+            }
+        }
+
+        return 'other';
+    }
+
+    private static function renderCategoryFilters(string $context, array $groups): void
+    {
+        if (count($groups) < 2) {
+            return;
+        }
+
+        echo '<div class="wnq-ai-category-filters" data-wnq-category-filter-context="' . esc_attr($context) . '">';
+        echo '<button type="button" class="is-active" data-wnq-category-filter="all">All</button>';
+        foreach ($groups as $key => $group) {
+            echo '<button type="button" data-wnq-category-filter="' . esc_attr((string)$key) . '">' . esc_html((string)$group['label']) . '</button>';
+        }
+        echo '</div>';
+    }
+
+    private static function renderSectionTemplatePicker(array $groups, string $field_name, array $default_keys = []): void
+    {
+        echo '<div class="wnq-ai-section-catalog" data-wnq-template-catalog>';
+        self::renderCategoryFilters($field_name, $groups);
+        echo '<div class="wnq-ai-template-groups">';
+
+        foreach ($groups as $category_key => $group) {
+            $open = count($groups) === 1 || self::templateGroupHasDefaults((array)$group['items'], $default_keys);
+            echo '<details class="wnq-ai-template-group" data-wnq-template-group="' . esc_attr((string)$category_key) . '"' . ($open ? ' open' : '') . '>';
+            echo '<summary><span>' . esc_html((string)$group['label']) . '</span><em>' . esc_html((string)count($group['items'])) . '</em></summary>';
+            echo '<div class="wnq-ai-elementor-section-list">';
+            foreach ((array)$group['items'] as $key => $template) {
+                $source = (string)($template['source'] ?? 'built_in');
+                $theme = ucfirst((string)($template['theme'] ?? 'any'));
+                echo '<label class="wnq-ai-section-option">';
+                echo '<input type="checkbox" name="' . esc_attr($field_name) . '[]" value="' . esc_attr((string)$key) . '" ' . checked(in_array((string)$key, $default_keys, true), true, false) . '>';
+                echo '<span>';
+                echo '<strong>' . esc_html((string)($template['label'] ?? $key)) . '</strong>';
+                echo '<small>' . esc_html(trim($theme . ' / ' . ($source === 'saved' ? 'Saved' : 'Built-in'))) . '</small>';
+                if (!empty($template['description'])) {
+                    echo '<small>' . esc_html((string)$template['description']) . '</small>';
+                }
+                if (!empty($template['variables'])) {
+                    echo '<span class="wnq-ai-mini-chips">';
+                    foreach (array_slice((array)$template['variables'], 0, 6) as $variable) {
+                        echo '<code>{{' . esc_html((string)$variable) . '}}</code>';
+                    }
+                    if (count((array)$template['variables']) > 6) {
+                        echo '<code>+' . esc_html((string)(count((array)$template['variables']) - 6)) . '</code>';
+                    }
+                    echo '</span>';
+                }
+                echo '</span>';
+                echo '</label>';
+            }
+            echo '</div>';
+            echo '</details>';
+        }
+
+        echo '</div></div>';
+    }
+
+    private static function renderSavedTemplateGroups(array $groups): void
+    {
+        echo '<div class="wnq-ai-section-catalog" data-wnq-template-catalog>';
+        self::renderCategoryFilters('saved-library', $groups);
+        echo '<div class="wnq-ai-template-groups">';
+
+        $index = 0;
+        foreach ($groups as $category_key => $group) {
+            echo '<details class="wnq-ai-template-group" data-wnq-template-group="' . esc_attr((string)$category_key) . '"' . ($index === 0 ? ' open' : '') . '>';
+            echo '<summary><span>' . esc_html((string)$group['label']) . '</span><em>' . esc_html((string)count($group['items'])) . '</em></summary>';
+            echo '<div class="wnq-ai-template-library-list">';
+            foreach ((array)$group['items'] as $key => $template) {
+                echo '<div class="wnq-ai-template-card">';
+                echo '<div>';
+                echo '<strong>' . esc_html((string)($template['name'] ?? $key)) . '</strong>';
+                echo '<span>' . esc_html((string)($template['category'] ?? 'Custom')) . ' / ' . esc_html(ucfirst((string)($template['theme'] ?? 'any'))) . '</span>';
+                if (!empty($template['description'])) {
+                    echo '<p>' . esc_html((string)$template['description']) . '</p>';
+                }
+                if (!empty($template['variables'])) {
+                    echo '<div class="wnq-ai-variable-chips">';
+                    foreach ((array)$template['variables'] as $variable) {
+                        echo '<code>{{' . esc_html((string)$variable) . '}}</code>';
+                    }
+                    echo '</div>';
+                }
+                echo '</div>';
+                echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(\'Delete this saved template?\');">';
+                wp_nonce_field('wnq_ai_elementor_delete_template_' . $key);
+                echo '<input type="hidden" name="action" value="wnq_ai_elementor_delete_template">';
+                echo '<input type="hidden" name="template_key" value="' . esc_attr((string)$key) . '">';
+                echo '<button type="submit" class="button">Delete</button>';
+                echo '</form>';
+                echo '</div>';
+            }
+            echo '</div>';
+            echo '</details>';
+            $index++;
+        }
+
+        echo '</div></div>';
+    }
+
+    private static function templateGroupHasDefaults(array $items, array $default_keys): bool
+    {
+        foreach (array_keys($items) as $key) {
+            if (in_array((string)$key, $default_keys, true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static function connectedAgents(): array
