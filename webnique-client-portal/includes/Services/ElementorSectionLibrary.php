@@ -26,10 +26,16 @@ final class ElementorSectionLibrary
             self::LOCAL_SERVICE_HERO => [
                 'label'       => 'Simple Local Hero',
                 'description' => 'Simple Elementor container hero with one background image, H1, subheadline, and two CTA buttons.',
+                'category'    => 'Hero',
+                'theme'       => 'any',
+                'source'      => 'built_in',
             ],
             self::CONTENT_IMAGE => [
                 'label'       => 'Text + CTA + Right Image',
                 'description' => 'Two-column content section with heading, short copy, CTA button, and an image that can be imported into client media.',
+                'category'    => 'Content',
+                'theme'       => 'any',
+                'source'      => 'built_in',
             ],
         ] + (class_exists(ElementorTemplateLibrary::class) ? ElementorTemplateLibrary::templateChoices() : []);
     }
