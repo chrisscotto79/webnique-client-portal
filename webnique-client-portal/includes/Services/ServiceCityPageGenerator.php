@@ -200,6 +200,10 @@ final class ServiceCityPageGenerator
                 $heading_done = false;
                 $body_done = false;
                 $elements = self::injectFallbackWidgets($elements, $tokens, $body, $heading_done, $body_done);
+                if (!$body_done) {
+                    $elements = self::appendFallbackBodySection($elements, $body);
+                    $body_done = true;
+                }
             }
 
             return [
@@ -236,24 +240,78 @@ final class ServiceCityPageGenerator
         return $value;
     }
 
-    private static function injectFallbackWidgets(array $elements, array $tokens, string $body, bool &$heading_done, bool &$body_done): array
+    private static function injectFallbackWidgets(
+        array $elements,
+        array $tokens,
+        string $body,
+        bool &$heading_done,
+        bool &$body_done,
+        int $depth = 0,
+        bool $inside_first_top_level = false
+    ): array
     {
-        foreach ($elements as &$el) {
+        foreach ($elements as $index => &$el) {
+            $is_first_top_level = $depth === 0 && (int)$index === 0;
+            $inside_hero = $inside_first_top_level || $is_first_top_level;
             $widget = $el['widgetType'] ?? '';
             if (!$heading_done && $widget === 'heading') {
                 $el['settings']['title'] = (string)($tokens['{{h1}}'] ?? $tokens['{{page_title}}'] ?? '');
                 $el['settings']['header_size'] = 'h1';
                 $heading_done = true;
-            } elseif (!$body_done && $widget === 'text-editor') {
+            } elseif (!$body_done && $widget === 'text-editor' && !$inside_hero) {
                 $el['settings']['editor'] = $body;
                 $body_done = true;
             }
 
             if (!empty($el['elements']) && is_array($el['elements'])) {
-                $el['elements'] = self::injectFallbackWidgets($el['elements'], $tokens, $body, $heading_done, $body_done);
+                $el['elements'] = self::injectFallbackWidgets(
+                    $el['elements'],
+                    $tokens,
+                    $body,
+                    $heading_done,
+                    $body_done,
+                    $depth + 1,
+                    $inside_hero
+                );
             }
         }
+        unset($el);
 
+        return $elements;
+    }
+
+    private static function appendFallbackBodySection(array $elements, string $body): array
+    {
+        $section = [
+            'id'       => self::elementorId(),
+            'elType'   => 'container',
+            'isInner'  => false,
+            'settings' => [
+                'content_width' => 'boxed',
+                'padding'       => [
+                    'unit'     => 'px',
+                    'top'      => '60',
+                    'right'    => '40',
+                    'bottom'   => '60',
+                    'left'     => '40',
+                    'isLinked' => false,
+                ],
+            ],
+            'elements' => [[
+                'id'         => self::elementorId(),
+                'elType'     => 'widget',
+                'widgetType' => 'text-editor',
+                'isInner'    => false,
+                'settings'   => ['editor' => $body],
+                'elements'   => [],
+            ]],
+        ];
+
+        if (!$elements) {
+            return [$section];
+        }
+
+        array_splice($elements, 1, 0, [$section]);
         return $elements;
     }
 
