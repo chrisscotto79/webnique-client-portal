@@ -367,6 +367,7 @@ final class ServiceCityPage
 
     private static function normalizeHeader(string $header): string
     {
+        $header = preg_replace('/^\xEF\xBB\xBF/', '', $header);
         $header = strtolower(trim($header));
         $header = preg_replace('/[^a-z0-9_]+/', '_', $header);
         return trim((string)$header, '_');
