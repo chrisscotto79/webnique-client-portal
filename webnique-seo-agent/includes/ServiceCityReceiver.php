@@ -30,6 +30,12 @@ final class ServiceCityReceiver
             'callback'            => [self::class, 'handleCreate'],
             'permission_callback' => [self::class, 'authenticate'],
         ]);
+
+        register_rest_route('wnq-agent/v1', '/delete-service-city-page', [
+            'methods'             => 'POST',
+            'callback'            => [self::class, 'handleDelete'],
+            'permission_callback' => [self::class, 'authenticate'],
+        ]);
     }
 
     public static function authenticate(\WP_REST_Request $request)
@@ -55,6 +61,19 @@ final class ServiceCityReceiver
             return self::doCreate($request);
         } catch (\Throwable $e) {
             error_log('WNQ ServiceCityReceiver error: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+            return new \WP_REST_Response([
+                'error'   => $e->getMessage(),
+                'context' => basename($e->getFile()) . ':' . $e->getLine(),
+            ], 500);
+        }
+    }
+
+    public static function handleDelete(\WP_REST_Request $request)
+    {
+        try {
+            return self::doDelete($request);
+        } catch (\Throwable $e) {
+            error_log('WNQ ServiceCityReceiver delete error: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
             return new \WP_REST_Response([
                 'error'   => $e->getMessage(),
                 'context' => basename($e->getFile()) . ':' . $e->getLine(),
@@ -167,6 +186,51 @@ final class ServiceCityReceiver
         ], 201);
     }
 
+    private static function doDelete(\WP_REST_Request $request)
+    {
+        $body = $request->get_json_params();
+        if (!is_array($body)) {
+            $body = [];
+        }
+
+        $page_id = absint($body['page_id'] ?? 0);
+        $source_row_id = sanitize_text_field($body['source_row_id'] ?? '');
+        $slug = sanitize_title($body['slug'] ?? '');
+        $parent_slug = sanitize_title($body['parent_service_slug'] ?? '');
+
+        $page_id = self::resolveDraftForDelete($page_id, $source_row_id, $slug, $parent_slug);
+        if (!$page_id) {
+            return new \WP_REST_Response(['error' => 'Generated draft was not found on this site.'], 404);
+        }
+
+        $post = get_post($page_id);
+        if (!$post || $post->post_type !== 'page') {
+            return new \WP_REST_Response(['error' => 'Target draft is not a page.'], 400);
+        }
+        if ($post->post_status !== 'draft') {
+            return new \WP_REST_Response(['error' => 'Only draft Service + City pages can be deleted from the hub.'], 409);
+        }
+
+        $has_source_match = $source_row_id !== '' && (string)get_post_meta($page_id, '_wnq_service_city_source_row_id', true) === $source_row_id;
+        $has_slug_match = $slug !== '' && (string)get_post_meta($page_id, '_wnq_service_city_slug', true) === $slug;
+        if (!$has_source_match && !$has_slug_match) {
+            return new \WP_REST_Response(['error' => 'Target page is not linked to this Service + City row.'], 403);
+        }
+
+        $result = wp_trash_post($page_id);
+        if (!$result) {
+            return new \WP_REST_Response(['error' => 'WordPress could not move the draft to trash.'], 500);
+        }
+
+        self::clearElementorCache($page_id);
+
+        return new \WP_REST_Response([
+            'status'  => 'trashed',
+            'page_id' => (int)$page_id,
+            'message' => 'Draft moved to trash.',
+        ], 200);
+    }
+
     private static function clearElementorCache(int $page_id): void
     {
         if (class_exists('\Elementor\Plugin')) {
@@ -216,6 +280,54 @@ final class ServiceCityReceiver
                  ORDER BY post_parent ASC, ID ASC
                  LIMIT 1",
                 $slug
+            )
+        );
+    }
+
+    private static function resolveDraftForDelete(int $page_id, string $source_row_id, string $slug, string $parent_slug): int
+    {
+        if ($page_id > 0) {
+            $post = get_post($page_id);
+            if ($post && $post->post_type === 'page') {
+                return $page_id;
+            }
+        }
+
+        if ($source_row_id !== '') {
+            $ids = get_posts([
+                'post_type'      => 'page',
+                'post_status'    => 'draft',
+                'fields'         => 'ids',
+                'posts_per_page' => 1,
+                'meta_key'       => '_wnq_service_city_source_row_id',
+                'meta_value'     => $source_row_id,
+            ]);
+            if (!empty($ids[0])) {
+                return (int)$ids[0];
+            }
+        }
+
+        if ($slug === '') {
+            return 0;
+        }
+
+        global $wpdb;
+        $parent_sql = '';
+        $args = [$slug];
+        if ($parent_slug !== '') {
+            $parent_id = self::findParentPageId($parent_slug);
+            if ($parent_id > 0) {
+                $parent_sql = ' AND post_parent=%d';
+                $args[] = $parent_id;
+            }
+        }
+
+        return (int)$wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT ID FROM {$wpdb->posts}
+                 WHERE post_type='page' AND post_name=%s AND post_status='draft' {$parent_sql}
+                 LIMIT 1",
+                ...$args
             )
         );
     }
