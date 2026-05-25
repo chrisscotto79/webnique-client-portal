@@ -248,7 +248,7 @@ final class Task
                 ? wp_json_encode($data['recurring_data'])
                 : $data['recurring_data'];
         }
-        if (isset($data['archived_at'])) {
+        if (array_key_exists('archived_at', $data)) {
             $update_data['archived_at'] = $data['archived_at'];
         }
         if (isset($data['completion_count'])) {
@@ -389,6 +389,7 @@ final class Task
         $counts = [
             'client' => 0,
             'webnique' => 0,
+            'social_media' => 0,
             'general' => 0,
         ];
 
@@ -397,6 +398,28 @@ final class Task
         }
 
         return $counts;
+    }
+
+    /**
+     * Archive all completed tasks.
+     */
+    public static function archiveDoneTasks(): int
+    {
+        global $wpdb;
+        $table_name = $wpdb->prefix . self::$table;
+
+        $result = $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE $table_name
+                 SET archived_at = %s
+                 WHERE status = %s
+                 AND archived_at IS NULL",
+                current_time('mysql'),
+                'done'
+            )
+        );
+
+        return $result === false ? 0 : (int)$result;
     }
 
     /**

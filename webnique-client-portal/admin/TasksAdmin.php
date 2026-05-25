@@ -6,7 +6,7 @@
  * - Working drag & drop with smooth animations
  * - User filtering system
  * - Beautiful modern UI
- * - Task categories (Client/Golden Web Marketing/General)
+ * - Task categories (Client/Golden Web Marketing/Social Media/General)
  * - Countdown timers
  * - Archive system
  * - Enhanced stats
@@ -24,10 +24,42 @@ if (!defined('ABSPATH')) {
 
 final class TasksAdmin
 {
+    private const STATUSES = ['todo', 'in_progress', 'review', 'done'];
+
     public static function register(): void
     {
         add_action('admin_menu', [self::class, 'addSubmenu'], 15);
         add_action('admin_enqueue_scripts', [self::class, 'enqueueAssets']);
+    }
+
+    private static function canManageTasks(): bool
+    {
+        return current_user_can('wnq_manage_portal') || current_user_can('manage_options');
+    }
+
+    private static function teamMembers(): array
+    {
+        return [
+            'christopher-scotto' => ['name' => 'Christopher Scotto', 'initials' => 'CS', 'color' => '#667eea'],
+            'christopher-sanders' => ['name' => 'Christopher Sanders', 'initials' => 'CS', 'color' => '#f093fb'],
+            'laurel-harris' => ['name' => 'Laurel Harris', 'initials' => 'LH', 'color' => '#14b8a6'],
+        ];
+    }
+
+    private static function taskTypes(): array
+    {
+        return [
+            'client' => ['icon' => '🏢', 'label' => 'Client', 'bg' => '#dbeafe', 'color' => '#1e40af'],
+            'webnique' => ['icon' => '🏪', 'label' => 'Golden Web Marketing', 'bg' => '#d1fae5', 'color' => '#065f46'],
+            'social_media' => ['icon' => '📱', 'label' => 'Social Media', 'bg' => '#fce7f3', 'color' => '#9d174d'],
+            'general' => ['icon' => '📝', 'label' => 'General', 'bg' => '#f3f4f6', 'color' => '#374151'],
+        ];
+    }
+
+    private static function taskTypeInfo(string $type): array
+    {
+        $types = self::taskTypes();
+        return $types[$type] ?? $types['general'];
     }
 
     public static function addSubmenu(): void
@@ -46,18 +78,17 @@ final class TasksAdmin
 
     public static function enqueueAssets($hook): void
     {
-        if ($hook !== 'webnique-portal_page_wnq-tasks') {
+        $page = isset($_GET['page']) ? sanitize_key(wp_unslash($_GET['page'])) : '';
+        if (!in_array($hook, ['wnq-portal_page_wnq-tasks', 'webnique-portal_page_wnq-tasks'], true) && $page !== 'wnq-tasks') {
             return;
         }
 
-        wp_enqueue_script('jquery-ui-draggable');
-        wp_enqueue_script('jquery-ui-droppable');
         wp_enqueue_script('jquery-ui-sortable');
     }
 
     public static function render(): void
     {
-        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
+        if (!self::canManageTasks()) {
             wp_die(__('You do not have sufficient permissions to access this page.'));
         }
 
@@ -108,9 +139,18 @@ final class TasksAdmin
             }
         }
 
+        $team_members = self::teamMembers();
+        $task_types = self::taskTypes();
+
         // Get filters
         $filter_type = isset($_GET['filter']) ? sanitize_text_field($_GET['filter']) : '';
         $filter_user = isset($_GET['user']) ? sanitize_text_field($_GET['user']) : '';
+        if ($filter_type && !isset($task_types[$filter_type])) {
+            $filter_type = '';
+        }
+        if ($filter_user && !isset($team_members[$filter_user])) {
+            $filter_user = '';
+        }
 
         // Get tasks
         $filters = [];
@@ -141,11 +181,6 @@ final class TasksAdmin
                 $tasksByStatus[$status][] = $task;
             }
         }
-
-        $team_members = [
-            'christopher-scotto' => ['name' => 'Christopher Scotto', 'initials' => 'CS', 'color' => '#667eea'],
-            'christopher-sanders' => ['name' => 'Christopher Sanders', 'initials' => 'CS', 'color' => '#f093fb'],
-        ];
 
         // Count tasks by user
         $user_counts = [];
@@ -246,39 +281,34 @@ final class TasksAdmin
                 <div class="filter-section">
                     <span class="filter-title">Task Type:</span>
                     <div class="filter-buttons">
-                        <a href="<?php echo admin_url('admin.php?page=wnq-tasks' . ($filter_user ? '&user=' . $filter_user : '')); ?>" 
+                        <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-tasks' . ($filter_user ? '&user=' . $filter_user : ''))); ?>"
                            class="filter-btn <?php echo empty($filter_type) ? 'active' : ''; ?>">
                             All <span class="badge"><?php echo array_sum($type_counts); ?></span>
                         </a>
-                        <a href="<?php echo admin_url('admin.php?page=wnq-tasks&filter=client' . ($filter_user ? '&user=' . $filter_user : '')); ?>" 
-                           class="filter-btn <?php echo $filter_type === 'client' ? 'active' : ''; ?>">
-                            🏢 Client <span class="badge"><?php echo $type_counts['client']; ?></span>
-                        </a>
-                        <a href="<?php echo admin_url('admin.php?page=wnq-tasks&filter=webnique' . ($filter_user ? '&user=' . $filter_user : '')); ?>" 
-                           class="filter-btn <?php echo $filter_type === 'webnique' ? 'active' : ''; ?>">
-                            🏪 Golden Web Marketing <span class="badge"><?php echo $type_counts['webnique']; ?></span>
-                        </a>
-                        <a href="<?php echo admin_url('admin.php?page=wnq-tasks&filter=general' . ($filter_user ? '&user=' . $filter_user : '')); ?>" 
-                           class="filter-btn <?php echo $filter_type === 'general' ? 'active' : ''; ?>">
-                            📝 General <span class="badge"><?php echo $type_counts['general']; ?></span>
-                        </a>
+                        <?php foreach ($task_types as $type_id => $type): ?>
+                            <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-tasks&filter=' . $type_id . ($filter_user ? '&user=' . $filter_user : ''))); ?>"
+                               class="filter-btn <?php echo $filter_type === $type_id ? 'active' : ''; ?>">
+                                <?php echo esc_html($type['icon'] . ' ' . $type['label']); ?>
+                                <span class="badge"><?php echo (int)($type_counts[$type_id] ?? 0); ?></span>
+                            </a>
+                        <?php endforeach; ?>
                     </div>
                 </div>
 
                 <div class="filter-section">
                     <span class="filter-title">Team Member:</span>
                     <div class="filter-buttons">
-                        <a href="<?php echo admin_url('admin.php?page=wnq-tasks' . ($filter_type ? '&filter=' . $filter_type : '')); ?>" 
+                        <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-tasks' . ($filter_type ? '&filter=' . $filter_type : ''))); ?>"
                            class="filter-btn <?php echo empty($filter_user) ? 'active' : ''; ?>">
                             All <span class="badge"><?php echo count($tasks); ?></span>
                         </a>
                         <?php foreach ($team_members as $id => $member): ?>
-                            <a href="<?php echo admin_url('admin.php?page=wnq-tasks&user=' . $id . ($filter_type ? '&filter=' . $filter_type : '')); ?>" 
+                            <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-tasks&user=' . $id . ($filter_type ? '&filter=' . $filter_type : ''))); ?>"
                                class="filter-btn user-filter <?php echo $filter_user === $id ? 'active' : ''; ?>">
-                                <span class="user-avatar" style="background: <?php echo $member['color']; ?>">
-                                    <?php echo $member['initials']; ?>
+                                <span class="user-avatar" style="background: <?php echo esc_attr($member['color']); ?>">
+                                    <?php echo esc_html($member['initials']); ?>
                                 </span>
-                                <?php echo explode(' ', $member['name'])[0]; ?>
+                                <?php echo esc_html(explode(' ', $member['name'])[0]); ?>
                                 <span class="badge"><?php echo $user_counts[$id]; ?></span>
                             </a>
                         <?php endforeach; ?>
@@ -302,8 +332,9 @@ final class TasksAdmin
                     </select>
                     <select id="filter-assignee" class="quick-filter-select">
                         <option value="">All Assignees</option>
-                        <option value="christopher-scotto">Christopher Scotto</option>
-                        <option value="christopher-sanders">Christopher Sanders</option>
+                        <?php foreach ($team_members as $id => $member): ?>
+                            <option value="<?php echo esc_attr($id); ?>"><?php echo esc_html($member['name']); ?></option>
+                        <?php endforeach; ?>
                         <option value="unassigned">Unassigned</option>
                     </select>
                     <button id="reset-filters" class="btn-reset-filters">Reset All</button>
@@ -417,22 +448,17 @@ final class TasksAdmin
              data-priority="<?php echo esc_attr($priority); ?>"
              data-assignee="<?php echo esc_attr($assignee_id); ?>"
              data-client="<?php echo esc_attr(strtolower($client_name)); ?>"
-             style="border-left-color: <?php echo $priority_color; ?>">
+             style="border-left-color: <?php echo esc_attr($priority_color); ?>">
             <div class="task-card-header">
                 <?php
-                $type_badges = [
-                    'client' => ['icon' => '🏢', 'label' => 'Client', 'bg' => '#dbeafe', 'color' => '#1e40af'],
-                    'webnique' => ['icon' => '🏪', 'label' => 'Golden Web Marketing', 'bg' => '#d1fae5', 'color' => '#065f46'],
-                    'general' => ['icon' => '📝', 'label' => 'General', 'bg' => '#f3f4f6', 'color' => '#374151'],
-                ];
-                $type_info = $type_badges[$task_type] ?? $type_badges['general'];
+                $type_info = self::taskTypeInfo($task_type);
                 ?>
-                <span class="task-type-tag" style="background: <?php echo $type_info['bg']; ?>; color: <?php echo $type_info['color']; ?>">
-                    <?php echo $type_info['icon']; ?> <?php echo $type_info['label']; ?>
+                <span class="task-type-tag" style="background: <?php echo esc_attr($type_info['bg']); ?>; color: <?php echo esc_attr($type_info['color']); ?>">
+                    <?php echo esc_html($type_info['icon'] . ' ' . $type_info['label']); ?>
                 </span>
                 
-                <div class="task-priority-indicator" style="background: <?php echo $priority_color; ?>" 
-                     title="<?php echo ucfirst($priority); ?> priority"></div>
+                <div class="task-priority-indicator" style="background: <?php echo esc_attr($priority_color); ?>"
+                     title="<?php echo esc_attr(ucfirst($priority)); ?> priority"></div>
             </div>
             
             <h4 class="task-card-title"><?php echo esc_html($task['title']); ?></h4>
@@ -796,15 +822,10 @@ final class TasksAdmin
                         <div class="archive-card-premium">
                             <div class="archive-card-header">
                                 <?php
-                                $types = [
-                                    'client' => ['icon' => '🏢', 'label' => 'Client', 'bg' => '#dbeafe', 'color' => '#1e40af'],
-                                    'webnique' => ['icon' => '🏪', 'label' => 'Golden Web Marketing', 'bg' => '#d1fae5', 'color' => '#065f46'],
-                                    'general' => ['icon' => '📝', 'label' => 'General', 'bg' => '#f3f4f6', 'color' => '#374151'],
-                                ];
-                                $type_info = $types[$task['task_type'] ?? 'general'];
+                                $type_info = self::taskTypeInfo($task['task_type'] ?? 'general');
                                 ?>
-                                <span class="task-type-tag" style="background: <?php echo $type_info['bg']; ?>; color: <?php echo $type_info['color']; ?>">
-                                    <?php echo $type_info['icon']; ?> <?php echo $type_info['label']; ?>
+                                <span class="task-type-tag" style="background: <?php echo esc_attr($type_info['bg']); ?>; color: <?php echo esc_attr($type_info['color']); ?>">
+                                    <?php echo esc_html($type_info['icon'] . ' ' . $type_info['label']); ?>
                                 </span>
                                 <span class="archive-date-badge">
                                     📅 <?php echo date('M j, Y', strtotime($task['archived_at'])); ?>
@@ -904,10 +925,7 @@ final class TasksAdmin
             }
         }
         
-        $team_members = [
-            'christopher-scotto' => ['name' => 'Christopher Scotto', 'initials' => 'CS', 'color' => '#667eea'],
-            'christopher-sanders' => ['name' => 'Christopher Sanders', 'initials' => 'CS', 'color' => '#f093fb'],
-        ];
+        $team_members = self::teamMembers();
 
         ?>
         <div class="wrap wnq-tasks-premium">
@@ -1057,10 +1075,7 @@ final class TasksAdmin
             $task['total_completions'] = count($completion_data);
         }
         
-        $team_members = [
-            'christopher-scotto' => ['name' => 'Christopher Scotto', 'initials' => 'CS', 'color' => '#667eea'],
-            'christopher-sanders' => ['name' => 'Christopher Sanders', 'initials' => 'CS', 'color' => '#f093fb'],
-        ];
+        $team_members = self::teamMembers();
 
         ?>
         <div class="wrap wnq-tasks-premium">
@@ -1707,11 +1722,19 @@ final class TasksAdmin
             box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
             transform: translateY(-2px);
         }
-        .task-card-premium.ui-draggable-dragging {
+        .task-card-premium.ui-draggable-dragging,
+        .task-card-premium.is-sorting {
             cursor: grabbing;
             opacity: 0.7;
             transform: rotate(3deg) scale(1.05);
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+        }
+        .task-drop-placeholder {
+            min-height: 112px;
+            margin-bottom: 12px;
+            border: 2px dashed #667eea;
+            border-radius: 10px;
+            background: rgba(102, 126, 234, 0.08);
         }
         .task-card-header {
             display: flex;
@@ -2237,54 +2260,47 @@ final class TasksAdmin
         ?>
         <script>
         jQuery(document).ready(function($) {
-            // Make task cards draggable
-            $('.task-card-premium').draggable({
-                revert: 'invalid',
-                helper: 'clone',
-                cursor: 'grabbing',
-                opacity: 0.8,
-                zIndex: 1000,
-                start: function(event, ui) {
-                    $(this).addClass('ui-draggable-dragging');
-                    ui.helper.css({
-                        'width': $(this).outerWidth(),
-                        'transform': 'rotate(3deg) scale(1.05)'
-                    });
-                },
-                stop: function() {
-                    $(this).removeClass('ui-draggable-dragging');
-                }
-            });
-
-            // Make columns droppable
-            $('.column-tasks-premium').droppable({
-                accept: '.task-card-premium',
+            $('.column-tasks-premium').sortable({
+                connectWith: '.column-tasks-premium',
+                items: '> .task-card-premium',
+                placeholder: 'task-drop-placeholder',
+                forcePlaceholderSize: true,
                 tolerance: 'pointer',
+                cursor: 'grabbing',
+                cancel: '.task-actions-dropdown, .task-menu, button, a, input, textarea, select',
+                start: function(event, ui) {
+                    const originalStatus = ui.item.closest('.kanban-column-premium').data('status');
+                    ui.item.data('original-status', originalStatus);
+                    ui.item.addClass('is-sorting');
+                    ui.placeholder.height(ui.item.outerHeight());
+                    ui.placeholder.width(ui.item.outerWidth());
+                    $('.empty-column-state').remove();
+                    document.querySelectorAll('.task-menu').forEach(m => m.classList.remove('active'));
+                },
                 over: function() {
                     $(this).addClass('drag-over');
                 },
                 out: function() {
                     $(this).removeClass('drag-over');
                 },
-                drop: function(event, ui) {
-                    $(this).removeClass('drag-over');
-                    
-                    const $card = ui.draggable;
+                receive: function() {
+                    $(this).find('.empty-column-state').remove();
+                },
+                stop: function(event, ui) {
+                    $('.column-tasks-premium').removeClass('drag-over');
+                    ui.item.removeClass('is-sorting').css({top: '', left: '', position: ''});
+
+                    const $card = ui.item;
                     const taskId = $card.data('task-id');
-                    const newStatus = $(this).parent().data('status');
-                    const $targetColumn = $(this);
-                    
-                    // Remove empty state if exists
-                    $targetColumn.find('.empty-column-state').remove();
-                    
-                    // Append card to new column
-                    $card.css({top: 0, left: 0, position: 'relative'});
-                    $targetColumn.append($card);
-                    
-                    // Update counts
+                    const originalStatus = $card.data('original-status');
+                    const newStatus = $card.closest('.kanban-column-premium').data('status');
+
                     updateColumnCounts();
-                    
-                    // AJAX update
+
+                    if (!taskId || !newStatus || originalStatus === newStatus) {
+                        return;
+                    }
+
                     $.post(ajaxurl, {
                         action: 'wnq_update_task_status',
                         task_id: taskId,
@@ -2292,11 +2308,10 @@ final class TasksAdmin
                         nonce: '<?php echo wp_create_nonce('wnq_task_nonce'); ?>'
                     }, function(response) {
                         if (response.success) {
-                            // Show success feedback
+                            $card.attr('data-status', newStatus);
                             showNotification('Task moved successfully', 'success');
                         } else {
-                            // Revert on error
-                            showNotification('Failed to update task', 'error');
+                            showNotification(response.data || 'Failed to update task', 'error');
                             setTimeout(() => location.reload(), 1000);
                         }
                     }).fail(function() {
@@ -2304,7 +2319,7 @@ final class TasksAdmin
                         setTimeout(() => location.reload(), 1000);
                     });
                 }
-            });
+            }).disableSelection();
 
             function updateColumnCounts() {
                 $('.kanban-column-premium').each(function() {
@@ -2313,6 +2328,7 @@ final class TasksAdmin
                     
                     // Show/hide empty state
                     const $tasks = $(this).find('.column-tasks-premium');
+                    $tasks.find('.empty-column-state').remove();
                     if (count === 0 && !$tasks.find('.empty-column-state').length) {
                         const icon = $(this).find('.column-icon').text();
                         $tasks.append(
@@ -2422,10 +2438,7 @@ final class TasksAdmin
             }
         }
 
-        $team_members = [
-            'christopher-scotto' => 'Christopher Scotto',
-            'christopher-sanders' => 'Christopher Sanders',
-        ];
+        $team_members = self::teamMembers();
 
         ?>
         <form method="post" action="<?php echo admin_url('admin-post.php'); ?>" class="task-form-premium">
@@ -2449,9 +2462,11 @@ final class TasksAdmin
                         <th><label for="task_type">Task Type</label></th>
                         <td>
                             <select name="task_type" id="task_type" class="regular-text">
-                                <option value="general" <?php selected($task['task_type'] ?? 'general', 'general'); ?>>📝 General</option>
-                                <option value="client" <?php selected($task['task_type'] ?? '', 'client'); ?>>🏢 Client Task</option>
-                                <option value="webnique" <?php selected($task['task_type'] ?? '', 'webnique'); ?>>🏪 Golden Web Marketing Task</option>
+                                <?php foreach (self::taskTypes() as $type_id => $type): ?>
+                                    <option value="<?php echo esc_attr($type_id); ?>" <?php selected($task['task_type'] ?? 'general', $type_id); ?>>
+                                        <?php echo esc_html($type['icon'] . ' ' . $type['label']); ?>
+                                    </option>
+                                <?php endforeach; ?>
                             </select>
                         </td>
                     </tr>
@@ -2481,8 +2496,8 @@ final class TasksAdmin
                         <td>
                             <select name="assigned_to" id="assigned_to" class="regular-text">
                                 <option value="">Unassigned</option>
-                                <?php foreach ($team_members as $id => $name): ?>
-                                    <option value="<?php echo esc_attr($id); ?>" <?php selected($task['assigned_to'] ?? '', $id); ?>><?php echo esc_html($name); ?></option>
+                                <?php foreach ($team_members as $id => $member): ?>
+                                    <option value="<?php echo esc_attr($id); ?>" <?php selected($task['assigned_to'] ?? '', $id); ?>><?php echo esc_html($member['name']); ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </td>
@@ -2547,19 +2562,33 @@ final class TasksAdmin
     public static function handleSaveTask(): void
     {
         check_admin_referer('wnq_save_task');
-        if (!current_user_can('manage_options')) wp_die('Insufficient permissions');
+        if (!self::canManageTasks()) wp_die('Insufficient permissions');
 
         $id = isset($_POST['id']) ? intval($_POST['id']) : 0;
+        $status = isset($_POST['status']) ? sanitize_text_field(wp_unslash($_POST['status'])) : 'todo';
+        $task_type = isset($_POST['task_type']) ? sanitize_text_field(wp_unslash($_POST['task_type'])) : 'general';
+        $assigned_to = isset($_POST['assigned_to']) ? sanitize_text_field(wp_unslash($_POST['assigned_to'])) : '';
+
+        if (!in_array($status, self::STATUSES, true)) {
+            $status = 'todo';
+        }
+        if (!isset(self::taskTypes()[$task_type])) {
+            $task_type = 'general';
+        }
+        if ($assigned_to && !isset(self::teamMembers()[$assigned_to])) {
+            $assigned_to = '';
+        }
+
         $data = [
-            'title' => sanitize_text_field($_POST['title'] ?? ''),
-            'description' => wp_kses_post($_POST['description'] ?? ''),
-            'status' => sanitize_text_field($_POST['status'] ?? 'todo'),
-            'task_type' => sanitize_text_field($_POST['task_type'] ?? 'general'),
-            'priority' => sanitize_text_field($_POST['priority'] ?? 'medium'),
-            'assigned_to' => sanitize_text_field($_POST['assigned_to'] ?? ''),
-            'due_date' => sanitize_text_field($_POST['due_date'] ?? ''),
-            'client_id' => sanitize_text_field($_POST['client_id'] ?? ''),
-            'notes' => wp_kses_post($_POST['notes'] ?? ''),
+            'title' => sanitize_text_field(wp_unslash($_POST['title'] ?? '')),
+            'description' => wp_kses_post(wp_unslash($_POST['description'] ?? '')),
+            'status' => $status,
+            'task_type' => $task_type,
+            'priority' => sanitize_text_field(wp_unslash($_POST['priority'] ?? 'medium')),
+            'assigned_to' => $assigned_to,
+            'due_date' => sanitize_text_field(wp_unslash($_POST['due_date'] ?? '')),
+            'client_id' => sanitize_text_field(wp_unslash($_POST['client_id'] ?? '')),
+            'notes' => wp_kses_post(wp_unslash($_POST['notes'] ?? '')),
             'is_recurring' => isset($_POST['is_recurring']) ? 1 : 0,
         ];
 
@@ -2571,7 +2600,7 @@ final class TasksAdmin
     public static function handleDeleteTask(): void
     {
         check_admin_referer('wnq_delete_task');
-        if (!current_user_can('manage_options')) wp_die('Insufficient permissions');
+        if (!self::canManageTasks()) wp_die('Insufficient permissions');
 
         $id = isset($_POST['id']) ? intval($_POST['id']) : 0;
         Task::delete($id);
@@ -2584,7 +2613,7 @@ final class TasksAdmin
     public static function handleArchive(): void
     {
         check_admin_referer('wnq_archive_task');
-        if (!current_user_can('manage_options')) wp_die('Insufficient permissions');
+        if (!self::canManageTasks()) wp_die('Insufficient permissions');
 
         $id = isset($_POST['id']) ? intval($_POST['id']) : 0;
         Task::archive($id);
@@ -2595,7 +2624,7 @@ final class TasksAdmin
     public static function handleRestore(): void
     {
         check_admin_referer('wnq_restore_task');
-        if (!current_user_can('manage_options')) wp_die('Insufficient permissions');
+        if (!self::canManageTasks()) wp_die('Insufficient permissions');
 
         $id = isset($_POST['id']) ? intval($_POST['id']) : 0;
         Task::restore($id);
@@ -2606,12 +2635,12 @@ final class TasksAdmin
     public static function ajaxUpdateTaskStatus(): void
     {
         check_ajax_referer('wnq_task_nonce', 'nonce');
-        if (!current_user_can('manage_options')) wp_send_json_error('Insufficient permissions');
+        if (!self::canManageTasks()) wp_send_json_error('Insufficient permissions');
 
         $task_id = isset($_POST['task_id']) ? intval($_POST['task_id']) : 0;
-        $status = isset($_POST['status']) ? sanitize_text_field($_POST['status']) : '';
+        $status = isset($_POST['status']) ? sanitize_text_field(wp_unslash($_POST['status'])) : '';
 
-        if (!$task_id || !$status) wp_send_json_error('Invalid data');
+        if (!$task_id || !in_array($status, self::STATUSES, true)) wp_send_json_error('Invalid data');
 
         $success = Task::update($task_id, ['status' => $status]);
         $success ? wp_send_json_success() : wp_send_json_error('Failed');
@@ -2620,7 +2649,7 @@ final class TasksAdmin
     public static function handleToggleRecurring(): void
     {
         check_admin_referer('wnq_toggle_recurring');
-        if (!current_user_can('manage_options')) wp_die('Insufficient permissions');
+        if (!self::canManageTasks()) wp_die('Insufficient permissions');
 
         $task_id = isset($_POST['task_id']) ? intval($_POST['task_id']) : 0;
         $date = isset($_POST['date']) ? sanitize_text_field($_POST['date']) : date('Y-m-d');
@@ -2651,7 +2680,7 @@ final class TasksAdmin
     public static function handleSaveJournal(): void
     {
         check_admin_referer('wnq_save_journal');
-        if (!current_user_can('manage_options')) wp_die('Insufficient permissions');
+        if (!self::canManageTasks()) wp_die('Insufficient permissions');
 
         $date = isset($_POST['date']) ? sanitize_text_field($_POST['date']) : date('Y-m-d');
         
@@ -2673,7 +2702,7 @@ final class TasksAdmin
     public static function ajaxLogTime(): void
     {
         check_ajax_referer('wnq_log_time', 'nonce');
-        if (!current_user_can('manage_options')) wp_send_json_error('Insufficient permissions');
+        if (!self::canManageTasks()) wp_send_json_error('Insufficient permissions');
 
         $task_id = isset($_POST['task_id']) ? intval($_POST['task_id']) : 0;
         $duration = isset($_POST['duration']) ? intval($_POST['duration']) : 0;

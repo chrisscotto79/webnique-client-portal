@@ -23,6 +23,7 @@ use WNQ\Services\CrawlEngine;
 use WNQ\Services\ReportGenerator;
 use WNQ\Models\BlogScheduler;
 use WNQ\Models\SEOHub;
+use WNQ\Models\Task;
 
 final class CronScheduler
 {
@@ -39,6 +40,7 @@ final class CronScheduler
         add_action('wnq_spider_auto_crawl',       [self::class, 'runSpiderCrawls']);
         add_action('wnq_spider_run_batch',        [self::class, 'runCronBatch'], 10, 1);
         add_action('wnq_backlink_verify',         [self::class, 'runBacklinkVerify']);
+        add_action('wnq_tasks_weekly_archive',    [self::class, 'runWeeklyTaskArchive']);
 
         // Schedule jobs if not already scheduled
         self::scheduleJobs();
@@ -94,11 +96,16 @@ final class CronScheduler
             $next_sunday_4am = strtotime('next Sunday 4:00am');
             wp_schedule_event($next_sunday_4am, 'weekly', 'wnq_backlink_verify');
         }
+
+        // Tasks — archive completed items at the end of the week, Sunday night
+        if (!wp_next_scheduled('wnq_tasks_weekly_archive')) {
+            wp_schedule_event(self::nextSundayNightTimestamp(), 'weekly', 'wnq_tasks_weekly_archive');
+        }
     }
 
     public static function unscheduleAll(): void
     {
-        $hooks = ['wnq_seo_nightly_audit', 'wnq_seo_nightly_automation', 'wnq_seo_process_queue', 'wnq_seo_monthly_reports', 'wnq_blog_publisher', 'wnq_gbp_scheduler', 'wnq_spider_auto_crawl', 'wnq_backlink_verify'];
+        $hooks = ['wnq_seo_nightly_audit', 'wnq_seo_nightly_automation', 'wnq_seo_process_queue', 'wnq_seo_monthly_reports', 'wnq_blog_publisher', 'wnq_gbp_scheduler', 'wnq_spider_auto_crawl', 'wnq_backlink_verify', 'wnq_tasks_weekly_archive'];
         foreach ($hooks as $hook) {
             $timestamp = wp_next_scheduled($hook);
             if ($timestamp) {
@@ -186,6 +193,12 @@ final class CronScheduler
         BacklinkVerifier::verifyAllClients();
     }
 
+    public static function runWeeklyTaskArchive(): void
+    {
+        $archived = Task::archiveDoneTasks();
+        SEOHub::log('tasks_weekly_archive', ['archived' => $archived], 'success', 'cron');
+    }
+
     /**
      * Hourly: start crawls for any clients whose schedule is due.
      */
@@ -248,6 +261,28 @@ final class CronScheduler
         };
     }
 
+    private static function nextSundayNightTimestamp(): int
+    {
+        try {
+            $timezone = function_exists('wp_timezone') ? wp_timezone() : new \DateTimeZone('UTC');
+            $now = new \DateTimeImmutable('now', $timezone);
+            $days_until_sunday = (7 - (int)$now->format('w')) % 7;
+            $target = $now->setTime(23, 55);
+
+            if ($days_until_sunday > 0) {
+                $target = $target->modify('+' . $days_until_sunday . ' days');
+            }
+
+            if ($target <= $now) {
+                $target = $target->modify('+7 days');
+            }
+
+            return $target->getTimestamp();
+        } catch (\Exception $e) {
+            return time() + WEEK_IN_SECONDS;
+        }
+    }
+
     private static function canRun(): bool
     {
         // Only run if SEO OS is enabled
@@ -267,6 +302,7 @@ final class CronScheduler
             'wnq_gbp_scheduler'          => 'GBP Post Scheduler (hourly check)',
             'wnq_spider_auto_crawl'      => 'Spider Auto-Crawl Scheduler (hourly check)',
             'wnq_backlink_verify'        => 'Backlink Verifier (Sunday 4am weekly)',
+            'wnq_tasks_weekly_archive'   => 'Task Done Archive (Sunday 11:55pm weekly)',
         ];
 
         $status = [];
