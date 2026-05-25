@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Golden Web Marketing Client Portal
  * Description: Complete client management with portal, analytics, billing, tasks, SEO tracking, and messaging
- * Version: 2.4.15
+ * Version: 2.4.16
  * Author: Golden Web Marketing
  * Requires at least: 6.0
  * Requires PHP: 8.0
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WNQ_PORTAL_VERSION', '2.4.15');
+define('WNQ_PORTAL_VERSION', '2.4.16');
 define('WNQ_PORTAL_PATH', plugin_dir_path(__FILE__));
 define('WNQ_PORTAL_URL', plugin_dir_url(__FILE__));
 
@@ -687,6 +687,13 @@ add_action('admin_menu', function() {
     }
     add_submenu_page('wnq-portal', 'Web Requests', 'Web Requests', $capability, 'wnq-web-requests', 'wnq_render_requests_page');
 }, 10);
+
+add_action('admin_enqueue_scripts', function($hook) {
+    $page = isset($_GET['page']) ? sanitize_key(wp_unslash($_GET['page'])) : '';
+    if ($hook === 'wnq-portal_page_wnq-tasks' || $page === 'wnq-tasks') {
+        wp_enqueue_script('jquery-ui-sortable');
+    }
+});
 
 
 // RENDER FUNCTIONS
