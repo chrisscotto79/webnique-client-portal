@@ -552,8 +552,13 @@ final class SEOHubAdmin
                     }
                 } elseif ($notice === 'generated') {
                     $notice_text = $message ?: 'Draft generated.';
+                } elseif ($notice === 'draft_deleted') {
+                    $notice_text = $message ?: 'Draft deleted and row reset.';
                 } elseif ($notice === 'generate_error' || $notice === 'import_error') {
                     $notice_text = $message ?: 'Something went wrong.';
+                    $notice_class = 'error';
+                } elseif ($notice === 'delete_error') {
+                    $notice_text = $message ?: 'Draft could not be deleted.';
                     $notice_class = 'error';
                 }
                 if ($notice_text) {
@@ -576,7 +581,7 @@ final class SEOHubAdmin
             echo '<div class="wnq-hub-form-grid" style="grid-template-columns:1fr 1fr;align-items:start;">';
             echo '<div class="wnq-hub-card" style="padding:18px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;">';
             echo '<h3 style="margin-top:0;">Client Elementor Template</h3>';
-            echo '<p style="color:#6b7280;">Paste this client\'s Elementor JSON or HTML structure. Variable templates can use tokens like <code>{{h1}}</code>, <code>{{page_title}}</code>, <code>{{primary_keyword}}</code>, <code>{{service}}</code>, <code>{{city}}</code>, <code>{{commercial_intent}}</code>, <code>{{cta_title}}</code>, <code>{{cta_text}}</code>, <code>{{related_services}}</code>, and <code>{{nearby_cities}}</code>. Add <code>{{body}}</code> only where you want the AI-written long-form page body inserted. If no tokens are found in Elementor JSON, the first heading is replaced and the long-form body is inserted into the first text editor after the hero section.</p>';
+            echo '<p style="color:#6b7280;">Paste this client\'s Elementor JSON or HTML structure. Variable templates can use tokens like <code>{{h1}}</code>, <code>{{page_title}}</code>, <code>{{primary_keyword}}</code>, <code>{{service}}</code>, <code>{{city}}</code>, <code>{{commercial_intent}}</code>, <code>{{cta_title}}</code>, <code>{{cta_text}}</code>, <code>{{related_services}}</code>, and <code>{{nearby_cities}}</code>. Add <code>{{body}}</code> only if you want one exact body insertion point. If no tokens are found in Elementor JSON, the generator keeps all imported sections and distributes the AI content across the hero, content sections, and CTA section.</p>';
             echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
             echo '<input type="hidden" name="action" value="wnq_service_city_save_template">';
             echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
@@ -669,8 +674,17 @@ final class SEOHubAdmin
                         wp_nonce_field('wnq_service_city_generate_' . (int)$row['id']);
                         echo '<button type="submit" class="wnq-btn wnq-btn-sm wnq-btn-primary" onclick="return confirm(\'Generate this one Service + City draft page now?\')">Generate Draft</button>';
                         echo '</form>';
-                    } elseif (!empty($row['wp_page_url'])) {
-                        echo '<a class="wnq-btn wnq-btn-sm" href="' . esc_url($row['wp_page_url']) . '" target="_blank">View Draft URL</a>';
+                    } elseif ($status === 'draft_created') {
+                        if (!empty($row['wp_page_url'])) {
+                            echo '<a class="wnq-btn wnq-btn-sm" href="' . esc_url($row['wp_page_url']) . '" target="_blank">View Draft URL</a> ';
+                        }
+                        echo '<form method="post" action="' . admin_url('admin-post.php') . '" style="display:inline;">';
+                        echo '<input type="hidden" name="action" value="wnq_service_city_delete_draft">';
+                        echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+                        echo '<input type="hidden" name="row_id" value="' . (int)$row['id'] . '">';
+                        wp_nonce_field('wnq_service_city_delete_' . (int)$row['id']);
+                        echo '<button type="submit" class="wnq-btn wnq-btn-sm" style="background:#fee2e2;color:#991b1b;border-color:#fecaca;" onclick="return confirm(\'Delete this draft from the client site and reset the imported row?\')">Delete Draft</button>';
+                        echo '</form>';
                     } else {
                         echo '<span style="color:#6b7280;">—</span>';
                     }

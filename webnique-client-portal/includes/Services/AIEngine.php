@@ -279,7 +279,7 @@ Rules:
 - Naturally mention relevant service variations, related services, nearby cities/areas, county, and geo modifiers where they make sense.
 - Use the CTA Title and CTA Text once near the end.
 - If internal links are provided, mention the page topics naturally, but do not add raw URL lists.
-- Write 700-1,100 words.
+- Write 900-1,100 words for this first pass. If the system needs more length, it will request a continuation after this.
 - Return valid HTML only inside the BODY delimiter. Do not use markdown.
 - Do not include schema scripts.
 
@@ -296,6 +296,49 @@ STRICT FORMAT - return exactly:
 
 ===BODY===
 [HTML content using <section>, <h2>, <h3>, <p>, <ul>, and <li>. No <h1>.]
+===END===
+PROMPT,
+
+        'service_city_page_expansion' => <<<'PROMPT'
+You are continuing a local SEO Service + City page for {business_name}. Expand the page with useful, non-repetitive content that fits after the existing body.
+
+Primary Keyword: {primary_keyword}
+Service: {service}
+Service Variations: {service_variations}
+City: {city}
+State: {state}
+County: {county}
+H1: {h1}
+CTA Title: {cta_title}
+CTA Text: {cta_text}
+Related Services: {related_services}
+Nearby Cities: {nearby_cities}
+Internal Links: {internal_links}
+Geo Modifiers: {geo_modifiers}
+Commercial Intent: {commercial_intent}
+Keyword Variants: {keyword_variants}
+Tone: {tone}
+
+Current Word Count: {current_word_count}
+Approximate Additional Words Needed: {remaining_words}
+
+Existing Body:
+{existing_body}
+
+Rules:
+- Continue the same page; do not restart the article.
+- Do not repeat headings or paragraphs already present in Existing Body.
+- Add roughly the Approximate Additional Words Needed. If the page needs a large expansion, add 500-750 words. If it only needs a small finish, add one tight 250-400 word section.
+- Use H2s and H3s only. Do not include an H1.
+- Add practical sections such as sizing/selection guidance, local delivery considerations, nearby service areas, maintenance/care, comparison details, and FAQ if not already covered.
+- Keep paragraphs short, 2-3 sentences max.
+- Return valid HTML only inside the BODY delimiter. Do not use markdown.
+- Do not include schema scripts.
+
+STRICT FORMAT - return exactly:
+
+===BODY===
+[Continuation HTML using <section>, <h2>, <h3>, <p>, <ul>, and <li>. No <h1>.]
 ===END===
 PROMPT,
 
