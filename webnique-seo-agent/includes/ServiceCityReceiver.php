@@ -97,6 +97,9 @@ final class ServiceCityReceiver
         $parent_slug = sanitize_title($body['parent_service_slug'] ?? '');
         $post_content = wp_kses_post($body['post_content'] ?? '');
         $elementor_raw = isset($body['elementor_data']) ? (string)$body['elementor_data'] : '';
+        $page_settings = isset($body['page_settings']) && is_array($body['page_settings'])
+            ? $body['page_settings']
+            : ['hide_title' => 'yes'];
         $source_row_id = sanitize_text_field($body['source_row_id'] ?? '');
 
         if ($title === '' || $slug === '') {
@@ -104,6 +107,14 @@ final class ServiceCityReceiver
         }
         if ($parent_slug === '') {
             return new \WP_REST_Response(['error' => 'parent_service_slug is required for child pages'], 400);
+        }
+        if ($elementor_raw === '') {
+            return new \WP_REST_Response(['error' => 'elementor_data is required'], 400);
+        }
+
+        $elementor = json_decode($elementor_raw, true);
+        if (!is_array($elementor)) {
+            return new \WP_REST_Response(['error' => 'Invalid elementor_data JSON: ' . json_last_error_msg()], 400);
         }
 
         $existing_id = self::findExistingPageBySlug($slug);
@@ -143,16 +154,11 @@ final class ServiceCityReceiver
             return new \WP_REST_Response(['error' => $page_id->get_error_message()], 500);
         }
 
-        if ($elementor_raw !== '') {
-            $elementor = json_decode($elementor_raw, true);
-            if (is_array($elementor)) {
-                update_post_meta($page_id, '_elementor_edit_mode', 'builder');
-                update_post_meta($page_id, '_elementor_template_type', 'wp-page');
-                update_post_meta($page_id, '_elementor_version', defined('ELEMENTOR_VERSION') ? ELEMENTOR_VERSION : '3.0.0');
-                update_post_meta($page_id, '_elementor_page_settings', ['hide_title' => 'yes']);
-                update_post_meta($page_id, '_elementor_data', wp_slash(wp_json_encode($elementor, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)));
-            }
-        }
+        update_post_meta($page_id, '_elementor_edit_mode', 'builder');
+        update_post_meta($page_id, '_elementor_template_type', 'wp-page');
+        update_post_meta($page_id, '_elementor_version', defined('ELEMENTOR_VERSION') ? ELEMENTOR_VERSION : '3.0.0');
+        update_post_meta($page_id, '_elementor_page_settings', $page_settings);
+        update_post_meta($page_id, '_elementor_data', wp_slash(wp_json_encode($elementor, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)));
 
         update_post_meta($page_id, '_wnq_service_city_source_row_id', $source_row_id);
         update_post_meta($page_id, '_wnq_service_city_slug', $slug);
@@ -182,7 +188,9 @@ final class ServiceCityReceiver
             'page_id'   => (int)$page_id,
             'parent_id' => (int)$parent_id,
             'page_url'  => get_permalink($page_id),
+            'preview_url' => get_preview_post_link((int)$page_id) ?: get_permalink($page_id),
             'edit_url'  => admin_url('post.php?post=' . (int)$page_id . '&action=edit'),
+            'elementor_url' => admin_url('post.php?post=' . (int)$page_id . '&action=elementor'),
         ], 201);
     }
 

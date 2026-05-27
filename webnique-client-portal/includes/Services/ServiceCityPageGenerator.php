@@ -20,7 +20,7 @@ use WNQ\Models\ServiceCityPage;
 
 final class ServiceCityPageGenerator
 {
-    public const MIN_AGENT_VERSION = '1.2.0';
+    public const MIN_AGENT_VERSION = '1.2.1';
 
     public static function generateDraft(int $row_id): array
     {
@@ -101,6 +101,7 @@ final class ServiceCityPageGenerator
             'parent_service_slug' => $row['parent_service_slug'],
             'post_content'        => $built['post_content'],
             'elementor_data'      => $built['elementor_data'],
+            'page_settings'       => $built['page_settings'],
             'source_row_id'       => $row_id,
         ]);
 
@@ -282,6 +283,9 @@ final class ServiceCityPageGenerator
         $decoded = json_decode($template, true);
 
         if (is_array($decoded)) {
+            $page_settings = isset($decoded['page_settings']) && is_array($decoded['page_settings'])
+                ? $decoded['page_settings']
+                : ['hide_title' => 'yes'];
             $elements = isset($decoded['content']) && is_array($decoded['content'])
                 ? $decoded['content']
                 : $decoded;
@@ -293,7 +297,8 @@ final class ServiceCityPageGenerator
 
             return [
                 'elementor_data' => wp_json_encode($elements),
-                'post_content'   => $body,
+                'page_settings'  => $page_settings,
+                'post_content'   => self::postContentFallback($tokens),
             ];
         }
 
@@ -305,8 +310,29 @@ final class ServiceCityPageGenerator
 
         return [
             'elementor_data' => wp_json_encode(self::minimalElementorTextEditor($html)),
+            'page_settings'  => ['hide_title' => 'yes'],
             'post_content'   => $html,
         ];
+    }
+
+    private static function postContentFallback(array $tokens): string
+    {
+        $h1 = trim((string)($tokens['{{h1}}'] ?? $tokens['{{page_title}}'] ?? ''));
+        $primary_keyword = trim((string)($tokens['{{primary_keyword}}'] ?? ''));
+        $cta_text = trim(wp_strip_all_tags((string)($tokens['{{cta_text}}'] ?? '')));
+        $parts = [];
+
+        if ($h1 !== '') {
+            $parts[] = '<h1>' . esc_html($h1) . '</h1>';
+        }
+        if ($primary_keyword !== '') {
+            $parts[] = '<p>' . esc_html($primary_keyword) . '</p>';
+        }
+        if ($cta_text !== '') {
+            $parts[] = '<p>' . esc_html($cta_text) . '</p>';
+        }
+
+        return implode("\n", $parts);
     }
 
     private static function replaceTokensRecursive($value, array $tokens)
