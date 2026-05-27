@@ -20,7 +20,7 @@ use WNQ\Models\ServiceCityPage;
 
 final class ServiceCityPageGenerator
 {
-    public const MIN_AGENT_VERSION = '1.2.1';
+    public const MIN_AGENT_VERSION = '1.2.2';
 
     public static function generateDraft(int $row_id): array
     {
@@ -294,11 +294,12 @@ final class ServiceCityPageGenerator
             if (!$had_body_token && !$has_variable_tokens) {
                 $elements = self::distributeFallbackContent($elements, $tokens, $body);
             }
+            $elements = self::protectHeroFromBodyLeak($elements, $tokens);
 
             return [
                 'elementor_data' => wp_json_encode($elements),
                 'page_settings'  => $page_settings,
-                'post_content'   => self::postContentFallback($tokens),
+                'post_content'   => '',
             ];
         }
 
@@ -315,24 +316,47 @@ final class ServiceCityPageGenerator
         ];
     }
 
-    private static function postContentFallback(array $tokens): string
+    private static function protectHeroFromBodyLeak(array $elements, array $tokens): array
     {
-        $h1 = trim((string)($tokens['{{h1}}'] ?? $tokens['{{page_title}}'] ?? ''));
-        $primary_keyword = trim((string)($tokens['{{primary_keyword}}'] ?? ''));
-        $cta_text = trim(wp_strip_all_tags((string)($tokens['{{cta_text}}'] ?? '')));
-        $parts = [];
-
-        if ($h1 !== '') {
-            $parts[] = '<h1>' . esc_html($h1) . '</h1>';
-        }
-        if ($primary_keyword !== '') {
-            $parts[] = '<p>' . esc_html($primary_keyword) . '</p>';
-        }
-        if ($cta_text !== '') {
-            $parts[] = '<p>' . esc_html($cta_text) . '</p>';
+        if (isset($elements[0]) && is_array($elements[0])) {
+            $elements[0] = self::clampHeroTextEditors($elements[0], $tokens);
         }
 
-        return implode("\n", $parts);
+        return $elements;
+    }
+
+    private static function clampHeroTextEditors(array $element, array $tokens): array
+    {
+        if (($element['widgetType'] ?? '') === 'text-editor') {
+            $editor = (string)($element['settings']['editor'] ?? '');
+            if (self::looksLikeFullGeneratedBody($editor)) {
+                $primary_keyword = trim((string)($tokens['{{primary_keyword}}'] ?? ''));
+                if ($primary_keyword === '') {
+                    $primary_keyword = wp_trim_words(wp_strip_all_tags($editor), 24, '.');
+                }
+                $element['settings']['editor'] = '<p>' . esc_html($primary_keyword) . '</p>';
+            }
+        }
+
+        if (!empty($element['elements']) && is_array($element['elements'])) {
+            foreach ($element['elements'] as &$child) {
+                if (is_array($child)) {
+                    $child = self::clampHeroTextEditors($child, $tokens);
+                }
+            }
+            unset($child);
+        }
+
+        return $element;
+    }
+
+    private static function looksLikeFullGeneratedBody(string $html): bool
+    {
+        if (self::wordCount($html) > 100) {
+            return true;
+        }
+
+        return (bool)preg_match('/<(?:h2|h3|section|ul|ol)\b/i', $html);
     }
 
     private static function replaceTokensRecursive($value, array $tokens)
