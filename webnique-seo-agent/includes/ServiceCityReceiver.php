@@ -95,7 +95,10 @@ final class ServiceCityReceiver
         $focus_kw = sanitize_text_field($body['focus_keyword'] ?? '');
         $slug = sanitize_title($body['slug'] ?? '');
         $parent_slug = sanitize_title($body['parent_service_slug'] ?? '');
-        $post_content = wp_kses_post($body['post_content'] ?? '');
+        // Service + City pages render from Elementor meta. Keeping normal
+        // post_content empty prevents themes from echoing the generated body
+        // inside custom hero/title templates before Elementor renders.
+        $post_content = '';
         $elementor_raw = isset($body['elementor_data']) ? (string)$body['elementor_data'] : '';
         $page_settings = isset($body['page_settings']) && is_array($body['page_settings'])
             ? $body['page_settings']
