@@ -23,6 +23,7 @@ if (!defined('ABSPATH')) {
 final class AIEngine
 {
     private const BLOG_PROMPT_VERSION = '2026-05-manual-html-format-v1';
+    private const SERVICE_CITY_PROMPT_VERSION = '2026-05-section-safe-v1';
 
     const CACHE_GROUP   = 'wnq_ai_cache';
     const RATE_KEY      = 'wnq_ai_rate_';
@@ -245,6 +246,8 @@ PROMPT,
         'service_city_page' => <<<'PROMPT'
 You are an expert local SEO copywriter writing a Service + City page for {business_name}. Create unique, useful page content for this exact page.
 
+Business Phone: {business_phone}
+Business Email: {business_email}
 Primary Keyword: {primary_keyword}
 Service: {service}
 Service Variations: {service_variations}
@@ -277,7 +280,9 @@ Rules:
 - Use H2s and H3s only. Do not include an H1 because the template controls the H1.
 - Naturally include the Primary Keyword in the first 100 words and in at least one H2.
 - Naturally mention relevant service variations, related services, nearby cities/areas, county, and geo modifiers where they make sense.
-- Use the CTA Title and CTA Text once near the end.
+- Do not create a standalone CTA, conclusion, or FAQ section. The Elementor template controls the final CTA.
+- Never write labels like "CTA Title:" or "CTA Text:".
+- If Business Phone or Business Email is provided, use the exact value when contact copy needs it. If either value is blank, omit it instead of writing placeholders like "[insert phone number]" or "[insert email address]".
 - If internal links are provided, mention the page topics naturally, but do not add raw URL lists.
 - Write 900-1,100 words for this first pass. If the system needs more length, it will request a continuation after this.
 - Return valid HTML only inside the BODY delimiter. Do not use markdown.
@@ -289,8 +294,7 @@ Recommended structure:
 - What is included
 - Local process or approach
 - Related services / nearby areas
-- CTA
-- FAQ with 4-6 questions
+- Practical selection, delivery, or preparation guidance
 
 STRICT FORMAT - return exactly:
 
@@ -302,6 +306,8 @@ PROMPT,
         'service_city_page_expansion' => <<<'PROMPT'
 You are continuing a local SEO Service + City page for {business_name}. Expand the page with useful, non-repetitive content that fits after the existing body.
 
+Business Phone: {business_phone}
+Business Email: {business_email}
 Primary Keyword: {primary_keyword}
 Service: {service}
 Service Variations: {service_variations}
@@ -328,9 +334,11 @@ Existing Body:
 Rules:
 - Continue the same page; do not restart the article.
 - Do not repeat headings or paragraphs already present in Existing Body.
+- Do not add a CTA, conclusion, or FAQ section. The Elementor template controls the final CTA.
+- If Business Phone or Business Email is blank, omit it instead of writing placeholders.
 - Add roughly the Approximate Additional Words Needed. If the page needs a large expansion, add 500-750 words. If it only needs a small finish, add one tight 250-400 word section.
 - Use H2s and H3s only. Do not include an H1.
-- Add practical sections such as sizing/selection guidance, local delivery considerations, nearby service areas, maintenance/care, comparison details, and FAQ if not already covered.
+- Add practical sections such as sizing/selection guidance, local delivery considerations, nearby service areas, maintenance/care, and comparison details.
 - Keep paragraphs short, 2-3 sentences max.
 - Return valid HTML only inside the BODY delimiter. Do not use markdown.
 - Do not include schema scripts.
@@ -506,6 +514,9 @@ PROMPT,
         if (in_array($key, ['blog_post_full', 'blog_titles_batch'], true)) {
             self::ensureBlogPromptDefaults();
         }
+        if (in_array($key, ['service_city_page', 'service_city_page_expansion'], true)) {
+            self::ensureServiceCityPromptDefaults();
+        }
 
         $overrides = get_option('wnq_ai_prompt_templates', []);
         if (!empty($overrides[$key])) {
@@ -540,6 +551,19 @@ PROMPT,
         $overrides['blog_titles_batch'] = self::$prompt_templates['blog_titles_batch'];
         update_option('wnq_ai_prompt_templates', $overrides);
         update_option('wnq_ai_blog_prompt_version', self::BLOG_PROMPT_VERSION);
+    }
+
+    private static function ensureServiceCityPromptDefaults(): void
+    {
+        if (get_option('wnq_ai_service_city_prompt_version', '') === self::SERVICE_CITY_PROMPT_VERSION) {
+            return;
+        }
+
+        $overrides = get_option('wnq_ai_prompt_templates', []);
+        $overrides['service_city_page'] = self::$prompt_templates['service_city_page'];
+        $overrides['service_city_page_expansion'] = self::$prompt_templates['service_city_page_expansion'];
+        update_option('wnq_ai_prompt_templates', $overrides);
+        update_option('wnq_ai_service_city_prompt_version', self::SERVICE_CITY_PROMPT_VERSION);
     }
 
     public static function getSettings(): array

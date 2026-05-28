@@ -290,6 +290,8 @@ final class SEOOSBootstrap
             'service_locations' => array_values($locations),
             'keyword_clusters'  => $kw_clusters,
             'brand_notes'       => sanitize_textarea_field($_POST['brand_notes'] ?? ''),
+            'phone'             => sanitize_text_field($_POST['profile_phone'] ?? ''),
+            'email'             => sanitize_email($_POST['profile_email'] ?? ''),
             'content_tone'      => sanitize_text_field($_POST['content_tone'] ?? 'professional'),
             'gsc_property'      => sanitize_text_field($_POST['gsc_property'] ?? ''),
             'ga_property'       => sanitize_text_field($_POST['ga_property'] ?? ''),
