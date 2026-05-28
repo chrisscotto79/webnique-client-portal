@@ -361,7 +361,7 @@ final class SEOHubAdmin
         <div class="wnq-hub-form-group">
           <label>Google Search Console Property URL</label>
           <input type="text" name="gsc_property" value="<?php echo esc_attr($profile['gsc_property'] ?? ''); ?>" placeholder="sc-domain:example.com or https://example.com/">
-          <p class="description">Use <code>sc-domain:example.com</code> for Search Console domain properties.</p>
+          <p class="description">Use the exact Search Console property the service account can access. URL-prefix properties look like <code>https://example.com/</code>; domain properties look like <code>sc-domain:example.com</code>.</p>
         </div>
 
         <div class="wnq-hub-form-group">

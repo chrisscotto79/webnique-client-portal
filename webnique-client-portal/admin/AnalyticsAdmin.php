@@ -656,7 +656,7 @@ final class AnalyticsAdmin
                             <input type="text" id="search_console_url" name="search_console_url" class="regular-text"
                                 value="<?php echo esc_attr($client['search_console_url'] ?? ''); ?>"
                                 placeholder="sc-domain:example.com or https://example.com/">
-                            <p class="description">Use <code>sc-domain:example.com</code> for domain properties, or the exact URL-prefix property as it appears in Search Console.</p>
+                            <p class="description">Use the exact property the service account can access. For URL-prefix properties, use <code>https://example.com/</code>; use <code>sc-domain:example.com</code> only when the service account was added to the domain property.</p>
                         </td>
                     </tr>
                     <tr>
@@ -1140,7 +1140,13 @@ final class AnalyticsAdmin
         $wpdb->query(
             "DELETE FROM {$wpdb->options}
              WHERE option_name LIKE '_transient_wnq_analytics_%'
-                OR option_name LIKE '_transient_timeout_wnq_analytics_%'"
+                OR option_name LIKE '_transient_timeout_wnq_analytics_%'
+                OR option_name LIKE '_transient_wnq_gsc_%'
+                OR option_name LIKE '_transient_timeout_wnq_gsc_%'
+                OR option_name LIKE '_transient_gsc_access_token_%'
+                OR option_name LIKE '_transient_timeout_gsc_access_token_%'
+                OR option_name LIKE '_transient_gsc_sites_%'
+                OR option_name LIKE '_transient_timeout_gsc_sites_%'"
         );
 
         wp_redirect(admin_url('admin.php?page=wnq-analytics&view=settings&cache_cleared=1'));
