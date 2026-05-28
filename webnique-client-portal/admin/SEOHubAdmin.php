@@ -1140,6 +1140,7 @@ jQuery(function($) {
         }
 
         if ($client_id) {
+            self::renderReportSourceOverrideForm($client_id);
             $reports = SEOHub::getReports($client_id);
 
             echo '<div class="wnq-hub-table-wrap"><table class="wnq-hub-table wnq-report-table"><thead><tr><th>Report</th><th>Period</th><th>Data Sources</th><th>Status</th><th>Generated</th><th>Actions</th></tr></thead><tbody>';
@@ -1166,6 +1167,57 @@ jQuery(function($) {
 
         echo '</div>';
         self::renderFooter();
+    }
+
+    private static function renderReportSourceOverrideForm(string $client_id): void
+    {
+        $config = AnalyticsConfig::getClientConfig($client_id) ?? [];
+        $credentials = AnalyticsConfig::getCredentials();
+        $notice = sanitize_key((string)($_GET['notice'] ?? ''));
+        $message = sanitize_text_field((string)($_GET['message'] ?? ''));
+
+        if (in_array($notice, ['report_sources_saved', 'report_sources_generated', 'report_sources_error'], true)) {
+            $is_error = $notice === 'report_sources_error';
+            $notice_text = $message ?: ($notice === 'report_sources_generated' ? 'Report sources saved and a new report was generated.' : 'Report sources saved.');
+            echo '<div class="' . ($is_error ? 'notice notice-error' : 'notice notice-success') . '" style="margin:16px 0;"><p>' . esc_html($notice_text) . '</p></div>';
+        }
+
+        echo '<div class="wnq-hub-card" style="padding:22px;margin:18px 0;">';
+        echo '<div style="display:flex;justify-content:space-between;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-bottom:18px;">';
+        echo '<div>';
+        echo '<h2 style="margin:0 0 6px;font-size:20px;color:#1f2937;">Report Data Sources</h2>';
+        echo '<p style="margin:0;color:#6b7280;">These values override GA4 and Search Console for reports. Reports read this section directly.</p>';
+        echo '</div>';
+        echo '<div style="font-size:12px;color:#6b7280;text-align:right;">';
+        echo '<strong>Service account:</strong><br>';
+        echo esc_html((string)($credentials['email'] ?? 'Not configured'));
+        echo '</div>';
+        echo '</div>';
+
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+        echo '<input type="hidden" name="action" value="wnq_save_report_sources">';
+        echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+        wp_nonce_field('wnq_report_sources_' . $client_id);
+
+        echo '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;">';
+        echo '<label style="display:block;font-weight:700;color:#374151;">GA4 Data API Property ID';
+        echo '<input type="text" name="ga4_property_id" value="' . esc_attr((string)($config['ga4_property_id'] ?? '')) . '" placeholder="properties/534865380" style="display:block;width:100%;margin-top:6px;">';
+        echo '<span style="display:block;margin-top:6px;font-size:12px;font-weight:400;color:#6b7280;">Use the numeric GA4 Property ID, not the <code>G-</code> measurement ID. Accepts <code>534865380</code> or <code>properties/534865380</code>.</span>';
+        echo '</label>';
+
+        echo '<label style="display:block;font-weight:700;color:#374151;">Google Search Console Property';
+        echo '<input type="text" name="search_console_url" value="' . esc_attr((string)($config['search_console_url'] ?? '')) . '" placeholder="https://example.com/ or sc-domain:example.com" style="display:block;width:100%;margin-top:6px;">';
+        echo '<span style="display:block;margin-top:6px;font-size:12px;font-weight:400;color:#6b7280;">Use the exact property the service account can access. URL-prefix properties should include the trailing slash.</span>';
+        echo '</label>';
+        echo '</div>';
+
+        echo '<div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
+        echo '<button type="submit" class="wnq-btn wnq-btn-primary">Save Report Sources</button>';
+        echo '<button type="submit" name="generate_report_now" value="1" class="wnq-btn">Save & Generate New Report</button>';
+        echo '<span style="font-size:12px;color:#6b7280;">Saving clears GA4/GSC report caches for fresh data.</span>';
+        echo '</div>';
+        echo '</form>';
+        echo '</div>';
     }
 
     private static function buildReportRowView(array $report): array

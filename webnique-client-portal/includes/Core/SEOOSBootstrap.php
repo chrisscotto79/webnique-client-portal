@@ -212,6 +212,7 @@ final class SEOOSBootstrap
 
         // Generate/export report
         add_action('admin_post_wnq_export_report', [self::class, 'handleExportReport']);
+        add_action('admin_post_wnq_save_report_sources', [self::class, 'handleSaveReportSources']);
 
         // Generate agent API key
         add_action('admin_post_wnq_generate_agent_key', [self::class, 'handleGenerateAgentKey']);
@@ -381,6 +382,179 @@ final class SEOOSBootstrap
         header('Content-Disposition: inline; filename="' . $filename . '"');
         echo $html;
         exit;
+    }
+
+    public static function handleSaveReportSources(): void
+    {
+        $client_id = sanitize_text_field(wp_unslash($_POST['client_id'] ?? ''));
+        check_admin_referer('wnq_report_sources_' . $client_id);
+        self::requireCap();
+
+        if ($client_id === '') {
+            wp_die('Missing client_id');
+        }
+
+        $redirect = admin_url('admin.php?page=wnq-seo-hub-reports&client_id=' . urlencode($client_id));
+
+        try {
+            $ga4_property_id = self::normalizeReportGa4Property(sanitize_text_field(wp_unslash($_POST['ga4_property_id'] ?? '')));
+            $search_console_url = self::normalizeReportSearchConsoleProperty(sanitize_text_field(wp_unslash($_POST['search_console_url'] ?? '')));
+
+            if ($ga4_property_id === '' && $search_console_url === '') {
+                throw new \Exception('Add at least one report data source before saving.');
+            }
+
+            $existing = \WNQ\Models\AnalyticsConfig::getClientConfig($client_id) ?: [];
+            $client = \WNQ\Models\Client::getByClientId($client_id) ?: [];
+            $client_name = (string)(
+                $existing['client_name']
+                ?? $client['company']
+                ?? $client['name']
+                ?? $client_id
+            );
+
+            $saved = \WNQ\Models\AnalyticsConfig::saveClientConfig([
+                'client_id' => $client_id,
+                'client_name' => $client_name,
+                'ga4_property_id' => $ga4_property_id,
+                'search_console_url' => $search_console_url,
+                'website_url' => (string)($existing['website_url'] ?? $client['website'] ?? ''),
+                'timezone' => (string)($existing['timezone'] ?? wp_timezone_string()),
+                'phone_numbers' => is_array($existing['phone_numbers'] ?? null) ? $existing['phone_numbers'] : [],
+                'form_ids' => is_array($existing['form_ids'] ?? null) ? $existing['form_ids'] : [],
+            ]);
+
+            if (!$saved) {
+                throw new \Exception('The report data sources could not be saved.');
+            }
+
+            \WNQ\Models\SEOHub::upsertProfile($client_id, [
+                'ga_property' => $ga4_property_id,
+                'gsc_property' => $search_console_url,
+            ]);
+
+            self::clearReportSourceCaches();
+
+            if (!empty($_POST['generate_report_now'])) {
+                $report_id = \WNQ\Services\ReportGenerator::generateMonthlyReport($client_id);
+                if (!$report_id) {
+                    throw new \Exception('Report sources were saved, but report generation failed.');
+                }
+
+                wp_safe_redirect(add_query_arg([
+                    'notice' => 'report_sources_generated',
+                    'message' => 'Report sources saved and report #' . (int)$report_id . ' was generated.',
+                ], $redirect));
+                exit;
+            }
+
+            wp_safe_redirect(add_query_arg([
+                'notice' => 'report_sources_saved',
+                'message' => 'Report sources saved. Generate a new report to pull fresh GA4/GSC data.',
+            ], $redirect));
+            exit;
+        } catch (\Throwable $e) {
+            wp_safe_redirect(add_query_arg([
+                'notice' => 'report_sources_error',
+                'message' => $e->getMessage(),
+            ], $redirect));
+            exit;
+        }
+    }
+
+    private static function normalizeReportGa4Property(string $value): string
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return '';
+        }
+
+        if (preg_match('/^G-[A-Z0-9-]+$/i', $value)) {
+            throw new \Exception('Use the numeric GA4 Property ID from Admin > Property Settings, not the G- measurement ID.');
+        }
+
+        if (preg_match('/^\d+$/', $value)) {
+            return 'properties/' . $value;
+        }
+
+        if (preg_match('#^properties/\d+$#', $value)) {
+            return $value;
+        }
+
+        throw new \Exception('GA4 Property ID must look like properties/123456789 or 123456789.');
+    }
+
+    private static function normalizeReportSearchConsoleProperty(string $value): string
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return '';
+        }
+
+        if (str_starts_with(strtolower($value), 'sc-domain:')) {
+            $host = self::normalizeReportHost(substr($value, strlen('sc-domain:')), true);
+            if ($host === '') {
+                throw new \Exception('Search Console domain property is missing the domain.');
+            }
+            return 'sc-domain:' . $host;
+        }
+
+        if (!preg_match('#^https?://#i', $value) && preg_match('/^[a-z0-9.-]+\.[a-z]{2,}(?:\/.*)?$/i', $value)) {
+            $value = 'https://' . $value;
+        }
+
+        $parts = wp_parse_url($value);
+        if (empty($parts['scheme']) || empty($parts['host'])) {
+            throw new \Exception('Search Console property must be an exact URL-prefix property or sc-domain: property.');
+        }
+
+        $scheme = strtolower((string)$parts['scheme']);
+        if (!in_array($scheme, ['http', 'https'], true)) {
+            throw new \Exception('Search Console URL-prefix properties must start with http:// or https://.');
+        }
+
+        $host = self::normalizeReportHost((string)$parts['host'], false);
+        $path = (string)($parts['path'] ?? '/');
+        $query = isset($parts['query']) ? '?' . (string)$parts['query'] : '';
+
+        if ($path === '') {
+            $path = '/';
+        }
+
+        return $scheme . '://' . $host . $path . $query;
+    }
+
+    private static function normalizeReportHost(string $host, bool $strip_www): string
+    {
+        $host = strtolower(trim($host));
+        $host = preg_replace('#^https?://#', '', $host);
+        $host = strtok($host, '/?:#') ?: $host;
+        $host = trim($host, " \t\n\r\0\x0B.");
+
+        if ($strip_www && str_starts_with($host, 'www.')) {
+            $host = substr($host, 4);
+        }
+
+        return $host;
+    }
+
+    private static function clearReportSourceCaches(): void
+    {
+        if (class_exists('\\WNQ\\API\\AnalyticsCache')) {
+            \WNQ\API\AnalyticsCache::clearAll();
+        }
+
+        global $wpdb;
+        foreach ([
+            '_transient_wnq_gsc_%',
+            '_transient_timeout_wnq_gsc_%',
+            '_transient_gsc_access_token_%',
+            '_transient_timeout_gsc_access_token_%',
+            '_transient_gsc_sites_%',
+            '_transient_timeout_gsc_sites_%',
+        ] as $pattern) {
+            $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $pattern));
+        }
     }
 
     public static function handleGenerateAgentKey(): void
