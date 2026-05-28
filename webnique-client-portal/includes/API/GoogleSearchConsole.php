@@ -19,7 +19,9 @@ if (!defined('ABSPATH')) {
 final class GoogleSearchConsole
 {
     private array $credentials;
+    private string $configured_site_url;
     private string $site_url;
+    private bool $site_url_resolved = false;
     private array $errors = [];
 
     /**
@@ -35,7 +37,8 @@ final class GoogleSearchConsole
         }
 
         $this->credentials = $config_data['credentials'];
-        $this->site_url = $client_config['search_console_url'];
+        $this->configured_site_url = self::normalizePropertyInput((string)($client_config['search_console_url'] ?? ''));
+        $this->site_url = $this->configured_site_url;
     }
 
     /**
@@ -50,7 +53,7 @@ final class GoogleSearchConsole
             $end_date = date('Y-m-d', strtotime('-3 days')); // GSC has 2-3 day delay
         }
 
-        $cache_key = "gsc_overview_{$this->site_url}_{$start_date}_{$end_date}";
+        $cache_key = "gsc_overview_{$this->configured_site_url}_{$start_date}_{$end_date}";
         
         $cached = $this->getFromCache($cache_key);
         if (is_array($cached)) {
@@ -115,7 +118,7 @@ final class GoogleSearchConsole
             $end_date = date('Y-m-d', strtotime('-3 days'));
         }
 
-        $cache_key = "gsc_keywords_{$this->site_url}_{$start_date}_{$end_date}_{$limit}";
+        $cache_key = "gsc_keywords_{$this->configured_site_url}_{$start_date}_{$end_date}_{$limit}";
         
         $cached = $this->getFromCache($cache_key);
         if (is_array($cached)) {
@@ -171,7 +174,7 @@ final class GoogleSearchConsole
             $end_date = date('Y-m-d', strtotime('-3 days'));
         }
 
-        $cache_key = "gsc_pages_{$this->site_url}_{$start_date}_{$end_date}_{$limit}";
+        $cache_key = "gsc_pages_{$this->configured_site_url}_{$start_date}_{$end_date}_{$limit}";
         
         $cached = $this->getFromCache($cache_key);
         if (is_array($cached)) {
@@ -226,7 +229,7 @@ final class GoogleSearchConsole
             $end_date = date('Y-m-d', strtotime('-3 days'));
         }
 
-        $cache_key = "gsc_performance_time_{$this->site_url}_{$start_date}_{$end_date}";
+        $cache_key = "gsc_performance_time_{$this->configured_site_url}_{$start_date}_{$end_date}";
         
         $cached = $this->getFromCache($cache_key);
         if (is_array($cached)) {
@@ -281,7 +284,7 @@ final class GoogleSearchConsole
             $end_date = date('Y-m-d', strtotime('-3 days'));
         }
 
-        $cache_key = "gsc_devices_{$this->site_url}_{$start_date}_{$end_date}";
+        $cache_key = "gsc_devices_{$this->configured_site_url}_{$start_date}_{$end_date}";
         
         $cached = $this->getFromCache($cache_key);
         if (is_array($cached)) {
@@ -332,7 +335,7 @@ final class GoogleSearchConsole
             $end_date = date('Y-m-d', strtotime('-3 days'));
         }
 
-        $cache_key = "gsc_countries_{$this->site_url}_{$start_date}_{$end_date}_{$limit}";
+        $cache_key = "gsc_countries_{$this->configured_site_url}_{$start_date}_{$end_date}_{$limit}";
         
         $cached = $this->getFromCache($cache_key);
         if (is_array($cached)) {
@@ -383,8 +386,8 @@ final class GoogleSearchConsole
         array $dimensions = [],
         int $row_limit = 1000
     ): array {
-        $url = 'https://searchconsole.googleapis.com/v1/urlTestingTools/mobileFriendlyTest:run';
-        $url = "https://www.googleapis.com/webmasters/v3/sites/" . urlencode($this->site_url) . "/searchAnalytics/query";
+        $site_url = $this->getResolvedSiteUrl();
+        $url = "https://www.googleapis.com/webmasters/v3/sites/" . urlencode($site_url) . "/searchAnalytics/query";
 
         $body = [
             'startDate' => $start_date,
@@ -397,6 +400,188 @@ final class GoogleSearchConsole
         }
 
         return $this->makeApiRequest($url, $body);
+    }
+
+    /**
+     * Resolve saved Search Console config to a property the service account can access.
+     *
+     * Search Console treats domain properties (sc-domain:example.com) and URL-prefix
+     * properties (https://example.com/) as different siteUrl values. Client setup often
+     * grants the service account to one but saves the other, so we list accessible
+     * properties and fall back to the matching property for the same domain.
+     */
+    private function getResolvedSiteUrl(): string
+    {
+        if ($this->site_url_resolved) {
+            return $this->site_url;
+        }
+
+        if ($this->configured_site_url === '') {
+            throw new \Exception('Search Console property is empty for this client.');
+        }
+
+        $sites = $this->listAccessibleSites();
+        if (empty($sites)) {
+            throw new \Exception(
+                'The Google service account does not have access to any Search Console properties. ' .
+                'Add ' . ($this->credentials['client_email'] ?? 'the service account') . ' as a Full user in Search Console.'
+            );
+        }
+
+        $match = self::findMatchingSiteUrl($this->configured_site_url, $sites);
+        if ($match === '') {
+            $domain = self::propertyDomain($this->configured_site_url);
+            $same_domain = array_values(array_filter(array_map(
+                static fn($site) => (string)($site['siteUrl'] ?? ''),
+                $sites
+            ), static fn($site_url) => self::propertyDomain($site_url) === $domain));
+            $visible = !empty($same_domain)
+                ? implode(', ', array_slice($same_domain, 0, 5))
+                : implode(', ', array_slice(array_map(static fn($site) => (string)($site['siteUrl'] ?? ''), $sites), 0, 5));
+
+            throw new \Exception(
+                "Configured Search Console property '{$this->configured_site_url}' is not accessible to the service account. " .
+                ($visible !== '' ? "Accessible properties include: {$visible}." : 'No accessible properties were returned.')
+            );
+        }
+
+        $this->site_url = $match;
+        $this->site_url_resolved = true;
+
+        return $this->site_url;
+    }
+
+    private function listAccessibleSites(): array
+    {
+        $cache_key = 'gsc_sites_' . md5((string)($this->credentials['client_email'] ?? ''));
+        $cached = get_transient($cache_key);
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        $data = $this->makeGetRequest('https://www.googleapis.com/webmasters/v3/sites');
+        $sites = is_array($data['siteEntry'] ?? null) ? $data['siteEntry'] : [];
+        set_transient($cache_key, $sites, 900);
+
+        return $sites;
+    }
+
+    private static function findMatchingSiteUrl(string $configured, array $sites): string
+    {
+        $configured = self::normalizePropertyInput($configured);
+        $configured_domain = self::propertyDomain($configured);
+        $matches = [];
+
+        foreach ($sites as $site) {
+            $site_url = self::normalizePropertyInput((string)($site['siteUrl'] ?? ''));
+            if ($site_url === '') {
+                continue;
+            }
+
+            if ($site_url === $configured) {
+                return $site_url;
+            }
+
+            if ($configured_domain !== '' && self::propertyDomain($site_url) === $configured_domain) {
+                $matches[] = [
+                    'site_url' => $site_url,
+                    'score' => self::propertyMatchScore($configured, $site_url),
+                ];
+            }
+        }
+
+        if (empty($matches)) {
+            return '';
+        }
+
+        usort($matches, static fn($a, $b) => $b['score'] <=> $a['score']);
+        return (string)$matches[0]['site_url'];
+    }
+
+    private static function propertyMatchScore(string $configured, string $site_url): int
+    {
+        $score = 0;
+        $configured_is_domain = str_starts_with($configured, 'sc-domain:');
+        $site_is_domain = str_starts_with($site_url, 'sc-domain:');
+
+        if ($configured_is_domain === $site_is_domain) {
+            $score += 30;
+        }
+        if (str_starts_with($site_url, 'https://')) {
+            $score += 20;
+        }
+        if (self::urlPathIsRoot($site_url)) {
+            $score += 10;
+        }
+
+        return $score;
+    }
+
+    private static function normalizePropertyInput(string $value): string
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return '';
+        }
+
+        if (str_starts_with(strtolower($value), 'sc-domain:')) {
+            return 'sc-domain:' . self::normalizeHost(substr($value, strlen('sc-domain:')));
+        }
+
+        if (!preg_match('#^https?://#i', $value) && preg_match('/^[a-z0-9.-]+\.[a-z]{2,}(?:\/.*)?$/i', $value)) {
+            $value = 'https://' . $value;
+        }
+
+        $parts = wp_parse_url($value);
+        if (empty($parts['scheme']) || empty($parts['host'])) {
+            return $value;
+        }
+
+        $scheme = strtolower((string)$parts['scheme']);
+        $host = self::normalizeHost((string)$parts['host'], false);
+        $path = (string)($parts['path'] ?? '/');
+        $query = isset($parts['query']) ? '?' . $parts['query'] : '';
+
+        if ($path === '') {
+            $path = '/';
+        }
+
+        return $scheme . '://' . $host . $path . $query;
+    }
+
+    private static function propertyDomain(string $site_url): string
+    {
+        $site_url = self::normalizePropertyInput($site_url);
+        if (str_starts_with($site_url, 'sc-domain:')) {
+            return self::normalizeHost(substr($site_url, strlen('sc-domain:')));
+        }
+
+        $host = (string)(wp_parse_url($site_url, PHP_URL_HOST) ?: '');
+        return self::normalizeHost($host);
+    }
+
+    private static function normalizeHost(string $host, bool $strip_www = true): string
+    {
+        $host = strtolower(trim($host));
+        $host = preg_replace('#^https?://#', '', $host);
+        $host = strtok($host, '/?:#') ?: $host;
+        $host = trim($host, " \t\n\r\0\x0B.");
+
+        if ($strip_www && str_starts_with($host, 'www.')) {
+            $host = substr($host, 4);
+        }
+
+        return $host;
+    }
+
+    private static function urlPathIsRoot(string $site_url): bool
+    {
+        if (str_starts_with($site_url, 'sc-domain:')) {
+            return true;
+        }
+
+        $path = (string)(wp_parse_url($site_url, PHP_URL_PATH) ?: '/');
+        return $path === '' || $path === '/';
     }
 
     /**
@@ -415,6 +600,45 @@ final class GoogleSearchConsole
                     'Content-Type' => 'application/json',
                 ],
                 'body' => wp_json_encode($body),
+                'timeout' => 30,
+            ]);
+
+            if (is_wp_error($response)) {
+                throw new \Exception('API request failed: ' . $response->get_error_message());
+            }
+
+            $code = wp_remote_retrieve_response_code($response);
+            $response_body = wp_remote_retrieve_body($response);
+            $data = json_decode($response_body, true);
+
+            if ($code === 200 && is_array($data) && !isset($data['error'])) {
+                return $data;
+            }
+
+            if (in_array((int)$code, [401, 403], true) && $attempt === 0) {
+                delete_transient($cache_key);
+                continue;
+            }
+
+            $error_msg = is_array($data) ? ($data['error']['message'] ?? 'Unknown error') : 'Invalid JSON response';
+            throw new \Exception('API error: ' . $error_msg);
+        }
+
+        throw new \Exception('API request failed after refreshing the access token');
+    }
+
+    private function makeGetRequest(string $url): array
+    {
+        $cache_key = 'gsc_access_token_' . md5($this->credentials['client_email']);
+
+        for ($attempt = 0; $attempt < 2; $attempt++) {
+            $access_token = $this->getAccessToken();
+
+            $response = wp_remote_get($url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $access_token,
+                    'Content-Type' => 'application/json',
+                ],
                 'timeout' => 30,
             ]);
 
