@@ -1127,8 +1127,13 @@ jQuery(function($) {
         }
         echo '</select>';
         if ($client_id) {
-            echo ' &nbsp;<button class="wnq-btn wnq-btn-primary" onclick="wnqHubAjax(\'generate_report\', \'' . esc_js($client_id) . '\', 0, this)">Generate New Report</button>';
-            echo ' &nbsp;<button class="wnq-btn" onclick="wnqHubAjax(\'generate_all_reports\', \'\', 0, this)">Generate All Client Reports</button>';
+            echo ' &nbsp;<label style="display:inline-flex;align-items:center;gap:8px;font-weight:700;color:#374151;">Period';
+            echo '<select id="wnq-report-period-select" style="min-width:160px;">';
+            echo '<option value="last_30_days" selected>Last 30 days</option>';
+            echo '<option value="previous_month">Previous full month</option>';
+            echo '</select></label>';
+            echo ' &nbsp;<button class="wnq-btn wnq-btn-primary" onclick="wnqHubAjax(\'generate_report\', \'' . esc_js($client_id) . '\', 0, this, {report_period: wnqSelectedReportPeriod()})">Generate New Report</button>';
+            echo ' &nbsp;<button class="wnq-btn" onclick="wnqHubAjax(\'generate_all_reports\', \'\', 0, this, {report_period: wnqSelectedReportPeriod()})">Generate All Client Reports</button>';
         }
         echo '</div>';
 
@@ -1159,7 +1164,7 @@ jQuery(function($) {
                 echo '<td class="wnq-report-actions">';
                 echo '<a class="wnq-btn wnq-btn-sm wnq-btn-primary" href="' . esc_url($view['report_url']) . '" target="_blank" rel="noopener">View Report</a>';
                 echo '<a class="wnq-btn wnq-btn-sm" href="' . esc_url($view['pdf_url']) . '">Download PDF</a>';
-                echo '<button type="button" class="wnq-btn wnq-btn-sm" onclick="wnqHubAjax(\'generate_report\', \'' . esc_js($client_id) . '\', 0, this)">Regenerate</button>';
+                echo '<button type="button" class="wnq-btn wnq-btn-sm" onclick="wnqHubAjax(\'generate_report\', \'' . esc_js($client_id) . '\', 0, this, {report_period: \'' . esc_js($view['period_key']) . '\'})">Regenerate</button>';
                 echo '</td></tr>';
             }
             echo '</tbody></table></div>';
@@ -1209,14 +1214,78 @@ jQuery(function($) {
         echo '<input type="text" name="search_console_url" value="' . esc_attr((string)($config['search_console_url'] ?? '')) . '" placeholder="https://example.com/ or sc-domain:example.com" style="display:block;width:100%;margin-top:6px;">';
         echo '<span style="display:block;margin-top:6px;font-size:12px;font-weight:400;color:#6b7280;">Use the exact property the service account can access. URL-prefix properties should include the trailing slash.</span>';
         echo '</label>';
+
+        echo '<label style="display:block;font-weight:700;color:#374151;">Report Period';
+        echo '<select name="report_period" style="display:block;width:100%;margin-top:6px;">';
+        echo '<option value="last_30_days" selected>Last 30 days</option>';
+        echo '<option value="previous_month">Previous full month</option>';
+        echo '</select>';
+        echo '<span style="display:block;margin-top:6px;font-size:12px;font-weight:400;color:#6b7280;">Applies to Save & Test GSC Access and Save & Generate New Report.</span>';
+        echo '</label>';
         echo '</div>';
 
         echo '<div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">';
         echo '<button type="submit" class="wnq-btn wnq-btn-primary">Save Report Sources</button>';
+        echo '<button type="submit" name="test_gsc_now" value="1" class="wnq-btn">Save & Test GSC Access</button>';
         echo '<button type="submit" name="generate_report_now" value="1" class="wnq-btn">Save & Generate New Report</button>';
         echo '<span style="font-size:12px;color:#6b7280;">Saving clears GA4/GSC report caches for fresh data.</span>';
         echo '</div>';
         echo '</form>';
+        self::renderReportSourceDiagnostics($client_id);
+        echo '</div>';
+    }
+
+    private static function renderReportSourceDiagnostics(string $client_id): void
+    {
+        $diagnostics = get_transient('wnq_report_source_diag_' . get_current_user_id() . '_' . $client_id);
+        if (!is_array($diagnostics)) {
+            return;
+        }
+
+        echo '<div style="margin-top:20px;padding:16px;border:1px solid #d1d5db;border-radius:10px;background:#f9fafb;">';
+        echo '<h3 style="margin:0 0 10px;font-size:16px;color:#1f2937;">Search Console Access Test</h3>';
+        $period = is_array($diagnostics['period'] ?? null) ? $diagnostics['period'] : [];
+
+        if (!empty($diagnostics['error'])) {
+            if (!empty($period['start']) || !empty($period['end'])) {
+                echo '<p style="margin:0 0 10px;color:#4b5563;">Test period: <code>' . esc_html((string)($period['start'] ?? '')) . '</code> to <code>' . esc_html((string)($period['end'] ?? '')) . '</code></p>';
+            }
+            echo '<p style="margin:0;color:#b91c1c;font-weight:700;">' . esc_html((string)$diagnostics['error']) . '</p>';
+            echo '</div>';
+            return;
+        }
+
+        echo '<p style="margin:0 0 10px;color:#4b5563;">Configured property: <code>' . esc_html((string)($diagnostics['configured'] ?? '')) . '</code></p>';
+        if (!empty($period['start']) || !empty($period['end'])) {
+            echo '<p style="margin:0 0 10px;color:#4b5563;">Test period: <code>' . esc_html((string)($period['start'] ?? '')) . '</code> to <code>' . esc_html((string)($period['end'] ?? '')) . '</code></p>';
+        }
+
+        $tests = is_array($diagnostics['tests'] ?? null) ? $diagnostics['tests'] : [];
+        if (!empty($tests)) {
+            echo '<div style="display:grid;gap:8px;margin-bottom:14px;">';
+            foreach ($tests as $test) {
+                $success = !empty($test['success']);
+                echo '<div style="padding:10px;border-radius:8px;background:' . ($success ? '#ecfdf5' : '#fef2f2') . ';border:1px solid ' . ($success ? '#bbf7d0' : '#fecaca') . ';">';
+                echo '<strong style="color:' . ($success ? '#166534' : '#991b1b') . ';">' . esc_html($success ? 'Works' : 'Failed') . '</strong> ';
+                echo '<code>' . esc_html((string)($test['site_url'] ?? '')) . '</code>';
+                echo '<div style="font-size:12px;color:#4b5563;margin-top:4px;">' . esc_html((string)($test['message'] ?? '')) . '</div>';
+                echo '</div>';
+            }
+            echo '</div>';
+        } else {
+            echo '<p style="margin:0 0 12px;color:#b91c1c;font-weight:700;">No matching Search Console properties were found for the configured domain.</p>';
+        }
+
+        $properties = is_array($diagnostics['accessible_properties'] ?? null) ? $diagnostics['accessible_properties'] : [];
+        echo '<details><summary style="cursor:pointer;font-weight:700;color:#374151;">Accessible properties returned by Google (' . count($properties) . ')</summary>';
+        if (!empty($properties)) {
+            echo '<table class="widefat striped" style="margin-top:10px;"><thead><tr><th>Property</th><th>Permission</th></tr></thead><tbody>';
+            foreach ($properties as $property) {
+                echo '<tr><td><code>' . esc_html((string)($property['site_url'] ?? '')) . '</code></td><td>' . esc_html((string)($property['permission'] ?? '')) . '</td></tr>';
+            }
+            echo '</tbody></table>';
+        }
+        echo '</details>';
         echo '</div>';
     }
 
@@ -1234,11 +1303,18 @@ jQuery(function($) {
         $start_ts = strtotime($start);
         $end_ts = strtotime($end);
         $generated_ts = strtotime((string)($report['generated_at'] ?? '')) ?: 0;
+        $period = is_array($data['period'] ?? null) ? $data['period'] : [];
+        $period_label = (string)($period['label'] ?? '');
+        $period_key = sanitize_key((string)($period['key'] ?? $report['report_type'] ?? 'previous_month'));
+        if ($period_key === 'monthly') {
+            $period_key = 'previous_month';
+        }
 
         return [
             'title' => (string)(($report['title'] ?? '') ?: 'Monthly Analytics Report'),
             'type' => ucwords(str_replace('_', ' ', (string)($report['report_type'] ?? 'monthly'))),
-            'period_label' => $start_ts ? date('F Y', $start_ts) : 'Unknown period',
+            'period_key' => $period_key,
+            'period_label' => $period_label !== '' ? $period_label : ($start_ts ? date('F Y', $start_ts) : 'Unknown period'),
             'period_range' => ($start_ts && $end_ts) ? date('M j, Y', $start_ts) . ' - ' . date('M j, Y', $end_ts) : trim($start . ' - ' . $end, ' -'),
             'sources_html' => self::renderReportSource('GA4', $sources['ga4']) . self::renderReportSource('GSC', $sources['gsc']),
             'status_label' => $status_label,
@@ -1249,6 +1325,12 @@ jQuery(function($) {
             'report_url' => admin_url('admin-post.php?action=wnq_export_report&report_id=' . (int)($report['id'] ?? 0) . '&_wpnonce=' . wp_create_nonce('wnq_export_report')),
             'pdf_url' => admin_url('admin-post.php?action=wnq_export_report&format=pdf&report_id=' . (int)($report['id'] ?? 0) . '&_wpnonce=' . wp_create_nonce('wnq_export_report')),
         ];
+    }
+
+    private static function normalizeReportPeriodKey(string $value): string
+    {
+        $value = sanitize_key($value);
+        return in_array($value, ['last_30_days', 'previous_month'], true) ? $value : 'last_30_days';
     }
 
     private static function normalizeReportSources(array $analytics): array
@@ -1737,7 +1819,8 @@ jQuery(function($) {
 
             case 'generate_report':
                 if (!$client_id) wp_send_json_error(['message' => 'No client selected']);
-                $id = \WNQ\Services\ReportGenerator::generateMonthlyReport($client_id);
+                $period = self::normalizeReportPeriodKey(sanitize_text_field(wp_unslash($_POST['report_period'] ?? 'last_30_days')));
+                $id = \WNQ\Services\ReportGenerator::generateReport($client_id, $period);
                 if ($id) {
                     wp_send_json_success([
                         'message' => 'New report generated (ID #' . $id . ')',
@@ -1752,7 +1835,8 @@ jQuery(function($) {
                 break;
 
             case 'generate_all_reports':
-                $result = \WNQ\Services\ReportGenerator::generateAllMonthlyReports('', false, true);
+                $period = self::normalizeReportPeriodKey(sanitize_text_field(wp_unslash($_POST['report_period'] ?? 'last_30_days')));
+                $result = \WNQ\Services\ReportGenerator::generateAllMonthlyReports('', false, true, $period);
                 wp_send_json_success([
                     'message' => "New reports: generated={$result['generated']}, skipped={$result['skipped']}, failed={$result['failed']}",
                     'data' => $result,

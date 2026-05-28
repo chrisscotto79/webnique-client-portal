@@ -8,7 +8,12 @@
 
   // ── AJAX Wrapper ─────────────────────────────────────────────────────────
 
-  window.wnqHubAjax = function (action, clientId, entityId, btn) {
+  window.wnqSelectedReportPeriod = function () {
+    const select = document.getElementById('wnq-report-period-select');
+    return select && select.value ? select.value : 'last_30_days';
+  };
+
+  window.wnqHubAjax = function (action, clientId, entityId, btn, extraData) {
     const $result = $('#wnq-action-result');
     $result.removeClass('success error').text('').hide();
 
@@ -25,13 +30,15 @@
       }
     }
 
-    $.post(WNQ_SEOHUB.ajaxUrl, {
+    const payload = Object.assign({
       action:     'wnq_seohub_action',
       hub_action: action,
       client_id:  clientId || '',
       entity_id:  entityId || 0,
       nonce:      WNQ_SEOHUB.nonce
-    })
+    }, extraData || {});
+
+    $.post(WNQ_SEOHUB.ajaxUrl, payload)
     .done(function (res) {
       if (res.success) {
         let message = '✅ ' + res.data.message;
