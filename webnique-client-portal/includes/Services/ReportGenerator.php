@@ -26,7 +26,15 @@ final class ReportGenerator
      */
     public static function generateMonthlyReport(string $client_id, string $month = ''): int|false
     {
-        $period = self::resolveMonthlyPeriod($month);
+        return self::generateReport($client_id, 'previous_month', $month);
+    }
+
+    /**
+     * Generate an analytics report for a supported period.
+     */
+    public static function generateReport(string $client_id, string $period_key = 'previous_month', string $month = ''): int|false
+    {
+        $period = self::resolveReportPeriod($period_key, $month);
         $period_start = $period['start'];
         $period_end = $period['end'];
 
@@ -48,7 +56,7 @@ final class ReportGenerator
         $report_data = [
             'client'         => self::getClientSummary($client, $profile),
             'analytics'      => self::getAnalyticsSummary($analytics_context, $period_start, $period_end),
-            'period'         => ['start' => $period_start, 'end' => $period_end, 'label' => date('F Y', strtotime($period_start))],
+            'period'         => ['start' => $period_start, 'end' => $period_end, 'label' => $period['label'], 'key' => $period['key']],
             'generated_at'   => current_time('mysql'),
         ];
         $report_status = self::resolveReportStatus($report_data);
@@ -56,7 +64,7 @@ final class ReportGenerator
         // AI-generated executive summary
         $summary_html = self::generateAISummary($client, $profile, $report_data);
 
-        $report_id = SEOHub::createReport($report_client_id, 'monthly', $period_start, $period_end, $report_data, $summary_html, $report_status);
+        $report_id = SEOHub::createReport($report_client_id, $period['type'], $period_start, $period_end, $report_data, $summary_html, $report_status);
 
         if ($report_id) {
             SEOHub::log('monthly_report_generated', [
@@ -72,10 +80,10 @@ final class ReportGenerator
     /**
      * Generate reports for all active clients
      */
-    public static function generateAllMonthlyReports(string $month = '', bool $send_email = false, bool $force_new = false): array
+    public static function generateAllMonthlyReports(string $month = '', bool $send_email = false, bool $force_new = false, string $period_key = 'previous_month'): array
     {
         $clients = AnalyticsConfig::getAllClients();
-        $period = self::resolveMonthlyPeriod($month);
+        $period = self::resolveReportPeriod($period_key, $month);
         $results = [
             'generated' => 0,
             'emailed' => 0,
@@ -88,13 +96,13 @@ final class ReportGenerator
         foreach ($clients as $client) {
             $client_id = $client['client_id'];
 
-            $existing = SEOHub::getReportForPeriod($client_id, 'monthly', $period['start'], $period['end']);
+            $existing = SEOHub::getReportForPeriod($client_id, $period['type'], $period['start'], $period['end']);
             if (!$force_new && $existing && ($existing['status'] ?? '') === 'sent') {
                 $results['email_skipped']++;
                 continue;
             }
 
-            $id = (!$force_new && $existing) ? (int)$existing['id'] : self::generateMonthlyReport($client_id, $month);
+            $id = (!$force_new && $existing) ? (int)$existing['id'] : self::generateReport($client_id, $period_key, $month);
             if ($id) {
                 if ($force_new || !$existing) {
                     $results['generated']++;
@@ -1328,6 +1336,23 @@ final class ReportGenerator
         return number_format($value, 1);
     }
 
+    public static function resolveReportPeriod(string $period_key = 'previous_month', string $month = ''): array
+    {
+        $period_key = sanitize_key($period_key);
+
+        if ($period_key === 'last_30_days') {
+            return [
+                'start' => date('Y-m-d', strtotime('-30 days')),
+                'end' => date('Y-m-d'),
+                'label' => 'Last 30 Days',
+                'key' => 'last_30_days',
+                'type' => 'last_30_days',
+            ];
+        }
+
+        return self::resolveMonthlyPeriod($month);
+    }
+
     private static function resolveMonthlyPeriod(string $month = ''): array
     {
         if (empty($month)) {
@@ -1339,6 +1364,8 @@ final class ReportGenerator
             'start' => $period_start,
             'end' => date('Y-m-t', strtotime($period_start)),
             'label' => date('F Y', strtotime($period_start)),
+            'key' => 'previous_month',
+            'type' => 'monthly',
         ];
     }
 

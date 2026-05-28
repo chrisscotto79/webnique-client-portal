@@ -22,6 +22,7 @@ final class GoogleSearchConsole
     private string $configured_site_url;
     private string $site_url;
     private bool $site_url_resolved = false;
+    private array $site_url_candidates = [];
     private array $errors = [];
 
     /**
@@ -386,9 +387,6 @@ final class GoogleSearchConsole
         array $dimensions = [],
         int $row_limit = 1000
     ): array {
-        $site_url = $this->getResolvedSiteUrl();
-        $url = "https://www.googleapis.com/webmasters/v3/sites/" . urlencode($site_url) . "/searchAnalytics/query";
-
         $body = [
             'startDate' => $start_date,
             'endDate' => $end_date,
@@ -399,7 +397,22 @@ final class GoogleSearchConsole
             $body['dimensions'] = $dimensions;
         }
 
-        return $this->makeApiRequest($url, $body);
+        $errors = [];
+        $candidates = $this->getResolvedSiteUrlCandidates();
+
+        foreach ($candidates as $site_url) {
+            $url = "https://www.googleapis.com/webmasters/v3/sites/" . urlencode($site_url) . "/searchAnalytics/query";
+
+            try {
+                $data = $this->makeApiRequest($url, $body);
+                $this->promoteSuccessfulSiteUrl($site_url);
+                return $data;
+            } catch (\Exception $e) {
+                $errors[] = $site_url . ': ' . $e->getMessage();
+            }
+        }
+
+        throw new \Exception('Search Console API failed for all matching properties. ' . implode(' | ', $errors));
     }
 
     /**
@@ -412,8 +425,13 @@ final class GoogleSearchConsole
      */
     private function getResolvedSiteUrl(): string
     {
+        return $this->getResolvedSiteUrlCandidates()[0];
+    }
+
+    private function getResolvedSiteUrlCandidates(): array
+    {
         if ($this->site_url_resolved) {
-            return $this->site_url;
+            return $this->site_url_candidates ?: [$this->site_url];
         }
 
         if ($this->configured_site_url === '') {
@@ -428,8 +446,8 @@ final class GoogleSearchConsole
             );
         }
 
-        $match = self::findMatchingSiteUrl($this->configured_site_url, $sites);
-        if ($match === '') {
+        $matches = self::findMatchingSiteUrls($this->configured_site_url, $sites);
+        if (empty($matches)) {
             $domain = self::propertyDomain($this->configured_site_url);
             $same_domain = array_values(array_filter(array_map(
                 static fn($site) => (string)($site['siteUrl'] ?? ''),
@@ -445,10 +463,26 @@ final class GoogleSearchConsole
             );
         }
 
-        $this->site_url = $match;
+        $this->site_url_candidates = $matches;
+        $this->site_url = $matches[0];
         $this->site_url_resolved = true;
 
-        return $this->site_url;
+        return $this->site_url_candidates;
+    }
+
+    private function promoteSuccessfulSiteUrl(string $site_url): void
+    {
+        $this->site_url = $site_url;
+
+        if (empty($this->site_url_candidates)) {
+            $this->site_url_candidates = [$site_url];
+            return;
+        }
+
+        $this->site_url_candidates = array_values(array_unique(array_merge(
+            [$site_url],
+            array_filter($this->site_url_candidates, static fn($candidate) => $candidate !== $site_url)
+        )));
     }
 
     private function listAccessibleSites(): array
@@ -466,7 +500,7 @@ final class GoogleSearchConsole
         return $sites;
     }
 
-    private static function findMatchingSiteUrl(string $configured, array $sites): string
+    private static function findMatchingSiteUrls(string $configured, array $sites): array
     {
         $configured = self::normalizePropertyInput($configured);
         $configured_domain = self::propertyDomain($configured);
@@ -478,11 +512,7 @@ final class GoogleSearchConsole
                 continue;
             }
 
-            if ($site_url === $configured) {
-                return $site_url;
-            }
-
-            if ($configured_domain !== '' && self::propertyDomain($site_url) === $configured_domain) {
+            if ($site_url === $configured || ($configured_domain !== '' && self::propertyDomain($site_url) === $configured_domain)) {
                 $matches[] = [
                     'site_url' => $site_url,
                     'score' => self::propertyMatchScore($configured, $site_url),
@@ -495,7 +525,7 @@ final class GoogleSearchConsole
         }
 
         usort($matches, static fn($a, $b) => $b['score'] <=> $a['score']);
-        return (string)$matches[0]['site_url'];
+        return array_values(array_unique(array_map(static fn($match) => (string)$match['site_url'], $matches)));
     }
 
     private static function propertyMatchScore(string $configured, string $site_url): int
@@ -504,6 +534,9 @@ final class GoogleSearchConsole
         $configured_is_domain = str_starts_with($configured, 'sc-domain:');
         $site_is_domain = str_starts_with($site_url, 'sc-domain:');
 
+        if ($site_url === $configured) {
+            $score += 100;
+        }
         if ($configured_is_domain === $site_is_domain) {
             $score += 30;
         }
@@ -515,6 +548,62 @@ final class GoogleSearchConsole
         }
 
         return $score;
+    }
+
+    public function getConnectionDiagnostics(string $start_date = '', string $end_date = ''): array
+    {
+        $start_date = $start_date ?: date('Y-m-d', strtotime('-14 days'));
+        $end_date = $end_date ?: date('Y-m-d', strtotime('-3 days'));
+        $sites = $this->listAccessibleSites();
+        $candidates = [];
+        $tests = [];
+
+        if (!empty($sites)) {
+            $candidates = self::findMatchingSiteUrls($this->configured_site_url, $sites);
+        }
+
+        $body = [
+            'startDate' => $start_date,
+            'endDate' => $end_date,
+            'rowLimit' => 1,
+        ];
+
+        foreach ($candidates as $site_url) {
+            $url = "https://www.googleapis.com/webmasters/v3/sites/" . urlencode($site_url) . "/searchAnalytics/query";
+
+            try {
+                $data = $this->makeApiRequest($url, $body);
+                $tests[] = [
+                    'site_url' => $site_url,
+                    'success' => true,
+                    'message' => 'Query succeeded',
+                    'rows' => count((array)($data['rows'] ?? [])),
+                ];
+            } catch (\Exception $e) {
+                $tests[] = [
+                    'site_url' => $site_url,
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                    'rows' => 0,
+                ];
+            }
+        }
+
+        return [
+            'configured' => $this->configured_site_url,
+            'period' => [
+                'start' => $start_date,
+                'end' => $end_date,
+            ],
+            'candidate_properties' => $candidates,
+            'accessible_properties' => array_values(array_map(static function($site): array {
+                return [
+                    'site_url' => (string)($site['siteUrl'] ?? ''),
+                    'permission' => (string)($site['permissionLevel'] ?? ''),
+                ];
+            }, $sites)),
+            'tests' => $tests,
+        ];
     }
 
     private static function normalizePropertyInput(string $value): string

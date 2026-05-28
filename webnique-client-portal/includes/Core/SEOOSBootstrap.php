@@ -399,6 +399,8 @@ final class SEOOSBootstrap
         try {
             $ga4_property_id = self::normalizeReportGa4Property(sanitize_text_field(wp_unslash($_POST['ga4_property_id'] ?? '')));
             $search_console_url = self::normalizeReportSearchConsoleProperty(sanitize_text_field(wp_unslash($_POST['search_console_url'] ?? '')));
+            $report_period = self::normalizeReportPeriod(sanitize_text_field(wp_unslash($_POST['report_period'] ?? 'last_30_days')));
+            $period = \WNQ\Services\ReportGenerator::resolveReportPeriod($report_period);
 
             if ($ga4_property_id === '' && $search_console_url === '') {
                 throw new \Exception('Add at least one report data source before saving.');
@@ -435,8 +437,36 @@ final class SEOOSBootstrap
 
             self::clearReportSourceCaches();
 
+            if (!empty($_POST['test_gsc_now'])) {
+                $diagnostics_key = 'wnq_report_source_diag_' . get_current_user_id() . '_' . $client_id;
+
+                try {
+                    $gsc = new \WNQ\API\GoogleSearchConsole($client_id);
+                    set_transient($diagnostics_key, $gsc->getConnectionDiagnostics($period['start'], $period['end']), 10 * MINUTE_IN_SECONDS);
+                    wp_safe_redirect(add_query_arg([
+                        'notice' => 'report_sources_saved',
+                        'message' => 'Report sources saved. Search Console access test for ' . $period['label'] . ' is shown below.',
+                    ], $redirect));
+                    exit;
+                } catch (\Throwable $diagnostic_error) {
+                    set_transient($diagnostics_key, [
+                        'configured' => $search_console_url,
+                        'period' => [
+                            'start' => $period['start'],
+                            'end' => $period['end'],
+                        ],
+                        'error' => $diagnostic_error->getMessage(),
+                    ], 10 * MINUTE_IN_SECONDS);
+                    wp_safe_redirect(add_query_arg([
+                        'notice' => 'report_sources_error',
+                        'message' => 'Report sources saved, but the Search Console access test failed: ' . $diagnostic_error->getMessage(),
+                    ], $redirect));
+                    exit;
+                }
+            }
+
             if (!empty($_POST['generate_report_now'])) {
-                $report_id = \WNQ\Services\ReportGenerator::generateMonthlyReport($client_id);
+                $report_id = \WNQ\Services\ReportGenerator::generateReport($client_id, $report_period);
                 if (!$report_id) {
                     throw new \Exception('Report sources were saved, but report generation failed.');
                 }
@@ -482,6 +512,12 @@ final class SEOOSBootstrap
         }
 
         throw new \Exception('GA4 Property ID must look like properties/123456789 or 123456789.');
+    }
+
+    private static function normalizeReportPeriod(string $value): string
+    {
+        $value = sanitize_key($value);
+        return in_array($value, ['last_30_days', 'previous_month'], true) ? $value : 'last_30_days';
     }
 
     private static function normalizeReportSearchConsoleProperty(string $value): string

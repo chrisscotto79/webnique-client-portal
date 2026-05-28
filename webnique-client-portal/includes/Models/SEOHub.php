@@ -771,12 +771,14 @@ final class SEOHub
 
         global $wpdb;
         $t = $wpdb->prefix . 'wnq_seo_reports';
+        $period_label = (string)($data['period']['label'] ?? date('F Y', strtotime($start)));
+        $title_prefix = $type === 'monthly' ? 'Monthly Analytics Report: ' : 'Analytics Report: ';
         $wpdb->insert($t, [
             'client_id'    => $client_id,
             'report_type'  => $type,
             'period_start' => $start,
             'period_end'   => $end,
-            'title'        => "Monthly Analytics Report: " . date('F Y', strtotime($start)),
+            'title'        => $title_prefix . $period_label,
             'report_data'  => wp_json_encode($data),
             'summary_html' => $summary_html,
             'status'       => $status,
