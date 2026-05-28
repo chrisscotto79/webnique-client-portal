@@ -338,6 +338,18 @@ final class SEOHubAdmin
         </div>
 
         <div class="wnq-hub-form-group">
+          <label>Business Phone</label>
+          <input type="text" name="profile_phone" value="<?php echo esc_attr($profile['phone'] ?? ''); ?>" placeholder="(941) 391-5034">
+          <p class="description">Used by AI Service + City pages for CTA/contact copy.</p>
+        </div>
+
+        <div class="wnq-hub-form-group">
+          <label>Business Email</label>
+          <input type="email" name="profile_email" value="<?php echo esc_attr($profile['email'] ?? ''); ?>" placeholder="info@example.com">
+          <p class="description">Used by AI Service + City pages when an email CTA is appropriate.</p>
+        </div>
+
+        <div class="wnq-hub-form-group">
           <label>Content Tone</label>
           <select name="content_tone">
             <?php foreach (['professional', 'friendly', 'authoritative', 'conversational', 'technical'] as $t): ?>

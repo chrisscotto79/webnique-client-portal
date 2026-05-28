@@ -66,7 +66,7 @@ final class ServiceCityPageGenerator
         $profile = SEOHub::getProfile($client_id) ?? [];
         $business_name = $client['company'] ?? $client['name'] ?? $client_id;
 
-        $ai_vars = self::aiVarsForRow($row, $business_name, $profile);
+        $ai_vars = self::aiVarsForRow($row, $business_name, $profile, $client);
         $ai = AIEngine::generate(
             'service_city_page',
             $ai_vars,
@@ -86,7 +86,7 @@ final class ServiceCityPageGenerator
         if ($body === '') {
             return self::fail($row_id, 'AI returned an empty page body. Try generating this row again.');
         }
-        $body = self::ensureTargetWordCount($row, $body, $business_name, $profile, $client_id);
+        $body = self::ensureTargetWordCount($row, $body, $business_name, $profile, $client_id, $client);
 
         $tokens = self::tokensForRow($row, $body, $business_name);
         $built = self::buildElementorFromTemplate($template, $tokens, $body);
@@ -174,10 +174,12 @@ final class ServiceCityPageGenerator
         return ['success' => true, 'message' => 'Draft deleted and row reset. You can generate it again.'];
     }
 
-    private static function aiVarsForRow(array $row, string $business_name, array $profile): array
+    private static function aiVarsForRow(array $row, string $business_name, array $profile, array $client = []): array
     {
         return [
             'business_name'       => $business_name,
+            'business_phone'      => (string)($profile['phone'] ?? $client['phone'] ?? ''),
+            'business_email'      => (string)($profile['email'] ?? $client['email'] ?? ''),
             'primary_keyword'     => $row['primary_keyword'] ?? '',
             'service'             => $row['service'] ?? '',
             'service_variations'  => $row['service_variations'] ?? '',
@@ -204,7 +206,7 @@ final class ServiceCityPageGenerator
         ];
     }
 
-    private static function ensureTargetWordCount(array $row, string $body, string $business_name, array $profile, string $client_id): string
+    private static function ensureTargetWordCount(array $row, string $body, string $business_name, array $profile, string $client_id, array $client = []): string
     {
         $minimum_words = 1450;
         $target_words = 1500;
@@ -217,7 +219,7 @@ final class ServiceCityPageGenerator
         // Keep continuations focused instead of asking one oversized prompt to
         // finish the whole page. Two passes covers the common 750 + 750 case.
         for ($pass = 1; $pass <= 2 && $current_words < $minimum_words; $pass++) {
-            $vars = self::aiVarsForRow($row, $business_name, $profile);
+            $vars = self::aiVarsForRow($row, $business_name, $profile, $client);
             $vars['existing_body'] = $body;
             $vars['current_word_count'] = (string)$current_words;
             $vars['remaining_words'] = (string)min(750, max(250, $target_words - $current_words));
@@ -395,6 +397,7 @@ final class ServiceCityPageGenerator
     private static function distributeFallbackContent(array $elements, array $tokens, string $body): array
     {
         $plan = self::contentPlan($body, $tokens);
+        $plan['sections'] = array_slice($plan['sections'], 0, self::countTemplateContentSections($elements));
         $section_index = 0;
         $last_top_level_index = count($elements) - 1;
 
@@ -430,15 +433,24 @@ final class ServiceCityPageGenerator
         }
         unset($element);
 
-        if ($section_index < count($plan['sections'])) {
-            $extra = '';
-            for ($i = $section_index; $i < count($plan['sections']); $i++) {
-                $extra .= '<h2>' . esc_html($plan['sections'][$i]['title']) . '</h2>' . $plan['sections'][$i]['html'];
+        return $elements;
+    }
+
+    private static function countTemplateContentSections(array $elements): int
+    {
+        $last_top_level_index = count($elements) - 1;
+        $count = 0;
+
+        foreach ($elements as $index => $element) {
+            if ($index === 0 || $index === $last_top_level_index || !is_array($element)) {
+                continue;
             }
-            $elements = self::appendToLastNonHeroTextEditor($elements, $extra);
+            if (self::elementHasWidget($element, 'text-editor')) {
+                $count++;
+            }
         }
 
-        return $elements;
+        return max(1, $count);
     }
 
     private static function contentPlan(string $body, array $tokens): array
@@ -457,6 +469,7 @@ final class ServiceCityPageGenerator
         if (empty($sections)) {
             $sections = self::paragraphChunksToSections($body, $tokens);
         }
+        $sections = self::cleanSectionsForTemplate($sections, $tokens);
 
         return [
             'intro_html' => self::limitHtmlToWords($intro_html, 85),
@@ -482,6 +495,9 @@ final class ServiceCityPageGenerator
                     continue;
                 }
                 $title = trim(wp_strip_all_tags($heading[1]));
+                if (self::isNonContentSectionTitle($title)) {
+                    continue;
+                }
                 $html = preg_replace('/<h2\b[^>]*>.*?<\/h2>/is', '', $section_html, 1);
                 $html = trim((string)$html);
                 if (preg_match('/<h2\b[^>]*>/i', $html)) {
@@ -518,6 +534,10 @@ final class ServiceCityPageGenerator
                 continue;
             }
             if ($current_title !== '' && self::wordCount($part) > 8) {
+                if (self::isNonContentSectionTitle($current_title)) {
+                    $current_title = '';
+                    continue;
+                }
                 $sections[] = [
                     'title' => $current_title,
                     'eyebrow' => $current_title,
@@ -528,6 +548,68 @@ final class ServiceCityPageGenerator
         }
 
         return $sections;
+    }
+
+    private static function cleanSectionsForTemplate(array $sections, array $tokens): array
+    {
+        $clean = [];
+        foreach ($sections as $index => $section) {
+            $title = trim((string)($section['title'] ?? ''));
+            if ($title === '' || self::isNonContentSectionTitle($title)) {
+                continue;
+            }
+
+            $html = self::cleanSectionBodyHtml((string)($section['html'] ?? ''));
+            if (self::wordCount($html) < 8) {
+                continue;
+            }
+
+            $clean[] = [
+                'title'   => $title,
+                'eyebrow' => self::eyebrowForSection($title, $tokens, count($clean)),
+                'html'    => $html,
+            ];
+        }
+
+        return $clean;
+    }
+
+    private static function isNonContentSectionTitle(string $title): bool
+    {
+        return (bool)preg_match('/\b(?:faq|frequently asked|questions?|cta|call|contact|quote|pricing|get your|get started|schedule|consultation)\b/i', $title);
+    }
+
+    private static function cleanSectionBodyHtml(string $html): string
+    {
+        $html = preg_replace('/<h[23]\b[^>]*>.*?<\/h[23]>/is', '', $html);
+        $html = preg_replace('/<p\b[^>]*>.*?(?:CTA\s*Title|CTA\s*Text|\[insert phone number\]|\[insert email address\]).*?<\/p>/is', '', (string)$html);
+        $html = preg_replace('/\b(?:CTA\s*Title|CTA\s*Text):\s*/i', '', (string)$html);
+        $html = str_replace(['[insert phone number]', '[insert email address]'], '', (string)$html);
+        $html = preg_replace('/<p\b[^>]*>\s*<\/p>/i', '', (string)$html);
+        $html = trim((string)$html);
+
+        if (self::wordCount($html) > 150) {
+            return self::limitHtmlToWords($html, 150);
+        }
+
+        return $html;
+    }
+
+    private static function eyebrowForSection(string $title, array $tokens, int $index): string
+    {
+        $service = trim((string)($tokens['{{service}}'] ?? 'Service'));
+        $city = trim((string)($tokens['{{city}}'] ?? ''));
+        $state = trim((string)($tokens['{{state}}'] ?? ''));
+        $location = trim($city . ($state !== '' ? ', ' . $state : ''));
+        $labels = [
+            $service !== '' && $location !== '' ? $service . ' in ' . $location : 'Local Service Details',
+            'Options and Details',
+            'What to Know Before Getting Started',
+            'Local Process and Preparation',
+            'Related Services and Nearby Areas',
+        ];
+
+        return $labels[$index] ?? self::shortLabel($title, $tokens);
     }
 
     private static function paragraphChunksToSections(string $body, array $tokens): array

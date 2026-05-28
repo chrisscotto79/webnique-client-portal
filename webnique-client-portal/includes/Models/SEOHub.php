@@ -23,6 +23,7 @@ if (!defined('ABSPATH')) {
 final class SEOHub
 {
     private static bool $report_schema_checked = false;
+    private static bool $profile_schema_checked = false;
 
     /* ═══════════════════════════════════════════
      *  TABLE CREATION
@@ -43,6 +44,8 @@ final class SEOHub
             service_locations  longtext DEFAULT NULL COMMENT 'JSON array of locations',
             keyword_clusters   longtext DEFAULT NULL COMMENT 'JSON: {cluster_name: [kws]}',
             brand_notes        text DEFAULT NULL,
+            phone              varchar(50) DEFAULT NULL,
+            email              varchar(255) DEFAULT NULL,
             content_tone       varchar(100) DEFAULT 'professional',
             gsc_property       varchar(500) DEFAULT NULL,
             ga_property        varchar(255) DEFAULT NULL,
@@ -199,7 +202,41 @@ final class SEOHub
             KEY created_at (created_at)
         ) $c;");
 
+        self::ensureProfileSchema();
         self::ensureReportSchema();
+    }
+
+    public static function ensureProfileSchema(): void
+    {
+        if (self::$profile_schema_checked) {
+            return;
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'wnq_seo_profiles';
+
+        $exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table));
+        if (!$exists) {
+            self::createTables();
+            self::$profile_schema_checked = true;
+            return;
+        }
+
+        $columns = $wpdb->get_col("SHOW COLUMNS FROM $table", 0) ?: [];
+        $column_set = array_fill_keys($columns, true);
+
+        $defs = [
+            'phone' => "ALTER TABLE $table ADD COLUMN phone varchar(50) DEFAULT NULL AFTER brand_notes",
+            'email' => "ALTER TABLE $table ADD COLUMN email varchar(255) DEFAULT NULL AFTER phone",
+        ];
+
+        foreach ($defs as $column => $sql) {
+            if (empty($column_set[$column])) {
+                $wpdb->query($sql);
+            }
+        }
+
+        self::$profile_schema_checked = true;
     }
 
     public static function ensureReportSchema(): void
@@ -317,6 +354,7 @@ final class SEOHub
     public static function getProfile(string $client_id): ?array
     {
         global $wpdb;
+        self::ensureProfileSchema();
         $row = $wpdb->get_row(
             $wpdb->prepare("SELECT * FROM {$wpdb->prefix}wnq_seo_profiles WHERE client_id = %s", $client_id),
             ARRAY_A
@@ -333,12 +371,14 @@ final class SEOHub
     public static function upsertProfile(string $client_id, array $data): bool
     {
         global $wpdb;
+        self::ensureProfileSchema();
         $t = $wpdb->prefix . 'wnq_seo_profiles';
         $existing = $wpdb->get_var($wpdb->prepare("SELECT id FROM $t WHERE client_id=%s", $client_id));
 
         $payload = ['client_id' => $client_id];
         $json_fields = ['primary_services', 'service_locations', 'keyword_clusters'];
-        $string_fields = ['brand_notes', 'content_tone', 'gsc_property', 'ga_property'];
+        $string_fields = ['brand_notes', 'phone', 'content_tone', 'gsc_property', 'ga_property'];
+        $email_fields = ['email'];
         $int_fields = [];
 
         foreach ($json_fields as $f) {
@@ -349,6 +389,11 @@ final class SEOHub
         foreach ($string_fields as $f) {
             if (array_key_exists($f, $data)) {
                 $payload[$f] = sanitize_textarea_field((string)$data[$f]);
+            }
+        }
+        foreach ($email_fields as $f) {
+            if (array_key_exists($f, $data)) {
+                $payload[$f] = sanitize_email((string)$data[$f]);
             }
         }
         foreach ($int_fields as $f) {
