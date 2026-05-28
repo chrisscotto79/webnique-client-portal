@@ -291,7 +291,7 @@ final class ServiceCityPageGenerator
                 : $decoded;
 
             $elements = self::replaceTokensRecursive($elements, $tokens);
-            if (!$had_body_token && !$has_variable_tokens) {
+            if (!$had_body_token || self::hasMultipleContentSections($elements)) {
                 $elements = self::distributeFallbackContent($elements, $tokens, $body);
             }
             $elements = self::protectHeroFromBodyLeak($elements, $tokens);
@@ -314,6 +314,23 @@ final class ServiceCityPageGenerator
             'page_settings'  => ['hide_title' => 'yes'],
             'post_content'   => $html,
         ];
+    }
+
+    private static function hasMultipleContentSections(array $elements): bool
+    {
+        $last_top_level_index = count($elements) - 1;
+        $content_sections = 0;
+
+        foreach ($elements as $index => $element) {
+            if ($index === 0 || $index === $last_top_level_index || !is_array($element)) {
+                continue;
+            }
+            if (self::elementHasWidget($element, 'text-editor')) {
+                $content_sections++;
+            }
+        }
+
+        return $content_sections > 1;
     }
 
     private static function protectHeroFromBodyLeak(array $elements, array $tokens): array
@@ -467,6 +484,9 @@ final class ServiceCityPageGenerator
                 $title = trim(wp_strip_all_tags($heading[1]));
                 $html = preg_replace('/<h2\b[^>]*>.*?<\/h2>/is', '', $section_html, 1);
                 $html = trim((string)$html);
+                if (preg_match('/<h2\b[^>]*>/i', $html)) {
+                    continue;
+                }
                 if ($title !== '' && self::wordCount($html) > 8) {
                     $sections[] = [
                         'title' => $title,
@@ -481,7 +501,8 @@ final class ServiceCityPageGenerator
             return $sections;
         }
 
-        $parts = preg_split('/(<h2\b[^>]*>.*?<\/h2>)/is', $body, -1, PREG_SPLIT_DELIM_CAPTURE);
+        $body = preg_replace('/<\/?section\b[^>]*>/i', '', $body);
+        $parts = preg_split('/(<h2\b[^>]*>.*?<\/h2>)/is', (string)$body, -1, PREG_SPLIT_DELIM_CAPTURE);
         if (!is_array($parts)) {
             return [];
         }
