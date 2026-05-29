@@ -21,6 +21,8 @@ use WNQ\API\GoogleSearchConsole;
 
 final class ReportGenerator
 {
+    private static string $last_error = '';
+
     /**
      * Generate monthly report for a client
      */
@@ -34,13 +36,21 @@ final class ReportGenerator
      */
     public static function generateReport(string $client_id, string $period_key = 'previous_month', string $month = ''): int|false
     {
+        self::$last_error = '';
         $period = self::resolveReportPeriod($period_key, $month);
         $period_start = $period['start'];
         $period_end = $period['end'];
 
         $analytics_config = AnalyticsConfig::getClientConfig($client_id);
         $client = self::resolveReportClient($client_id, $analytics_config);
-        if (!$client) return false;
+        if (!$client) {
+            self::$last_error = 'No matching client was found for report client ID "' . $client_id . '".';
+            SEOHub::log('monthly_report_client_missing', [
+                'client_id' => $client_id,
+                'period' => $period_start . ' to ' . $period_end,
+            ], 'failed');
+            return false;
+        }
 
         $profile = self::resolveReportProfile($client_id, $client, $analytics_config);
         $analytics_context = $analytics_config
@@ -72,9 +82,24 @@ final class ReportGenerator
                 'entity_id' => $report_id,
                 'period'    => $period_start . ' to ' . $period_end,
             ]);
+        } else {
+            global $wpdb;
+            self::$last_error = $wpdb->last_error
+                ? 'The report database insert failed: ' . $wpdb->last_error
+                : 'The report database insert did not return a report ID.';
+            SEOHub::log('monthly_report_insert_failed', [
+                'client_id' => $report_client_id,
+                'period' => $period_start . ' to ' . $period_end,
+                'error' => self::$last_error,
+            ], 'failed');
         }
 
         return $report_id;
+    }
+
+    public static function getLastError(): string
+    {
+        return self::$last_error;
     }
 
     /**
@@ -1339,11 +1364,24 @@ final class ReportGenerator
     public static function resolveReportPeriod(string $period_key = 'previous_month', string $month = ''): array
     {
         $period_key = sanitize_key($period_key);
+        $now = function_exists('current_time') ? (int)current_time('timestamp') : time();
+
+        if ($period_key === 'current_month') {
+            $period_start = date('Y-m-01', $now);
+
+            return [
+                'start' => $period_start,
+                'end' => date('Y-m-d', $now),
+                'label' => function_exists('date_i18n') ? date_i18n('F Y', $now) : date('F Y', $now),
+                'key' => 'current_month',
+                'type' => 'monthly',
+            ];
+        }
 
         if ($period_key === 'last_30_days') {
             return [
-                'start' => date('Y-m-d', strtotime('-30 days')),
-                'end' => date('Y-m-d'),
+                'start' => date('Y-m-d', strtotime('-30 days', $now)),
+                'end' => date('Y-m-d', $now),
                 'label' => 'Last 30 Days',
                 'key' => 'last_30_days',
                 'type' => 'last_30_days',

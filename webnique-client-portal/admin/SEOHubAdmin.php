@@ -1127,9 +1127,11 @@ jQuery(function($) {
         }
         echo '</select>';
         if ($client_id) {
+            $current_month_label = date_i18n('F Y') . ' (month to date)';
             echo ' &nbsp;<label style="display:inline-flex;align-items:center;gap:8px;font-weight:700;color:#374151;">Period';
             echo '<select id="wnq-report-period-select" style="min-width:160px;">';
-            echo '<option value="last_30_days" selected>Last 30 days</option>';
+            echo '<option value="current_month" selected>' . esc_html($current_month_label) . '</option>';
+            echo '<option value="last_30_days">Last 30 days</option>';
             echo '<option value="previous_month">Previous full month</option>';
             echo '</select></label>';
             echo ' &nbsp;<button class="wnq-btn wnq-btn-primary" onclick="wnqHubAjax(\'generate_report\', \'' . esc_js($client_id) . '\', 0, this, {report_period: wnqSelectedReportPeriod()})">Generate New Report</button>';
@@ -1217,7 +1219,8 @@ jQuery(function($) {
 
         echo '<label style="display:block;font-weight:700;color:#374151;">Report Period';
         echo '<select name="report_period" style="display:block;width:100%;margin-top:6px;">';
-        echo '<option value="last_30_days" selected>Last 30 days</option>';
+        echo '<option value="current_month" selected>' . esc_html(date_i18n('F Y') . ' (month to date)') . '</option>';
+        echo '<option value="last_30_days">Last 30 days</option>';
         echo '<option value="previous_month">Previous full month</option>';
         echo '</select>';
         echo '<span style="display:block;margin-top:6px;font-size:12px;font-weight:400;color:#6b7280;">Applies to Save & Test GSC Access and Save & Generate New Report.</span>';
@@ -1246,6 +1249,7 @@ jQuery(function($) {
         echo '<div style="margin-top:20px;padding:16px;border:1px solid #d1d5db;border-radius:10px;background:#f9fafb;">';
         echo '<h3 style="margin:0 0 10px;font-size:16px;color:#1f2937;">Search Console Access Test</h3>';
         $period = is_array($diagnostics['period'] ?? null) ? $diagnostics['period'] : [];
+        $generation_error = (string)($diagnostics['generation_error'] ?? '');
 
         if (!empty($diagnostics['error'])) {
             if (!empty($period['start']) || !empty($period['end'])) {
@@ -1280,13 +1284,19 @@ jQuery(function($) {
         }
 
         if ($has_success) {
-            $period_key = sanitize_key((string)($period['key'] ?? 'last_30_days'));
-            if (!in_array($period_key, ['last_30_days', 'previous_month'], true)) {
-                $period_key = 'last_30_days';
+            $period_key = sanitize_key((string)($period['key'] ?? 'current_month'));
+            if (!in_array($period_key, ['current_month', 'last_30_days', 'previous_month'], true)) {
+                $period_key = 'current_month';
             }
             echo '<div style="margin:0 0 14px;padding:12px;border-radius:8px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;">';
             echo '<strong>GSC is connected for the tested property.</strong> Existing report rows below are saved snapshots and may still show old errors until you generate a new report.';
             echo '<br><button type="button" class="wnq-btn wnq-btn-sm wnq-btn-primary" style="margin-top:10px;" onclick="wnqHubAjax(\'generate_report\', \'' . esc_js($client_id) . '\', 0, this, {report_period: \'' . esc_js($period_key) . '\'})">Generate Fresh Report for This Period</button>';
+            echo '</div>';
+        }
+
+        if ($generation_error !== '') {
+            echo '<div style="margin:0 0 14px;padding:12px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;">';
+            echo '<strong>Report generation failed after the Search Console test.</strong><br>' . esc_html($generation_error);
             echo '</div>';
         }
 
@@ -1344,7 +1354,7 @@ jQuery(function($) {
     private static function normalizeReportPeriodKey(string $value): string
     {
         $value = sanitize_key($value);
-        return in_array($value, ['last_30_days', 'previous_month'], true) ? $value : 'last_30_days';
+        return in_array($value, ['current_month', 'last_30_days', 'previous_month'], true) ? $value : 'current_month';
     }
 
     private static function normalizeReportSources(array $analytics): array
@@ -1836,7 +1846,7 @@ jQuery(function($) {
 
             case 'generate_report':
                 if (!$client_id) wp_send_json_error(['message' => 'No client selected']);
-                $period = self::normalizeReportPeriodKey(sanitize_text_field(wp_unslash($_POST['report_period'] ?? 'last_30_days')));
+                $period = self::normalizeReportPeriodKey(sanitize_text_field(wp_unslash($_POST['report_period'] ?? 'current_month')));
                 $id = \WNQ\Services\ReportGenerator::generateReport($client_id, $period);
                 if ($id) {
                     wp_send_json_success([
@@ -1852,7 +1862,7 @@ jQuery(function($) {
                 break;
 
             case 'generate_all_reports':
-                $period = self::normalizeReportPeriodKey(sanitize_text_field(wp_unslash($_POST['report_period'] ?? 'last_30_days')));
+                $period = self::normalizeReportPeriodKey(sanitize_text_field(wp_unslash($_POST['report_period'] ?? 'current_month')));
                 $result = \WNQ\Services\ReportGenerator::generateAllMonthlyReports('', false, true, $period);
                 wp_send_json_success([
                     'message' => "New reports: generated={$result['generated']}, skipped={$result['skipped']}, failed={$result['failed']}",
