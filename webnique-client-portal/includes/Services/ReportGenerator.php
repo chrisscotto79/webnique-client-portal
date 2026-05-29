@@ -1490,7 +1490,7 @@ final class ReportGenerator
             $performance = $gsc->getPerformanceOverTime($start, $end);
             $keywords = $gsc->getKeywordRankings($start, $end, 10);
             $pages = $gsc->getTopPages($start, $end, 10);
-            $source = self::buildGscSourceSummary($config, $overview, $keywords, $gsc->getErrors());
+            $source = self::buildGscSourceSummary($config, $overview, $keywords, $gsc->getErrors(), $gsc->getActivePropertyUrl());
 
             return [
                 'configured' => in_array($source['status'], ['connected', 'partial', 'no_data'], true),
@@ -1580,7 +1580,7 @@ final class ReportGenerator
         ]);
     }
 
-    private static function buildGscSourceSummary(array $config, array $overview, array $keywords, array $errors): array
+    private static function buildGscSourceSummary(array $config, array $overview, array $keywords, array $errors, string $resolved_property = ''): array
     {
         $clicks = (int)($overview['clicks']['value'] ?? 0);
         $impressions = (int)($overview['impressions']['value'] ?? 0);
@@ -1603,6 +1603,7 @@ final class ReportGenerator
 
         return self::sourceStatus($status, $label, $error, [
             'property' => (string)($config['search_console_url'] ?? ''),
+            'resolved_property' => $resolved_property,
             'clicks' => $clicks,
             'impressions' => $impressions,
             'queries' => $keyword_count,

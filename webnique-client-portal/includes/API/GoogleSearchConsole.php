@@ -18,6 +18,8 @@ if (!defined('ABSPATH')) {
 
 final class GoogleSearchConsole
 {
+    private const DATA_CACHE_VERSION = 'v2';
+
     private array $credentials;
     private string $configured_site_url;
     private string $site_url;
@@ -63,30 +65,32 @@ final class GoogleSearchConsole
 
         try {
             $data = $this->query($start_date, $end_date);
+            $metrics = self::extractAggregateMetrics($data);
 
             // Get previous period for comparison
             $prev_data = $this->getPreviousPeriodData($start_date, $end_date);
+            $prev_metrics = self::extractAggregateMetrics($prev_data);
 
             $result = [
                 'clicks' => [
-                    'value' => $data['clicks'] ?? 0,
-                    'previous' => $prev_data['clicks'] ?? 0,
-                    'change' => $this->calculateChange($data['clicks'] ?? 0, $prev_data['clicks'] ?? 0),
+                    'value' => $metrics['clicks'],
+                    'previous' => $prev_metrics['clicks'],
+                    'change' => $this->calculateChange($metrics['clicks'], $prev_metrics['clicks']),
                 ],
                 'impressions' => [
-                    'value' => $data['impressions'] ?? 0,
-                    'previous' => $prev_data['impressions'] ?? 0,
-                    'change' => $this->calculateChange($data['impressions'] ?? 0, $prev_data['impressions'] ?? 0),
+                    'value' => $metrics['impressions'],
+                    'previous' => $prev_metrics['impressions'],
+                    'change' => $this->calculateChange($metrics['impressions'], $prev_metrics['impressions']),
                 ],
                 'ctr' => [
-                    'value' => round(($data['ctr'] ?? 0) * 100, 2),
-                    'previous' => round(($prev_data['ctr'] ?? 0) * 100, 2),
-                    'change' => $this->calculateChange($data['ctr'] ?? 0, $prev_data['ctr'] ?? 0),
+                    'value' => round($metrics['ctr'] * 100, 2),
+                    'previous' => round($prev_metrics['ctr'] * 100, 2),
+                    'change' => $this->calculateChange($metrics['ctr'], $prev_metrics['ctr']),
                 ],
                 'position' => [
-                    'value' => round($data['position'] ?? 0, 1),
-                    'previous' => round($prev_data['position'] ?? 0, 1),
-                    'change' => $this->calculatePositionChange($data['position'] ?? 0, $prev_data['position'] ?? 0),
+                    'value' => round($metrics['position'], 1),
+                    'previous' => round($prev_metrics['position'], 1),
+                    'change' => $this->calculatePositionChange($metrics['position'], $prev_metrics['position']),
                 ],
                 'period' => [
                     'start' => $start_date,
@@ -521,7 +525,7 @@ final class GoogleSearchConsole
         }
 
         if (empty($matches)) {
-            return '';
+            return [];
         }
 
         usort($matches, static fn($a, $b) => $b['score'] <=> $a['score']);
@@ -573,11 +577,18 @@ final class GoogleSearchConsole
 
             try {
                 $data = $this->makeApiRequest($url, $body);
+                $metrics = self::extractAggregateMetrics($data);
                 $tests[] = [
                     'site_url' => $site_url,
                     'success' => true,
-                    'message' => 'Query succeeded',
+                    'message' => sprintf(
+                        'Query succeeded: %d clicks, %d impressions',
+                        (int)$metrics['clicks'],
+                        (int)$metrics['impressions']
+                    ),
                     'rows' => count((array)($data['rows'] ?? [])),
+                    'clicks' => (int)$metrics['clicks'],
+                    'impressions' => (int)$metrics['impressions'],
                 ];
             } catch (\Exception $e) {
                 $tests[] = [
@@ -604,6 +615,11 @@ final class GoogleSearchConsole
             }, $sites)),
             'tests' => $tests,
         ];
+    }
+
+    public function getActivePropertyUrl(): string
+    {
+        return $this->site_url;
     }
 
     private static function normalizePropertyInput(string $value): string
@@ -830,6 +846,18 @@ final class GoogleSearchConsole
         }
     }
 
+    private static function extractAggregateMetrics(array $data): array
+    {
+        $row = is_array($data['rows'][0] ?? null) ? $data['rows'][0] : $data;
+
+        return [
+            'clicks' => (float)($row['clicks'] ?? 0),
+            'impressions' => (float)($row['impressions'] ?? 0),
+            'ctr' => (float)($row['ctr'] ?? 0),
+            'position' => (float)($row['position'] ?? 0),
+        ];
+    }
+
     /**
      * Calculate percentage change
      */
@@ -903,12 +931,12 @@ final class GoogleSearchConsole
      */
     private function getFromCache(string $key)
     {
-        return get_transient('wnq_gsc_' . md5($key));
+        return get_transient('wnq_gsc_' . md5(self::DATA_CACHE_VERSION . '|' . $key));
     }
 
     private function saveToCache(string $key, $data, int $expiration = 3600): void
     {
-        set_transient('wnq_gsc_' . md5($key), $data, $expiration);
+        set_transient('wnq_gsc_' . md5(self::DATA_CACHE_VERSION . '|' . $key), $data, $expiration);
     }
 
     public function getErrors(): array
