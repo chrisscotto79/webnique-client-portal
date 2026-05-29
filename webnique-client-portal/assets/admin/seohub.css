@@ -465,7 +465,12 @@
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+  justify-content: flex-end;
   min-width: 170px;
+}
+.wnq-report-table th:nth-child(6),
+.wnq-report-table td:nth-child(6) {
+  text-align: right;
 }
 
 /* ── Buttons ──────────────────────────────────────── */

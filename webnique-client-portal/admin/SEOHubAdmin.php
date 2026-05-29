@@ -1178,6 +1178,7 @@ jQuery(function($) {
                 echo '<a class="wnq-btn wnq-btn-sm wnq-btn-primary" href="' . esc_url($view['report_url']) . '" target="_blank" rel="noopener">View Report</a>';
                 echo '<a class="wnq-btn wnq-btn-sm" href="' . esc_url($view['pdf_url']) . '">Download PDF</a>';
                 echo '<button type="button" class="wnq-btn wnq-btn-sm" onclick="wnqHubAjax(\'generate_report\', \'' . esc_js($client_id) . '\', 0, this, {report_period: \'' . esc_js($view['period_key']) . '\'})">Regenerate</button>';
+                echo '<button type="button" class="wnq-btn wnq-btn-sm wnq-btn-danger" onclick="if(confirm(\'Delete this saved report? This cannot be undone.\')) wnqHubAjax(\'delete_report\', \'' . esc_js($client_id) . '\', ' . (int)$r['id'] . ', this)">Delete</button>';
                 echo '</td></tr>';
             }
             echo '</tbody></table></div>';
@@ -1878,6 +1879,28 @@ jQuery(function($) {
                 wp_send_json_success([
                     'message' => "New reports: generated={$result['generated']}, skipped={$result['skipped']}, failed={$result['failed']}",
                     'data' => $result,
+                    'reload' => true,
+                ]);
+                break;
+
+            case 'delete_report':
+                if (!$client_id) wp_send_json_error(['message' => 'No client selected']);
+                if (!$entity_id) wp_send_json_error(['message' => 'No report selected']);
+
+                $report = SEOHub::getReport($entity_id);
+                if (!$report) {
+                    wp_send_json_error(['message' => 'Report not found']);
+                }
+                if ((string)($report['client_id'] ?? '') !== $client_id) {
+                    wp_send_json_error(['message' => 'Report does not belong to the selected client']);
+                }
+
+                if (!SEOHub::deleteReport($entity_id)) {
+                    wp_send_json_error(['message' => 'Report could not be deleted']);
+                }
+
+                wp_send_json_success([
+                    'message' => 'Report deleted',
                     'reload' => true,
                 ]);
                 break;

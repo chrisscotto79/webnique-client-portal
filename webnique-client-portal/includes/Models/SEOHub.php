@@ -874,6 +874,24 @@ final class SEOHub
         return $row ?: null;
     }
 
+    public static function deleteReport(int $id): bool
+    {
+        self::ensureReportSchema();
+
+        if ($id <= 0) {
+            return false;
+        }
+
+        global $wpdb;
+        $deleted = $wpdb->delete(
+            $wpdb->prefix . 'wnq_seo_reports',
+            ['id' => $id],
+            ['%d']
+        );
+
+        return $deleted !== false && $deleted > 0;
+    }
+
     public static function getReportForPeriod(string $client_id, string $type, string $start, string $end): ?array
     {
         self::ensureReportSchema();
