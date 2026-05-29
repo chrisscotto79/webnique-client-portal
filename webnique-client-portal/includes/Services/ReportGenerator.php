@@ -229,6 +229,7 @@ final class ReportGenerator
         $period  = $data['period'] ?? [];
         $client  = $data['client'] ?? [];
         $analytics = $data['analytics'] ?? [];
+        $brand_logo_url = defined('WNQ_PORTAL_URL') ? WNQ_PORTAL_URL . 'assets/images/golden-web-marketing-logo-background.png' : '';
 
         ob_start();
         ?>
@@ -237,69 +238,117 @@ final class ReportGenerator
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Analytics Report - <?php echo esc_html($client['name'] ?? ''); ?> - <?php echo esc_html($period['label'] ?? ''); ?></title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #1f2937; background: #f9fafb; }
-  .report-wrapper { max-width: 900px; margin: 0 auto; background: #fff; padding: 0; }
-  .report-header { background: linear-gradient(135deg, #1e3a5f 0%, #0d539e 100%); color: white; padding: 40px; }
-  .report-header h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
-  .report-header .meta { opacity: 0.8; font-size: 14px; }
-  .report-logo { font-size: 12px; opacity: 0.6; margin-top: 20px; text-transform: uppercase; letter-spacing: 2px; }
-  .section { padding: 32px 40px; border-bottom: 1px solid #e5e7eb; }
-  .section h2 { font-size: 20px; font-weight: 700; color: #1e3a5f; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
-  .section h2::before { content: ''; display: block; width: 4px; height: 20px; background: #0d539e; border-radius: 2px; }
-  .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 24px; }
-  .metric-card { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 10px; padding: 20px; text-align: center; }
-  .metric-card .value { font-size: 32px; font-weight: 800; color: #0d539e; }
-  .metric-card .label { font-size: 12px; color: #6b7280; margin-top: 4px; text-transform: uppercase; letter-spacing: 1px; }
-  .metric-card.danger { background: #fef2f2; border-color: #fca5a5; }
-  .metric-card.danger .value { color: #dc2626; }
-  .metric-card.success { background: #f0fdf4; border-color: #86efac; }
-  .metric-card.success .value { color: #16a34a; }
-  .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin: 8px 0 28px; }
-  .chart-card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 18px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06); }
-  .chart-title { color: #1e3a5f; font-size: 15px; font-weight: 800; margin-bottom: 4px; }
-  .chart-subtitle { color: #64748b; font-size: 12px; margin-bottom: 14px; }
-  .chart-svg { width: 100%; height: auto; display: block; overflow: visible; }
-  .chart-axis-label { fill: #64748b; font-size: 11px; }
-  .chart-grid-line { stroke: #e5e7eb; stroke-width: 1; }
-  .chart-point { stroke: #ffffff; stroke-width: 2; }
-  .bar-list { display: flex; flex-direction: column; gap: 12px; }
-  .bar-row { display: flex; flex-direction: column; gap: 6px; }
-  .bar-meta { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 12px; }
-  .bar-label { color: #334155; font-weight: 700; line-height: 1.35; }
-  .bar-value { color: #64748b; white-space: nowrap; }
-  .bar-track { width: 100%; height: 10px; background: #edf2f7; border-radius: 999px; overflow: hidden; }
-  .bar-fill { display: block; height: 100%; min-width: 4px; border-radius: 999px; }
-  .dual-bars { display: grid; grid-template-columns: 1fr; gap: 5px; }
-  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; color: #64748b; font-size: 12px; }
-  .legend-item { display: inline-flex; align-items: center; gap: 6px; }
-  .legend-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
-  .table-wrap { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th { background: #f1f5f9; text-align: left; padding: 10px 12px; font-weight: 600; color: #374151; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-  td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; color: #374151; }
-  tr:hover td { background: #f9fafb; }
-  .ai-summary { background: #f0f9ff; border-left: 4px solid #0d539e; padding: 20px 24px; border-radius: 0 8px 8px 0; font-size: 15px; line-height: 1.7; }
-  .note { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: 10px; padding: 14px 16px; font-size: 14px; line-height: 1.6; }
-  .report-footer { padding: 24px 40px; background: #f9fafb; text-align: center; font-size: 12px; color: #9ca3af; }
-  @media print { body { background: white; } .section { page-break-inside: avoid; } }
-</style>
-</head>
-<body>
-<div class="report-wrapper">
+	<title>Analytics Report - <?php echo esc_html($client['name'] ?? ''); ?> - <?php echo esc_html($period['label'] ?? ''); ?></title>
+	<style>
+	  * { box-sizing: border-box; margin: 0; padding: 0; }
+	  :root {
+	    --gwm-black: #090806;
+	    --gwm-ink: #1b1710;
+	    --gwm-green: #18380f;
+	    --gwm-gold: #d6a72a;
+	    --gwm-gold-dark: #9b6a10;
+	    --gwm-cream: #fff7df;
+	    --gwm-soft: #f7f1e2;
+	    --gwm-line: #eadfca;
+	    --gwm-muted: #706756;
+	  }
+	  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: var(--gwm-ink); background: #eee7d8; padding: 24px; }
+	  .report-wrapper { max-width: 1040px; margin: 0 auto; background: #fffaf0; padding: 0; border: 1px solid var(--gwm-line); border-radius: 8px; overflow: hidden; box-shadow: 0 24px 80px rgba(26, 19, 8, 0.18); }
+	  .report-header { background: linear-gradient(135deg, #070604 0%, #171207 46%, #244414 100%); color: white; padding: 34px 40px 38px; position: relative; overflow: hidden; }
+	  .report-header::after { content: ''; position: absolute; inset: auto 0 0 0; height: 5px; background: linear-gradient(90deg, #f7d86a, #b77b15, #f7d86a); }
+	  .report-brand { position: relative; z-index: 1; display: flex; align-items: center; gap: 18px; margin-bottom: 30px; }
+	  .brand-logo { width: 84px; height: 84px; object-fit: contain; border-radius: 999px; background: #050402; border: 1px solid rgba(247,216,106,.55); box-shadow: 0 12px 28px rgba(0,0,0,.3); }
+	  .brand-text span { display: block; color: #f7d86a; font-size: 12px; font-weight: 800; letter-spacing: 0; text-transform: uppercase; margin-bottom: 5px; }
+	  .brand-text strong { display: block; color: #fff7df; font-size: 22px; line-height: 1.1; }
+	  .report-header h1 { position: relative; z-index: 1; font-size: 44px; line-height: 1.05; font-weight: 850; letter-spacing: 0; max-width: 760px; margin-bottom: 18px; color: #fffdf6; }
+	  .report-header .subtitle { position: relative; z-index: 1; color: #f7d86a; font-size: 15px; font-weight: 750; text-transform: uppercase; letter-spacing: 0; margin-bottom: 16px; }
+	  .report-meta-grid { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
+	  .report-meta-card { background: rgba(255, 247, 223, .08); border: 1px solid rgba(247,216,106,.22); border-radius: 8px; padding: 14px 16px; }
+	  .report-meta-card span { display:block; color:#c9b98d; font-size:11px; text-transform:uppercase; letter-spacing:0; font-weight:800; margin-bottom:5px; }
+	  .report-meta-card strong { display:block; color:#fff7df; font-size:16px; line-height:1.3; }
+	  .section { padding: 34px 40px; border-bottom: 1px solid var(--gwm-line); background: #fffaf0; }
+	  .section:nth-of-type(even) { background: #fffdf7; }
+	  .section h2 { font-size: 22px; font-weight: 850; color: var(--gwm-green); margin-bottom: 18px; display: flex; align-items: center; gap: 10px; letter-spacing: 0; }
+	  .section h2::before { content: ''; display: block; width: 6px; height: 24px; background: var(--gwm-gold); border-radius: 999px; box-shadow: 0 0 0 4px rgba(214,167,42,.14); }
+	  .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-bottom: 24px; }
+	  .metric-card { background: linear-gradient(180deg, #fffdf8 0%, #fff4d6 100%); border: 1px solid #ead39c; border-radius: 8px; padding: 20px; text-align: center; box-shadow: 0 10px 24px rgba(119, 82, 12, .08); }
+	  .metric-card .value { font-size: 34px; font-weight: 900; color: var(--gwm-green); letter-spacing: 0; }
+	  .metric-card .label { font-size: 11px; color: var(--gwm-muted); margin-top: 6px; text-transform: uppercase; letter-spacing: 0; font-weight: 800; }
+	  .metric-card.danger { background: #fef2f2; border-color: #fca5a5; }
+	  .metric-card.danger .value { color: #dc2626; }
+	  .metric-card.success { background: #f3faeb; border-color: #b8d89f; }
+	  .metric-card.success .value { color: var(--gwm-green); }
+	  .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin: 8px 0 28px; }
+	  .chart-card { background: #fffdf8; border: 1px solid var(--gwm-line); border-radius: 8px; padding: 18px; box-shadow: 0 10px 30px rgba(65, 46, 11, 0.08); }
+	  .chart-title { color: var(--gwm-green); font-size: 15px; font-weight: 850; margin-bottom: 4px; }
+	  .chart-subtitle { color: var(--gwm-muted); font-size: 12px; margin-bottom: 14px; }
+	  .chart-svg { width: 100%; height: auto; display: block; overflow: visible; }
+	  .chart-axis-label { fill: #74664f; font-size: 11px; }
+	  .chart-grid-line { stroke: #eadfca; stroke-width: 1; }
+	  .chart-point { stroke: #ffffff; stroke-width: 2; }
+	  .bar-list { display: flex; flex-direction: column; gap: 12px; }
+	  .bar-row { display: flex; flex-direction: column; gap: 6px; }
+	  .bar-meta { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 12px; }
+	  .bar-label { color: var(--gwm-ink); font-weight: 750; line-height: 1.35; }
+	  .bar-value { color: var(--gwm-muted); white-space: nowrap; }
+	  .bar-track { width: 100%; height: 10px; background: #efe4cf; border-radius: 999px; overflow: hidden; }
+	  .bar-fill { display: block; height: 100%; min-width: 4px; border-radius: 999px; }
+	  .dual-bars { display: grid; grid-template-columns: 1fr; gap: 5px; }
+	  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; color: var(--gwm-muted); font-size: 12px; }
+	  .legend-item { display: inline-flex; align-items: center; gap: 6px; }
+	  .legend-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+	  .table-wrap { overflow-x: auto; }
+	  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+	  th { background: #f4ead4; text-align: left; padding: 11px 12px; font-weight: 800; color: #3b321f; font-size: 12px; text-transform: uppercase; letter-spacing: 0; border-bottom: 1px solid #e3d2ae; }
+	  td { padding: 11px 12px; border-bottom: 1px solid #f1e8d6; color: #3a3326; }
+	  tr:hover td { background: #fff5db; }
+	  .ai-summary { background: #fff4d6; border: 1px solid #ead39c; border-left: 5px solid var(--gwm-gold); padding: 22px 24px; border-radius: 8px; font-size: 15px; line-height: 1.7; color: #302817; }
+	  .note { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: 8px; padding: 14px 16px; font-size: 14px; line-height: 1.6; }
+	  .report-footer { padding: 26px 40px; background: #090806; text-align: center; font-size: 12px; color: #c9b98d; border-top: 4px solid var(--gwm-gold); }
+	  @media print {
+	    body { background: white; padding: 0; }
+	    .report-wrapper { box-shadow: none; border-radius: 0; }
+	    .section { page-break-inside: avoid; }
+	  }
+	  @media (max-width: 720px) {
+	    body { padding: 0; }
+	    .report-wrapper { border-radius: 0; }
+	    .report-header, .section, .report-footer { padding-left: 22px; padding-right: 22px; }
+	    .report-header h1 { font-size: 34px; }
+	    .report-meta-grid { grid-template-columns: 1fr; }
+	  }
+	</style>
+	</head>
+	<body>
+	<div class="report-wrapper">
 
-  <div class="report-header">
-    <h1>Analytics Performance Report</h1>
-    <div class="meta">
-      <?php echo esc_html($client['name'] ?? ''); ?> &bull; <?php echo esc_html($period['label'] ?? ''); ?>
-    </div>
-    <div class="meta" style="margin-top:8px;">
-      Reporting Period: <?php echo esc_html($period['start'] ?? ''); ?> – <?php echo esc_html($period['end'] ?? ''); ?>
-    </div>
-    <div class="report-logo">Powered by Golden Web Marketing SEO OS</div>
-  </div>
+	  <div class="report-header">
+	    <div class="report-brand">
+	      <?php if ($brand_logo_url !== ''): ?>
+	      <img class="brand-logo" src="<?php echo esc_url($brand_logo_url); ?>" alt="Golden Web Marketing">
+	      <?php endif; ?>
+	      <div class="brand-text">
+	        <span>Golden Web Marketing</span>
+	        <strong>SEO OS</strong>
+	      </div>
+	    </div>
+	    <div class="subtitle">Client Performance Report</div>
+	    <h1>Analytics Performance Report</h1>
+	    <div class="report-meta-grid">
+	      <div class="report-meta-card">
+	        <span>Client</span>
+	        <strong><?php echo esc_html($client['name'] ?? ''); ?></strong>
+	      </div>
+	      <div class="report-meta-card">
+	        <span>Period</span>
+	        <strong><?php echo esc_html($period['label'] ?? ''); ?></strong>
+	      </div>
+	      <div class="report-meta-card">
+	        <span>Date Range</span>
+	        <strong><?php echo esc_html($period['start'] ?? ''); ?> – <?php echo esc_html($period['end'] ?? ''); ?></strong>
+	      </div>
+	    </div>
+	  </div>
 
   <?php if (!empty($report['summary_html'])): ?>
   <div class="section">
@@ -576,10 +625,12 @@ final class ReportGenerator
         $pdf = self::pdfCreateContext();
         self::pdfStartPage($pdf);
 
-        self::pdfRect($pdf, 0, 0, 612, 118, [30, 58, 95]);
-        self::pdfText($pdf, 'Analytics Performance Report', 48, 42, 24, [255, 255, 255], true);
-        self::pdfText($pdf, (string)($client['name'] ?? 'Client') . '  |  ' . (string)($period['label'] ?? ''), 48, 74, 11, [219, 234, 254]);
-        self::pdfText($pdf, 'Reporting Period: ' . (string)($period['start'] ?? '') . ' - ' . (string)($period['end'] ?? ''), 48, 92, 10, [191, 219, 254]);
+        self::pdfRect($pdf, 0, 0, 612, 118, [9, 8, 6]);
+        self::pdfRect($pdf, 0, 112, 612, 6, [214, 167, 42]);
+        self::pdfText($pdf, 'Golden Web Marketing SEO OS', 48, 24, 10, [247, 216, 106], true);
+        self::pdfText($pdf, 'Analytics Performance Report', 48, 48, 24, [255, 247, 223], true);
+        self::pdfText($pdf, (string)($client['name'] ?? 'Client') . '  |  ' . (string)($period['label'] ?? ''), 48, 78, 11, [234, 223, 202]);
+        self::pdfText($pdf, 'Reporting Period: ' . (string)($period['start'] ?? '') . ' - ' . (string)($period['end'] ?? ''), 48, 96, 10, [201, 185, 141]);
         $pdf['y'] = 142;
 
         if (!empty($report['summary_html'])) {
@@ -597,16 +648,16 @@ final class ReportGenerator
             $visitor_trends = $analytics['visitors_over_time'] ?? [];
 
             self::pdfMetricCards($pdf, [
-                ['label' => 'Visitors', 'value' => number_format((int)($overview['total_users'] ?? 0)), 'color' => [13, 83, 158]],
-                ['label' => 'Sessions', 'value' => number_format((int)($overview['sessions'] ?? 0)), 'color' => [37, 99, 235]],
-                ['label' => 'Page Views', 'value' => number_format((int)($overview['page_views'] ?? 0)), 'color' => [124, 58, 237]],
-                ['label' => 'Bounce Rate', 'value' => number_format((float)($overview['bounce_rate'] ?? 0), 1) . '%', 'color' => [217, 119, 6]],
-                ['label' => 'Key Events', 'value' => number_format((int)($analytics['total_key_events'] ?? 0)), 'color' => [22, 163, 74]],
+                ['label' => 'Visitors', 'value' => number_format((int)($overview['total_users'] ?? 0)), 'color' => [24, 56, 15]],
+                ['label' => 'Sessions', 'value' => number_format((int)($overview['sessions'] ?? 0)), 'color' => [155, 106, 16]],
+                ['label' => 'Page Views', 'value' => number_format((int)($overview['page_views'] ?? 0)), 'color' => [24, 56, 15]],
+                ['label' => 'Bounce Rate', 'value' => number_format((float)($overview['bounce_rate'] ?? 0), 1) . '%', 'color' => [183, 123, 21]],
+                ['label' => 'Key Events', 'value' => number_format((int)($analytics['total_key_events'] ?? 0)), 'color' => [22, 101, 52]],
             ]);
 
-            self::pdfLineChart($pdf, $visitor_trends, 'Visitors Over Time', 'users', [37, 99, 235]);
-            self::pdfBarChart($pdf, $traffic_sources, 'channel', 'sessions', 'Sessions by Channel', [13, 148, 136]);
-            self::pdfBarChart($pdf, $top_pages, 'title', 'views', 'Top Pages by Views', [124, 58, 237]);
+            self::pdfLineChart($pdf, $visitor_trends, 'Visitors Over Time', 'users', [183, 123, 21]);
+            self::pdfBarChart($pdf, $traffic_sources, 'channel', 'sessions', 'Sessions by Channel', [24, 56, 15]);
+            self::pdfBarChart($pdf, $top_pages, 'title', 'views', 'Top Pages by Views', [214, 167, 42]);
             self::pdfBarChart($pdf, $key_events, 'label', 'count', 'Key Events', [22, 163, 74]);
         } else {
             self::pdfNote($pdf, 'GA4 analytics data was not available for this client during report generation. ' . (string)($analytics['error'] ?? ''));
@@ -620,14 +671,14 @@ final class ReportGenerator
             $gsc_trends = $search_console['performance_over_time'] ?? [];
 
             self::pdfMetricCards($pdf, [
-                ['label' => 'Organic Clicks', 'value' => number_format((int)($gsc_overview['clicks']['value'] ?? 0)), 'color' => [13, 83, 158]],
-                ['label' => 'Impressions', 'value' => number_format((int)($gsc_overview['impressions']['value'] ?? 0)), 'color' => [124, 58, 237]],
+                ['label' => 'Organic Clicks', 'value' => number_format((int)($gsc_overview['clicks']['value'] ?? 0)), 'color' => [24, 56, 15]],
+                ['label' => 'Impressions', 'value' => number_format((int)($gsc_overview['impressions']['value'] ?? 0)), 'color' => [214, 167, 42]],
                 ['label' => 'Average CTR', 'value' => number_format((float)($gsc_overview['ctr']['value'] ?? 0), 1) . '%', 'color' => [22, 163, 74]],
-                ['label' => 'Avg Position', 'value' => number_format((float)($gsc_overview['position']['value'] ?? 0), 1), 'color' => [217, 119, 6]],
+                ['label' => 'Avg Position', 'value' => number_format((float)($gsc_overview['position']['value'] ?? 0), 1), 'color' => [183, 123, 21]],
             ]);
 
-            self::pdfLineChart($pdf, $gsc_trends, 'Organic Clicks Over Time', 'clicks', [37, 99, 235]);
-            self::pdfLineChart($pdf, $gsc_trends, 'Search Impressions Over Time', 'impressions', [124, 58, 237]);
+            self::pdfLineChart($pdf, $gsc_trends, 'Organic Clicks Over Time', 'clicks', [24, 56, 15]);
+            self::pdfLineChart($pdf, $gsc_trends, 'Search Impressions Over Time', 'impressions', [214, 167, 42]);
             self::pdfDualBarChart($pdf, $gsc_keywords, 'keyword', 'clicks', 'impressions', 'Top Search Queries', 'Clicks', 'Impressions');
             self::pdfDualBarChart($pdf, $gsc_pages, 'page', 'clicks', 'impressions', 'Top Search Pages', 'Clicks', 'Impressions');
         } else {
@@ -671,7 +722,7 @@ final class ReportGenerator
             return;
         }
 
-        self::pdfText($pdf, 'Generated by Golden Web Marketing SEO Operating System | ' . date('F j, Y') . ' | Confidential', 48, 760, 8, [148, 163, 184]);
+        self::pdfText($pdf, 'Generated by Golden Web Marketing SEO Operating System | ' . date('F j, Y') . ' | Confidential', 48, 760, 8, [112, 103, 86]);
         $pdf['pages'][] = $pdf['stream'];
         $pdf['stream'] = '';
     }
@@ -686,8 +737,8 @@ final class ReportGenerator
     private static function pdfSectionTitle(array &$pdf, string $title): void
     {
         self::pdfEnsureSpace($pdf, 36);
-        self::pdfRect($pdf, 48, $pdf['y'] + 3, 4, 18, [13, 83, 158]);
-        self::pdfText($pdf, $title, 60, $pdf['y'], 17, [30, 58, 95], true);
+        self::pdfRect($pdf, 48, $pdf['y'] + 3, 4, 18, [214, 167, 42]);
+        self::pdfText($pdf, $title, 60, $pdf['y'], 17, [24, 56, 15], true);
         $pdf['y'] += 34;
     }
 
@@ -703,9 +754,9 @@ final class ReportGenerator
             $x = 48;
             foreach ($row as $card) {
                 $color = $card['color'] ?? [13, 83, 158];
-                self::pdfRect($pdf, $x, $pdf['y'], $card_width, $card_height, [240, 249, 255], [186, 230, 253]);
+                self::pdfRect($pdf, $x, $pdf['y'], $card_width, $card_height, [255, 247, 223], [234, 211, 156]);
                 self::pdfText($pdf, (string)($card['value'] ?? '0'), $x + 14, $pdf['y'] + 15, 20, $color, true);
-                self::pdfText($pdf, strtoupper((string)($card['label'] ?? 'Metric')), $x + 14, $pdf['y'] + 45, 8, [100, 116, 139], true);
+                self::pdfText($pdf, strtoupper((string)($card['label'] ?? 'Metric')), $x + 14, $pdf['y'] + 45, 8, [112, 103, 86], true);
                 $x += $card_width + $gap;
             }
             $pdf['y'] += $card_height + 14;
