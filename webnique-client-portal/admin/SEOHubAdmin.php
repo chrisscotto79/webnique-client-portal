@@ -571,11 +571,15 @@ final class SEOHubAdmin
                     $notice_text = $message ?: 'Draft generated.';
                 } elseif ($notice === 'draft_deleted') {
                     $notice_text = $message ?: 'Draft deleted and row reset.';
+                } elseif ($notice === 'row_deleted') {
+                    $notice_text = $message ?: 'Imported row deleted.';
+                } elseif ($notice === 'rows_deleted') {
+                    $notice_text = $message ?: 'Imported rows deleted.';
                 } elseif ($notice === 'generate_error' || $notice === 'import_error') {
                     $notice_text = $message ?: 'Something went wrong.';
                     $notice_class = 'error';
                 } elseif ($notice === 'delete_error') {
-                    $notice_text = $message ?: 'Draft could not be deleted.';
+                    $notice_text = $message ?: 'Delete action could not be completed.';
                     $notice_class = 'error';
                 }
                 if ($notice_text) {
@@ -654,6 +658,12 @@ final class SEOHubAdmin
                 echo '<label style="font-size:12px;color:#475569;font-weight:700;">Delay <input id="wnq-service-city-delay" type="number" min="5" max="120" value="30" style="width:74px;margin-left:5px;"> sec</label>';
                 echo '<button type="button" id="wnq-service-city-bulk-start" class="wnq-btn wnq-btn-primary"' . ((int)$bulk_counts['processable'] <= 0 ? ' disabled' : '') . '>Write Drafts for All</button>';
                 echo '<button type="button" id="wnq-service-city-bulk-stop" class="wnq-btn" disabled>Stop</button>';
+                echo '<form method="post" action="' . admin_url('admin-post.php') . '" style="display:inline;">';
+                echo '<input type="hidden" name="action" value="wnq_service_city_delete_all">';
+                echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+                wp_nonce_field('wnq_service_city_delete_all_' . $client_id);
+                echo '<button type="submit" class="wnq-btn" style="background:#fee2e2;color:#991b1b;border-color:#fecaca;" onclick="return confirm(\'Delete all imported Service + City rows for this client? Any generated draft pages will be moved to trash first.\')">Delete All</button>';
+                echo '</form>';
                 echo '</div></div>';
                 echo '<div style="margin-top:14px;height:14px;background:#e2e8f0;border-radius:999px;overflow:hidden;"><div id="wnq-service-city-progress-bar" style="height:100%;width:0%;background:#2563eb;border-radius:999px;transition:width .25s ease;"></div></div>';
                 echo '<div id="wnq-service-city-progress-text" style="margin-top:8px;color:#475569;font-size:12px;">Ready. ' . (int)$bulk_counts['processable'] . ' rows waiting for drafts.</div>';
@@ -682,7 +692,7 @@ final class SEOHubAdmin
                         echo '<br><small style="color:#991b1b;">' . esc_html(substr($row['error_message'], 0, 220)) . '</small>';
                     }
                     echo '</td>';
-                    echo '<td>';
+                    echo '<td><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">';
                     if (in_array($status, ['imported', 'failed'], true)) {
                         echo '<form method="post" action="' . admin_url('admin-post.php') . '" style="display:inline;">';
                         echo '<input type="hidden" name="action" value="wnq_service_city_generate_page">';
@@ -705,7 +715,14 @@ final class SEOHubAdmin
                     } else {
                         echo '<span style="color:#6b7280;">—</span>';
                     }
-                    echo '</td>';
+                    echo '<form method="post" action="' . admin_url('admin-post.php') . '" style="display:inline;">';
+                    echo '<input type="hidden" name="action" value="wnq_service_city_delete_row">';
+                    echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+                    echo '<input type="hidden" name="row_id" value="' . (int)$row['id'] . '">';
+                    wp_nonce_field('wnq_service_city_delete_row_' . (int)$row['id']);
+                    echo '<button type="submit" class="wnq-btn wnq-btn-sm" style="background:#fee2e2;color:#991b1b;border-color:#fecaca;" onclick="return confirm(\'Delete this imported row? If it has a generated draft page, the draft will be moved to trash first.\')">Delete</button>';
+                    echo '</form>';
+                    echo '</div></td>';
                     echo '</tr>';
                 }
                 echo '</tbody></table></div>';

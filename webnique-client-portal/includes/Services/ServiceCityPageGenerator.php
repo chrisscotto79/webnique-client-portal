@@ -20,7 +20,7 @@ use WNQ\Models\ServiceCityPage;
 
 final class ServiceCityPageGenerator
 {
-    public const MIN_AGENT_VERSION = '1.2.2';
+    public const MIN_AGENT_VERSION = '1.2.3';
 
     public static function generateDraft(int $row_id): array
     {
@@ -176,6 +176,58 @@ final class ServiceCityPageGenerator
         ]);
 
         return ['success' => true, 'message' => 'Draft deleted and row reset. You can generate it again.'];
+    }
+
+    public static function deleteRow(int $row_id): array
+    {
+        $row = ServiceCityPage::getRow($row_id);
+        if (!$row) {
+            return ['success' => false, 'message' => 'Imported row not found.'];
+        }
+
+        if (($row['status'] ?? '') === 'draft_created') {
+            $delete = self::deleteDraft($row_id);
+            if (!$delete['success']) {
+                return $delete;
+            }
+        }
+
+        if (!ServiceCityPage::deleteRow($row_id)) {
+            return ['success' => false, 'message' => 'Imported row could not be deleted from the portal.'];
+        }
+
+        return ['success' => true, 'message' => 'Imported row deleted.'];
+    }
+
+    public static function deleteAllRows(string $client_id): array
+    {
+        $rows = ServiceCityPage::getAllRows($client_id);
+        $deleted = 0;
+        $errors = [];
+
+        foreach ($rows as $row) {
+            $result = self::deleteRow((int)$row['id']);
+            if ($result['success']) {
+                $deleted++;
+            } else {
+                $label = $row['slug'] ?? ('row #' . (int)$row['id']);
+                $errors[] = $label . ': ' . ($result['message'] ?? 'delete failed');
+            }
+        }
+
+        if (!empty($errors)) {
+            return [
+                'success' => false,
+                'message' => $deleted . ' row(s) deleted. Some rows could not be deleted: ' . implode(' ', array_slice($errors, 0, 3)),
+                'deleted' => $deleted,
+            ];
+        }
+
+        return [
+            'success' => true,
+            'message' => $deleted . ' imported row(s) deleted.',
+            'deleted' => $deleted,
+        ];
     }
 
     private static function aiVarsForRow(array $row, string $business_name, array $profile, array $client = []): array

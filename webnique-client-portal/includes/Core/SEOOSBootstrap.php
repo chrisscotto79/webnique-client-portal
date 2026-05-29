@@ -244,6 +244,8 @@ final class SEOOSBootstrap
         add_action('admin_post_wnq_service_city_import_csv',    [self::class, 'handleServiceCityImportCsv']);
         add_action('admin_post_wnq_service_city_generate_page', [self::class, 'handleServiceCityGeneratePage']);
         add_action('admin_post_wnq_service_city_delete_draft',  [self::class, 'handleServiceCityDeleteDraft']);
+        add_action('admin_post_wnq_service_city_delete_row',    [self::class, 'handleServiceCityDeleteRow']);
+        add_action('admin_post_wnq_service_city_delete_all',    [self::class, 'handleServiceCityDeleteAll']);
 
         // Blog Scheduler handlers
         add_action('admin_post_wnq_blog_add_post',         [self::class, 'handleBlogAddPost']);
@@ -1235,6 +1237,53 @@ final class SEOOSBootstrap
             'client_id' => $client_id,
             'notice'    => $result['success'] ? 'draft_deleted' : 'delete_error',
             'message'   => $result['message'] ?? '',
+        ];
+
+        wp_redirect(add_query_arg($args, admin_url('admin.php')));
+        exit;
+    }
+
+    public static function handleServiceCityDeleteRow(): void
+    {
+        $row_id = (int)($_POST['row_id'] ?? 0);
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        check_admin_referer('wnq_service_city_delete_row_' . $row_id);
+        self::requireCap();
+
+        $row = $row_id ? \WNQ\Models\ServiceCityPage::getRow($row_id) : null;
+        if (!$row || $row['client_id'] !== $client_id) {
+            wp_die('Invalid Service + City row');
+        }
+
+        $result = \WNQ\Services\ServiceCityPageGenerator::deleteRow($row_id);
+        $args = [
+            'page'      => 'wnq-seo-hub-content',
+            'client_id' => $client_id,
+            'notice'    => $result['success'] ? 'row_deleted' : 'delete_error',
+            'message'   => $result['message'] ?? '',
+        ];
+
+        wp_redirect(add_query_arg($args, admin_url('admin.php')));
+        exit;
+    }
+
+    public static function handleServiceCityDeleteAll(): void
+    {
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        check_admin_referer('wnq_service_city_delete_all_' . $client_id);
+        self::requireCap();
+
+        if ($client_id === '') {
+            wp_die('Missing client_id');
+        }
+
+        $result = \WNQ\Services\ServiceCityPageGenerator::deleteAllRows($client_id);
+        $args = [
+            'page'      => 'wnq-seo-hub-content',
+            'client_id' => $client_id,
+            'notice'    => $result['success'] ? 'rows_deleted' : 'delete_error',
+            'message'   => $result['message'] ?? '',
+            'deleted'   => (int)($result['deleted'] ?? 0),
         ];
 
         wp_redirect(add_query_arg($args, admin_url('admin.php')));

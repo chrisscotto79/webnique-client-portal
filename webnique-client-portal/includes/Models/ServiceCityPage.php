@@ -127,6 +127,20 @@ final class ServiceCityPage
         ) ?: [];
     }
 
+    public static function getAllRows(string $client_id): array
+    {
+        global $wpdb;
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM {$wpdb->prefix}wnq_service_city_pages
+                 WHERE client_id=%s
+                 ORDER BY created_at DESC, id DESC",
+                $client_id
+            ),
+            ARRAY_A
+        ) ?: [];
+    }
+
     public static function getRow(int $id): ?array
     {
         global $wpdb;
@@ -201,6 +215,12 @@ final class ServiceCityPage
     {
         global $wpdb;
         return $wpdb->update($wpdb->prefix . 'wnq_service_city_pages', $data, ['id' => $id]) !== false;
+    }
+
+    public static function deleteRow(int $id): bool
+    {
+        global $wpdb;
+        return $wpdb->delete($wpdb->prefix . 'wnq_service_city_pages', ['id' => $id], ['%d']) !== false;
     }
 
     public static function importCsvFile(string $client_id, int $agent_key_id, string $file_path): array
