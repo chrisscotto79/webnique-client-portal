@@ -399,7 +399,7 @@ final class SEOOSBootstrap
         try {
             $ga4_property_id = self::normalizeReportGa4Property(sanitize_text_field(wp_unslash($_POST['ga4_property_id'] ?? '')));
             $search_console_url = self::normalizeReportSearchConsoleProperty(sanitize_text_field(wp_unslash($_POST['search_console_url'] ?? '')));
-            $report_period = self::normalizeReportPeriod(sanitize_text_field(wp_unslash($_POST['report_period'] ?? 'last_30_days')));
+            $report_period = self::normalizeReportPeriod(sanitize_text_field(wp_unslash($_POST['report_period'] ?? 'current_month')));
             $period = \WNQ\Services\ReportGenerator::resolveReportPeriod($report_period);
 
             if ($ga4_property_id === '' && $search_console_url === '') {
@@ -461,9 +461,22 @@ final class SEOOSBootstrap
                             exit;
                         }
 
-                        $report_id = \WNQ\Services\ReportGenerator::generateReport($client_id, $report_period);
+                        try {
+                            $report_id = \WNQ\Services\ReportGenerator::generateReport($client_id, $report_period);
+                        } catch (\Throwable $generation_error) {
+                            $report_id = false;
+                            $diagnostics['generation_error'] = $generation_error->getMessage();
+                        }
+
                         if (!$report_id) {
-                            throw new \Exception('Report sources were saved and tested, but report generation failed.');
+                            $last_error = \WNQ\Services\ReportGenerator::getLastError();
+                            $diagnostics['generation_error'] = (string)($diagnostics['generation_error'] ?? ($last_error ?: 'Search Console tested successfully, but the report record could not be created.'));
+                            set_transient($diagnostics_key, $diagnostics, 10 * MINUTE_IN_SECONDS);
+                            wp_safe_redirect(add_query_arg([
+                                'notice' => 'report_sources_error',
+                                'message' => 'Search Console tested successfully, but report generation failed. See the diagnostic panel below.',
+                            ], $redirect));
+                            exit;
                         }
 
                         wp_safe_redirect(add_query_arg([
@@ -484,6 +497,9 @@ final class SEOOSBootstrap
                         'period' => [
                             'start' => $period['start'],
                             'end' => $period['end'],
+                            'label' => $period['label'],
+                            'key' => $period['key'],
+                            'type' => $period['type'],
                         ],
                         'error' => $diagnostic_error->getMessage(),
                     ], 10 * MINUTE_IN_SECONDS);
@@ -547,7 +563,7 @@ final class SEOOSBootstrap
     private static function normalizeReportPeriod(string $value): string
     {
         $value = sanitize_key($value);
-        return in_array($value, ['last_30_days', 'previous_month'], true) ? $value : 'last_30_days';
+        return in_array($value, ['current_month', 'last_30_days', 'previous_month'], true) ? $value : 'current_month';
     }
 
     private static function diagnosticsHasSuccessfulGscTest(array $diagnostics): bool

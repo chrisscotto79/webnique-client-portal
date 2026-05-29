@@ -10,7 +10,7 @@
 
   window.wnqSelectedReportPeriod = function () {
     const select = document.getElementById('wnq-report-period-select');
-    return select && select.value ? select.value : 'last_30_days';
+    return select && select.value ? select.value : 'current_month';
   };
 
   window.wnqHubAjax = function (action, clientId, entityId, btn, extraData) {
