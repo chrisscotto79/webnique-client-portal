@@ -1403,6 +1403,9 @@ jQuery(function($) {
         $html = '<div class="' . esc_attr($class) . '">';
         $html .= '<div><strong>' . esc_html($name) . '</strong><span>' . esc_html((string)($source['label'] ?? 'Unknown')) . '</span></div>';
         $html .= '<small>' . esc_html($metric_line) . '</small>';
+        if ($name === 'GSC' && !empty($metrics['resolved_property'])) {
+            $html .= '<small>Property: ' . esc_html((string)$metrics['resolved_property']) . '</small>';
+        }
         if ($error !== '') {
             $html .= '<em title="' . esc_attr($error) . '">' . esc_html(wp_trim_words($error, 12, '...')) . '</em>';
         }
