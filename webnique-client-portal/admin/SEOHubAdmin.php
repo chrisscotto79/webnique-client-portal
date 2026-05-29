@@ -71,8 +71,13 @@ final class SEOHubAdmin
     {
         if (strpos($hook, 'wnq-seo-hub') === false) return;
 
-        wp_enqueue_style('wnq-seohub', WNQ_PORTAL_URL . 'assets/admin/seohub.css', [], WNQ_PORTAL_VERSION);
-        wp_enqueue_script('wnq-seohub', WNQ_PORTAL_URL . 'assets/admin/seohub.js', ['jquery'], WNQ_PORTAL_VERSION, true);
+        $css_path = WNQ_PORTAL_PATH . 'assets/admin/seohub.css';
+        $js_path  = WNQ_PORTAL_PATH . 'assets/admin/seohub.js';
+        $css_ver  = file_exists($css_path) ? (string) filemtime($css_path) : WNQ_PORTAL_VERSION;
+        $js_ver   = file_exists($js_path) ? (string) filemtime($js_path) : WNQ_PORTAL_VERSION;
+
+        wp_enqueue_style('wnq-seohub', WNQ_PORTAL_URL . 'assets/admin/seohub.css', [], $css_ver);
+        wp_enqueue_script('wnq-seohub', WNQ_PORTAL_URL . 'assets/admin/seohub.js', ['jquery'], $js_ver, true);
         wp_localize_script('wnq-seohub', 'WNQ_SEOHUB', [
             'ajaxUrl' => admin_url('admin-ajax.php'),
             'nonce'   => wp_create_nonce('wnq_seohub_nonce'),
@@ -1125,7 +1130,7 @@ jQuery(function($) {
         echo '<p>GA4 and Search Console snapshots, ready for client review with cleaner exports and stronger agency branding.</p>';
         echo '</div>';
         if ($logo_url !== '') {
-            echo '<img src="' . esc_url($logo_url) . '" alt="Golden Web Marketing">';
+            echo '<img src="' . esc_url($logo_url) . '" width="84" height="84" style="width:84px;height:84px;max-width:84px;max-height:84px;object-fit:contain;flex:0 0 auto;border-radius:999px;" alt="Golden Web Marketing">';
         }
         echo '</div>';
         echo '<div class="wnq-client-selector">';
@@ -2056,7 +2061,7 @@ jQuery(function($) {
         echo '<div class="wnq-hub-masthead">';
         echo '<div class="wnq-hub-logo">';
         if ($logo_url !== '') {
-            echo '<img src="' . esc_url($logo_url) . '" alt="" aria-hidden="true">';
+            echo '<img src="' . esc_url($logo_url) . '" width="42" height="42" style="width:42px;height:42px;max-width:42px;max-height:42px;object-fit:contain;flex:0 0 auto;border-radius:999px;" alt="" aria-hidden="true">';
         }
         echo '<strong>Golden Web Marketing</strong><span>SEO OS</span></div>';
         echo '<nav class="wnq-hub-nav">';

@@ -133,7 +133,7 @@
   justify-content: space-between;
   gap: 24px;
   margin: 0 0 24px;
-  padding: 28px;
+  padding: 22px 24px;
   background: linear-gradient(135deg, #0b0905 0%, #171207 54%, #244414 100%);
   border: 1px solid rgba(214,167,42,.45);
   border-radius: var(--hub-radius);
@@ -152,7 +152,7 @@
 }
 .wnq-reports-hero h2 {
   color: #fff7df;
-  font-size: 28px;
+  font-size: 24px;
   line-height: 1.08;
   margin: 0 0 10px;
 }
@@ -165,8 +165,10 @@
   margin: 0;
 }
 .wnq-reports-hero img {
-  width: 104px;
-  height: 104px;
+  width: 84px;
+  height: 84px;
+  max-width: 84px;
+  max-height: 84px;
   object-fit: contain;
   flex: 0 0 auto;
   border-radius: 999px;
