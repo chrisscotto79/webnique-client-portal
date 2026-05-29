@@ -773,8 +773,11 @@ final class SEOHub
         $t = $wpdb->prefix . 'wnq_seo_reports';
         $period_label = (string)($data['period']['label'] ?? date('F Y', strtotime($start)));
         $title_prefix = $type === 'monthly' ? 'Monthly Analytics Report: ' : 'Analytics Report: ';
-        $wpdb->insert($t, [
+        $columns = array_fill_keys($wpdb->get_col("SHOW COLUMNS FROM $t", 0) ?: [], true);
+        $month_year = date('Y-m', strtotime($start));
+        $payload = [
             'client_id'    => $client_id,
+            'month_year'   => $month_year,
             'report_type'  => $type,
             'period_start' => $start,
             'period_end'   => $end,
@@ -783,8 +786,61 @@ final class SEOHub
             'summary_html' => $summary_html,
             'status'       => $status,
             'generated_at' => current_time('mysql'),
-        ]);
+        ];
+        $payload = array_intersect_key($payload, $columns);
+
+        $existing = self::findWritableReport($client_id, $type, $start, $end, $month_year, $columns);
+        if ($existing) {
+            $updated = $wpdb->update($t, $payload, ['id' => (int)$existing['id']]);
+            return $updated !== false ? (int)$existing['id'] : false;
+        }
+
+        $wpdb->insert($t, $payload);
         return $wpdb->insert_id ?: false;
+    }
+
+    private static function findWritableReport(string $client_id, string $type, string $start, string $end, string $month_year, array $columns): ?array
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'wnq_seo_reports';
+
+        if (!empty($columns['report_type']) && !empty($columns['period_start']) && !empty($columns['period_end'])) {
+            $row = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT * FROM $table
+                     WHERE client_id=%s AND report_type=%s AND period_start=%s AND period_end=%s
+                     ORDER BY id DESC LIMIT 1",
+                    $client_id,
+                    $type,
+                    $start,
+                    $end
+                ),
+                ARRAY_A
+            );
+
+            if ($row) {
+                return $row;
+            }
+        }
+
+        if (!empty($columns['month_year'])) {
+            $row = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT * FROM $table
+                     WHERE client_id=%s AND month_year=%s
+                     ORDER BY id DESC LIMIT 1",
+                    $client_id,
+                    $month_year
+                ),
+                ARRAY_A
+            );
+
+            if ($row) {
+                return $row;
+            }
+        }
+
+        return null;
     }
 
     public static function getReports(string $client_id, int $limit = 12): array
