@@ -23,7 +23,7 @@ if (!defined('ABSPATH')) {
 final class AIEngine
 {
     private const BLOG_PROMPT_VERSION = '2026-05-manual-html-format-v1';
-    private const SERVICE_CITY_PROMPT_VERSION = '2026-05-section-safe-v1';
+    private const SERVICE_CITY_PROMPT_VERSION = '2026-05-short-headings-no-intro-v1';
 
     const CACHE_GROUP   = 'wnq_ai_cache';
     const RATE_KEY      = 'wnq_ai_rate_';
@@ -278,23 +278,26 @@ Rules:
 - Do not publish-sounding boilerplate, fake guarantees, fake reviews, fake stats, or generic filler.
 - Keep paragraphs short, 2-3 sentences max.
 - Use H2s and H3s only. Do not include an H1 because the template controls the H1.
+- Keep every H2 short, 3-7 words when possible, keyword-focused, and free of colons or long subtitles.
+- Do not use generic headings like "Introduction", "Overview", "Conclusion", "Final Thoughts", "Get Started", or "Frequently Asked Questions".
+- Do not start sentences with "At {business_name}" or "At King Sheds". Use direct wording like "{business_name} helps..." or "{service} customers in {city} can...".
 - Naturally include the Primary Keyword in the first 100 words and in at least one H2.
 - Naturally mention relevant service variations, related services, nearby cities/areas, county, and geo modifiers where they make sense.
 - Do not create a standalone CTA, conclusion, or FAQ section. The Elementor template controls the final CTA.
 - Never write labels like "CTA Title:" or "CTA Text:".
 - If Business Phone or Business Email is provided, use the exact value when contact copy needs it. If either value is blank, omit it instead of writing placeholders like "[insert phone number]" or "[insert email address]".
 - If internal links are provided, mention the page topics naturally, but do not add raw URL lists.
-- Write 900-1,100 words for this first pass. If the system needs more length, it will request a continuation after this.
+- Write 1,050-1,250 words for this first pass. If the system needs more length, it will request a continuation after this.
 - Return valid HTML only inside the BODY delimiter. Do not use markdown.
 - Do not include schema scripts.
 
 Recommended structure:
-- Intro section that answers what the page is about immediately
-- Why customers in {city} need this service
-- What is included
-- Local process or approach
-- Related services / nearby areas
-- Practical selection, delivery, or preparation guidance
+- Local service overview with a keyword-focused H2
+- Options, models, or details customers compare
+- Permits, preparation, or installation requirements
+- Local delivery or setup process
+- Related services and nearby areas
+- Practical selection, care, or next-step guidance
 
 STRICT FORMAT - return exactly:
 
@@ -335,9 +338,12 @@ Rules:
 - Continue the same page; do not restart the article.
 - Do not repeat headings or paragraphs already present in Existing Body.
 - Do not add a CTA, conclusion, or FAQ section. The Elementor template controls the final CTA.
+- Do not use generic headings like "Introduction", "Overview", "Conclusion", "Final Thoughts", "Get Started", or "Frequently Asked Questions".
+- Do not start sentences with "At {business_name}" or "At King Sheds".
 - If Business Phone or Business Email is blank, omit it instead of writing placeholders.
 - Add roughly the Approximate Additional Words Needed. If the page needs a large expansion, add 500-750 words. If it only needs a small finish, add one tight 250-400 word section.
 - Use H2s and H3s only. Do not include an H1.
+- Keep every H2 short, 3-7 words when possible, keyword-focused, and free of colons or long subtitles.
 - Add practical sections such as sizing/selection guidance, local delivery considerations, nearby service areas, maintenance/care, and comparison details.
 - Keep paragraphs short, 2-3 sentences max.
 - Return valid HTML only inside the BODY delimiter. Do not use markdown.
