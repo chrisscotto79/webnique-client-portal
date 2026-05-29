@@ -86,8 +86,12 @@ final class ServiceCityPageGenerator
         if ($body === '') {
             return self::fail($row_id, 'AI returned an empty page body. Try generating this row again.');
         }
+        $tokens = self::tokensForRow($row, $body, $business_name);
+        $body = self::sanitizeGeneratedCopy($body, $tokens);
         $body = self::ensureTargetWordCount($row, $body, $business_name, $profile, $client_id, $client);
 
+        $tokens = self::tokensForRow($row, $body, $business_name);
+        $body = self::sanitizeGeneratedCopy($body, $tokens);
         $tokens = self::tokensForRow($row, $body, $business_name);
         $built = self::buildElementorFromTemplate($template, $tokens, $body);
 
@@ -278,6 +282,30 @@ final class ServiceCityPageGenerator
         return $tokens;
     }
 
+    private static function sanitizeGeneratedCopy(string $html, array $tokens): string
+    {
+        $html = preg_replace('/<h[23]\b[^>]*>\s*(?:Introduction|Overview|Conclusion|Summary|Final Thoughts|Get Started|Frequently Asked Questions)\s*<\/h[23]>/is', '', $html);
+        $html = preg_replace('/\b(?:Introduction|Overview|Conclusion|Summary|Final Thoughts|CTA\s*Title|CTA\s*Text):\s*/i', '', (string)$html);
+        $html = str_replace(['[insert phone number]', '[insert email address]'], '', (string)$html);
+
+        $business = trim((string)($tokens['{{business_name}}'] ?? ''));
+        $names = array_values(array_filter(array_unique([$business, 'King Sheds'])));
+        foreach ($names as $name) {
+            $quoted = preg_quote($name, '/');
+            $html = preg_replace('/\b(?:Here\s+at|At)\s+' . $quoted . '\s*,?\s*/i', '', (string)$html);
+        }
+
+        $html = preg_replace_callback('/(<(?:p|li)\b[^>]*>)\s*(we|our)\b/i', static function (array $matches): string {
+            return $matches[1] . ucfirst(strtolower($matches[2]));
+        }, (string)$html);
+        $html = preg_replace_callback('/(<(?:p|li)\b[^>]*>)\s*([a-z])/', static function (array $matches): string {
+            return $matches[1] . strtoupper($matches[2]);
+        }, (string)$html);
+        $html = preg_replace('/[ \t]{2,}/', ' ', (string)$html);
+
+        return trim((string)$html);
+    }
+
     private static function buildElementorFromTemplate(string $template, array $tokens, string $body): array
     {
         $had_body_token = self::templateHasBodyToken($template);
@@ -455,8 +483,9 @@ final class ServiceCityPageGenerator
 
     private static function contentPlan(string $body, array $tokens): array
     {
+        $body = self::sanitizeGeneratedCopy($body, $tokens);
         $sections = self::extractContentSections($body);
-        $intro_html = self::extractIntroHtml($body);
+        $intro_html = self::extractIntroHtml($body, $tokens);
 
         if ($intro_html === '') {
             $primary = trim((string)($tokens['{{primary_keyword}}'] ?? ''));
@@ -472,15 +501,21 @@ final class ServiceCityPageGenerator
         $sections = self::cleanSectionsForTemplate($sections, $tokens);
 
         return [
-            'intro_html' => self::limitHtmlToWords($intro_html, 85),
+            'intro_html' => self::limitHtmlToWords($intro_html, 55),
             'sections'   => $sections,
         ];
     }
 
-    private static function extractIntroHtml(string $body): string
+    private static function extractIntroHtml(string $body, array $tokens): string
     {
-        if (preg_match('/<p\b[^>]*>.*?<\/p>/is', $body, $m)) {
-            return trim($m[0]);
+        if (preg_match_all('/<p\b[^>]*>.*?<\/p>/is', $body, $matches)) {
+            foreach ($matches[0] as $paragraph) {
+                $paragraph = self::sanitizeGeneratedCopy((string)$paragraph, $tokens);
+                $plain = trim(wp_strip_all_tags($paragraph));
+                if ($plain !== '' && self::wordCount($plain) >= 8) {
+                    return trim($paragraph);
+                }
+            }
         }
 
         return '';
@@ -559,11 +594,12 @@ final class ServiceCityPageGenerator
                 continue;
             }
 
-            $html = self::cleanSectionBodyHtml((string)($section['html'] ?? ''));
+            $html = self::cleanSectionBodyHtml((string)($section['html'] ?? ''), $tokens);
             if (self::wordCount($html) < 8) {
                 continue;
             }
 
+            $title = self::compactKeywordHeading($title, $tokens, count($clean));
             $clean[] = [
                 'title'   => $title,
                 'eyebrow' => self::eyebrowForSection($title, $tokens, count($clean)),
@@ -576,37 +612,123 @@ final class ServiceCityPageGenerator
 
     private static function isNonContentSectionTitle(string $title): bool
     {
-        return (bool)preg_match('/\b(?:faq|frequently asked|questions?|cta|call|contact|quote|pricing|get your|get started|schedule|consultation)\b/i', $title);
+        return (bool)preg_match('/\b(?:introduction|overview|summary|conclusion|final thoughts|faq|frequently asked|questions?|cta|call|contact|quote|pricing|get your|get started|schedule|consultation)\b/i', $title);
     }
 
-    private static function cleanSectionBodyHtml(string $html): string
+    private static function cleanSectionBodyHtml(string $html, array $tokens): string
     {
+        $html = self::sanitizeGeneratedCopy($html, $tokens);
         $html = preg_replace('/<h[23]\b[^>]*>.*?<\/h[23]>/is', '', $html);
-        $html = preg_replace('/<p\b[^>]*>.*?(?:CTA\s*Title|CTA\s*Text|\[insert phone number\]|\[insert email address\]).*?<\/p>/is', '', (string)$html);
+        $html = preg_replace('/<p\b[^>]*>.*?(?:CTA\s*Title|CTA\s*Text|\[insert phone number\]|\[insert email address\]|Get Started Today|schedule a consultation|take the first step).*?<\/p>/is', '', (string)$html);
         $html = preg_replace('/\b(?:CTA\s*Title|CTA\s*Text):\s*/i', '', (string)$html);
         $html = str_replace(['[insert phone number]', '[insert email address]'], '', (string)$html);
         $html = preg_replace('/<p\b[^>]*>\s*<\/p>/i', '', (string)$html);
         $html = trim((string)$html);
 
-        if (self::wordCount($html) > 150) {
-            return self::limitHtmlToWords($html, 150);
+        if (self::wordCount($html) > 225) {
+            return self::limitHtmlToWords($html, 225);
         }
 
         return $html;
     }
 
+    private static function compactKeywordHeading(string $title, array $tokens, int $index): string
+    {
+        $title = trim(wp_strip_all_tags($title));
+        $title = preg_replace('/\s+/', ' ', (string)$title);
+        $title = trim((string)preg_replace('/\s*:\s*.*$/', '', (string)$title));
+        $title = trim($title, " \t\n\r\0\x0B?.!");
+
+        $service = trim((string)($tokens['{{service}}'] ?? ''));
+        $service = $service !== '' ? $service : 'Service';
+        $service_single = self::singularServiceLabel($service);
+        $city = trim((string)($tokens['{{city}}'] ?? ''));
+        $fallback = self::fallbackHeadingForIndex($tokens, $index);
+        if ($title === '' || self::isNonContentSectionTitle($title) || preg_match('/\b(?:what to know|getting started)\b/i', $title)) {
+            return $fallback;
+        }
+
+        if (preg_match('/\b(?:why|choose|customers?)\b/i', $title)) {
+            return 'Why Choose ' . $service;
+        }
+        if (preg_match('/\b(?:included|includes|features?)\b/i', $title)) {
+            return $service_single . ' Features';
+        }
+        if (preg_match('/\b(?:options?|styles?|models?|custom|details?)\b/i', $title)) {
+            return $service_single . ' Options';
+        }
+        if (preg_match('/\bpermits?\b/i', $title)) {
+            return $service_single . ' Permits';
+        }
+        if (preg_match('/\b(?:prep|preparation|site|delivery|install|installation|setup|process|approach)\b/i', $title)) {
+            return $service_single . ' Installation';
+        }
+        if (preg_match('/\b(?:related|nearby|areas?|cities|county)\b/i', $title)) {
+            return 'Nearby ' . $service_single . ' Services';
+        }
+
+        $title = preg_replace('/^(?:our|your)\s+/i', '', $title);
+        if ($city !== '') {
+            $title = preg_replace('/\s+in\s+' . preg_quote($city, '/') . '\b.*$/i', '', (string)$title);
+        }
+        $title = wp_trim_words((string)$title, 7, '');
+        $title = trim((string)$title, " \t\n\r\0\x0B?.!");
+
+        if ($title === '' || self::wordCount($title) < 2) {
+            return $fallback;
+        }
+
+        if ($index === 0 && $city !== '' && stripos($title, $service) === false) {
+            return trim($service . ' in ' . $city);
+        }
+
+        return $title;
+    }
+
+    private static function fallbackHeadingForIndex(array $tokens, int $index): string
+    {
+        $service = trim((string)($tokens['{{service}}'] ?? ''));
+        $service = $service !== '' ? $service : 'Service';
+        $service_single = self::singularServiceLabel($service);
+        $city = trim((string)($tokens['{{city}}'] ?? ''));
+        $service_city = trim($service . ($city !== '' ? ' in ' . $city : ''));
+        $titles = [
+            $service_city !== '' ? $service_city : $service,
+            $service_single . ' Options',
+            $service_single . ' Permits',
+            $service_single . ' Installation',
+            'Why Choose ' . $service,
+        ];
+
+        return $titles[$index] ?? ($service_single . ' Details');
+    }
+
+    private static function singularServiceLabel(string $service): string
+    {
+        $service = trim($service) !== '' ? trim($service) : 'Service';
+        $service = preg_replace('/\bSheds\b/i', 'Shed', $service);
+        $service = preg_replace('/\bCarports\b/i', 'Carport', (string)$service);
+        $service = preg_replace('/\bBuildings\b/i', 'Building', (string)$service);
+
+        return trim((string)$service);
+    }
+
     private static function eyebrowForSection(string $title, array $tokens, int $index): string
     {
-        $service = trim((string)($tokens['{{service}}'] ?? 'Service'));
+        $service = trim((string)($tokens['{{service}}'] ?? ''));
+        $service = $service !== '' ? $service : 'Service';
+        $service_single = self::singularServiceLabel($service);
         $city = trim((string)($tokens['{{city}}'] ?? ''));
         $state = trim((string)($tokens['{{state}}'] ?? ''));
         $location = trim($city . ($state !== '' ? ', ' . $state : ''));
+        $business = trim((string)($tokens['{{business_name}}'] ?? ''));
+        $business = $business !== '' ? $business : 'King Sheds';
         $labels = [
             $service !== '' && $location !== '' ? $service . ' in ' . $location : 'Local Service Details',
-            'Options and Details',
-            'What to Know Before Getting Started',
-            'Local Process and Preparation',
-            'Related Services and Nearby Areas',
+            $service_single . ' Options',
+            $service_single . ' Permits',
+            'Site Prep and Delivery',
+            'Why Choose ' . $business,
         ];
 
         return $labels[$index] ?? self::shortLabel($title, $tokens);
@@ -635,24 +757,37 @@ final class ServiceCityPageGenerator
 
     private static function fallbackContentSection(array $tokens, int $index): array
     {
-        $service = trim((string)($tokens['{{service}}'] ?? 'Service'));
         $city = trim((string)($tokens['{{city}}'] ?? 'Your Area'));
         $state = trim((string)($tokens['{{state}}'] ?? ''));
         $location = trim($city . ($state !== '' ? ', ' . $state : ''));
-        $titles = [
-            $service . ' in ' . $location,
-            $service . ' Options and Details',
-            'What to Know Before Getting Started',
-            'Preparing for ' . $service,
-            'Why Customers Choose ' . ((string)($tokens['{{business_name}}'] ?? 'Us')),
-        ];
-        $title = $titles[$index] ?? ($service . ' Details for ' . $location);
+        $title = self::fallbackHeadingForIndex($tokens, $index);
 
         return [
             'title' => $title,
-            'eyebrow' => $title,
-            'html' => '<p>Details for this section will be generated from the imported Service + City row.</p>',
+            'eyebrow' => self::eyebrowForSection($title, $tokens, $index),
+            'html' => self::fallbackSectionHtml($tokens, $index, $location),
         ];
+    }
+
+    private static function fallbackSectionHtml(array $tokens, int $index, string $location): string
+    {
+        $business = trim((string)($tokens['{{business_name}}'] ?? ''));
+        $business = $business !== '' ? $business : 'King Sheds';
+        $service = trim((string)($tokens['{{service}}'] ?? ''));
+        $service = $service !== '' ? $service : 'service options';
+        $service_single = self::singularServiceLabel($service);
+        $city = trim((string)($tokens['{{city}}'] ?? 'your area'));
+        $location = $location !== '' ? $location : $city;
+
+        $sections = [
+            '<p>' . esc_html($business) . ' helps customers compare ' . esc_html($service) . ' for properties in ' . esc_html($location) . ' with practical guidance on size, access, delivery, and setup.</p><p>Each page section is built around the service and city from the import row, so the draft stays focused on the customer\'s local search intent.</p>',
+            '<p>Available ' . esc_html($service_single) . ' options can vary by size, layout, materials, doors, windows, and add-on features.</p><p>Customers can use this section to compare common choices before requesting pricing or confirming availability for ' . esc_html($city) . ' delivery.</p>',
+            '<p>Permit and approval requirements may depend on the structure size, placement, and local rules in ' . esc_html($location) . '.</p><p>Customers should confirm city or county requirements before delivery so the site is ready and the installation timeline stays clear.</p>',
+            '<p>Good site preparation starts with a level location, safe access for delivery equipment, and enough clearance around the installation area.</p><p>The team can review common delivery questions before setup so customers know what to expect on installation day.</p>',
+            '<p>Customers choose ' . esc_html($service) . ' when they want practical storage, flexible options, and a simpler buying process.</p><p>' . esc_html($business) . ' keeps the page focused on useful local details, nearby service coverage, and the next steps customers need before requesting pricing.</p>',
+        ];
+
+        return $sections[$index] ?? $sections[0];
     }
 
     private static function fillHeroElement(array $element, array $tokens, string $intro_html, bool &$heading_done, bool &$intro_done): array
