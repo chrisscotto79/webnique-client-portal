@@ -1228,6 +1228,7 @@ jQuery(function($) {
         echo '<button type="submit" class="wnq-btn wnq-btn-primary">Save Report Sources</button>';
         echo '<button type="submit" name="test_gsc_now" value="1" class="wnq-btn">Save & Test GSC Access</button>';
         echo '<button type="submit" name="generate_report_now" value="1" class="wnq-btn">Save & Generate New Report</button>';
+        echo '<button type="submit" name="test_and_generate_report" value="1" class="wnq-btn wnq-btn-primary">Save, Test & Generate Report</button>';
         echo '<span style="font-size:12px;color:#6b7280;">Saving clears GA4/GSC report caches for fresh data.</span>';
         echo '</div>';
         echo '</form>';
@@ -1261,10 +1262,12 @@ jQuery(function($) {
         }
 
         $tests = is_array($diagnostics['tests'] ?? null) ? $diagnostics['tests'] : [];
+        $has_success = false;
         if (!empty($tests)) {
             echo '<div style="display:grid;gap:8px;margin-bottom:14px;">';
             foreach ($tests as $test) {
                 $success = !empty($test['success']);
+                $has_success = $has_success || $success;
                 echo '<div style="padding:10px;border-radius:8px;background:' . ($success ? '#ecfdf5' : '#fef2f2') . ';border:1px solid ' . ($success ? '#bbf7d0' : '#fecaca') . ';">';
                 echo '<strong style="color:' . ($success ? '#166534' : '#991b1b') . ';">' . esc_html($success ? 'Works' : 'Failed') . '</strong> ';
                 echo '<code>' . esc_html((string)($test['site_url'] ?? '')) . '</code>';
@@ -1274,6 +1277,17 @@ jQuery(function($) {
             echo '</div>';
         } else {
             echo '<p style="margin:0 0 12px;color:#b91c1c;font-weight:700;">No matching Search Console properties were found for the configured domain.</p>';
+        }
+
+        if ($has_success) {
+            $period_key = sanitize_key((string)($period['key'] ?? 'last_30_days'));
+            if (!in_array($period_key, ['last_30_days', 'previous_month'], true)) {
+                $period_key = 'last_30_days';
+            }
+            echo '<div style="margin:0 0 14px;padding:12px;border-radius:8px;background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;">';
+            echo '<strong>GSC is connected for the tested property.</strong> Existing report rows below are saved snapshots and may still show old errors until you generate a new report.';
+            echo '<br><button type="button" class="wnq-btn wnq-btn-sm wnq-btn-primary" style="margin-top:10px;" onclick="wnqHubAjax(\'generate_report\', \'' . esc_js($client_id) . '\', 0, this, {report_period: \'' . esc_js($period_key) . '\'})">Generate Fresh Report for This Period</button>';
+            echo '</div>';
         }
 
         $properties = is_array($diagnostics['accessible_properties'] ?? null) ? $diagnostics['accessible_properties'] : [];
