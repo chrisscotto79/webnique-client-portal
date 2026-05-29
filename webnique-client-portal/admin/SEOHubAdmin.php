@@ -1113,10 +1113,21 @@ jQuery(function($) {
         self::checkCap();
         $client_id = sanitize_text_field($_GET['client_id'] ?? '');
         $clients   = AnalyticsConfig::getAllClients();
+        $logo_url  = defined('WNQ_PORTAL_URL') ? WNQ_PORTAL_URL . 'assets/images/golden-web-marketing-logo-background.png' : '';
 
         self::renderHeader('SEO OS — Reports');
 
         echo '<div class="wnq-hub-section">';
+        echo '<div class="wnq-reports-hero">';
+        echo '<div class="wnq-reports-hero-copy">';
+        echo '<span>Golden Web Marketing Reporting</span>';
+        echo '<h2>Client performance reports</h2>';
+        echo '<p>GA4 and Search Console snapshots, ready for client review with cleaner exports and stronger agency branding.</p>';
+        echo '</div>';
+        if ($logo_url !== '') {
+            echo '<img src="' . esc_url($logo_url) . '" alt="Golden Web Marketing">';
+        }
+        echo '</div>';
         echo '<div class="wnq-client-selector">';
         echo '<select onchange="location.href=\'?page=wnq-seo-hub-reports&client_id=\'+this.value"><option value="">— Select Client —</option>';
         foreach ($clients as $c) {
@@ -2016,9 +2027,15 @@ jQuery(function($) {
 
     private static function renderHeader(string $title): void
     {
+        $logo_url = defined('WNQ_PORTAL_URL') ? WNQ_PORTAL_URL . 'assets/images/golden-web-marketing-logo-background.png' : '';
+
         echo '<div class="wrap wnq-hub-wrap">';
         echo '<div class="wnq-hub-masthead">';
-        echo '<div class="wnq-hub-logo">🔭 Golden Web Marketing<span>SEO OS</span></div>';
+        echo '<div class="wnq-hub-logo">';
+        if ($logo_url !== '') {
+            echo '<img src="' . esc_url($logo_url) . '" alt="" aria-hidden="true">';
+        }
+        echo '<strong>Golden Web Marketing</strong><span>SEO OS</span></div>';
         echo '<nav class="wnq-hub-nav">';
         $nav_items = [
             'wnq-seo-hub'          => 'Dashboard',
