@@ -437,12 +437,42 @@ final class SEOOSBootstrap
 
             self::clearReportSourceCaches();
 
-            if (!empty($_POST['test_gsc_now'])) {
+            if (!empty($_POST['test_gsc_now']) || !empty($_POST['test_and_generate_report'])) {
                 $diagnostics_key = 'wnq_report_source_diag_' . get_current_user_id() . '_' . $client_id;
 
                 try {
                     $gsc = new \WNQ\API\GoogleSearchConsole($client_id);
-                    set_transient($diagnostics_key, $gsc->getConnectionDiagnostics($period['start'], $period['end']), 10 * MINUTE_IN_SECONDS);
+                    $diagnostics = $gsc->getConnectionDiagnostics($period['start'], $period['end']);
+                    $diagnostics['period'] = [
+                        'start' => $period['start'],
+                        'end' => $period['end'],
+                        'label' => $period['label'],
+                        'key' => $period['key'],
+                        'type' => $period['type'],
+                    ];
+                    set_transient($diagnostics_key, $diagnostics, 10 * MINUTE_IN_SECONDS);
+
+                    if (!empty($_POST['test_and_generate_report'])) {
+                        if ($search_console_url !== '' && !self::diagnosticsHasSuccessfulGscTest($diagnostics)) {
+                            wp_safe_redirect(add_query_arg([
+                                'notice' => 'report_sources_error',
+                                'message' => 'Report sources saved, but the Search Console test did not pass. No report was generated.',
+                            ], $redirect));
+                            exit;
+                        }
+
+                        $report_id = \WNQ\Services\ReportGenerator::generateReport($client_id, $report_period);
+                        if (!$report_id) {
+                            throw new \Exception('Report sources were saved and tested, but report generation failed.');
+                        }
+
+                        wp_safe_redirect(add_query_arg([
+                            'notice' => 'report_sources_generated',
+                            'message' => 'Report sources saved, Search Console tested, and report #' . (int)$report_id . ' was generated for ' . $period['label'] . '.',
+                        ], $redirect));
+                        exit;
+                    }
+
                     wp_safe_redirect(add_query_arg([
                         'notice' => 'report_sources_saved',
                         'message' => 'Report sources saved. Search Console access test for ' . $period['label'] . ' is shown below.',
@@ -518,6 +548,18 @@ final class SEOOSBootstrap
     {
         $value = sanitize_key($value);
         return in_array($value, ['last_30_days', 'previous_month'], true) ? $value : 'last_30_days';
+    }
+
+    private static function diagnosticsHasSuccessfulGscTest(array $diagnostics): bool
+    {
+        $tests = is_array($diagnostics['tests'] ?? null) ? $diagnostics['tests'] : [];
+        foreach ($tests as $test) {
+            if (!empty($test['success'])) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static function normalizeReportSearchConsoleProperty(string $value): string
