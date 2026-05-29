@@ -169,18 +169,19 @@ final class ServiceCityReceiver
         update_post_meta($page_id, '_wnq_h1', $h1);
         update_post_meta($page_id, '_meta_description', $meta_desc);
 
+        if ($title_tag !== '') {
+            update_post_meta($page_id, 'rank_math_title', $title_tag);
+        }
+        update_post_meta($page_id, 'rank_math_description', $meta_desc);
+        if ($focus_kw !== '') {
+            update_post_meta($page_id, 'rank_math_focus_keyword', $focus_kw);
+        }
+
         if (defined('WPSEO_VERSION')) {
             update_post_meta($page_id, '_yoast_wpseo_title', $title_tag);
             update_post_meta($page_id, '_yoast_wpseo_metadesc', $meta_desc);
             if ($focus_kw !== '') {
                 update_post_meta($page_id, '_yoast_wpseo_focuskw', $focus_kw);
-            }
-        }
-        if (class_exists('RankMath')) {
-            update_post_meta($page_id, 'rank_math_title', $title_tag);
-            update_post_meta($page_id, 'rank_math_description', $meta_desc);
-            if ($focus_kw !== '') {
-                update_post_meta($page_id, 'rank_math_focus_keyword', $focus_kw);
             }
         }
 
