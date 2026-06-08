@@ -202,6 +202,31 @@ if (wnq_seo_features_enabled()) {
         }
     });
 
+    // Keep every client's managed monthly SEO checklist on the latest version.
+    add_action('admin_init', function() {
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
+            return;
+        }
+
+        $seo_model = WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+        if (file_exists($seo_model)) {
+            require_once $seo_model;
+        }
+        if (!class_exists('WNQ\\Models\\SEO')) {
+            return;
+        }
+
+        $installed = get_option('wnq_monthly_seo_checklist_version', '');
+        if ($installed === \WNQ\Models\SEO::MONTHLY_CHECKLIST_VERSION) {
+            return;
+        }
+
+        $result = \WNQ\Models\SEO::syncMonthlyChecklistForAllClients();
+        if (empty($result['failed'])) {
+            update_option('wnq_monthly_seo_checklist_version', \WNQ\Models\SEO::MONTHLY_CHECKLIST_VERSION, false);
+        }
+    }, 20);
+
     // SEO OS — Initialize after portal is loaded
     add_action('plugins_loaded', function() {
         $seoos = WNQ_PORTAL_PATH . 'includes/Core/SEOOSBootstrap.php';

@@ -268,7 +268,7 @@ final class SEOAdmin
             'technical' => ['name' => 'Technical SEO', 'icon' => '⚙️', 'color' => '#10b981'],
             'local' => ['name' => 'Local SEO', 'icon' => '📍', 'color' => '#f59e0b'],
             'offpage' => ['name' => 'Off-Page SEO', 'icon' => '🔗', 'color' => '#8b5cf6'],
-            'monthly' => ['name' => 'Monthly Tasks', 'icon' => '📅', 'color' => '#ec4899'],
+            'monthly' => ['name' => 'Monthly SEO Checklist', 'icon' => '📅', 'color' => '#ec4899'],
         ];
 
         $current_service = $service_types[$selected_service] ?? $service_types['launch'];
