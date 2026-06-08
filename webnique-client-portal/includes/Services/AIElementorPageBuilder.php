@@ -123,8 +123,13 @@ final class AIElementorPageBuilder
         }
 
         $variables = self::applyVariableAliases(self::normalizeVariables($variables));
-        $elementor_data = self::replacePlaceholdersRecursive($content, self::buildTokenMap($variables));
+        $tokens = self::buildTokenMap($variables);
+        $elementor_data = self::replacePlaceholdersRecursive($content, $tokens);
         $elementor_data = self::regenerateElementorIds($elementor_data);
+        $page_settings = isset($template['page_settings']) && is_array($template['page_settings'])
+            ? self::replacePlaceholdersRecursive($template['page_settings'], $tokens)
+            : [];
+        $template['page_settings'] = $page_settings;
         $title = self::resolvePostTitle($variables, $options);
 
         return [
@@ -132,7 +137,7 @@ final class AIElementorPageBuilder
             'template'         => $template,
             'variables'        => $variables,
             'elementor_data'   => $elementor_data,
-            'page_settings'    => isset($template['page_settings']) && is_array($template['page_settings']) ? $template['page_settings'] : [],
+            'page_settings'    => $page_settings,
             'title'            => $title,
             'slug'             => self::generateSlug($variables, $title),
             'post_content'     => self::buildPostContentFallback($variables),

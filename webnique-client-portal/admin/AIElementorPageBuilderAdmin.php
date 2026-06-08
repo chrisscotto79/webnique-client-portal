@@ -102,6 +102,8 @@ final class AIElementorPageBuilderAdmin
         }
         if ($notice === 'template_saved') {
             echo '<div class="wnq-hub-notice success"><p>Template saved to the library.</p></div>';
+        } elseif ($notice === 'template_saved_no_variables') {
+            echo '<div class="wnq-hub-notice warning"><p><strong>Template saved, but no AI placeholders were detected.</strong> Its hardcoded text will remain editable in Elementor, but the AI Payload step cannot personalize it until you add values such as <code>{{business_name}}</code>, <code>{{service}}</code>, or <code>{{city}}</code>.</p></div>';
         } elseif ($notice === 'template_deleted') {
             echo '<div class="wnq-hub-notice success"><p>Template deleted from the library.</p></div>';
         }
@@ -126,7 +128,7 @@ final class AIElementorPageBuilderAdmin
         );
         $last_generated_page = sanitize_text_field((string)($builder_stats['last_title'] ?? 'None yet'));
         $active_tab = 'draft';
-        if (in_array($notice, ['template_saved', 'template_deleted'], true)) {
+        if (in_array($notice, ['template_saved', 'template_saved_no_variables', 'template_deleted'], true)) {
             $active_tab = 'library';
         } elseif ($notice === 'ai_payload') {
             $active_tab = 'payload';
@@ -175,6 +177,11 @@ final class AIElementorPageBuilderAdmin
       <h2><span class="wnq-ai-step">1</span>Template Library</h2>
       <p>Upload reusable Elementor JSON sections or pages. The software scans placeholders automatically and adds the saved template to the builder.</p>
     </div>
+  </div>
+
+  <div class="wnq-ai-template-guidance">
+    <strong>Build templates for reuse</strong>
+    <span>Keep universal labels as normal text. Replace client-specific copy, links, colors, and images with <code>{{placeholders}}</code> so the AI Payload step can personalize them.</span>
   </div>
 
   <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" enctype="multipart/form-data" class="wnq-ai-template-form">
@@ -1075,6 +1082,25 @@ final class AIElementorPageBuilderAdmin
     color: var(--ai-text);
     display: block;
   }
+  .wnq-ai-template-guidance {
+    align-items: flex-start;
+    background: rgba(217, 190, 66, 0.07);
+    border-left: 3px solid var(--ai-gold);
+    display: flex;
+    gap: 14px;
+    margin: 0 0 24px;
+    padding: 14px 16px;
+  }
+  .wnq-ai-template-guidance strong {
+    color: var(--ai-gold-2);
+    flex: 0 0 auto;
+  }
+  .wnq-ai-template-guidance span {
+    color: var(--ai-muted);
+  }
+  .wnq-ai-template-guidance code {
+    color: var(--ai-gold-2);
+  }
   .wnq-ai-variable-chips {
     display: flex;
     flex-wrap: wrap;
@@ -1095,6 +1121,15 @@ final class AIElementorPageBuilderAdmin
     border: 1px solid rgba(217, 190, 66, 0.18);
     border-radius: 999px;
     color: var(--ai-gold-2);
+    padding: 4px 8px;
+  }
+  .wnq-ai-placeholder-warning {
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.28);
+    border-radius: 999px;
+    color: #f5c96a;
+    font-size: 12px;
+    font-weight: 800;
     padding: 4px 8px;
   }
   .wnq-ai-elementor-section-list label,
@@ -1489,7 +1524,7 @@ final class AIElementorPageBuilderAdmin
 
         wp_safe_redirect(add_query_arg([
             'page'   => 'wnq-seo-hub-ai-elementor',
-            'notice' => 'template_saved',
+            'notice' => !empty($result['warning']) ? 'template_saved_no_variables' : 'template_saved',
         ], admin_url('admin.php')));
         exit;
     }
@@ -1962,6 +1997,8 @@ final class AIElementorPageBuilderAdmin
                         echo '<code>{{' . esc_html((string)$variable) . '}}</code>';
                     }
                     echo '</div>';
+                } else {
+                    echo '<div class="wnq-ai-variable-chips"><span class="wnq-ai-placeholder-warning">No AI placeholders</span></div>';
                 }
                 echo '</div>';
                 echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(\'Delete this saved template?\');">';

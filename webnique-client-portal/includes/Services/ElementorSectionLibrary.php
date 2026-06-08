@@ -66,6 +66,7 @@ final class ElementorSectionLibrary
     {
         $content = [];
         $valid_keys = [];
+        $page_settings = ['hide_title' => 'yes'];
 
         foreach ($keys as $key) {
             $key = sanitize_key((string)$key);
@@ -78,6 +79,9 @@ final class ElementorSectionLibrary
             foreach ($template['content'] as $section) {
                 $content[] = $section;
             }
+            if (!empty($template['page_settings']) && is_array($template['page_settings'])) {
+                $page_settings = array_replace_recursive($page_settings, $template['page_settings']);
+            }
         }
 
         if (!$content) {
@@ -86,7 +90,7 @@ final class ElementorSectionLibrary
 
         return [
             'content'       => $content,
-            'page_settings' => ['hide_title' => 'yes'],
+            'page_settings' => $page_settings,
             'version'       => '0.4',
             'title'         => count($valid_keys) > 1 ? '{{template_title}}' : (self::template($valid_keys[0])['title'] ?? '{{template_title}}'),
             'type'          => 'container',
