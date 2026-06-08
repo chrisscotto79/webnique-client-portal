@@ -30,6 +30,8 @@ if (!defined('ABSPATH')) {
 
 final class SEO
 {
+    public const MONTHLY_CHECKLIST_VERSION = '2026-06-08-v2';
+
     /* ───────────────────────────────────────────
      *  TABLE CREATION
      * ─────────────────────────────────────────── */
@@ -465,6 +467,134 @@ final class SEO
     }
 
     /**
+     * Apply the latest managed monthly checklist to all clients and months.
+     *
+     * Previous built-in checklist items are replaced, matching task progress
+     * is preserved, and manually-added monthly tasks are left untouched.
+     */
+    public static function syncMonthlyChecklistForAllClients(): array
+    {
+        global $wpdb;
+
+        $task_table = $wpdb->prefix . 'wnq_seo_tasks';
+        $client_table = $wpdb->prefix . 'wnq_clients';
+        $current_month = current_time('Y-m');
+        $targets = [];
+
+        $existing_targets = $wpdb->get_results(
+            "SELECT DISTINCT client_id, month_year
+             FROM $task_table
+             WHERE service_type = 'monthly' AND month_year IS NOT NULL AND month_year <> ''",
+            ARRAY_A
+        ) ?: [];
+
+        foreach ($existing_targets as $target) {
+            $client_id = sanitize_text_field((string)($target['client_id'] ?? ''));
+            $month_year = sanitize_text_field((string)($target['month_year'] ?? ''));
+            if ($client_id !== '' && preg_match('/^\d{4}-\d{2}$/', $month_year)) {
+                $targets[$client_id . '|' . $month_year] = [$client_id, $month_year];
+            }
+        }
+
+        $active_clients = $wpdb->get_col(
+            "SELECT client_id FROM $client_table WHERE status = 'active' OR status IS NULL OR status = ''"
+        ) ?: [];
+        foreach ($active_clients as $client_id) {
+            $client_id = sanitize_text_field((string)$client_id);
+            if ($client_id !== '') {
+                $targets[$client_id . '|' . $current_month] = [$client_id, $current_month];
+            }
+        }
+
+        $result = ['clients' => count($active_clients), 'months' => 0, 'imported' => 0, 'failed' => 0];
+        foreach ($targets as [$client_id, $month_year]) {
+            $sync = self::syncMonthlyChecklist($client_id, $month_year);
+            $result['months']++;
+            $result['imported'] += (int)($sync['imported'] ?? 0);
+            $result['failed'] += (int)($sync['failed'] ?? 0);
+        }
+
+        return $result;
+    }
+
+    private static function syncMonthlyChecklist(string $client_id, string $month_year): array
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'wnq_seo_tasks';
+        $latest = self::getMonthlyTasks();
+        $managed_names = array_values(array_unique(array_merge(
+            self::flattenTaskGroups(self::getLegacyMonthlyTasks()),
+            self::flattenTaskGroups(self::getPreviousMonthlyTasks()),
+            self::flattenTaskGroups($latest)
+        )));
+        $existing = self::getTasksByClient($client_id, 'monthly', $month_year);
+        $existing_by_name = [];
+        foreach ($existing as $task) {
+            $existing_by_name[(string)$task['task_name']] = $task;
+        }
+
+        $wpdb->query('START TRANSACTION');
+        $imported = 0;
+        $failed = 0;
+
+        try {
+            if ($managed_names) {
+                $placeholders = implode(',', array_fill(0, count($managed_names), '%s'));
+                $wpdb->query($wpdb->prepare(
+                    "DELETE FROM $table
+                     WHERE client_id = %s AND service_type = 'monthly' AND month_year = %s
+                     AND task_name IN ($placeholders)",
+                    $client_id,
+                    $month_year,
+                    ...$managed_names
+                ));
+            }
+
+            $sort = 0;
+            foreach ($latest as $task_group => $tasks) {
+                foreach ($tasks as $task_name) {
+                    $sort++;
+                    $previous = $existing_by_name[$task_name] ?? [];
+                    $inserted = $wpdb->insert($table, [
+                        'client_id'        => $client_id,
+                        'service_type'     => 'monthly',
+                        'task_group'       => $task_group,
+                        'task_name'        => $task_name,
+                        'task_description' => (string)($previous['task_description'] ?? ''),
+                        'status'           => (string)($previous['status'] ?? 'pending'),
+                        'completed_date'   => $previous['completed_date'] ?? null,
+                        'notes'            => (string)($previous['notes'] ?? ''),
+                        'is_recurring'     => 1,
+                        'month_year'       => $month_year,
+                        'sort_order'       => $sort,
+                    ]);
+                    $inserted ? $imported++ : $failed++;
+                }
+            }
+
+            $wpdb->query('COMMIT');
+        } catch (\Throwable $e) {
+            $wpdb->query('ROLLBACK');
+            error_log('SEO monthly checklist sync error: ' . $e->getMessage());
+            return ['imported' => 0, 'failed' => count(self::flattenTaskGroups($latest)), 'error' => $e->getMessage()];
+        }
+
+        return ['imported' => $imported, 'failed' => $failed];
+    }
+
+    private static function flattenTaskGroups(array $groups): array
+    {
+        $tasks = [];
+        foreach ($groups as $group_tasks) {
+            foreach ($group_tasks as $task) {
+                $tasks[] = (string)$task;
+            }
+        }
+        return $tasks;
+    }
+
+    /**
      * Bulk import tasks for a single service type from built-in templates.
      */
     public static function bulkImportTasks(string $client_id, string $service_type, ?string $month_year = null): array
@@ -681,7 +811,7 @@ final class SEO
             ['technical', 'Site Speed & Core Web Vitals', 'Run PageSpeed Insights analysis (desktop)', 'Analyze desktop performance scores'],
             ['local', 'Google Business Profile Setup', 'Complete business name and category', ''],
             ['offpage', 'Backlink Audit & Foundation', 'Audit existing backlinks using backlink tool', ''],
-            ['monthly', 'Monthly Keyword & Traffic Analysis', 'Update keyword ranking report', 'Monthly recurring task'],
+            ['monthly', 'Technical SEO', 'Check Google Search Console errors', 'Monthly recurring task'],
         ];
 
         $output = '';
@@ -1250,6 +1380,62 @@ final class SEO
     private static function getMonthlyTasks(): array
     {
         return [
+            'Rankings & Search Visibility' => [
+                'Compare main service and city keyword rankings month over month',
+                'Review GSC clicks, impressions, CTR, and average position',
+                'Identify page 2 keywords with realistic ranking potential',
+                'Identify high-impression keywords with low CTR',
+                'Choose priority keyword and page opportunities to act on',
+            ],
+            'Traffic, Leads & Conversion Tracking' => [
+                'Compare organic traffic and landing page performance month over month',
+                'Review calls, forms, quote requests, and booking conversions',
+                'Confirm call, form, and conversion tracking is working',
+                'Identify pages driving leads and pages losing conversions',
+                'Test forms, phone buttons, quote buttons, and booking links',
+            ],
+            'Service & Location Page Improvements' => [
+                'Improve 1-3 priority service or location pages',
+                'Create or optimize the next priority service/city page when included',
+                'Improve title tags and meta descriptions for priority pages',
+                'Add internal links to priority service and city pages',
+                'Add useful FAQs, local proof, reviews, photos, or project details',
+                'Refresh thin or outdated content that can improve rankings or leads',
+            ],
+            'Google Business Profile Visibility' => [
+                'Review GBP performance, calls, website clicks, and direction requests',
+                'Verify GBP categories, services, hours, phone, website, and service areas',
+                'Publish useful GBP updates or offers when relevant',
+                'Add recent project or team photos when available',
+                'Respond to new reviews and request reviews from recent customers',
+                'Identify GBP visibility improvements for priority services and locations',
+            ],
+            'Technical & Lead-Blocking Issues' => [
+                'Review Google Search Console indexing and coverage issues',
+                'Fix broken links, 404s, redirect issues, or crawl blockers',
+                'Check sitemap and important page indexing status',
+                'Review Core Web Vitals and speed issues affecting priority pages',
+                'Fix technical or usability issues blocking calls, forms, or rankings',
+            ],
+            'Competitive Gaps & Authority' => [
+                'Review top local competitors for priority services and cities',
+                'Identify competitor page, content, or local visibility gaps',
+                'Find relevant local, niche, partnership, or citation opportunities',
+                'Improve citation consistency or pursue authority opportunities when valuable',
+                'Document authority improvements and newly earned links or citations',
+            ],
+            'Monthly Results & Next Priorities' => [
+                'Document ranking, traffic, lead, and GBP wins or losses',
+                'Document pages created, improved, or fixed this month',
+                'Compile and send the monthly client update',
+                'Set next month\'s priorities based on expected ranking and lead impact',
+            ],
+        ];
+    }
+
+    private static function getLegacyMonthlyTasks(): array
+    {
+        return [
             'Monthly Keyword & Traffic Analysis' => [
                 'Update keyword ranking report',
                 'Analyze traffic trends in Google Analytics',
@@ -1308,6 +1494,75 @@ final class SEO
                 'Identify next month priorities',
                 'Provide improvement recommendations',
                 'Set goals for next month',
+            ],
+        ];
+    }
+
+    private static function getPreviousMonthlyTasks(): array
+    {
+        return [
+            'Technical SEO' => [
+                'Check Google Search Console errors',
+                'Check indexing status for important pages',
+                'Check sitemap',
+                'Check broken links and 404s',
+                'Check site speed/Core Web Vitals',
+                'Test forms, phone buttons, quote buttons, and booking links',
+                'Confirm tracking is working for calls/forms',
+            ],
+            'Keyword & Traffic Review' => [
+                'Review GSC clicks, impressions, CTR, and rankings',
+                'Review GA4 traffic trends',
+                'Compare month-over-month performance',
+                'Identify keywords gaining impressions but low clicks',
+                'Identify page 2 ranking opportunities',
+                'Track main service and city keywords',
+                'Document wins, drops, and opportunities',
+            ],
+            'On-Page SEO' => [
+                'Update 1-3 priority pages',
+                'Improve title tags/meta descriptions where needed',
+                'Add internal links to priority pages',
+                'Add or update FAQs',
+                'Add local proof, photos, reviews, or project details',
+                'Review thin or outdated content',
+                'Plan next service/city page improvements',
+            ],
+            'Content / Page Creation' => [
+                'Choose next month\'s priority content/pages',
+                'Create or optimize new service/city page if included',
+                'Create or update blog content if useful',
+                'Review content performance',
+                'Update content calendar',
+            ],
+            'Google Business Profile / Local SEO' => [
+                'Check GBP info, hours, phone, website, services',
+                'Add new photos if available',
+                'Publish 2-4 GBP posts',
+                'Respond to new reviews',
+                'Request new reviews',
+                'Check GBP categories and services',
+                'Build or clean up citations as needed',
+            ],
+            'Competitor Review' => [
+                'Review top 3 competitors',
+                'Check competitor rankings for main services',
+                'Identify new competitor pages/content',
+                'Find content/service/city gaps',
+                'Document competitor changes',
+            ],
+            'Links / Authority' => [
+                'Find local/niche link opportunities',
+                'Build 3-5 citations or local links when appropriate',
+                'Check citation consistency',
+                'Document new links/citations',
+            ],
+            'Reporting' => [
+                'Compile monthly report',
+                'Document completed work',
+                'Report leads, calls, forms, traffic, rankings, and GBP updates',
+                'Set next month\'s priorities',
+                'Send client update',
             ],
         ];
     }
