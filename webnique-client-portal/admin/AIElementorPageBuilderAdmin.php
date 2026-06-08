@@ -109,6 +109,15 @@ final class AIElementorPageBuilderAdmin
         }
         if (is_array($ai_payload)) {
             echo '<div class="wnq-hub-notice success"><p><strong>AI variable payload generated.</strong> Open Advanced Mode, paste this into the JSON payload box, review it, then generate the draft.</p>';
+            if (!empty($ai_payload['warnings']) && is_array($ai_payload['warnings'])) {
+                echo '<p><strong>Review these remaining content notes:</strong></p><ul>';
+                foreach ((array)$ai_payload['warnings'] as $warning) {
+                    echo '<li>' . esc_html((string)$warning) . '</li>';
+                }
+                echo '</ul>';
+            } else {
+                echo '<p><strong>Quality checks passed:</strong> required variables are present, substantial copy meets minimum lengths, and no repeated content was detected.</p>';
+            }
             echo '<textarea class="wnq-ai-generated-payload" rows="18" readonly spellcheck="false">' . esc_textarea((string)($ai_payload['json'] ?? '')) . '</textarea>';
             echo '</div>';
         }
@@ -1567,7 +1576,7 @@ final class AIElementorPageBuilderAdmin
         }
 
         $image_variables = ElementorTemplateLibrary::imageFieldsFromVariables($variables);
-        $result = AIEngine::generate('elementor_variable_payload', [
+        $generation_vars = [
             'business_name'   => sanitize_text_field(wp_unslash($_POST['ai_business_name'] ?? '')),
             'brand_notes'     => sanitize_textarea_field(wp_unslash($_POST['ai_brand_notes'] ?? '')),
             'service'         => sanitize_text_field(wp_unslash($_POST['ai_service'] ?? '')),
@@ -1580,22 +1589,50 @@ final class AIElementorPageBuilderAdmin
             'section_context' => ElementorSectionLibrary::writingContextFor($keys),
             'variables'       => implode("\n", array_map(static fn($key) => '- ' . $key, $variables)),
             'image_variables' => $image_variables ? implode("\n", array_map(static fn($key) => '- ' . $key, $image_variables)) : 'None',
-        ], '', [
-            'max_tokens'  => 3000,
-            'temperature' => 0.45,
-            'no_cache'    => true,
-        ]);
+            'quality_feedback' => 'No previous draft. Write a complete, varied payload that passes all quality rules.',
+            'previous_payload' => 'None',
+        ];
 
-        if (empty($result['success'])) {
-            self::redirectWithError('AI variable generation failed: ' . (string)($result['error'] ?? 'unknown error'));
+        $json = '';
+        $quality_issues = [];
+        for ($attempt = 1; $attempt <= 3; $attempt++) {
+            $result = AIEngine::generate('elementor_variable_payload', $generation_vars, '', [
+                'max_tokens'  => 5000,
+                'temperature' => $attempt === 1 ? 0.45 : 0.35,
+                'no_cache'    => true,
+            ]);
+
+            if (empty($result['success'])) {
+                self::redirectWithError('AI variable generation failed: ' . (string)($result['error'] ?? 'unknown error'));
+            }
+
+            $json = self::extractJsonObject((string)($result['content'] ?? ''));
+            if ($json === '') {
+                $generation_vars['quality_feedback'] = 'The previous response was not valid JSON. Return one complete valid JSON object containing every requested variable.';
+                continue;
+            }
+
+            $payload = json_decode($json, true);
+            $quality_issues = is_array($payload)
+                ? self::payloadQualityIssues($payload, $variables, $image_variables)
+                : ['Return one complete valid JSON object.'];
+            if (!$quality_issues) {
+                break;
+            }
+
+            $feedback_issues = array_slice($quality_issues, 0, 25);
+            $generation_vars['quality_feedback'] = implode("\n", array_map(static fn($issue) => '- ' . $issue, $feedback_issues));
+            $generation_vars['previous_payload'] = $json;
         }
 
-        $json = self::extractJsonObject((string)($result['content'] ?? ''));
         if ($json === '') {
-            self::redirectWithError('AI did not return a valid JSON object. Try again or check AI settings.');
+            self::redirectWithError('AI did not return a valid JSON object after multiple attempts. Try again or check AI settings.');
         }
 
-        set_transient(self::aiPayloadTransientKey(), ['json' => $json], 10 * MINUTE_IN_SECONDS);
+        set_transient(self::aiPayloadTransientKey(), [
+            'json'     => $json,
+            'warnings' => $quality_issues,
+        ], 10 * MINUTE_IN_SECONDS);
 
         wp_safe_redirect(add_query_arg([
             'page'   => 'wnq-seo-hub-ai-elementor',
@@ -2262,6 +2299,119 @@ final class AIElementorPageBuilderAdmin
         $key = preg_replace('/_+/', '_', (string)$key);
 
         return trim((string)$key, '_');
+    }
+
+    private static function payloadQualityIssues(array $payload, array $variables, array $image_variables): array
+    {
+        $issues = [];
+        $image_variables = array_map([self::class, 'cleanPlaceholderKey'], $image_variables);
+        $substantial_values = [];
+
+        foreach ($variables as $variable) {
+            $key = self::cleanPlaceholderKey((string)$variable);
+            if ($key === '') {
+                continue;
+            }
+            if (!array_key_exists($key, $payload)) {
+                $issues[] = sprintf('Add the missing "%s" variable.', $key);
+                continue;
+            }
+
+            $value = is_scalar($payload[$key]) ? trim(wp_strip_all_tags((string)$payload[$key])) : '';
+            if (in_array($key, $image_variables, true) || self::isNonCopyVariable($key)) {
+                continue;
+            }
+
+            $minimum = self::minimumWordsForVariable($key);
+            if ($value === '') {
+                if ($minimum > 0 && !preg_match('/(?:^|_)(?:review|testimonial)(?:_|$)/', $key)) {
+                    $issues[] = sprintf('Write useful content for the empty "%s" variable.', $key);
+                }
+                continue;
+            }
+
+            $word_count = self::wordCount($value);
+            if ($minimum > 0 && $word_count < $minimum) {
+                $issues[] = sprintf('Expand "%s" to at least %d useful words; it currently has %d.', $key, $minimum, $word_count);
+            }
+            if (preg_match('/(?:^|_)(?:faq_)?question(?:_|$)/', $key) && substr($value, -1) !== '?') {
+                $issues[] = sprintf('Rewrite "%s" as a clear question ending with a question mark.', $key);
+            }
+            if ($word_count >= 10 && !preg_match('/(?:^|_)(?:title|heading|headline|label|button|cta)(?:_|$)/', $key)) {
+                $substantial_values[$key] = $value;
+            }
+        }
+
+        $keys = array_keys($substantial_values);
+        for ($i = 0, $count = count($keys); $i < $count; $i++) {
+            for ($j = $i + 1; $j < $count; $j++) {
+                $similarity = self::contentSimilarity($substantial_values[$keys[$i]], $substantial_values[$keys[$j]]);
+                if ($similarity >= 0.78) {
+                    $issues[] = sprintf('Rewrite "%s" and "%s" so they provide distinct information instead of repeating each other.', $keys[$i], $keys[$j]);
+                }
+            }
+        }
+
+        return array_values(array_unique($issues));
+    }
+
+    private static function minimumWordsForVariable(string $key): int
+    {
+        if (preg_match('/(?:^|_)(?:title|heading|headline|label|button|cta|eyebrow|kicker)(?:_|$)/', $key)) {
+            return 0;
+        }
+        if (preg_match('/(?:^|_)(?:faq_)?answer(?:_|$)/', $key)) {
+            return 30;
+        }
+        if (preg_match('/(?:^|_)(?:paragraph|body|long_copy|content_copy)(?:_|$)/', $key)) {
+            return 45;
+        }
+        if (preg_match('/(?:^|_)(?:description|subheadline|summary|intro|service_copy)(?:_|$)/', $key)) {
+            return 25;
+        }
+        if (preg_match('/(?:^|_)(?:text|copy)(?:_|$)/', $key)) {
+            return 25;
+        }
+        if (preg_match('/(?:^|_)(?:faq_)?question(?:_|$)/', $key)) {
+            return 6;
+        }
+
+        return 0;
+    }
+
+    private static function isNonCopyVariable(string $key): bool
+    {
+        if (in_array($key, ['city', 'state', 'target_city', 'target_state'], true)) {
+            return true;
+        }
+
+        return preg_match('/(?:^|_)(?:url|color|font|id|slug|alt|email|phone)(?:_|$)/', $key) === 1;
+    }
+
+    private static function wordCount(string $value): int
+    {
+        $words = preg_split('/\s+/', trim(preg_replace('/[^\p{L}\p{N}\']+/u', ' ', $value)));
+        return count(array_filter((array)$words, static fn($word) => $word !== ''));
+    }
+
+    private static function contentSimilarity(string $left, string $right): float
+    {
+        $normalize = static function (string $value): array {
+            $value = strtolower(wp_strip_all_tags($value));
+            $words = preg_split('/\s+/', trim(preg_replace('/[^\p{L}\p{N}]+/u', ' ', $value)));
+            $words = array_filter((array)$words, static fn($word) => strlen((string)$word) > 3);
+            return array_values(array_unique($words));
+        };
+
+        $left_words = $normalize($left);
+        $right_words = $normalize($right);
+        if (!$left_words || !$right_words) {
+            return 0.0;
+        }
+
+        $intersection = count(array_intersect($left_words, $right_words));
+        $union = count(array_unique(array_merge($left_words, $right_words)));
+        return $union > 0 ? $intersection / $union : 0.0;
     }
 
     private static function extractJsonObject(string $raw): string
