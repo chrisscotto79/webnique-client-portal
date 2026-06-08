@@ -64,9 +64,16 @@ final class AIElementorPageBuilderAdmin
         }
 
         if ($created && is_array($result)) {
-            echo '<div class="wnq-hub-notice success"><p><strong>Draft created on:</strong> ' . esc_html($result['site_url'] ?? 'Client site') . '</p>';
+            echo '<div class="wnq-ai-success-state">';
+            echo '<span class="wnq-ai-success-icon" aria-hidden="true">&#10003;</span>';
+            echo '<div><span class="wnq-ai-eyebrow">Elementor draft ready</span><h2>Draft created successfully.</h2>';
+            echo '<dl class="wnq-ai-success-meta">';
+            echo '<div><dt>Page title</dt><dd>' . esc_html($result['post_title'] ?? 'Elementor Draft') . '</dd></div>';
+            echo '<div><dt>Client site</dt><dd>' . esc_html($result['site_url'] ?? 'Client site') . '</dd></div>';
+            echo '<div><dt>Status</dt><dd>WordPress Draft</dd></div>';
+            echo '</dl>';
             if (isset($result['images_imported'])) {
-                echo '<p><strong>Images imported to client media:</strong> ' . esc_html((string)absint($result['images_imported'])) . '</p>';
+                echo '<p class="description">Images imported to client media: ' . esc_html((string)absint($result['images_imported'])) . '</p>';
             }
             if (!empty($result['image_import_errors']) && is_array($result['image_import_errors'])) {
                 echo '<p><strong>Image import warnings:</strong></p><ul style="margin-left:18px;">';
@@ -79,17 +86,15 @@ final class AIElementorPageBuilderAdmin
                 }
                 echo '</ul>';
             }
-            echo '<p style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">';
+            echo '<p class="wnq-ai-success-actions">';
             if (!empty($result['elementor_url'])) {
-                echo '<a class="wnq-btn wnq-btn-primary" target="_blank" rel="noopener" href="' . esc_url($result['elementor_url']) . '">Edit Draft</a>';
+                echo '<a class="wnq-btn wnq-btn-primary" target="_blank" rel="noopener" href="' . esc_url($result['elementor_url']) . '">Edit in Elementor</a>';
             }
             if (!empty($result['preview_url'])) {
-                echo '<a class="wnq-btn" target="_blank" rel="noopener" href="' . esc_url($result['preview_url']) . '">Preview</a>';
+                echo '<a class="wnq-btn" target="_blank" rel="noopener" href="' . esc_url($result['preview_url']) . '">View Draft</a>';
             }
-            if (!empty($result['pages_url'])) {
-                echo '<a class="wnq-btn" target="_blank" rel="noopener" href="' . esc_url($result['pages_url']) . '">Open Pages</a>';
-            }
-            echo '</p></div>';
+            echo '<a class="wnq-btn" href="' . esc_url(admin_url('admin.php?page=wnq-seo-hub-ai-elementor')) . '">Create Another Page</a>';
+            echo '</p></div></div>';
         }
 
         if ($error !== '') {
@@ -101,7 +106,7 @@ final class AIElementorPageBuilderAdmin
             echo '<div class="wnq-hub-notice success"><p>Template deleted from the library.</p></div>';
         }
         if (is_array($ai_payload)) {
-            echo '<div class="wnq-hub-notice success"><p><strong>AI variable payload generated.</strong> Copy this into the JSON Variable Payload box, review it, then generate the draft.</p>';
+            echo '<div class="wnq-hub-notice success"><p><strong>AI variable payload generated.</strong> Open Advanced Mode, paste this into the JSON payload box, review it, then generate the draft.</p>';
             echo '<textarea class="wnq-ai-generated-payload" rows="18" readonly spellcheck="false">' . esc_textarea((string)($ai_payload['json'] ?? '')) . '</textarea>';
             echo '</div>';
         }
@@ -111,9 +116,15 @@ final class AIElementorPageBuilderAdmin
         $section_groups = self::groupSectionTemplates($section_templates);
         $saved_template_groups = self::groupSavedTemplates($saved_templates);
         $category_labels = self::templateCategoryLabels();
-        $saved_template_count = count($saved_templates);
         $connected_site_count = count($agents);
         $available_template_count = count($section_templates);
+        $builder_stats = get_option('wnq_ai_elementor_builder_stats', []);
+        $drafts_this_month = (string)(
+            sanitize_text_field((string)($builder_stats['month'] ?? '')) === current_time('Y-m')
+                ? absint($builder_stats['month_count'] ?? 0)
+                : 0
+        );
+        $last_generated_page = sanitize_text_field((string)($builder_stats['last_title'] ?? 'None yet'));
         $active_tab = 'draft';
         if (in_array($notice, ['template_saved', 'template_deleted'], true)) {
             $active_tab = 'library';
@@ -139,8 +150,12 @@ final class AIElementorPageBuilderAdmin
         <span>Templates Ready</span>
       </div>
       <div>
-        <strong><?php echo esc_html((string)$saved_template_count); ?></strong>
-        <span>Saved Uploads</span>
+        <strong><?php echo esc_html($drafts_this_month); ?></strong>
+        <span>Drafts This Month</span>
+      </div>
+      <div>
+        <strong class="wnq-ai-stat-title"><?php echo esc_html($last_generated_page); ?></strong>
+        <span>Last Generated Page</span>
       </div>
     </div>
   </div>
@@ -266,130 +281,128 @@ final class AIElementorPageBuilderAdmin
 
       <section class="wnq-ai-tab-panel <?php echo $active_tab === 'draft' ? 'is-active' : ''; ?>" id="wnq-ai-tab-draft" data-wnq-ai-panel="draft" role="tabpanel" <?php echo $active_tab === 'draft' ? '' : 'hidden'; ?>>
         <div class="wnq-hub-section wnq-ai-card wnq-ai-card-wide" id="wnq-draft-builder">
-  <div class="wnq-hub-section-header">
+  <div class="wnq-ai-builder-heading">
     <div>
-      <h2><span class="wnq-ai-step">3</span>Generate Editable Elementor Draft</h2>
-      <p>Choose one or more reusable Elementor sections or paste a custom Elementor JSON export, then provide a JSON payload of variables. The page is always created as a draft.</p>
+      <span class="wnq-ai-eyebrow">Simple Mode</span>
+      <h2>Create a client page draft</h2>
+      <p>Move through the guided steps. The builder converts your choices into the Elementor template payload behind the scenes.</p>
     </div>
+    <button type="button" class="wnq-btn" data-wnq-open-advanced>Advanced Mode</button>
   </div>
 
-  <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" enctype="multipart/form-data" class="wnq-ai-elementor-form">
+  <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" enctype="multipart/form-data" class="wnq-ai-elementor-form" data-wnq-wizard>
     <?php wp_nonce_field('wnq_ai_elementor_generate'); ?>
     <input type="hidden" name="action" value="wnq_ai_elementor_generate">
 
-    <div class="wnq-ai-elementor-target">
-      <label for="wnq_agent_key_id"><strong>Select Client / WordPress Site</strong></label>
-      <select id="wnq_agent_key_id" name="agent_key_id" required>
-        <option value="">Choose a connected client site...</option>
-        <?php foreach ($agents as $agent): ?>
-          <?php
-            $site_label = ($agent['site_name'] ?? '') ?: parse_url($agent['site_url'] ?? '', PHP_URL_HOST) ?: ($agent['site_url'] ?? '');
-            $label = trim(($agent['client_label'] ?? '') . ' - ' . $site_label);
-            $meta = [];
-            if (!empty($agent['plugin_version'])) {
-                $meta[] = 'Agent ' . $agent['plugin_version'];
-            }
-            if (!empty($agent['last_ping'])) {
-                $meta[] = 'Last ping ' . $agent['last_ping'];
-            }
-          ?>
-          <option value="<?php echo (int)$agent['id']; ?>">
-            <?php echo esc_html($label . ($meta ? ' (' . implode(', ', $meta) . ')' : '')); ?>
-          </option>
+    <nav class="wnq-ai-wizard-progress" aria-label="Page builder progress">
+      <?php foreach (['Choose Client', 'Page Type', 'Page Details', 'Sections', 'Images', 'Preview & Generate'] as $index => $step_label): ?>
+        <button type="button" class="<?php echo $index === 0 ? 'is-active' : ''; ?>" data-wnq-step-nav="<?php echo (int)($index + 1); ?>"><span><?php echo (int)($index + 1); ?></span><?php echo esc_html($step_label); ?></button>
+      <?php endforeach; ?>
+    </nav>
+
+    <section class="wnq-ai-wizard-step is-active" data-wnq-step="1">
+      <div class="wnq-ai-step-heading"><span>Step 1</span><h3>Choose Client</h3><p>Select the connected WordPress site that should receive the draft.</p></div>
+      <div class="wnq-ai-client-picker">
+        <label for="wnq_agent_key_id"><strong>Connected client site</strong></label>
+        <select id="wnq_agent_key_id" name="agent_key_id" required data-wnq-summary-source="client">
+          <option value="">Choose a connected client site...</option>
+          <?php foreach ($agents as $agent): ?>
+            <?php
+              $site_label = ($agent['site_name'] ?? '') ?: parse_url($agent['site_url'] ?? '', PHP_URL_HOST) ?: ($agent['site_url'] ?? '');
+              $label = trim(($agent['client_label'] ?? '') . ' - ' . $site_label);
+            ?>
+            <option value="<?php echo (int)$agent['id']; ?>" data-client-name="<?php echo esc_attr((string)($agent['client_label'] ?? '')); ?>" data-client-phone="<?php echo esc_attr((string)($agent['client_phone'] ?? '')); ?>" data-client-website="<?php echo esc_attr((string)($agent['client_website'] ?? $agent['site_url'] ?? '')); ?>" data-client-services="<?php echo esc_attr((string)($agent['client_services'] ?? '')); ?>" data-site-url="<?php echo esc_attr((string)($agent['site_url'] ?? '')); ?>"><?php echo esc_html($label); ?></option>
+          <?php endforeach; ?>
+        </select>
+        <?php if (empty($agents)): ?><p class="description">No active sites found. Connect one under <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-seo-hub-api')); ?>">API Management</a>.</p><?php endif; ?>
+      </div>
+      <div class="wnq-ai-autofill-note"><strong>Client profile ready</strong><span>Business details remain editable. Connected brand profiles can auto-fill these fields as that data becomes available.</span></div>
+    </section>
+
+    <section class="wnq-ai-wizard-step" data-wnq-step="2" hidden>
+      <div class="wnq-ai-step-heading"><span>Step 2</span><h3>Choose Page Type</h3><p>Start with the page goal. The builder will tailor the recommended fields, sections, and image slots.</p></div>
+      <div class="wnq-ai-page-type-grid">
+        <?php foreach (self::pageTypes() as $key => $page_type): ?>
+          <label><input type="radio" name="page_type" value="<?php echo esc_attr($key); ?>" <?php checked($key, 'home'); ?>><span><strong><?php echo esc_html($page_type['label']); ?></strong><small><?php echo esc_html($page_type['description']); ?></small></span></label>
         <?php endforeach; ?>
-      </select>
-      <?php if (empty($agents)): ?>
-        <p class="description">No active connected client sites were found. Add one under <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-seo-hub-api')); ?>">SEO OS API Management</a>.</p>
-      <?php else: ?>
-        <p class="description">This controls which client WordPress application receives the draft. The API key stays server-side.</p>
-      <?php endif; ?>
-    </div>
-
-    <div class="wnq-ai-elementor-template-source">
-      <strong>Section Templates</strong>
-      <?php self::renderSectionTemplatePicker($section_groups, 'section_template_keys', [ElementorSectionLibrary::LOCAL_SERVICE_HERO, ElementorSectionLibrary::CONTENT_IMAGE]); ?>
-      <label class="wnq-ai-elementor-custom-toggle">
-        <input type="checkbox" name="use_custom_template" value="1">
-        Use custom pasted/uploaded Elementor JSON instead
-      </label>
-      <p class="description">Select multiple built-in sections to generate a full draft page in that order. Use custom only when you want to paste a complete Elementor export.</p>
-    </div>
-
-    <div class="wnq-ai-elementor-grid">
-      <div class="wnq-ai-elementor-field">
-        <label for="wnq_elementor_template"><strong>Custom Elementor JSON Template</strong></label>
-        <p class="description">Only needed when Section Template is set to Custom. If a file is uploaded, it overrides the pasted text.</p>
-        <input type="file" name="elementor_template_file" accept=".json,application/json">
-        <textarea id="wnq_elementor_template" name="elementor_template" rows="18" spellcheck="false" placeholder='{"content":[...],"page_settings":{"hide_title":"yes"}}'></textarea>
       </div>
+    </section>
 
-      <div class="wnq-ai-elementor-field">
-        <label for="wnq_variables_json"><strong>JSON Variable Payload</strong></label>
-        <p class="description">Use the variables from the selected sections. Public remote image URLs are imported by the client agent. ChatGPT image URLs are usually private, so use the image upload fields below for those.</p>
-        <input type="file" name="variables_json_file" accept=".json,application/json">
-        <textarea id="wnq_variables_json" name="variables_json" rows="18" spellcheck="false" placeholder='{"service":"Land Clearing","city":"Lakeland"}'></textarea>
+    <section class="wnq-ai-wizard-step" data-wnq-step="3" hidden>
+      <div class="wnq-ai-step-heading"><span>Step 3</span><h3>Add Page Details</h3><p>Use normal page fields. These values become the JSON variable payload automatically.</p></div>
+      <div class="wnq-ai-simple-fields">
+        <?php self::renderSimpleFields(); ?>
       </div>
-    </div>
+    </section>
 
-    <div class="wnq-ai-elementor-options">
-      <label>
-        <strong>Optional Page Title Override</strong>
-        <input type="text" name="post_title" placeholder="Leave blank to use h1 or primary keyword">
-      </label>
-      <label>
-        <strong>Optional Featured Image ID</strong>
-        <input type="number" min="1" step="1" name="featured_image_id" placeholder="Client site WordPress attachment ID">
-      </label>
-    </div>
+    <section class="wnq-ai-wizard-step" data-wnq-step="4" hidden>
+      <div class="wnq-ai-step-heading"><span>Step 4</span><h3>Choose Sections</h3><p>Select reusable Elementor sections. Recommended sections are preselected.</p></div>
+      <?php self::renderSimpleSectionCards($section_templates); ?>
+    </section>
 
-    <div class="wnq-ai-elementor-image-uploads">
-      <h3>Optional Image Uploads</h3>
-      <p class="description">Use these for ChatGPT/private image links. For the fastest pages, upload compressed WebP images when possible, keep files under 5 MB, and include matching ALT variables in the JSON payload.</p>
-      <div class="wnq-ai-elementor-image-grid">
+    <section class="wnq-ai-wizard-step" data-wnq-step="5" hidden>
+      <div class="wnq-ai-step-heading"><span>Step 5</span><h3>Upload Images</h3><p>Only relevant image slots are shown. Images are imported to the client site's media library during generation.</p></div>
+      <div class="wnq-ai-elementor-image-grid wnq-ai-simple-image-grid">
         <?php foreach (self::imageUploadFields() as $field => $label): ?>
-          <label>
+          <label class="wnq-ai-upload-box" data-image-slot="<?php echo esc_attr($field); ?>">
+            <span class="wnq-ai-upload-preview" aria-hidden="true">+</span>
             <strong><?php echo esc_html($label); ?></strong>
-            <code>{{<?php echo esc_html($field); ?>}}</code>
-            <input type="file" name="<?php echo esc_attr('image_upload_' . $field); ?>" accept="image/jpeg,image/png,image/gif,image/webp">
+            <small>Drop or choose JPG, PNG, GIF, or WebP</small>
+            <input type="file" name="<?php echo esc_attr('image_upload_' . $field); ?>" accept="image/jpeg,image/png,image/gif,image/webp" data-wnq-image-input>
           </label>
         <?php endforeach; ?>
       </div>
-    </div>
+    </section>
 
-    <div class="wnq-ai-elementor-image-uploads">
-      <h3>Custom Image Upload Mappings</h3>
-      <p class="description">For your uploaded templates, enter the placeholder name such as <code>gallery_image_1_url</code>, then upload the image. This supports any custom <code>{{*_image_url}}</code> placeholder.</p>
-      <div class="wnq-ai-custom-image-grid">
-        <?php for ($i = 1; $i <= 6; $i++): ?>
-          <label>
-            <strong>Custom image <?php echo (int)$i; ?></strong>
-            <input type="text" name="<?php echo esc_attr('custom_image_field_' . $i); ?>" placeholder="example_image_url">
-            <input type="file" name="<?php echo esc_attr('custom_image_upload_' . $i); ?>" accept="image/jpeg,image/png,image/gif,image/webp">
-          </label>
-        <?php endfor; ?>
+    <section class="wnq-ai-wizard-step" data-wnq-step="6" hidden>
+      <div class="wnq-ai-step-heading"><span>Step 6</span><h3>Preview & Generate</h3><p>Confirm the plan before creating the editable WordPress draft.</p></div>
+      <div class="wnq-ai-summary-card" data-wnq-summary></div>
+      <div class="wnq-ai-confirmation-actions">
+        <button type="button" class="wnq-btn" data-wnq-go-step="3">Back to Edit</button>
+        <button type="submit" class="wnq-btn wnq-btn-primary">Create Elementor Draft</button>
       </div>
+    </section>
+
+    <div class="wnq-ai-wizard-actions">
+      <button type="button" class="wnq-btn" data-wnq-prev hidden>Back</button>
+      <button type="button" class="wnq-btn wnq-btn-primary" data-wnq-next>Continue</button>
     </div>
 
-    <p>
-      <button type="submit" class="wnq-btn wnq-btn-primary">Generate Draft Page</button>
-    </p>
+    <details class="wnq-ai-advanced-mode" data-wnq-advanced>
+      <summary><span><strong>Advanced Mode</strong><small>Custom Elementor JSON, raw variables, image mappings, and developer helpers</small></span></summary>
+      <div class="wnq-ai-advanced-body">
+        <div class="wnq-ai-elementor-template-source">
+          <strong>Complete Elementor Template Catalog</strong>
+          <p class="description">Choose any built-in or saved template. These selections are combined with the friendly section choices above.</p>
+          <?php self::renderSectionTemplatePicker($section_groups, 'section_template_keys', []); ?>
+        </div>
+        <label class="wnq-ai-elementor-custom-toggle"><input type="checkbox" name="use_custom_template" value="1"> Use custom pasted/uploaded Elementor JSON instead of selected sections</label>
+        <div class="wnq-ai-elementor-grid">
+          <div class="wnq-ai-elementor-field">
+            <label for="wnq_elementor_template"><strong>Custom Elementor JSON Template</strong></label>
+            <input type="file" name="elementor_template_file" accept=".json,application/json">
+            <textarea id="wnq_elementor_template" name="elementor_template" rows="14" spellcheck="false" placeholder='{"content":[...],"page_settings":{"hide_title":"yes"}}'></textarea>
+          </div>
+          <div class="wnq-ai-elementor-field">
+            <label for="wnq_variables_json"><strong>View / Edit Advanced JSON Payload</strong></label>
+            <input type="file" name="variables_json_file" accept=".json,application/json">
+            <textarea id="wnq_variables_json" name="variables_json" rows="14" spellcheck="false" placeholder='{"service":"Land Clearing","city":"Lakeland"}'></textarea>
+          </div>
+        </div>
+        <div class="wnq-ai-elementor-options">
+          <label><strong>Featured Image ID</strong><input type="number" min="1" step="1" name="featured_image_id" placeholder="Client attachment ID"></label>
+        </div>
+        <h3>Custom Image Placeholder Mappings</h3>
+        <div class="wnq-ai-custom-image-grid">
+          <?php for ($i = 1; $i <= 6; $i++): ?>
+            <label><strong>Custom image <?php echo (int)$i; ?></strong><input type="text" name="<?php echo esc_attr('custom_image_field_' . $i); ?>" placeholder="example_image_url"><input type="file" name="<?php echo esc_attr('custom_image_upload_' . $i); ?>" accept="image/jpeg,image/png,image/gif,image/webp"></label>
+          <?php endfor; ?>
+        </div>
+        <details class="wnq-ai-help-details"><summary><strong>Built-in JSON examples and debug output</strong></summary><div class="wnq-ai-elementor-grid"><pre><?php echo esc_html(wp_json_encode(self::exampleTemplate(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)); ?></pre><pre><?php echo esc_html(wp_json_encode(self::exampleVariables(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)); ?></pre></div></details>
+      </div>
+    </details>
   </form>
 </div>
-
-        <details class="wnq-ai-help-details">
-          <summary><strong>Examples and copy helpers</strong></summary>
-          <p class="description">These reusable sections can be stacked into one draft. Paste the example variables, change the copy/URLs, select a client site, and generate a draft.</p>
-          <div class="wnq-ai-elementor-grid">
-            <details>
-              <summary><strong>Built-in Hero Elementor JSON</strong></summary>
-              <pre><?php echo esc_html(wp_json_encode(self::exampleTemplate(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)); ?></pre>
-            </details>
-            <details>
-              <summary><strong>Example JSON Variable Payload</strong></summary>
-              <pre><?php echo esc_html(wp_json_encode(self::exampleVariables(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)); ?></pre>
-            </details>
-          </div>
-        </details>
       </section>
     </div>
   </div>
@@ -437,6 +450,202 @@ final class AIElementorPageBuilderAdmin
         });
       });
     });
+  });
+
+  document.querySelectorAll('[data-wnq-wizard]').forEach(function(form) {
+    var currentStep = 1;
+    var maxStep = 6;
+    var prevButton = form.querySelector('[data-wnq-prev]');
+    var nextButton = form.querySelector('[data-wnq-next]');
+    var advanced = form.querySelector('[data-wnq-advanced]');
+    var advancedPayloadGenerated = false;
+
+    function selectedPageType() {
+      var input = form.querySelector('input[name="page_type"]:checked');
+      return input ? input.value : 'home';
+    }
+
+    function selectedSections() {
+      return Array.prototype.slice.call(form.querySelectorAll('.wnq-ai-section-card input:checked')).map(function(input) {
+        return input.closest('.wnq-ai-section-card').querySelector('strong').textContent.trim();
+      });
+    }
+
+    function updateImageSlots() {
+      var type = selectedPageType();
+      var sections = selectedSections();
+      form.querySelectorAll('[data-image-slot]').forEach(function(slot) {
+        var key = slot.getAttribute('data-image-slot') || '';
+        var show = key === 'logo_image_url' || key === 'featured_image_url';
+        if (key === 'hero_background_image_url') show = sections.indexOf('Hero') !== -1 || ['home', 'service', 'city', 'service_city', 'ads'].indexOf(type) !== -1;
+        if (key === 'content_image_url') show = sections.indexOf('Services') !== -1 || sections.indexOf('About') !== -1 || ['service', 'service_city', 'about'].indexOf(type) !== -1;
+        if (key.indexOf('gallery_image_') === 0) show = sections.indexOf('Gallery') !== -1 || type === 'home';
+        if (key === 'before_image_url' || key === 'after_image_url') show = sections.indexOf('Gallery') !== -1 && ['service', 'service_city', 'ads'].indexOf(type) !== -1;
+        if (key.indexOf('hero_slide_') === 0) show = false;
+        slot.hidden = !show;
+      });
+    }
+
+    function updatePageFields() {
+      var type = selectedPageType();
+      var fieldRules = {
+        city: ['city', 'service_city'],
+        state: ['city', 'service_city'],
+        service: ['home', 'service', 'city', 'service_city', 'ads'],
+        main_offer: ['home', 'service', 'service_city', 'ads'],
+        secondary_cta_text: ['home', 'service', 'city', 'service_city', 'about']
+      };
+      Object.keys(fieldRules).forEach(function(name) {
+        var field = form.querySelector('[name="' + name + '"]');
+        if (field && field.closest('label')) field.closest('label').hidden = fieldRules[name].indexOf(type) === -1;
+      });
+    }
+
+    function validateStep() {
+      if (currentStep === 1) {
+        var client = form.querySelector('[name="agent_key_id"]');
+        if (client && !client.value) {
+          client.focus();
+          client.reportValidity();
+          return false;
+        }
+      }
+      return true;
+    }
+
+    function summaryValue(name, fallback) {
+      var field = form.querySelector('[name="' + name + '"]');
+      return field && field.value.trim() ? field.value.trim() : fallback;
+    }
+
+    function buildSummary() {
+      var summary = form.querySelector('[data-wnq-summary]');
+      if (!summary) return;
+      var client = form.querySelector('[name="agent_key_id"]');
+      var pageType = form.querySelector('input[name="page_type"]:checked');
+      var uploads = Array.prototype.slice.call(form.querySelectorAll('[data-wnq-image-input]')).filter(function(input) { return input.files && input.files.length; }).map(function(input) { return input.closest('[data-image-slot]').querySelector('strong').textContent; });
+      var rows = [
+        ['Client site', client && client.selectedIndex > 0 ? client.options[client.selectedIndex].text : 'Not selected'],
+        ['Page type', pageType ? pageType.closest('label').querySelector('strong').textContent : 'Home Page'],
+        ['Page title', summaryValue('page_title', 'Uses main headline')],
+        ['Primary service', summaryValue('service', 'Not entered')],
+        ['Target city', summaryValue('city', 'Not entered')],
+        ['Selected sections', selectedSections().join(', ') || 'No sections selected'],
+        ['Uploaded images', uploads.join(', ') || 'No images uploaded'],
+        ['CTA text', summaryValue('primary_cta_text', 'Not entered')],
+        ['SEO title', summaryValue('title_tag', 'Uses page title')],
+        ['Meta description', summaryValue('meta_description', 'Not entered')]
+      ];
+      summary.innerHTML = rows.map(function(row) {
+        return '<div><span>' + row[0] + '</span><strong>' + row[1].replace(/[&<>"']/g, function(char) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[char]; }) + '</strong></div>';
+      }).join('');
+    }
+
+    function populateAdvancedPayload() {
+      var textarea = form.querySelector('[name="variables_json"]');
+      if (!textarea || (textarea.value.trim() && !advancedPayloadGenerated)) return;
+      var payload = {};
+      form.querySelectorAll('.wnq-ai-simple-fields input, .wnq-ai-simple-fields textarea, input[name="page_type"]:checked').forEach(function(field) {
+        if (field.name && field.value) payload[field.name] = field.value;
+      });
+      textarea.value = JSON.stringify(payload, null, 2);
+      advancedPayloadGenerated = true;
+    }
+
+    function showStep(step) {
+      currentStep = Math.max(1, Math.min(maxStep, step));
+      form.querySelectorAll('[data-wnq-step]').forEach(function(panel) {
+        var active = parseInt(panel.getAttribute('data-wnq-step'), 10) === currentStep;
+        panel.hidden = !active;
+        panel.classList.toggle('is-active', active);
+      });
+      form.querySelectorAll('[data-wnq-step-nav]').forEach(function(button) {
+        var buttonStep = parseInt(button.getAttribute('data-wnq-step-nav'), 10);
+        button.classList.toggle('is-active', buttonStep === currentStep);
+        button.classList.toggle('is-complete', buttonStep < currentStep);
+      });
+      prevButton.hidden = currentStep === 1 || currentStep === 6;
+      nextButton.hidden = currentStep === 6;
+      if (currentStep === 5) updateImageSlots();
+      if (currentStep === 3) updatePageFields();
+      if (currentStep === 6) buildSummary();
+    }
+
+    form.querySelectorAll('[data-wnq-step-nav]').forEach(function(button) {
+      button.addEventListener('click', function() {
+        var target = parseInt(button.getAttribute('data-wnq-step-nav'), 10);
+        if (target <= currentStep || validateStep()) showStep(target);
+      });
+    });
+    form.querySelectorAll('[data-wnq-go-step]').forEach(function(button) {
+      button.addEventListener('click', function() { showStep(parseInt(button.getAttribute('data-wnq-go-step'), 10)); });
+    });
+    nextButton.addEventListener('click', function() { if (validateStep()) showStep(currentStep + 1); });
+    prevButton.addEventListener('click', function() { showStep(currentStep - 1); });
+    form.querySelectorAll('input[name="page_type"], .wnq-ai-section-card input').forEach(function(input) {
+      input.addEventListener('change', function() {
+        updateImageSlots();
+        updatePageFields();
+      });
+    });
+    var clientSelect = form.querySelector('[name="agent_key_id"]');
+    if (clientSelect) {
+      clientSelect.addEventListener('change', function() {
+        var option = clientSelect.options[clientSelect.selectedIndex];
+        var autofill = {
+          business_name: option ? option.getAttribute('data-client-name') : '',
+          phone_number: option ? option.getAttribute('data-client-phone') : '',
+          website_url: option ? option.getAttribute('data-client-website') : '',
+          service: option ? option.getAttribute('data-client-services') : ''
+        };
+        Object.keys(autofill).forEach(function(name) {
+          var field = form.querySelector('[name="' + name + '"]');
+          if (field && !field.value && autofill[name]) field.value = autofill[name];
+        });
+        if (advancedPayloadGenerated) populateAdvancedPayload();
+      });
+    }
+    form.querySelectorAll('[data-wnq-image-input]').forEach(function(input) {
+      function updatePreview() {
+        var preview = input.closest('.wnq-ai-upload-box').querySelector('.wnq-ai-upload-preview');
+        if (!input.files || !input.files[0]) return;
+        var reader = new FileReader();
+        reader.onload = function(event) {
+          preview.style.backgroundImage = 'url("' + event.target.result + '")';
+          preview.classList.add('has-image');
+          preview.textContent = '';
+        };
+        reader.readAsDataURL(input.files[0]);
+      }
+      input.addEventListener('change', updatePreview);
+      var box = input.closest('.wnq-ai-upload-box');
+      box.addEventListener('dragover', function(event) { event.preventDefault(); box.classList.add('is-dragging'); });
+      box.addEventListener('dragleave', function() { box.classList.remove('is-dragging'); });
+      box.addEventListener('drop', function(event) {
+        event.preventDefault();
+        box.classList.remove('is-dragging');
+        if (event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files.length) {
+          input.files = event.dataTransfer.files;
+          updatePreview();
+        }
+      });
+    });
+    document.querySelectorAll('[data-wnq-open-advanced]').forEach(function(button) {
+      button.addEventListener('click', function() {
+        populateAdvancedPayload();
+        advanced.open = true;
+        advanced.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+    advanced.addEventListener('toggle', function() { if (advanced.open) populateAdvancedPayload(); });
+    var advancedPayload = form.querySelector('[name="variables_json"]');
+    if (advancedPayload) advancedPayload.addEventListener('input', function() { advancedPayloadGenerated = false; });
+    form.querySelectorAll('.wnq-ai-simple-fields input, .wnq-ai-simple-fields textarea, input[name="page_type"]').forEach(function(field) {
+      field.addEventListener('input', function() { if (advancedPayloadGenerated) populateAdvancedPayload(); });
+      field.addEventListener('change', function() { if (advancedPayloadGenerated) populateAdvancedPayload(); });
+    });
+    updatePageFields();
+    showStep(1);
   });
 })();
 </script>
@@ -693,6 +902,8 @@ final class AIElementorPageBuilderAdmin
     margin-top: 12px;
   }
   .wnq-ai-builder-page input[type="text"],
+  .wnq-ai-builder-page input[type="url"],
+  .wnq-ai-builder-page input[type="color"],
   .wnq-ai-builder-page input[type="number"],
   .wnq-ai-builder-page select,
   .wnq-ai-builder-page textarea {
@@ -706,6 +917,8 @@ final class AIElementorPageBuilderAdmin
     width: 100%;
   }
   .wnq-ai-builder-page input[type="text"]:focus,
+  .wnq-ai-builder-page input[type="url"]:focus,
+  .wnq-ai-builder-page input[type="color"]:focus,
   .wnq-ai-builder-page input[type="number"]:focus,
   .wnq-ai-builder-page select:focus,
   .wnq-ai-builder-page textarea:focus {
@@ -935,11 +1148,223 @@ final class AIElementorPageBuilderAdmin
     margin-top: 10px;
     width: 100%;
   }
+  .wnq-ai-builder-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .wnq-ai-builder-stats .wnq-ai-stat-title {
+    font-size: 16px;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .wnq-ai-success-state {
+    align-items: flex-start;
+    background: linear-gradient(135deg, rgba(217,190,66,.17), rgba(255,255,255,.04)), #101314;
+    border: 1px solid rgba(217,190,66,.42);
+    border-radius: 18px;
+    color: #f6f2df;
+    display: flex;
+    gap: 18px;
+    margin: 18px 0;
+    padding: 22px;
+  }
+  .wnq-ai-success-state h2 { color: #f6f2df; margin: 2px 0 14px; }
+  .wnq-ai-success-icon {
+    align-items: center;
+    background: #d9be42;
+    border-radius: 50%;
+    color: #161100;
+    display: flex;
+    flex: 0 0 auto;
+    font-size: 24px;
+    font-weight: 900;
+    height: 48px;
+    justify-content: center;
+    width: 48px;
+  }
+  .wnq-ai-success-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 28px;
+    margin: 0;
+  }
+  .wnq-ai-success-meta dt { color: #a6acb3; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+  .wnq-ai-success-meta dd { font-weight: 800; margin: 3px 0 0; }
+  .wnq-ai-success-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0 0; }
+  .wnq-ai-builder-heading {
+    align-items: flex-start;
+    border-bottom: 1px solid rgba(217,190,66,.12);
+    display: flex;
+    gap: 20px;
+    justify-content: space-between;
+    margin-bottom: 18px;
+    padding-bottom: 18px;
+  }
+  .wnq-ai-builder-heading h2 { color: var(--ai-text); font-size: 28px; margin: 0; }
+  .wnq-ai-builder-heading p { color: var(--ai-muted); margin: 7px 0 0; max-width: 720px; }
+  .wnq-ai-wizard-progress {
+    display: grid;
+    gap: 6px;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    margin-bottom: 24px;
+  }
+  .wnq-ai-wizard-progress button {
+    appearance: none;
+    background: rgba(255,255,255,.025);
+    border: 0;
+    border-top: 3px solid rgba(255,255,255,.10);
+    color: var(--ai-muted-2);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 800;
+    padding: 11px 6px 8px;
+    text-align: left;
+  }
+  .wnq-ai-wizard-progress button span {
+    align-items: center;
+    background: rgba(255,255,255,.07);
+    border-radius: 50%;
+    display: inline-flex;
+    height: 22px;
+    justify-content: center;
+    margin-right: 5px;
+    width: 22px;
+  }
+  .wnq-ai-wizard-progress button.is-active { border-color: var(--ai-gold); color: var(--ai-text); }
+  .wnq-ai-wizard-progress button.is-complete { border-color: rgba(217,190,66,.46); color: var(--ai-gold-2); }
+  .wnq-ai-wizard-step {
+    animation: wnqAiPanelIn .16s ease-out;
+    min-height: 420px;
+    padding: 6px 2px;
+  }
+  .wnq-ai-wizard-step[hidden] { display: none !important; }
+  .wnq-ai-step-heading { margin-bottom: 22px; }
+  .wnq-ai-step-heading > span { color: var(--ai-gold-2); font-size: 11px; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+  .wnq-ai-step-heading h3 { color: var(--ai-text); font-size: 25px; margin: 5px 0 6px; }
+  .wnq-ai-step-heading p { color: var(--ai-muted); margin: 0; }
+  .wnq-ai-client-picker {
+    background: var(--ai-panel-2);
+    border: 1px solid var(--ai-line-strong);
+    border-radius: 16px;
+    max-width: 760px;
+    padding: 20px;
+  }
+  .wnq-ai-client-picker select { font-size: 16px; min-height: 52px; }
+  .wnq-ai-autofill-note {
+    align-items: flex-start;
+    background: rgba(217,190,66,.07);
+    border-left: 3px solid var(--ai-gold);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 18px;
+    max-width: 760px;
+    padding: 13px 16px;
+  }
+  .wnq-ai-autofill-note span { color: var(--ai-muted); }
+  .wnq-ai-page-type-grid,
+  .wnq-ai-section-card-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+  .wnq-ai-page-type-grid label,
+  .wnq-ai-section-card {
+    background: var(--ai-panel-2);
+    border: 1px solid rgba(255,255,255,.09);
+    border-radius: 14px;
+    cursor: pointer;
+    display: flex;
+    gap: 12px;
+    min-height: 108px;
+    padding: 16px;
+    transition: border-color .16s ease, background .16s ease, transform .16s ease;
+  }
+  .wnq-ai-page-type-grid label:hover,
+  .wnq-ai-section-card:hover { border-color: var(--ai-line-strong); transform: translateY(-1px); }
+  .wnq-ai-page-type-grid label:has(input:checked),
+  .wnq-ai-section-card:has(input:checked) { background: rgba(217,190,66,.11); border-color: var(--ai-gold); }
+  .wnq-ai-page-type-grid input,
+  .wnq-ai-section-card input { accent-color: var(--ai-gold); margin-top: 3px; }
+  .wnq-ai-page-type-grid span,
+  .wnq-ai-section-card > span { display: grid; gap: 7px; }
+  .wnq-ai-page-type-grid small,
+  .wnq-ai-section-card small { color: var(--ai-muted); line-height: 1.4; }
+  .wnq-ai-section-card.is-unavailable { cursor: default; opacity: .52; }
+  .wnq-ai-section-card-top { align-items: center; display: flex; gap: 8px; justify-content: space-between; }
+  .wnq-ai-section-card-top em {
+    background: rgba(217,190,66,.12);
+    border: 1px solid rgba(217,190,66,.20);
+    border-radius: 999px;
+    color: var(--ai-gold-2);
+    font-size: 10px;
+    font-style: normal;
+    font-weight: 900;
+    padding: 3px 7px;
+    text-transform: uppercase;
+  }
+  .wnq-ai-simple-fields {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .wnq-ai-simple-fields label { display: block; }
+  .wnq-ai-simple-fields .wnq-ai-field-wide { grid-column: span 3; }
+  .wnq-ai-upload-box {
+    align-items: center;
+    border: 1px dashed var(--ai-line-strong) !important;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    min-height: 205px;
+    text-align: center;
+  }
+  .wnq-ai-upload-box[hidden] { display: none !important; }
+  .wnq-ai-upload-box.is-dragging { background: rgba(217,190,66,.10); border-color: var(--ai-gold) !important; }
+  .wnq-ai-upload-preview {
+    align-items: center;
+    background: rgba(217,190,66,.10);
+    background-position: center;
+    background-size: cover;
+    border-radius: 10px;
+    color: var(--ai-gold-2);
+    display: flex;
+    font-size: 32px;
+    height: 100px;
+    justify-content: center;
+    margin-bottom: 10px;
+    width: 100%;
+  }
+  .wnq-ai-upload-preview.has-image { border: 1px solid rgba(217,190,66,.35); }
+  .wnq-ai-upload-box input[type=file] { border: 0; font-size: 11px; padding: 8px 0 0; }
+  .wnq-ai-summary-card {
+    background: var(--ai-panel-2);
+    border: 1px solid var(--ai-line);
+    border-radius: 16px;
+    display: grid;
+    gap: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: hidden;
+  }
+  .wnq-ai-summary-card div { border-bottom: 1px solid rgba(255,255,255,.07); display: grid; gap: 4px; padding: 14px 16px; }
+  .wnq-ai-summary-card div:nth-child(odd) { border-right: 1px solid rgba(255,255,255,.07); }
+  .wnq-ai-summary-card span { color: var(--ai-muted); font-size: 11px; font-weight: 800; text-transform: uppercase; }
+  .wnq-ai-summary-card strong { color: var(--ai-text); }
+  .wnq-ai-confirmation-actions,
+  .wnq-ai-wizard-actions { display: flex; gap: 10px; justify-content: space-between; margin-top: 20px; }
+  .wnq-ai-advanced-mode { margin-top: 28px; }
+  .wnq-ai-advanced-mode > summary { background: rgba(0,0,0,.20); }
+  .wnq-ai-advanced-mode > summary span { display: grid; gap: 3px; }
+  .wnq-ai-advanced-mode > summary small { color: var(--ai-muted); }
+  .wnq-ai-advanced-body { padding: 16px; }
   @media (max-width: 1180px) {
     .wnq-ai-builder-hero,
     .wnq-ai-workflow-grid {
       grid-template-columns: 1fr;
     }
+    .wnq-ai-simple-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .wnq-ai-simple-fields .wnq-ai-field-wide { grid-column: span 2; }
   }
   @media (max-width: 782px) {
     .wnq-ai-builder-page {
@@ -957,6 +1382,14 @@ final class AIElementorPageBuilderAdmin
       grid-template-columns: 1fr;
       position: static;
     }
+    .wnq-ai-builder-heading,
+    .wnq-ai-success-state { display: grid; }
+    .wnq-ai-wizard-progress { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .wnq-ai-wizard-step { min-height: 0; }
+    .wnq-ai-simple-fields,
+    .wnq-ai-summary-card { grid-template-columns: 1fr; }
+    .wnq-ai-simple-fields .wnq-ai-field-wide { grid-column: auto; }
+    .wnq-ai-summary-card div:nth-child(odd) { border-right: 0; }
   }
 </style>
         <?php
@@ -975,11 +1408,14 @@ final class AIElementorPageBuilderAdmin
             : [ElementorSectionLibrary::LOCAL_SERVICE_HERO];
         $section_template_keys = array_values(array_filter($section_template_keys));
         $template_json = '';
-        $variables_json = self::readTextInputOrFile('variables_json', 'variables_json_file');
-        $variables = json_decode(trim($variables_json), true);
-
-        if (!is_array($variables)) {
-            self::redirectWithError('Invalid variable JSON: ' . json_last_error_msg());
+        $variables_json = trim(self::readTextInputOrFile('variables_json', 'variables_json_file'));
+        $variables = self::simpleModeVariables();
+        if ($variables_json !== '') {
+            $advanced_variables = json_decode($variables_json, true);
+            if (!is_array($advanced_variables)) {
+                self::redirectWithError('Invalid variable JSON: ' . json_last_error_msg());
+            }
+            $variables = array_merge($variables, $advanced_variables);
         }
 
         if ($use_custom_template) {
@@ -1024,6 +1460,7 @@ final class AIElementorPageBuilderAdmin
         }
 
         set_transient(self::resultTransientKey(), $result, 10 * MINUTE_IN_SECONDS);
+        self::recordGeneratedDraft($result);
 
         wp_safe_redirect(add_query_arg([
             'page'    => 'wnq-seo-hub-ai-elementor',
@@ -1217,6 +1654,140 @@ final class AIElementorPageBuilderAdmin
     private static function aiPayloadTransientKey(): string
     {
         return 'wnq_ai_elementor_payload_' . get_current_user_id();
+    }
+
+    private static function simpleModeVariables(): array
+    {
+        $text_fields = [
+            'page_type', 'page_title', 'business_name', 'service', 'city', 'state',
+            'h1', 'hero_subheadline', 'primary_cta_text', 'secondary_cta_text',
+            'phone_number', 'website_url', 'main_offer', 'accent_color', 'hero_background_color',
+            'tone_of_voice', 'title_tag', 'primary_keyword',
+        ];
+        $textarea_fields = ['short_description', 'meta_description'];
+        $variables = [];
+
+        foreach ($text_fields as $field) {
+            $variables[$field] = sanitize_text_field(wp_unslash($_POST[$field] ?? ''));
+        }
+        foreach ($textarea_fields as $field) {
+            $variables[$field] = sanitize_textarea_field(wp_unslash($_POST[$field] ?? ''));
+        }
+        $variables['page_type'] = array_key_exists($variables['page_type'], self::pageTypes()) ? $variables['page_type'] : 'custom';
+        $variables['website_url'] = esc_url_raw((string)$variables['website_url']);
+        $variables['accent_color'] = sanitize_hex_color((string)$variables['accent_color']) ?: '';
+        $variables['hero_background_color'] = sanitize_hex_color((string)$variables['hero_background_color']) ?: '';
+
+        if ($variables['primary_keyword'] === '') {
+            $variables['primary_keyword'] = trim($variables['service'] . ' ' . $variables['city']);
+        }
+        if ($variables['h1'] === '') {
+            $variables['h1'] = $variables['page_title'];
+        }
+        if ($variables['title_tag'] === '') {
+            $variables['title_tag'] = $variables['page_title'];
+        }
+        if ($variables['hero_subheadline'] === '') {
+            $variables['hero_subheadline'] = $variables['short_description'];
+        }
+
+        return array_filter($variables, static fn($value) => $value !== '');
+    }
+
+    private static function recordGeneratedDraft(array $result): void
+    {
+        $stats = get_option('wnq_ai_elementor_builder_stats', []);
+        $month = current_time('Y-m');
+        $stats_month = sanitize_text_field((string)($stats['month'] ?? ''));
+        $stats['month'] = $month;
+        $stats['month_count'] = $stats_month === $month ? absint($stats['month_count'] ?? 0) + 1 : 1;
+        $stats['last_title'] = sanitize_text_field((string)($result['post_title'] ?? 'Elementor Draft'));
+        $stats['last_generated_at'] = current_time('mysql');
+        update_option('wnq_ai_elementor_builder_stats', $stats, false);
+    }
+
+    private static function pageTypes(): array
+    {
+        return [
+            'home'         => ['label' => 'Home Page', 'description' => 'Primary brand and conversion page'],
+            'service'      => ['label' => 'Service Page', 'description' => 'Focused page for one service'],
+            'city'         => ['label' => 'City Page', 'description' => 'SEO page for one service area'],
+            'service_city' => ['label' => 'Service + City Page', 'description' => 'Local SEO service landing page'],
+            'ads'          => ['label' => 'Google Ads Landing Page', 'description' => 'Focused campaign conversion page'],
+            'about'        => ['label' => 'About Page', 'description' => 'Company story, trust, and team'],
+            'contact'      => ['label' => 'Contact Page', 'description' => 'Calls, forms, and location details'],
+            'custom'       => ['label' => 'Custom Page', 'description' => 'Start with your own structure'],
+        ];
+    }
+
+    private static function renderSimpleFields(): void
+    {
+        $fields = [
+            ['page_title', 'Page Title', 'text', 'Plumbing Services in Orlando'],
+            ['business_name', 'Business Name', 'text', 'PrimeFlow Plumbing'],
+            ['service', 'Primary Service', 'text', 'Emergency Plumbing'],
+            ['city', 'Target City', 'text', 'Orlando'],
+            ['state', 'State', 'text', 'FL'],
+            ['h1', 'Main Headline', 'text', 'Plumbing Done Right.'],
+            ['hero_subheadline', 'Subheadline', 'text', 'Fast. Reliable. Professional.'],
+            ['primary_cta_text', 'CTA Button Text', 'text', 'Schedule Service'],
+            ['secondary_cta_text', 'Secondary CTA Button Text', 'text', 'View Services'],
+            ['phone_number', 'Phone Number', 'text', '(555) 123-4567'],
+            ['website_url', 'Website URL', 'url', 'https://example.com'],
+            ['main_offer', 'Main Offer', 'text', 'Same-day service'],
+            ['accent_color', 'Primary Brand Color', 'color', '#d9be42'],
+            ['hero_background_color', 'Secondary Brand Color', 'color', '#07131c'],
+            ['tone_of_voice', 'Tone of Voice', 'text', 'Professional, clear, conversion-focused'],
+            ['title_tag', 'SEO Title', 'text', 'Emergency Plumber in Orlando | PrimeFlow'],
+            ['primary_keyword', 'Primary SEO Keyword', 'text', 'emergency plumber Orlando'],
+        ];
+
+        foreach ($fields as [$name, $label, $type, $placeholder]) {
+            $value = $type === 'color' ? $placeholder : '';
+            echo '<label><strong>' . esc_html($label) . '</strong><input type="' . esc_attr($type) . '" name="' . esc_attr($name) . '" placeholder="' . esc_attr($placeholder) . '" value="' . esc_attr($value) . '" data-wnq-field-label="' . esc_attr($label) . '"></label>';
+        }
+        echo '<label class="wnq-ai-field-wide"><strong>Short Description</strong><textarea name="short_description" rows="4" placeholder="Briefly describe the business, service, and value proposition." data-wnq-field-label="Short Description"></textarea></label>';
+        echo '<label class="wnq-ai-field-wide"><strong>Meta Description</strong><textarea name="meta_description" rows="3" placeholder="Search-friendly summary for the page." data-wnq-field-label="Meta Description"></textarea></label>';
+    }
+
+    private static function renderSimpleSectionCards(array $templates): void
+    {
+        $section_cards = [
+            'hero' => ['Hero', 'Headline, offer, background image, and primary CTA', 'Recommended'],
+            'trust' => ['Trust Badges', 'Licenses, guarantees, certifications, or proof points', 'Recommended'],
+            'services' => ['Services', 'Scannable overview of core services', 'Recommended'],
+            'about' => ['About', 'Company story and differentiators', ''],
+            'process' => ['Process', 'Simple step-by-step customer journey', ''],
+            'gallery' => ['Gallery', 'Project, team, or service imagery', ''],
+            'reviews' => ['Reviews', 'Customer testimonials and ratings', 'Recommended'],
+            'faq' => ['FAQ', 'Common questions and helpful answers', 'Recommended'],
+            'cta' => ['Final CTA', 'Closing offer and action prompt', 'Recommended'],
+            'contact' => ['Contact Form', 'Lead form and contact details', ''],
+        ];
+        $template_by_category = [];
+        foreach ($templates as $key => $template) {
+            $category = self::templateCategoryKey((string)($template['category'] ?? ''), (string)$key, (string)($template['label'] ?? ''), (string)($template['description'] ?? ''));
+            $template_by_category[$category] ??= (string)$key;
+        }
+        $template_by_category['services'] ??= $template_by_category['content'] ?? '';
+        $template_by_category['about'] ??= $template_by_category['content'] ?? '';
+
+        echo '<div class="wnq-ai-section-card-grid">';
+        foreach ($section_cards as $category => [$label, $description, $badge]) {
+            $template_key = $template_by_category[$category] ?? '';
+            $available = $template_key !== '';
+            $recommended = $badge !== '' && $available;
+            echo '<label class="wnq-ai-section-card' . ($available ? '' : ' is-unavailable') . '">';
+            echo '<input type="checkbox" name="section_template_keys[]" value="' . esc_attr($template_key) . '"' . checked($recommended, true, false) . ($available ? '' : ' disabled') . '>';
+            echo '<span><span class="wnq-ai-section-card-top"><strong>' . esc_html($label) . '</strong>';
+            if ($badge !== '') {
+                echo '<em>' . esc_html($available ? $badge : 'Template needed') . '</em>';
+            } elseif (!$available) {
+                echo '<em>Template needed</em>';
+            }
+            echo '</span><small>' . esc_html($description) . '</small><small>' . esc_html($available ? 'Reusable Elementor template' : 'Add this section in Template Library') . '</small></span></label>';
+        }
+        echo '</div>';
     }
 
     private static function templateCategoryLabels(): array
@@ -1422,13 +1993,27 @@ final class AIElementorPageBuilderAdmin
 
     private static function connectedAgents(): array
     {
-        $client_labels = [];
+        $client_profiles = [];
         foreach (Client::getAll() as $client) {
             $client_id = (string)($client['client_id'] ?? '');
             if ($client_id === '') {
                 continue;
             }
-            $client_labels[$client_id] = $client['company'] ?: $client['name'] ?: $client_id;
+            $services = $client['active_services'] ?? '';
+            if (is_array($services)) {
+                $services = implode(', ', array_map('sanitize_text_field', $services));
+            } elseif (is_string($services) && $services !== '') {
+                $decoded_services = json_decode($services, true);
+                if (is_array($decoded_services)) {
+                    $services = implode(', ', array_map('sanitize_text_field', $decoded_services));
+                }
+            }
+            $client_profiles[$client_id] = [
+                'label'    => $client['company'] ?: $client['name'] ?: $client_id,
+                'phone'    => sanitize_text_field((string)($client['phone'] ?? '')),
+                'website'  => esc_url_raw((string)($client['website'] ?? '')),
+                'services' => sanitize_text_field((string)$services),
+            ];
         }
 
         $agents = [];
@@ -1437,7 +2022,11 @@ final class AIElementorPageBuilderAdmin
                 continue;
             }
             $client_id = (string)($agent['client_id'] ?? '');
-            $agent['client_label'] = $client_labels[$client_id] ?? $client_id;
+            $profile = $client_profiles[$client_id] ?? [];
+            $agent['client_label'] = $profile['label'] ?? $client_id;
+            $agent['client_phone'] = $profile['phone'] ?? '';
+            $agent['client_website'] = $profile['website'] ?? '';
+            $agent['client_services'] = $profile['services'] ?? '';
             $agents[] = $agent;
         }
 
@@ -1454,11 +2043,18 @@ final class AIElementorPageBuilderAdmin
     private static function imageUploadFields(): array
     {
         return [
-            'hero_background_image_url' => 'Hero background image',
-            'hero_slide_1_url'          => 'Hero slide 1',
-            'hero_slide_2_url'          => 'Hero slide 2',
-            'hero_slide_3_url'          => 'Hero slide 3',
-            'content_image_url'         => 'Content section image',
+            'logo_image_url'            => 'Logo',
+            'hero_background_image_url' => 'Hero Background',
+            'content_image_url'         => 'Main Service Image',
+            'gallery_image_1_url'       => 'Gallery Image 1',
+            'gallery_image_2_url'       => 'Gallery Image 2',
+            'gallery_image_3_url'       => 'Gallery Image 3',
+            'before_image_url'          => 'Before Image',
+            'after_image_url'           => 'After Image',
+            'featured_image_url'        => 'Featured Image',
+            'hero_slide_1_url'          => 'Hero Slide 1',
+            'hero_slide_2_url'          => 'Hero Slide 2',
+            'hero_slide_3_url'          => 'Hero Slide 3',
         ];
     }
 
