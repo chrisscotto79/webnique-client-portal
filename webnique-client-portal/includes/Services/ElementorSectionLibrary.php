@@ -118,6 +118,42 @@ final class ElementorSectionLibrary
         return $defaults;
     }
 
+    public static function writingContextFor(array $keys): string
+    {
+        $choices = self::templates();
+        $sections = [];
+        $position = 1;
+
+        foreach ($keys as $key) {
+            $key = sanitize_key((string)$key);
+            $template = self::template($key);
+            if (!$template) {
+                continue;
+            }
+
+            $choice = (array)($choices[$key] ?? []);
+            $label = trim((string)($choice['label'] ?? $template['title'] ?? $key));
+            $category = trim((string)($choice['category'] ?? 'Custom'));
+            $description = trim((string)($choice['description'] ?? ''));
+            $variables = class_exists(ElementorTemplateLibrary::class)
+                ? ElementorTemplateLibrary::scanVariables($template)
+                : [];
+
+            $lines = [
+                sprintf('%d. %s', $position, $label !== '' ? $label : $key),
+                '   Category: ' . ($category !== '' ? $category : 'Custom'),
+            ];
+            if ($description !== '') {
+                $lines[] = '   Purpose: ' . $description;
+            }
+            $lines[] = '   Variables: ' . ($variables ? implode(', ', $variables) : 'None');
+            $sections[] = implode("\n", $lines);
+            $position++;
+        }
+
+        return $sections ? implode("\n\n", $sections) : 'No section metadata available.';
+    }
+
     public static function exampleVariables(string $key = self::LOCAL_SERVICE_HERO): array
     {
         if ($key === self::CONTENT_IMAGE) {

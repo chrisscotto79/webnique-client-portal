@@ -200,6 +200,7 @@ final class AIElementorPageBuilderAdmin
             <option value="<?php echo esc_attr($category_label); ?>" <?php selected($category_key, 'custom'); ?>><?php echo esc_html($category_label); ?></option>
           <?php endforeach; ?>
         </select>
+        <span class="description">The category tells the AI what kind of copy this section needs.</span>
       </label>
       <label>
         <strong>Theme</strong>
@@ -215,6 +216,7 @@ final class AIElementorPageBuilderAdmin
     <label class="wnq-ai-template-description">
       <strong>Description</strong>
       <input type="text" name="template_description" placeholder="Short note about when to use this section">
+      <span class="description">Describe the section's purpose so the AI writes copy that fits it.</span>
     </label>
 
     <div class="wnq-ai-elementor-grid">
@@ -1575,6 +1577,7 @@ final class AIElementorPageBuilderAdmin
             'page_goal'       => sanitize_text_field(wp_unslash($_POST['ai_page_goal'] ?? '')),
             'tone'            => sanitize_text_field(wp_unslash($_POST['ai_tone'] ?? 'professional, clear, conversion-focused')),
             'theme_style'     => sanitize_text_field(wp_unslash($_POST['ai_theme_style'] ?? '')),
+            'section_context' => ElementorSectionLibrary::writingContextFor($keys),
             'variables'       => implode("\n", array_map(static fn($key) => '- ' . $key, $variables)),
             'image_variables' => $image_variables ? implode("\n", array_map(static fn($key) => '- ' . $key, $image_variables)) : 'None',
         ], '', [

@@ -398,6 +398,9 @@ Page Goal: {page_goal}
 Tone: {tone}
 Theme Style: {theme_style}
 
+Selected Section Blueprint:
+{section_context}
+
 Template Variables To Fill:
 {variables}
 
@@ -407,6 +410,14 @@ Image URL Variables:
 Rules:
 - Return ONLY one valid JSON object. No markdown, no code fences, no comments.
 - Include every variable listed in Template Variables To Fill.
+- Use the Selected Section Blueprint as the writing plan. Match each variable's copy to the section category, label, purpose, and position where it appears.
+- Do not write generic page copy into every section. Each section must perform its labeled job.
+- For FAQ sections, write useful service- and location-relevant questions with direct answers. Question variables must be questions and answer variables must answer them.
+- For hero sections, write a clear primary headline, supporting value proposition, and focused CTA copy.
+- For services sections, describe distinct relevant services and customer outcomes.
+- For process sections, write sequential steps in the order a customer would experience them.
+- For CTA sections, write concise action-oriented copy that supports the page goal.
+- For reviews or testimonial sections, never invent customer quotes, names, ratings, or claims. Use neutral trust copy or empty strings when real review content is unavailable.
 - Keep headings direct and conversion-focused.
 - Write natural, human service-business copy.
 - Do not invent phone numbers, addresses, prices, awards, reviews, licenses, or guarantees.
@@ -476,6 +487,15 @@ PROMPT,
         $template = self::getTemplate($template_key);
         if (!$template) {
             return ['success' => false, 'error' => "Unknown template: $template_key", 'content' => ''];
+        }
+        if (
+            $template_key === 'elementor_variable_payload'
+            && !empty($vars['section_context'])
+            && strpos($template, '{section_context}') === false
+        ) {
+            $template .= "\n\nSelected Section Blueprint:\n{section_context}\n\n"
+                . "Match every generated value to its section label, category, purpose, and variables. "
+                . "FAQ sections must contain relevant questions and direct answers; other sections must perform their labeled role.";
         }
         $prompt = self::interpolate($template, $vars);
 
