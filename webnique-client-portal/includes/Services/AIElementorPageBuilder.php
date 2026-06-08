@@ -86,7 +86,7 @@ final class AIElementorPageBuilder
             return $built;
         }
 
-        return self::pushToAgent($agent, [
+        $result = self::pushToAgent($agent, [
             'title'             => $built['title'],
             'slug'              => $built['slug'],
             'post_content'      => $built['post_content'],
@@ -98,6 +98,12 @@ final class AIElementorPageBuilder
             'focus_keyword'     => $built['focus_keyword'],
             'featured_image_id' => absint($options['featured_image_id'] ?? $built['variables']['featured_image_id'] ?? 0),
         ]);
+
+        if (!empty($result['success'])) {
+            $result['post_title'] = $built['title'];
+        }
+
+        return $result;
     }
 
     private static function buildPagePayload(string $template_json, array $variables, array $options = []): array
