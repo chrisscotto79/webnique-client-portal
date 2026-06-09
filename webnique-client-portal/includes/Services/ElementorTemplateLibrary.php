@@ -41,6 +41,7 @@ final class ElementorTemplateLibrary
                 'theme'       => $theme,
                 'variables'   => (array)($template['variables'] ?? []),
                 'image_fields'=> (array)($template['image_fields'] ?? []),
+                'requires_elementor_pro' => true,
             ];
         }
 
@@ -108,6 +109,7 @@ final class ElementorTemplateLibrary
             'description'  => $description,
             'variables'    => $variables,
             'image_fields' => $image_fields,
+            'requires_elementor_pro' => true,
             'template'     => $normalized,
             'created_at'   => $now,
             'updated_at'   => $now,

@@ -299,11 +299,12 @@ final class AIElementorPageBuilderAdmin
 
       <section class="wnq-ai-tab-panel <?php echo $active_tab === 'draft' ? 'is-active' : ''; ?>" id="wnq-ai-tab-draft" data-wnq-ai-panel="draft" role="tabpanel" <?php echo $active_tab === 'draft' ? '' : 'hidden'; ?>>
         <div class="wnq-hub-section wnq-ai-card wnq-ai-card-wide" id="wnq-draft-builder">
-  <div class="wnq-ai-builder-heading">
+    <div class="wnq-ai-builder-heading">
     <div>
       <span class="wnq-ai-eyebrow">Simple Mode</span>
       <h2>Create a client page draft</h2>
       <p>Move through the guided steps. The builder converts your choices into the Elementor template payload behind the scenes.</p>
+      <p><strong>Requirements:</strong> Every generated page uses Elementor Pro and automatically includes a top banner. Contact pages also include the required iframe contact section.</p>
     </div>
     <button type="button" class="wnq-btn" data-wnq-open-advanced>Advanced Mode</button>
   </div>
@@ -517,6 +518,14 @@ final class AIElementorPageBuilderAdmin
         var field = form.querySelector('[name="' + name + '"]');
         if (field && field.closest('label')) field.closest('label').hidden = fieldRules[name].indexOf(type) === -1;
       });
+      form.querySelectorAll('[data-contact-only]').forEach(function(field) {
+        field.hidden = type !== 'contact';
+      });
+    }
+
+    function updateRequiredSections() {
+      var contact = form.querySelector('.wnq-ai-section-card input[data-section-category="contact"]');
+      if (contact && selectedPageType() === 'contact') contact.checked = true;
     }
 
     function validateStep() {
@@ -525,6 +534,16 @@ final class AIElementorPageBuilderAdmin
         if (client && !client.value) {
           client.focus();
           client.reportValidity();
+          return false;
+        }
+      }
+      if (currentStep === 3 && selectedPageType() === 'contact') {
+        var iframe = form.querySelector('[name="contact_form_iframe"]');
+        if (iframe && !/<iframe[\s>]/i.test(iframe.value.trim())) {
+          iframe.setCustomValidity('Contact pages require a contact form iframe embed code.');
+          iframe.reportValidity();
+          iframe.focus();
+          iframe.setCustomValidity('');
           return false;
         }
       }
@@ -549,6 +568,7 @@ final class AIElementorPageBuilderAdmin
         ['Primary service', summaryValue('service', 'Not entered')],
         ['Target city', summaryValue('city', 'Not entered')],
         ['Selected sections', selectedSections().join(', ') || 'No sections selected'],
+        ['Required structure', selectedPageType() === 'contact' ? 'Top banner, Elementor Pro, contact iframe section' : 'Top banner and Elementor Pro'],
         ['Uploaded images', uploads.join(', ') || 'No images uploaded'],
         ['CTA text', summaryValue('primary_cta_text', 'Not entered')],
         ['SEO title', summaryValue('title_tag', 'Uses page title')],
@@ -604,6 +624,7 @@ final class AIElementorPageBuilderAdmin
       input.addEventListener('change', function() {
         updateImageSlots();
         updatePageFields();
+        updateRequiredSections();
       });
     });
     var clientSelect = form.querySelector('[name="agent_key_id"]');
@@ -1463,6 +1484,21 @@ final class AIElementorPageBuilderAdmin
             }
             $variables = array_merge($variables, $advanced_variables);
         }
+        $required_defaults = ElementorSectionLibrary::defaults(ElementorSectionLibrary::TOP_BANNER);
+        if (($variables['page_type'] ?? '') === 'contact') {
+            $required_defaults = array_merge(
+                $required_defaults,
+                ElementorSectionLibrary::defaults(ElementorSectionLibrary::CONTACT_IFRAME)
+            );
+        }
+        $variables = array_merge($required_defaults, $variables);
+        $contact_iframe = $variables['contact_form_iframe'] ?? '';
+        if (
+            ($variables['page_type'] ?? '') === 'contact'
+            && (!is_string($contact_iframe) || !preg_match('/<iframe[\s>]/i', $contact_iframe))
+        ) {
+            self::redirectWithError('Contact pages require a contact form iframe embed code.');
+        }
 
         if ($use_custom_template) {
             $template_json = self::readTextInputOrFile('elementor_template', 'elementor_template_file');
@@ -1736,7 +1772,7 @@ final class AIElementorPageBuilderAdmin
         $text_fields = [
             'page_type', 'page_title', 'business_name', 'service', 'city', 'state',
             'h1', 'hero_subheadline', 'primary_cta_text', 'secondary_cta_text',
-            'phone_number', 'website_url', 'main_offer', 'accent_color', 'hero_background_color',
+            'phone_number', 'business_email', 'business_address', 'website_url', 'main_offer', 'accent_color', 'hero_background_color',
             'tone_of_voice', 'title_tag', 'primary_keyword',
         ];
         $textarea_fields = ['short_description', 'meta_description'];
@@ -1748,6 +1784,8 @@ final class AIElementorPageBuilderAdmin
         foreach ($textarea_fields as $field) {
             $variables[$field] = sanitize_textarea_field(wp_unslash($_POST[$field] ?? ''));
         }
+        $variables['business_email'] = sanitize_email((string)$variables['business_email']);
+        $variables['contact_form_iframe'] = self::sanitizeContactIframe(wp_unslash((string)($_POST['contact_form_iframe'] ?? '')));
         $variables['page_type'] = array_key_exists($variables['page_type'], self::pageTypes()) ? $variables['page_type'] : 'custom';
         $variables['website_url'] = esc_url_raw((string)$variables['website_url']);
         $variables['accent_color'] = sanitize_hex_color((string)$variables['accent_color']) ?: '';
@@ -1767,6 +1805,30 @@ final class AIElementorPageBuilderAdmin
         }
 
         return array_filter($variables, static fn($value) => $value !== '');
+    }
+
+    private static function sanitizeContactIframe(string $value): string
+    {
+        return wp_kses($value, [
+            'iframe' => [
+                'src'             => true,
+                'title'           => true,
+                'id'              => true,
+                'class'           => true,
+                'name'            => true,
+                'width'           => true,
+                'height'          => true,
+                'style'           => true,
+                'frameborder'     => true,
+                'scrolling'       => true,
+                'allowtransparency' => true,
+                'allow'           => true,
+                'allowfullscreen' => true,
+                'loading'         => true,
+                'referrerpolicy'  => true,
+                'sandbox'         => true,
+            ],
+        ]);
     }
 
     private static function recordGeneratedDraft(array $result): void
@@ -1808,6 +1870,8 @@ final class AIElementorPageBuilderAdmin
             ['primary_cta_text', 'CTA Button Text', 'text', 'Schedule Service'],
             ['secondary_cta_text', 'Secondary CTA Button Text', 'text', 'View Services'],
             ['phone_number', 'Phone Number', 'text', '(555) 123-4567'],
+            ['business_email', 'Business Email', 'email', 'hello@example.com'],
+            ['business_address', 'Business Address', 'text', '123 Main Street, Orlando, FL'],
             ['website_url', 'Website URL', 'url', 'https://example.com'],
             ['main_offer', 'Main Offer', 'text', 'Same-day service'],
             ['accent_color', 'Primary Brand Color', 'color', '#d9be42'],
@@ -1823,6 +1887,7 @@ final class AIElementorPageBuilderAdmin
         }
         echo '<label class="wnq-ai-field-wide"><strong>Short Description</strong><textarea name="short_description" rows="4" placeholder="Briefly describe the business, service, and value proposition." data-wnq-field-label="Short Description"></textarea></label>';
         echo '<label class="wnq-ai-field-wide"><strong>Meta Description</strong><textarea name="meta_description" rows="3" placeholder="Search-friendly summary for the page." data-wnq-field-label="Meta Description"></textarea></label>';
+        echo '<label class="wnq-ai-field-wide" data-contact-only hidden><strong>Contact Form Iframe</strong><textarea name="contact_form_iframe" rows="5" placeholder=\'<iframe src="https://forms.example.com/contact" title="Contact form"></iframe>\' data-wnq-field-label="Contact Form Iframe"></textarea><span class="description">Required for Contact Pages. Paste the complete iframe embed code.</span></label>';
     }
 
     private static function renderSimpleSectionCards(array $templates): void
@@ -1853,7 +1918,7 @@ final class AIElementorPageBuilderAdmin
             $available = $template_key !== '';
             $recommended = $badge !== '' && $available;
             echo '<label class="wnq-ai-section-card' . ($available ? '' : ' is-unavailable') . '">';
-            echo '<input type="checkbox" name="section_template_keys[]" value="' . esc_attr($template_key) . '"' . checked($recommended, true, false) . ($available ? '' : ' disabled') . '>';
+            echo '<input type="checkbox" name="section_template_keys[]" data-section-category="' . esc_attr($category) . '" value="' . esc_attr($template_key) . '"' . checked($recommended, true, false) . ($available ? '' : ' disabled') . '>';
             echo '<span><span class="wnq-ai-section-card-top"><strong>' . esc_html($label) . '</strong>';
             if ($badge !== '') {
                 echo '<em>' . esc_html($available ? $badge : 'Template needed') . '</em>';
@@ -1868,6 +1933,7 @@ final class AIElementorPageBuilderAdmin
     private static function templateCategoryLabels(): array
     {
         return [
+            'required'=> 'Required Sections',
             'header'  => 'Header Templates',
             'hero'    => 'Hero Templates',
             'content' => 'Content Sections',
@@ -1875,6 +1941,7 @@ final class AIElementorPageBuilderAdmin
             'faq'     => 'FAQ Templates',
             'reviews' => 'Reviews Sections',
             'process' => 'Process Sections',
+            'contact' => 'Contact Sections',
             'footer'  => 'Footer Templates',
             'custom'  => 'Custom / Saved Templates',
             'other'   => 'Other Templates',
@@ -1934,6 +2001,7 @@ final class AIElementorPageBuilderAdmin
         $text = strtolower($category . ' ' . $key . ' ' . $label . ' ' . $description);
 
         $map = [
+            'required'=> ['required'],
             'header'  => ['header', 'nav', 'navigation', 'menu'],
             'hero'    => ['hero', 'banner', 'above fold', 'above_the_fold'],
             'content' => ['content', 'text', 'image', 'two-column', 'two column', 'body'],
@@ -1941,6 +2009,7 @@ final class AIElementorPageBuilderAdmin
             'faq'     => ['faq', 'accordion', 'question'],
             'reviews' => ['review', 'testimonial', 'rating'],
             'process' => ['process', 'steps', 'how it works'],
+            'contact' => ['contact', 'form', 'iframe'],
             'footer'  => ['footer'],
             'custom'  => ['custom', 'saved'],
         ];
@@ -1984,11 +2053,12 @@ final class AIElementorPageBuilderAdmin
             foreach ((array)$group['items'] as $key => $template) {
                 $source = (string)($template['source'] ?? 'built_in');
                 $theme = ucfirst((string)($template['theme'] ?? 'any'));
+                $required = (string)$key === ElementorSectionLibrary::TOP_BANNER;
                 echo '<label class="wnq-ai-section-option">';
-                echo '<input type="checkbox" name="' . esc_attr($field_name) . '[]" value="' . esc_attr((string)$key) . '" ' . checked(in_array((string)$key, $default_keys, true), true, false) . '>';
+                echo '<input type="checkbox" name="' . esc_attr($field_name) . '[]" value="' . esc_attr((string)$key) . '" ' . checked($required || in_array((string)$key, $default_keys, true), true, false) . ($required ? ' disabled' : '') . '>';
                 echo '<span>';
                 echo '<strong>' . esc_html((string)($template['label'] ?? $key)) . '</strong>';
-                echo '<small>' . esc_html(trim($theme . ' / ' . ($source === 'saved' ? 'Saved' : 'Built-in'))) . '</small>';
+                echo '<small>' . esc_html(trim($theme . ' / ' . ($source === 'saved' ? 'Saved' : 'Built-in') . ' / Elementor Pro')) . '</small>';
                 if (!empty($template['description'])) {
                     echo '<small>' . esc_html((string)$template['description']) . '</small>';
                 }
@@ -2027,7 +2097,7 @@ final class AIElementorPageBuilderAdmin
                 echo '<div class="wnq-ai-template-card">';
                 echo '<div>';
                 echo '<strong>' . esc_html((string)($template['name'] ?? $key)) . '</strong>';
-                echo '<span>' . esc_html((string)($template['category'] ?? 'Custom')) . ' / ' . esc_html(ucfirst((string)($template['theme'] ?? 'any'))) . '</span>';
+                echo '<span>' . esc_html((string)($template['category'] ?? 'Custom')) . ' / ' . esc_html(ucfirst((string)($template['theme'] ?? 'any'))) . ' / Elementor Pro</span>';
                 if (!empty($template['description'])) {
                     echo '<p>' . esc_html((string)$template['description']) . '</p>';
                 }
