@@ -524,8 +524,10 @@ final class AIElementorPageBuilderAdmin
     }
 
     function updateRequiredSections() {
-      var contact = form.querySelector('.wnq-ai-section-card input[data-section-category="contact"]');
-      if (contact && selectedPageType() === 'contact') contact.checked = true;
+      form.querySelectorAll('.wnq-ai-section-card input[data-recommended-pages]').forEach(function(input) {
+        var recommended = (input.getAttribute('data-recommended-pages') || '').split(',');
+        input.checked = recommended.indexOf(selectedPageType()) !== -1;
+      });
     }
 
     function validateStep() {
@@ -620,11 +622,17 @@ final class AIElementorPageBuilderAdmin
     });
     nextButton.addEventListener('click', function() { if (validateStep()) showStep(currentStep + 1); });
     prevButton.addEventListener('click', function() { showStep(currentStep - 1); });
-    form.querySelectorAll('input[name="page_type"], .wnq-ai-section-card input').forEach(function(input) {
+    form.querySelectorAll('input[name="page_type"]').forEach(function(input) {
       input.addEventListener('change', function() {
         updateImageSlots();
         updatePageFields();
         updateRequiredSections();
+      });
+    });
+    form.querySelectorAll('.wnq-ai-section-card input').forEach(function(input) {
+      input.addEventListener('change', function() {
+        updateImageSlots();
+        updatePageFields();
       });
     });
     var clientSelect = form.querySelector('[name="agent_key_id"]');
@@ -1893,16 +1901,18 @@ final class AIElementorPageBuilderAdmin
     private static function renderSimpleSectionCards(array $templates): void
     {
         $section_cards = [
-            'hero' => ['Hero', 'Headline, offer, background image, and primary CTA', 'Recommended'],
-            'trust' => ['Trust Badges', 'Licenses, guarantees, certifications, or proof points', 'Recommended'],
-            'services' => ['Services', 'Scannable overview of core services', 'Recommended'],
-            'about' => ['About', 'Company story and differentiators', ''],
-            'process' => ['Process', 'Simple step-by-step customer journey', ''],
-            'gallery' => ['Gallery', 'Project, team, or service imagery', ''],
-            'reviews' => ['Reviews', 'Customer testimonials and ratings', 'Recommended'],
-            'faq' => ['FAQ', 'Common questions and helpful answers', 'Recommended'],
-            'cta' => ['Final CTA', 'Closing offer and action prompt', 'Recommended'],
-            'contact' => ['Contact Form', 'Lead form and contact details', ''],
+            'hero' => ['Hero', 'Headline, offer, background image, and primary CTA', 'Recommended', 'home,service,city,service_city,ads,about,contact'],
+            'trust' => ['Trust Badges', 'Licenses, guarantees, certifications, or proof points', 'Recommended', 'home,service,city,service_city,ads'],
+            'services' => ['Services', 'Scannable overview of core services', 'Recommended', 'home,service,city,service_city'],
+            'about' => ['About', 'Company story and differentiators', '', 'home,about'],
+            'process' => ['Process', 'Simple step-by-step customer journey', '', 'home,service,service_city'],
+            'gallery' => ['Gallery', 'Project, team, or service imagery', '', 'home,service'],
+            'reviews' => ['Reviews', 'Customer testimonials and ratings', 'Recommended', 'home,service,city,service_city'],
+            'faq' => ['FAQ', 'Common questions and helpful answers', 'Recommended', 'home,service,city,service_city,contact'],
+            'cta' => ['Final CTA', 'Closing offer and action prompt', 'Recommended', 'home,service,city,service_city,ads'],
+            'contact_form' => ['Contact Form Alternative', 'Optional alternative contact form and supporting content', '', ''],
+            'contact_details' => ['Contact Details', 'Phone, address, and email cards', 'Contact Page', 'contact'],
+            'map' => ['Location Map', 'Google map showing the business address', 'Home + Contact', 'home,contact'],
         ];
         $template_by_category = [];
         foreach ($templates as $key => $template) {
@@ -1911,14 +1921,15 @@ final class AIElementorPageBuilderAdmin
         }
         $template_by_category['services'] ??= $template_by_category['content'] ?? '';
         $template_by_category['about'] ??= $template_by_category['content'] ?? '';
+        $template_by_category['contact_form'] ??= $template_by_category['contact'] ?? '';
 
         echo '<div class="wnq-ai-section-card-grid">';
-        foreach ($section_cards as $category => [$label, $description, $badge]) {
+        foreach ($section_cards as $category => [$label, $description, $badge, $recommended_pages]) {
             $template_key = $template_by_category[$category] ?? '';
             $available = $template_key !== '';
-            $recommended = $badge !== '' && $available;
+            $recommended = $available && in_array('home', explode(',', $recommended_pages), true);
             echo '<label class="wnq-ai-section-card' . ($available ? '' : ' is-unavailable') . '">';
-            echo '<input type="checkbox" name="section_template_keys[]" data-section-category="' . esc_attr($category) . '" value="' . esc_attr($template_key) . '"' . checked($recommended, true, false) . ($available ? '' : ' disabled') . '>';
+            echo '<input type="checkbox" name="section_template_keys[]" data-section-category="' . esc_attr($category) . '" data-recommended-pages="' . esc_attr($recommended_pages) . '" value="' . esc_attr($template_key) . '"' . checked($recommended, true, false) . ($available ? '' : ' disabled') . '>';
             echo '<span><span class="wnq-ai-section-card-top"><strong>' . esc_html($label) . '</strong>';
             if ($badge !== '') {
                 echo '<em>' . esc_html($available ? $badge : 'Template needed') . '</em>';
@@ -1942,6 +1953,9 @@ final class AIElementorPageBuilderAdmin
             'reviews' => 'Reviews Sections',
             'process' => 'Process Sections',
             'contact' => 'Contact Sections',
+            'contact_form' => 'Contact Form Sections',
+            'contact_details' => 'Contact Detail Sections',
+            'map'     => 'Map Sections',
             'footer'  => 'Footer Templates',
             'custom'  => 'Custom / Saved Templates',
             'other'   => 'Other Templates',
@@ -2009,7 +2023,10 @@ final class AIElementorPageBuilderAdmin
             'faq'     => ['faq', 'accordion', 'question'],
             'reviews' => ['review', 'testimonial', 'rating'],
             'process' => ['process', 'steps', 'how it works'],
-            'contact' => ['contact', 'form', 'iframe'],
+            'contact_details' => ['contact details', 'phone address', 'phone, address'],
+            'contact_form' => ['contact form', 'iframe'],
+            'map'     => ['map', 'location map', 'google maps'],
+            'contact' => ['contact'],
             'footer'  => ['footer'],
             'custom'  => ['custom', 'saved'],
         ];
@@ -2053,12 +2070,13 @@ final class AIElementorPageBuilderAdmin
             foreach ((array)$group['items'] as $key => $template) {
                 $source = (string)($template['source'] ?? 'built_in');
                 $theme = ucfirst((string)($template['theme'] ?? 'any'));
+                $requirements = (string)($template['requirements_label'] ?? 'Elementor Pro');
                 $required = (string)$key === ElementorSectionLibrary::TOP_BANNER;
                 echo '<label class="wnq-ai-section-option">';
                 echo '<input type="checkbox" name="' . esc_attr($field_name) . '[]" value="' . esc_attr((string)$key) . '" ' . checked($required || in_array((string)$key, $default_keys, true), true, false) . ($required ? ' disabled' : '') . '>';
                 echo '<span>';
                 echo '<strong>' . esc_html((string)($template['label'] ?? $key)) . '</strong>';
-                echo '<small>' . esc_html(trim($theme . ' / ' . ($source === 'saved' ? 'Saved' : 'Built-in') . ' / Elementor Pro')) . '</small>';
+                echo '<small>' . esc_html(trim($theme . ' / ' . ($source === 'saved' ? 'Saved' : 'Built-in') . ' / ' . $requirements)) . '</small>';
                 if (!empty($template['description'])) {
                     echo '<small>' . esc_html((string)$template['description']) . '</small>';
                 }
