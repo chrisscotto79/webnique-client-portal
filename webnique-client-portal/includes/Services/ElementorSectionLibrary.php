@@ -21,6 +21,9 @@ final class ElementorSectionLibrary
     public const LOCAL_SERVICE_HERO = 'local_service_hero';
     public const CONTENT_IMAGE = 'content_image';
     public const CONTACT_IFRAME = 'contact_iframe_section_1';
+    public const CONTACT_IFRAME_2 = 'contact_iframe_section_2';
+    public const CONTACT_DETAILS = 'contact_details_section';
+    public const CONTACT_MAP = 'contact_map_section';
 
     public static function templates(): array
     {
@@ -32,6 +35,7 @@ final class ElementorSectionLibrary
                 'theme'       => 'any',
                 'source'      => 'built_in',
                 'requires_elementor_pro' => true,
+                'requirements_label' => 'Elementor Pro',
             ],
             self::LOCAL_SERVICE_HERO => [
                 'label'       => 'Simple Local Hero',
@@ -40,6 +44,7 @@ final class ElementorSectionLibrary
                 'theme'       => 'any',
                 'source'      => 'built_in',
                 'requires_elementor_pro' => true,
+                'requirements_label' => 'Elementor Pro',
             ],
             self::CONTENT_IMAGE => [
                 'label'       => 'Text + CTA + Right Image',
@@ -48,6 +53,7 @@ final class ElementorSectionLibrary
                 'theme'       => 'any',
                 'source'      => 'built_in',
                 'requires_elementor_pro' => true,
+                'requirements_label' => 'Elementor Pro',
             ],
             self::CONTACT_IFRAME => [
                 'label'       => 'Contact Section Template 1',
@@ -56,6 +62,34 @@ final class ElementorSectionLibrary
                 'theme'       => 'brand',
                 'source'      => 'built_in',
                 'requires_elementor_pro' => true,
+                'requirements_label' => 'Elementor Pro',
+            ],
+            self::CONTACT_IFRAME_2 => [
+                'label'       => 'Contact Section Template 2',
+                'description' => 'Contact form, supporting image, and social follow-up section.',
+                'category'    => 'Contact Form',
+                'theme'       => 'brand',
+                'source'      => 'built_in',
+                'requires_elementor_pro' => true,
+                'requirements_label' => 'Elementor Pro + ElementsKit',
+            ],
+            self::CONTACT_DETAILS => [
+                'label'       => 'Contact Details',
+                'description' => 'Phone, business address, and email detail cards.',
+                'category'    => 'Contact Details',
+                'theme'       => 'brand',
+                'source'      => 'built_in',
+                'requires_elementor_pro' => true,
+                'requirements_label' => 'Elementor Pro + ElementsKit',
+            ],
+            self::CONTACT_MAP => [
+                'label'       => 'Contact Location Map',
+                'description' => 'Google map showing the business address. Recommended for Home and Contact pages.',
+                'category'    => 'Map',
+                'theme'       => 'any',
+                'source'      => 'built_in',
+                'requires_elementor_pro' => true,
+                'requirements_label' => 'Elementor Pro',
             ],
         ] + (class_exists(ElementorTemplateLibrary::class) ? ElementorTemplateLibrary::templateChoices() : []);
     }
@@ -71,6 +105,12 @@ final class ElementorSectionLibrary
                 return self::contentImageTemplate();
             case self::CONTACT_IFRAME:
                 return self::contactIframeTemplate();
+            case self::CONTACT_IFRAME_2:
+                return self::contactIframeTemplate2();
+            case self::CONTACT_DETAILS:
+                return self::contactDetailsTemplate();
+            case self::CONTACT_MAP:
+                return self::contactMapTemplate();
             default:
                 return class_exists(ElementorTemplateLibrary::class) ? ElementorTemplateLibrary::template($key) : null;
         }
@@ -164,6 +204,12 @@ final class ElementorSectionLibrary
                 return self::contentImageDefaults();
             case self::CONTACT_IFRAME:
                 return self::contactDefaults();
+            case self::CONTACT_IFRAME_2:
+                return self::contactTemplate2Defaults();
+            case self::CONTACT_DETAILS:
+                return self::contactDetailsDefaults();
+            case self::CONTACT_MAP:
+                return self::contactMapDefaults();
             default:
                 return class_exists(ElementorTemplateLibrary::class) ? ElementorTemplateLibrary::defaults($key) : [];
         }
@@ -326,6 +372,35 @@ final class ElementorSectionLibrary
         ];
     }
 
+    private static function contactTemplate2Defaults(): array
+    {
+        return array_merge(self::contactDefaults(), [
+            'contact_eyebrow'     => 'Contact',
+            'contact_heading'     => 'Connect with us',
+            'contact_intro'       => 'Fill out the form or give us a call to request service, schedule an appointment, or get a quote.',
+            'contact_image_url'   => '',
+            'contact_image_alt'   => '',
+            'social_heading'      => 'Follow Us:',
+            'facebook_url'        => '',
+        ]);
+    }
+
+    private static function contactDetailsDefaults(): array
+    {
+        return [
+            'phone_number'     => '',
+            'business_address' => '',
+            'business_email'   => '',
+        ];
+    }
+
+    private static function contactMapDefaults(): array
+    {
+        return [
+            'business_address' => '',
+        ];
+    }
+
     private static function contentImageDefaults(): array
     {
         return [
@@ -424,6 +499,111 @@ final class ElementorSectionLibrary
         $template['title'] = 'Contact Section Template 1';
 
         return $template;
+    }
+
+    private static function contactIframeTemplate2(): array
+    {
+        $template = self::assetTemplate('contact-section-template-2.json', [
+            'Contact' => '{{contact_eyebrow}}',
+            "Connect with us\n" => '{{contact_heading}}',
+            '<p data-start="762" data-end="938">Fill out the form below or give us a call to request service, schedule an inspection, or get a quote. We respond quickly and provide honest, dependable solutions you can trust.</p>' => '<p>{{contact_intro}}</p>',
+            'https://parrishwelldrillingfl.com/wp-content/uploads/2026/01/608313660_122259822494084097_5054794541996255453_n.jpg' => '{{contact_image_url}}',
+            "Follow Us:\n" => '{{social_heading}}',
+            'https://www.facebook.com/p/Parrish-Well-Drilling-61552522930790/' => '{{facebook_url}}',
+        ], 'contact_form_2');
+        return self::replaceWidgetSetting($template, 'html', 'html', '{{contact_form_iframe}}');
+    }
+
+    private static function contactDetailsTemplate(): array
+    {
+        return self::assetTemplate('contact-details-section.json', [
+            '+1 941-378-4061' => '{{phone_number}}',
+            '941-378-4061' => '{{phone_number}}',
+            '7401 Rim Rd, Sarasota, FL, United States, Florida' => '{{business_address}}',
+            'Office@parrishwell.net' => '{{business_email}}',
+            'Office%40parrishwell.net' => '{{business_email}}',
+        ], 'contact_details');
+    }
+
+    private static function contactMapTemplate(): array
+    {
+        return [
+            'content' => [[
+                'id'       => 'wnqmap01',
+                'settings' => [
+                    '_wnq_section_role' => 'contact_map',
+                    'flex_direction'    => 'column',
+                    'content_width'     => 'full',
+                    'padding'           => ['unit' => 'px', 'top' => '0', 'right' => '0', 'bottom' => '0', 'left' => '0', 'isLinked' => false],
+                ],
+                'elements' => [[
+                    'id'       => 'wnqmap02',
+                    'settings' => [
+                        'address' => '{{business_address}}',
+                        'height'  => ['unit' => 'px', 'size' => 532, 'sizes' => []],
+                    ],
+                    'elements'   => [],
+                    'isInner'    => false,
+                    'widgetType' => 'google_maps',
+                    'elType'     => 'widget',
+                ]],
+                'isInner' => false,
+                'elType'  => 'container',
+            ]],
+            'page_settings' => ['hide_title' => 'yes'],
+            'version'       => '0.4',
+            'title'         => 'Contact Maps Location',
+            'type'          => 'container',
+        ];
+    }
+
+    private static function assetTemplate(string $filename, array $replacements, string $section_role): array
+    {
+        $path = dirname(__DIR__, 2) . '/assets/elementor/' . $filename;
+        $raw = is_readable($path) ? file_get_contents($path) : '';
+        $template = is_string($raw) ? json_decode($raw, true) : null;
+        if (!is_array($template) || empty($template['content']) || !is_array($template['content'])) {
+            return ['content' => [], 'page_settings' => ['hide_title' => 'yes']];
+        }
+
+        $template = self::replaceTextValues($template, $replacements);
+        if (isset($template['content'][0]['settings']) && is_array($template['content'][0]['settings'])) {
+            $template['content'][0]['settings']['_wnq_section_role'] = $section_role;
+        }
+
+        return $template;
+    }
+
+    private static function replaceTextValues($value, array $replacements)
+    {
+        if (is_array($value)) {
+            foreach ($value as $key => $child) {
+                $value[$key] = self::replaceTextValues($child, $replacements);
+            }
+            return $value;
+        }
+        if (!is_string($value)) {
+            return $value;
+        }
+
+        return str_replace(array_keys($replacements), array_values($replacements), $value);
+    }
+
+    private static function replaceWidgetSetting($value, string $widget_type, string $setting, string $replacement)
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+        if (($value['widgetType'] ?? '') === $widget_type && isset($value['settings']) && is_array($value['settings'])) {
+            $value['settings'][$setting] = $replacement;
+        }
+        foreach ($value as $key => $child) {
+            if (is_array($child)) {
+                $value[$key] = self::replaceWidgetSetting($child, $widget_type, $setting, $replacement);
+            }
+        }
+
+        return $value;
     }
 
     private static function replaceExactValues($value, array $replacements)
