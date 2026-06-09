@@ -100,7 +100,17 @@ final class ElementorSectionLibrary
             }
 
             $valid_keys[] = $key;
-            foreach ($template['content'] as $section) {
+            foreach ($template['content'] as $index => $section) {
+                if (
+                    $index === 0
+                    && self::templateProvidesTopBanner($key, $template)
+                    && is_array($section)
+                ) {
+                    $section['settings'] = isset($section['settings']) && is_array($section['settings'])
+                        ? $section['settings']
+                        : [];
+                    $section['settings']['_wnq_required_section'] = 'top_banner';
+                }
                 $content[] = $section;
             }
             if (!empty($template['page_settings']) && is_array($template['page_settings'])) {
@@ -125,7 +135,7 @@ final class ElementorSectionLibrary
     {
         $content = isset($template['content']) && is_array($template['content']) ? $template['content'] : [];
 
-        if (!self::contentHasRequiredSection($content, 'top_banner')) {
+        if (!self::contentHasRequiredSection($content, 'top_banner') && !self::contentStartsWithBanner($content)) {
             $banner = self::topBannerTemplate();
             $content = array_merge((array)($banner['content'] ?? []), $content);
         }
@@ -443,6 +453,33 @@ final class ElementorSectionLibrary
         return false;
     }
 
+    private static function contentStartsWithBanner(array $content): bool
+    {
+        $first = isset($content[0]) && is_array($content[0]) ? $content[0] : [];
+        $settings = isset($first['settings']) && is_array($first['settings']) ? $first['settings'] : [];
+        $title = strtolower((string)($settings['_title'] ?? ''));
+
+        return strpos($title, 'hero') !== false || strpos($title, 'banner') !== false;
+    }
+
+    private static function templateProvidesTopBanner(string $key, array $template): bool
+    {
+        if (in_array($key, [self::TOP_BANNER, self::LOCAL_SERVICE_HERO], true)) {
+            return true;
+        }
+
+        $choices = self::templates();
+        $choice = (array)($choices[$key] ?? []);
+        $text = strtolower(implode(' ', [
+            (string)($choice['category'] ?? ''),
+            (string)($choice['label'] ?? ''),
+            (string)($choice['description'] ?? ''),
+            (string)($template['title'] ?? ''),
+        ]));
+
+        return strpos($text, 'hero') !== false || strpos($text, 'banner') !== false;
+    }
+
     private static function localServiceHeroTemplate(): array
     {
         return [
@@ -450,6 +487,7 @@ final class ElementorSectionLibrary
                 [
                     'id'       => '610dc5e3',
                     'settings' => [
+                        '_wnq_required_section'       => 'top_banner',
                         'flex_direction'              => 'row',
                         'flex_wrap'                   => 'wrap',
                         'flex_align_items'            => 'center',
