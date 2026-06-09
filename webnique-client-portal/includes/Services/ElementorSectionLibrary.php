@@ -66,6 +66,7 @@ final class ElementorSectionLibrary
     {
         $content = [];
         $valid_keys = [];
+        $page_settings = ['hide_title' => 'yes'];
 
         foreach ($keys as $key) {
             $key = sanitize_key((string)$key);
@@ -78,6 +79,9 @@ final class ElementorSectionLibrary
             foreach ($template['content'] as $section) {
                 $content[] = $section;
             }
+            if (!empty($template['page_settings']) && is_array($template['page_settings'])) {
+                $page_settings = array_replace_recursive($page_settings, $template['page_settings']);
+            }
         }
 
         if (!$content) {
@@ -86,7 +90,7 @@ final class ElementorSectionLibrary
 
         return [
             'content'       => $content,
-            'page_settings' => ['hide_title' => 'yes'],
+            'page_settings' => $page_settings,
             'version'       => '0.4',
             'title'         => count($valid_keys) > 1 ? '{{template_title}}' : (self::template($valid_keys[0])['title'] ?? '{{template_title}}'),
             'type'          => 'container',
@@ -112,6 +116,42 @@ final class ElementorSectionLibrary
             $defaults = array_merge($defaults, self::defaults((string)$key));
         }
         return $defaults;
+    }
+
+    public static function writingContextFor(array $keys): string
+    {
+        $choices = self::templates();
+        $sections = [];
+        $position = 1;
+
+        foreach ($keys as $key) {
+            $key = sanitize_key((string)$key);
+            $template = self::template($key);
+            if (!$template) {
+                continue;
+            }
+
+            $choice = (array)($choices[$key] ?? []);
+            $label = trim((string)($choice['label'] ?? $template['title'] ?? $key));
+            $category = trim((string)($choice['category'] ?? 'Custom'));
+            $description = trim((string)($choice['description'] ?? ''));
+            $variables = class_exists(ElementorTemplateLibrary::class)
+                ? ElementorTemplateLibrary::scanVariables($template)
+                : [];
+
+            $lines = [
+                sprintf('%d. %s', $position, $label !== '' ? $label : $key),
+                '   Category: ' . ($category !== '' ? $category : 'Custom'),
+            ];
+            if ($description !== '') {
+                $lines[] = '   Purpose: ' . $description;
+            }
+            $lines[] = '   Variables: ' . ($variables ? implode(', ', $variables) : 'None');
+            $sections[] = implode("\n", $lines);
+            $position++;
+        }
+
+        return $sections ? implode("\n\n", $sections) : 'No section metadata available.';
     }
 
     public static function exampleVariables(string $key = self::LOCAL_SERVICE_HERO): array
