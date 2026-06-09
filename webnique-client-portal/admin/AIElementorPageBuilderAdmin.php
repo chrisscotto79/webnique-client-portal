@@ -526,7 +526,7 @@ final class AIElementorPageBuilderAdmin
     function updateRequiredSections() {
       form.querySelectorAll('.wnq-ai-section-card input[data-recommended-pages]').forEach(function(input) {
         var recommended = (input.getAttribute('data-recommended-pages') || '').split(',');
-        input.checked = recommended.indexOf(selectedPageType()) !== -1;
+        input.checked = !input.disabled && recommended.indexOf(selectedPageType()) !== -1;
       });
     }
 
@@ -2018,14 +2018,14 @@ final class AIElementorPageBuilderAdmin
             'required'=> ['required'],
             'header'  => ['header', 'nav', 'navigation', 'menu'],
             'hero'    => ['hero', 'banner', 'above fold', 'above_the_fold'],
+            'contact_details' => ['contact details', 'phone address', 'phone, address'],
+            'contact_form' => ['contact form', 'iframe'],
+            'map'     => ['map', 'location map', 'google maps'],
             'content' => ['content', 'text', 'image', 'two-column', 'two column', 'body'],
             'cta'     => ['cta', 'call to action', 'conversion'],
             'faq'     => ['faq', 'accordion', 'question'],
             'reviews' => ['review', 'testimonial', 'rating'],
             'process' => ['process', 'steps', 'how it works'],
-            'contact_details' => ['contact details', 'phone address', 'phone, address'],
-            'contact_form' => ['contact form', 'iframe'],
-            'map'     => ['map', 'location map', 'google maps'],
             'contact' => ['contact'],
             'footer'  => ['footer'],
             'custom'  => ['custom', 'saved'],

@@ -511,7 +511,12 @@ final class ElementorSectionLibrary
             "Follow Us:\n" => '{{social_heading}}',
             'https://www.facebook.com/p/Parrish-Well-Drilling-61552522930790/' => '{{facebook_url}}',
         ], 'contact_form_2');
-        return self::replaceWidgetSetting($template, 'html', 'html', '{{contact_form_iframe}}');
+        $template = self::replaceWidgetSetting($template, 'html', 'html', '{{contact_form_iframe}}');
+        if (isset($template['content'][0]['settings']) && is_array($template['content'][0]['settings'])) {
+            $template['content'][0]['settings']['_wnq_required_section'] = 'contact_iframe';
+        }
+
+        return $template;
     }
 
     private static function contactDetailsTemplate(): array
