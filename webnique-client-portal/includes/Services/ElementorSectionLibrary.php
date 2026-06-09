@@ -131,6 +131,19 @@ final class ElementorSectionLibrary
         $content = [];
         $valid_keys = [];
         $page_settings = ['hide_title' => 'yes'];
+        $banner_keys = [];
+        $other_keys = [];
+
+        foreach (array_values(array_unique($keys)) as $key) {
+            $key = sanitize_key((string)$key);
+            $template = self::template($key);
+            if ($template && self::templateProvidesTopBanner($key, $template)) {
+                $banner_keys[] = $key;
+            } else {
+                $other_keys[] = $key;
+            }
+        }
+        $keys = array_merge($banner_keys, $other_keys);
 
         foreach ($keys as $key) {
             $key = sanitize_key((string)$key);

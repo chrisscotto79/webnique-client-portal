@@ -355,7 +355,7 @@ final class AIElementorPageBuilderAdmin
     </section>
 
     <section class="wnq-ai-wizard-step" data-wnq-step="4" hidden>
-      <div class="wnq-ai-step-heading"><span>Step 4</span><h3>Choose Sections</h3><p>Select reusable Elementor sections. Recommended sections are preselected.</p></div>
+      <div class="wnq-ai-step-heading"><span>Step 4</span><h3>Choose & Order Sections</h3><p>Select reusable Elementor sections, then use the arrows to set their page order. The banner always stays first.</p></div>
       <?php self::renderSimpleSectionCards($section_templates); ?>
     </section>
 
@@ -490,6 +490,48 @@ final class AIElementorPageBuilderAdmin
       });
     }
 
+    function syncSectionOrder() {
+      var orderInput = form.querySelector('[name="section_order"]');
+      var selectedCards = Array.prototype.slice.call(form.querySelectorAll('.wnq-ai-section-card')).filter(function(card) {
+        var input = card.querySelector('input[name="section_template_keys[]"]');
+        return input && input.checked && !input.disabled;
+      });
+      var bannerCard = selectedCards.find(function(card) {
+        return card.getAttribute('data-section-category') === 'hero';
+      });
+
+      if (bannerCard && selectedCards[0] !== bannerCard) {
+        bannerCard.parentNode.insertBefore(bannerCard, selectedCards[0]);
+        selectedCards = Array.prototype.slice.call(form.querySelectorAll('.wnq-ai-section-card')).filter(function(card) {
+          var input = card.querySelector('input[name="section_template_keys[]"]');
+          return input && input.checked && !input.disabled;
+        });
+      }
+
+      selectedCards.forEach(function(card, index) {
+        var position = card.querySelector('[data-section-position]');
+        var up = card.querySelector('[data-move-section="up"]');
+        var down = card.querySelector('[data-move-section="down"]');
+        var isBanner = card.getAttribute('data-section-category') === 'hero';
+        if (position) position.textContent = isBanner ? '1 - Banner locked' : String(index + 1);
+        if (up) up.disabled = isBanner || index === 0 || (index === 1 && bannerCard === selectedCards[0]);
+        if (down) down.disabled = isBanner || index === selectedCards.length - 1;
+      });
+
+      form.querySelectorAll('.wnq-ai-section-card').forEach(function(card) {
+        var input = card.querySelector('input[name="section_template_keys[]"]');
+        var controls = card.querySelector('[data-section-order-controls]');
+        if (controls) controls.hidden = !input || !input.checked || input.disabled;
+      });
+
+      if (orderInput) {
+        orderInput.value = selectedCards.map(function(card) {
+          var input = card.querySelector('input[name="section_template_keys[]"]');
+          return input ? input.value : '';
+        }).filter(Boolean).join(',');
+      }
+    }
+
     function updateImageSlots() {
       var type = selectedPageType();
       var sections = selectedSections();
@@ -528,6 +570,7 @@ final class AIElementorPageBuilderAdmin
         var recommended = (input.getAttribute('data-recommended-pages') || '').split(',');
         input.checked = !input.disabled && recommended.indexOf(selectedPageType()) !== -1;
       });
+      syncSectionOrder();
     }
 
     function validateStep() {
@@ -631,8 +674,28 @@ final class AIElementorPageBuilderAdmin
     });
     form.querySelectorAll('.wnq-ai-section-card input').forEach(function(input) {
       input.addEventListener('change', function() {
+        syncSectionOrder();
         updateImageSlots();
         updatePageFields();
+      });
+    });
+    form.querySelectorAll('[data-move-section]').forEach(function(button) {
+      button.addEventListener('click', function() {
+        var card = button.closest('.wnq-ai-section-card');
+        if (!card || card.getAttribute('data-section-category') === 'hero') return;
+        var selectedCards = Array.prototype.slice.call(form.querySelectorAll('.wnq-ai-section-card')).filter(function(item) {
+          var input = item.querySelector('input[name="section_template_keys[]"]');
+          return input && input.checked && !input.disabled;
+        });
+        var index = selectedCards.indexOf(card);
+        var target = button.getAttribute('data-move-section') === 'up' ? selectedCards[index - 1] : selectedCards[index + 1];
+        if (!target || target.getAttribute('data-section-category') === 'hero') return;
+        if (button.getAttribute('data-move-section') === 'up') {
+          card.parentNode.insertBefore(card, target);
+        } else {
+          card.parentNode.insertBefore(card, target.nextSibling);
+        }
+        syncSectionOrder();
       });
     });
     var clientSelect = form.querySelector('[name="agent_key_id"]');
@@ -691,6 +754,7 @@ final class AIElementorPageBuilderAdmin
       field.addEventListener('input', function() { if (advancedPayloadGenerated) populateAdvancedPayload(); });
       field.addEventListener('change', function() { if (advancedPayloadGenerated) populateAdvancedPayload(); });
     });
+    syncSectionOrder();
     updatePageFields();
     showStep(1);
   });
@@ -1349,12 +1413,19 @@ final class AIElementorPageBuilderAdmin
     background: var(--ai-panel-2);
     border: 1px solid rgba(255,255,255,.09);
     border-radius: 14px;
-    cursor: pointer;
-    display: flex;
-    gap: 12px;
     min-height: 108px;
     padding: 16px;
     transition: border-color .16s ease, background .16s ease, transform .16s ease;
+  }
+  .wnq-ai-page-type-grid label {
+    cursor: pointer;
+    display: flex;
+    gap: 12px;
+  }
+  .wnq-ai-section-card-select {
+    cursor: pointer;
+    display: flex;
+    gap: 12px;
   }
   .wnq-ai-page-type-grid label:hover,
   .wnq-ai-section-card:hover { border-color: var(--ai-line-strong); transform: translateY(-1px); }
@@ -1363,7 +1434,7 @@ final class AIElementorPageBuilderAdmin
   .wnq-ai-page-type-grid input,
   .wnq-ai-section-card input { accent-color: var(--ai-gold); margin-top: 3px; }
   .wnq-ai-page-type-grid span,
-  .wnq-ai-section-card > span { display: grid; gap: 7px; }
+  .wnq-ai-section-card-select > span { display: grid; gap: 7px; }
   .wnq-ai-page-type-grid small,
   .wnq-ai-section-card small { color: var(--ai-muted); line-height: 1.4; }
   .wnq-ai-section-card.is-unavailable { cursor: default; opacity: .52; }
@@ -1379,6 +1450,38 @@ final class AIElementorPageBuilderAdmin
     padding: 3px 7px;
     text-transform: uppercase;
   }
+  .wnq-ai-section-order-controls {
+    align-items: center;
+    border-top: 1px solid rgba(255,255,255,.08);
+    display: flex;
+    gap: 7px;
+    margin-top: 14px;
+    padding-top: 12px;
+  }
+  .wnq-ai-section-order-controls[hidden] { display: none; }
+  .wnq-ai-section-order-controls span {
+    color: var(--ai-gold-2);
+    font-size: 11px;
+    font-weight: 900;
+    margin-right: auto;
+    text-transform: uppercase;
+  }
+  .wnq-ai-section-order-controls button {
+    align-items: center;
+    background: rgba(217,190,66,.08);
+    border: 1px solid var(--ai-line-strong);
+    border-radius: 6px;
+    color: var(--ai-gold-2);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 16px;
+    height: 30px;
+    justify-content: center;
+    padding: 0;
+    width: 32px;
+  }
+  .wnq-ai-section-order-controls button:hover:not(:disabled) { background: rgba(217,190,66,.18); border-color: var(--ai-gold); }
+  .wnq-ai-section-order-controls button:disabled { cursor: not-allowed; opacity: .3; }
   .wnq-ai-simple-fields {
     display: grid;
     gap: 14px;
@@ -1481,7 +1584,18 @@ final class AIElementorPageBuilderAdmin
         $section_template_keys = isset($_POST['section_template_keys']) && is_array($_POST['section_template_keys'])
             ? array_map('sanitize_key', wp_unslash($_POST['section_template_keys']))
             : [ElementorSectionLibrary::LOCAL_SERVICE_HERO];
-        $section_template_keys = array_values(array_filter($section_template_keys));
+        $section_template_keys = array_values(array_unique(array_filter($section_template_keys)));
+        $section_order = array_values(array_unique(array_filter(array_map(
+            'sanitize_key',
+            explode(',', (string)wp_unslash($_POST['section_order'] ?? ''))
+        ))));
+        if ($section_order) {
+            $ordered_selected = array_values(array_intersect($section_order, $section_template_keys));
+            $section_template_keys = array_values(array_merge(
+                $ordered_selected,
+                array_diff($section_template_keys, $ordered_selected)
+            ));
+        }
         $template_json = '';
         $variables_json = trim(self::readTextInputOrFile('variables_json', 'variables_json_file'));
         $variables = self::simpleModeVariables();
@@ -1923,13 +2037,14 @@ final class AIElementorPageBuilderAdmin
         $template_by_category['about'] ??= $template_by_category['content'] ?? '';
         $template_by_category['contact_form'] ??= $template_by_category['contact'] ?? '';
 
-        echo '<div class="wnq-ai-section-card-grid">';
+        echo '<input type="hidden" name="section_order" value="">';
+        echo '<div class="wnq-ai-section-card-grid" data-section-order-list>';
         foreach ($section_cards as $category => [$label, $description, $badge, $recommended_pages]) {
             $template_key = $template_by_category[$category] ?? '';
             $available = $template_key !== '';
             $recommended = $available && in_array('home', explode(',', $recommended_pages), true);
-            echo '<label class="wnq-ai-section-card' . ($available ? '' : ' is-unavailable') . '">';
-            echo '<input type="checkbox" name="section_template_keys[]" data-section-category="' . esc_attr($category) . '" data-recommended-pages="' . esc_attr($recommended_pages) . '" value="' . esc_attr($template_key) . '"' . checked($recommended, true, false) . ($available ? '' : ' disabled') . '>';
+            echo '<div class="wnq-ai-section-card' . ($available ? '' : ' is-unavailable') . '" data-section-category="' . esc_attr($category) . '">';
+            echo '<label class="wnq-ai-section-card-select"><input type="checkbox" name="section_template_keys[]" data-section-category="' . esc_attr($category) . '" data-recommended-pages="' . esc_attr($recommended_pages) . '" value="' . esc_attr($template_key) . '"' . checked($recommended, true, false) . ($available ? '' : ' disabled') . '>';
             echo '<span><span class="wnq-ai-section-card-top"><strong>' . esc_html($label) . '</strong>';
             if ($badge !== '') {
                 echo '<em>' . esc_html($available ? $badge : 'Template needed') . '</em>';
@@ -1937,6 +2052,8 @@ final class AIElementorPageBuilderAdmin
                 echo '<em>Template needed</em>';
             }
             echo '</span><small>' . esc_html($description) . '</small><small>' . esc_html($available ? 'Reusable Elementor template' : 'Add this section in Template Library') . '</small></span></label>';
+            echo '<div class="wnq-ai-section-order-controls" data-section-order-controls hidden><span data-section-position></span><button type="button" data-move-section="up" aria-label="Move ' . esc_attr($label) . ' up" title="Move section up">&uarr;</button><button type="button" data-move-section="down" aria-label="Move ' . esc_attr($label) . ' down" title="Move section down">&darr;</button></div>';
+            echo '</div>';
         }
         echo '</div>';
     }
