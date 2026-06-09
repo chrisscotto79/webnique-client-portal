@@ -17,18 +17,29 @@ if (!defined('ABSPATH')) {
 
 final class ElementorSectionLibrary
 {
+    public const TOP_BANNER = 'required_top_banner';
     public const LOCAL_SERVICE_HERO = 'local_service_hero';
     public const CONTENT_IMAGE = 'content_image';
+    public const CONTACT_IFRAME = 'contact_iframe_section_1';
 
     public static function templates(): array
     {
         return [
+            self::TOP_BANNER => [
+                'label'       => 'Required Top Banner',
+                'description' => 'Required page banner automatically placed at the top of every generated page.',
+                'category'    => 'Required',
+                'theme'       => 'any',
+                'source'      => 'built_in',
+                'requires_elementor_pro' => true,
+            ],
             self::LOCAL_SERVICE_HERO => [
                 'label'       => 'Simple Local Hero',
                 'description' => 'Simple Elementor container hero with one background image, H1, subheadline, and two CTA buttons.',
                 'category'    => 'Hero',
                 'theme'       => 'any',
                 'source'      => 'built_in',
+                'requires_elementor_pro' => true,
             ],
             self::CONTENT_IMAGE => [
                 'label'       => 'Text + CTA + Right Image',
@@ -36,6 +47,15 @@ final class ElementorSectionLibrary
                 'category'    => 'Content',
                 'theme'       => 'any',
                 'source'      => 'built_in',
+                'requires_elementor_pro' => true,
+            ],
+            self::CONTACT_IFRAME => [
+                'label'       => 'Contact Section Template 1',
+                'description' => 'Contact details and required iframe form section for contact pages.',
+                'category'    => 'Contact',
+                'theme'       => 'brand',
+                'source'      => 'built_in',
+                'requires_elementor_pro' => true,
             ],
         ] + (class_exists(ElementorTemplateLibrary::class) ? ElementorTemplateLibrary::templateChoices() : []);
     }
@@ -43,10 +63,14 @@ final class ElementorSectionLibrary
     public static function template(string $key): ?array
     {
         switch ($key) {
+            case self::TOP_BANNER:
+                return self::topBannerTemplate();
             case self::LOCAL_SERVICE_HERO:
                 return self::localServiceHeroTemplate();
             case self::CONTENT_IMAGE:
                 return self::contentImageTemplate();
+            case self::CONTACT_IFRAME:
+                return self::contactIframeTemplate();
             default:
                 return class_exists(ElementorTemplateLibrary::class) ? ElementorTemplateLibrary::template($key) : null;
         }
@@ -88,22 +112,48 @@ final class ElementorSectionLibrary
             return null;
         }
 
-        return [
+        return self::applyRequiredSectionsToTemplate([
             'content'       => $content,
             'page_settings' => $page_settings,
             'version'       => '0.4',
             'title'         => count($valid_keys) > 1 ? '{{template_title}}' : (self::template($valid_keys[0])['title'] ?? '{{template_title}}'),
             'type'          => 'container',
-        ];
+        ], 'custom');
+    }
+
+    public static function applyRequiredSectionsToTemplate(array $template, string $page_type): array
+    {
+        $content = isset($template['content']) && is_array($template['content']) ? $template['content'] : [];
+
+        if (!self::contentHasRequiredSection($content, 'top_banner')) {
+            $banner = self::topBannerTemplate();
+            $content = array_merge((array)($banner['content'] ?? []), $content);
+        }
+        if ($page_type === 'contact' && !self::contentHasRequiredSection($content, 'contact_iframe')) {
+            $contact = self::contactIframeTemplate();
+            $content = array_merge($content, (array)($contact['content'] ?? []));
+        }
+
+        $template['content'] = $content;
+        $template['page_settings'] = array_replace_recursive(
+            ['hide_title' => 'yes'],
+            isset($template['page_settings']) && is_array($template['page_settings']) ? $template['page_settings'] : []
+        );
+
+        return $template;
     }
 
     public static function defaults(string $key): array
     {
         switch ($key) {
+            case self::TOP_BANNER:
+                return self::bannerDefaults();
             case self::LOCAL_SERVICE_HERO:
                 return self::heroDefaults();
             case self::CONTENT_IMAGE:
                 return self::contentImageDefaults();
+            case self::CONTACT_IFRAME:
+                return self::contactDefaults();
             default:
                 return class_exists(ElementorTemplateLibrary::class) ? ElementorTemplateLibrary::defaults($key) : [];
         }
@@ -120,6 +170,9 @@ final class ElementorSectionLibrary
 
     public static function writingContextFor(array $keys): string
     {
+        if (!in_array(self::TOP_BANNER, $keys, true)) {
+            array_unshift($keys, self::TOP_BANNER);
+        }
         $choices = self::templates();
         $sections = [];
         $position = 1;
@@ -239,6 +292,30 @@ final class ElementorSectionLibrary
         ];
     }
 
+    private static function bannerDefaults(): array
+    {
+        return [
+            'banner_heading'          => '',
+            'banner_subheadline'      => '',
+            'banner_background_color' => '#111111',
+            'banner_text_color'       => '#FFFFFF',
+            'accent_color'            => '#D9BE42',
+        ];
+    }
+
+    private static function contactDefaults(): array
+    {
+        return [
+            'contact_heading'      => 'Contact Us',
+            'contact_intro'        => 'We are here to help. Reach out and our team will get back to you soon.',
+            'phone_number'         => '',
+            'business_email'       => '',
+            'business_address'     => '',
+            'contact_form_iframe'  => '',
+            'contact_privacy_text' => 'We respect your privacy. Your information will never be shared.',
+        ];
+    }
+
     private static function contentImageDefaults(): array
     {
         return [
@@ -257,6 +334,113 @@ final class ElementorSectionLibrary
             'body_font_family'       => 'Roboto',
             'button_font_family'     => 'Poppins',
         ];
+    }
+
+    private static function topBannerTemplate(): array
+    {
+        return [
+            'content' => [[
+                'id'       => 'wnqbnr01',
+                'settings' => [
+                    '_wnq_required_section' => 'top_banner',
+                    'content_width'          => 'boxed',
+                    'min_height'             => ['unit' => 'px', 'size' => 240, 'sizes' => []],
+                    'flex_direction'         => 'column',
+                    'flex_justify_content'   => 'center',
+                    'flex_align_items'       => 'center',
+                    'padding'                => ['unit' => 'px', 'top' => '70', 'right' => '30', 'bottom' => '70', 'left' => '30', 'isLinked' => false],
+                    'background_background'  => 'classic',
+                    'background_color'       => '{{banner_background_color}}',
+                ],
+                'elements' => [
+                    [
+                        'id'       => 'wnqbnr02',
+                        'settings' => [
+                            'title'       => '{{banner_heading}}',
+                            'header_size' => 'h2',
+                            'align'       => 'center',
+                            'title_color' => '{{banner_text_color}}',
+                        ],
+                        'elements'   => [],
+                        'isInner'    => false,
+                        'widgetType' => 'heading',
+                        'elType'     => 'widget',
+                    ],
+                    [
+                        'id'       => 'wnqbnr03',
+                        'settings' => [
+                            'editor'     => '<p>{{banner_subheadline}}</p>',
+                            'align'      => 'center',
+                            'text_color' => '{{banner_text_color}}',
+                        ],
+                        'elements'   => [],
+                        'isInner'    => false,
+                        'widgetType' => 'text-editor',
+                        'elType'     => 'widget',
+                    ],
+                ],
+                'isInner' => false,
+                'elType'  => 'container',
+            ]],
+            'page_settings' => ['hide_title' => 'yes'],
+            'version'       => '0.4',
+            'title'         => 'Required Top Banner',
+            'type'          => 'container',
+        ];
+    }
+
+    private static function contactIframeTemplate(): array
+    {
+        $path = dirname(__DIR__, 2) . '/assets/elementor/contact-section-template-1.json';
+        $raw = is_readable($path) ? file_get_contents($path) : '';
+        $template = is_string($raw) ? json_decode($raw, true) : null;
+        if (!is_array($template) || empty($template['content']) || !is_array($template['content'])) {
+            return ['content' => [], 'page_settings' => ['hide_title' => 'yes']];
+        }
+
+        $replacements = [
+            'Contact Us' => '{{contact_heading}}',
+            "<p>We're here to help. Reach out and we'll get back to you soon.</p>" => '<p>{{contact_intro}}</p>',
+            '(555) 555-1234' => '{{phone_number}}',
+            'Hello@example.com' => '{{business_email}}',
+            "123 Main Street, suite 100\nAnytown, ST 12345" => '{{business_address}}',
+            'iframe' => '{{contact_form_iframe}}',
+            '<p>We resect your privacy. Your information will never be shared.</p>' => '<p>{{contact_privacy_text}}</p>',
+        ];
+        $template = self::replaceExactValues($template, $replacements);
+        if (isset($template['content'][0]['settings']) && is_array($template['content'][0]['settings'])) {
+            $template['content'][0]['settings']['_wnq_required_section'] = 'contact_iframe';
+        }
+        $template['title'] = 'Contact Section Template 1';
+
+        return $template;
+    }
+
+    private static function replaceExactValues($value, array $replacements)
+    {
+        if (is_array($value)) {
+            foreach ($value as $key => $child) {
+                $value[$key] = self::replaceExactValues($child, $replacements);
+            }
+            return $value;
+        }
+
+        return is_string($value) && array_key_exists($value, $replacements) ? $replacements[$value] : $value;
+    }
+
+    private static function contentHasRequiredSection(array $content, string $required_section): bool
+    {
+        foreach ($content as $section) {
+            if (
+                is_array($section)
+                && isset($section['settings']['_wnq_required_section'])
+                && $section['settings']['_wnq_required_section'] === $required_section
+            ) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static function localServiceHeroTemplate(): array

@@ -431,6 +431,7 @@ Rules:
 - Write natural, human service-business copy.
 - Do not invent phone numbers, addresses, prices, awards, reviews, licenses, or guarantees.
 - For image URL variables, return an empty string unless the brand notes explicitly provide a public image URL.
+- For contact_form_iframe, return an empty string unless the brand notes explicitly provide the complete iframe embed code. Never invent an iframe URL.
 - For color variables, choose accessible values that match the requested theme style.
 - For CTA URLs, use simple relative links such as "/contact/" or "/services/".
 - Keep paragraph variables concise: 1-3 sentences each unless the variable name clearly asks for long content.

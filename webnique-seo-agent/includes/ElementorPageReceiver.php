@@ -68,6 +68,12 @@ final class ElementorPageReceiver
         if (!is_array($body)) {
             $body = [];
         }
+        if (!empty($body['requires_elementor_pro']) && !defined('ELEMENTOR_PRO_VERSION')) {
+            return new \WP_REST_Response([
+                'code'  => 'elementor_pro_required',
+                'error' => 'Elementor Pro must be installed and active before creating this draft.',
+            ], 412);
+        }
 
         $title = sanitize_text_field($body['title'] ?? '');
         $title_tag = sanitize_text_field($body['title_tag'] ?? $title);

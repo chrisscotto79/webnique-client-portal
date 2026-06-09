@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
 
 final class AIElementorPageBuilder
 {
-    public const MIN_REMOTE_AGENT_VERSION = '1.1.8';
+    public const MIN_REMOTE_AGENT_VERSION = '1.2.4';
 
     /**
      * Generate a draft page from an Elementor JSON template and variables.
@@ -97,6 +97,7 @@ final class AIElementorPageBuilder
             'h1'                => $built['h1'],
             'focus_keyword'     => $built['focus_keyword'],
             'featured_image_id' => absint($options['featured_image_id'] ?? $built['variables']['featured_image_id'] ?? 0),
+            'requires_elementor_pro' => true,
         ]);
 
         if (!empty($result['success'])) {
@@ -123,6 +124,20 @@ final class AIElementorPageBuilder
         }
 
         $variables = self::applyVariableAliases(self::normalizeVariables($variables));
+        if (!isset($template['content']) || !is_array($template['content'])) {
+            $template = [
+                'content'       => $content,
+                'page_settings' => [],
+                'version'       => '0.4',
+                'title'         => '{{template_title}}',
+                'type'          => 'container',
+            ];
+        }
+        $template = ElementorSectionLibrary::applyRequiredSectionsToTemplate(
+            $template,
+            (string)($variables['page_type'] ?? 'custom')
+        );
+        $content = self::extractElementorContent($template);
         $tokens = self::buildTokenMap($variables);
         $elementor_data = self::replacePlaceholdersRecursive($content, $tokens);
         $elementor_data = self::regenerateElementorIds($elementor_data);
@@ -230,11 +245,37 @@ final class AIElementorPageBuilder
         foreach ($variables as $key => $value) {
             $clean_key = self::cleanPlaceholderKey((string)$key);
             if ($clean_key !== '') {
-                $tokens[$clean_key] = self::stringifyVariable($value);
+                $tokens[$clean_key] = $clean_key === 'contact_form_iframe'
+                    ? self::sanitizeContactIframe((string)$value)
+                    : self::stringifyVariable($value);
             }
         }
 
         return $tokens;
+    }
+
+    private static function sanitizeContactIframe(string $value): string
+    {
+        return wp_kses($value, [
+            'iframe' => [
+                'src'             => true,
+                'title'           => true,
+                'id'              => true,
+                'class'           => true,
+                'name'            => true,
+                'width'           => true,
+                'height'          => true,
+                'style'           => true,
+                'frameborder'     => true,
+                'scrolling'       => true,
+                'allowtransparency' => true,
+                'allow'           => true,
+                'allowfullscreen' => true,
+                'loading'         => true,
+                'referrerpolicy'  => true,
+                'sandbox'         => true,
+            ],
+        ]);
     }
 
     private static function normalizeVariables(array $variables): array
@@ -253,6 +294,8 @@ final class AIElementorPageBuilder
     {
         $aliases = [
             'section_title' => ['template_title'],
+            'banner_heading' => ['page_title', 'h1', 'primary_keyword'],
+            'banner_subheadline' => ['short_description', 'hero_subheadline'],
             'hero_subheadline' => ['hero_description', 'hero_subtitle', 'cta_text'],
             'hero_background_image_url' => ['hero_slide_1_url', 'hero_background_placeholder_url'],
             'primary_cta_text' => ['cta_button_1_text', 'cta_button_text'],
