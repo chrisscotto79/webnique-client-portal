@@ -24,6 +24,11 @@ final class ElementorSectionLibrary
     public const CONTACT_IFRAME_2 = 'contact_iframe_section_2';
     public const CONTACT_DETAILS = 'contact_details_section';
     public const CONTACT_MAP = 'contact_map_section';
+    public const GALLERY = 'gallery_section';
+    public const HOME_HERO = 'home_hero_section';
+    public const SERVICE_AREA = 'service_area_section';
+    public const IMAGE_LEFT_TEXT_RIGHT = 'image_left_text_right_section';
+    public const BLOG_POSTS = 'blog_posts_section';
 
     public static function templates(): array
     {
@@ -91,6 +96,51 @@ final class ElementorSectionLibrary
                 'requires_elementor_pro' => true,
                 'requirements_label' => 'Elementor Pro',
             ],
+            self::GALLERY => [
+                'label'       => 'Project Gallery',
+                'description' => 'Visual project gallery with a short gallery introduction and closing prompt. Recommended for Home and Service pages.',
+                'category'    => 'Gallery',
+                'theme'       => 'dark',
+                'source'      => 'built_in',
+                'requires_elementor_pro' => true,
+                'requirements_label' => 'Elementor Pro + RS Elements',
+            ],
+            self::HOME_HERO => [
+                'label'       => 'Slideshow Home Hero',
+                'description' => 'Home-page hero with slideshow images, primary headline, supporting copy, and two conversion CTAs.',
+                'category'    => 'Hero',
+                'theme'       => 'brand',
+                'source'      => 'built_in',
+                'requires_elementor_pro' => true,
+                'requirements_label' => 'Elementor Pro',
+            ],
+            self::SERVICE_AREA => [
+                'label'       => 'Service Areas Introduction',
+                'description' => 'Local SEO section summarizing the cities and surrounding communities the business serves.',
+                'category'    => 'Service Area',
+                'theme'       => 'brand',
+                'source'      => 'built_in',
+                'requires_elementor_pro' => true,
+                'requirements_label' => 'Elementor Pro',
+            ],
+            self::IMAGE_LEFT_TEXT_RIGHT => [
+                'label'       => 'Image Left + Text Right',
+                'description' => 'Supporting content section with an image, related-service heading, explanatory copy, and useful bullet points.',
+                'category'    => 'Content Split',
+                'theme'       => 'brand',
+                'source'      => 'built_in',
+                'requires_elementor_pro' => true,
+                'requirements_label' => 'Elementor Pro',
+            ],
+            self::BLOG_POSTS => [
+                'label'       => 'Blog Posts Grid',
+                'description' => 'Dynamic blog archive section that displays existing WordPress posts. Use on Blog pages.',
+                'category'    => 'Blog',
+                'theme'       => 'brand',
+                'source'      => 'built_in',
+                'requires_elementor_pro' => true,
+                'requirements_label' => 'Elementor Pro + HFE',
+            ],
         ] + (class_exists(ElementorTemplateLibrary::class) ? ElementorTemplateLibrary::templateChoices() : []);
     }
 
@@ -111,6 +161,16 @@ final class ElementorSectionLibrary
                 return self::contactDetailsTemplate();
             case self::CONTACT_MAP:
                 return self::contactMapTemplate();
+            case self::GALLERY:
+                return self::galleryTemplate();
+            case self::HOME_HERO:
+                return self::homeHeroTemplate();
+            case self::SERVICE_AREA:
+                return self::serviceAreaTemplate();
+            case self::IMAGE_LEFT_TEXT_RIGHT:
+                return self::imageLeftTextRightTemplate();
+            case self::BLOG_POSTS:
+                return self::blogPostsTemplate();
             default:
                 return class_exists(ElementorTemplateLibrary::class) ? ElementorTemplateLibrary::template($key) : null;
         }
@@ -131,6 +191,20 @@ final class ElementorSectionLibrary
         $content = [];
         $valid_keys = [];
         $page_settings = ['hide_title' => 'yes'];
+        $banner_keys = [];
+        $other_keys = [];
+
+        foreach (array_values(array_unique($keys)) as $key) {
+            $key = sanitize_key((string)$key);
+            $template = self::template($key);
+            if ($template && self::templateProvidesTopBanner($key, $template)) {
+                // A later explicit hero choice replaces the default simple hero.
+                $banner_keys = [$key];
+            } else {
+                $other_keys[] = $key;
+            }
+        }
+        $keys = array_merge($banner_keys, $other_keys);
 
         foreach ($keys as $key) {
             $key = sanitize_key((string)$key);
@@ -175,11 +249,19 @@ final class ElementorSectionLibrary
     {
         $content = isset($template['content']) && is_array($template['content']) ? $template['content'] : [];
 
-        if (!self::contentHasRequiredSection($content, 'top_banner') && !self::contentStartsWithBanner($content)) {
+        if (
+            !self::contentHasRequiredSection($content, 'top_banner')
+            && !self::contentStartsWithBanner($content)
+            && !self::templateProvidesTopBanner('custom', $template)
+        ) {
             $banner = self::topBannerTemplate();
             $content = array_merge((array)($banner['content'] ?? []), $content);
         }
-        if ($page_type === 'contact' && !self::contentHasRequiredSection($content, 'contact_iframe')) {
+        if (
+            $page_type === 'contact'
+            && !self::contentHasRequiredSection($content, 'contact_iframe')
+            && !self::contentContainsContactIframe($content)
+        ) {
             $contact = self::contactIframeTemplate();
             $content = array_merge($content, (array)($contact['content'] ?? []));
         }
@@ -210,6 +292,16 @@ final class ElementorSectionLibrary
                 return self::contactDetailsDefaults();
             case self::CONTACT_MAP:
                 return self::contactMapDefaults();
+            case self::GALLERY:
+                return self::galleryDefaults();
+            case self::HOME_HERO:
+                return self::homeHeroDefaults();
+            case self::SERVICE_AREA:
+                return self::serviceAreaDefaults();
+            case self::IMAGE_LEFT_TEXT_RIGHT:
+                return self::imageLeftTextRightDefaults();
+            case self::BLOG_POSTS:
+                return [];
             default:
                 return class_exists(ElementorTemplateLibrary::class) ? ElementorTemplateLibrary::defaults($key) : [];
         }
@@ -401,6 +493,54 @@ final class ElementorSectionLibrary
         ];
     }
 
+    private static function galleryDefaults(): array
+    {
+        return [
+            'gallery_eyebrow'      => 'Our Recent Projects',
+            'gallery_heading'      => 'Featured Work Gallery',
+            'gallery_closing_label' => 'Looking for more projects?',
+            'gallery_button_text'   => 'View All Projects',
+            'gallery_button_url'    => '/projects/',
+            'gallery_cta_label'     => 'Connect with us for guidance',
+            'gallery_image_1_url'  => '',
+            'gallery_image_2_url'  => '',
+            'gallery_image_3_url'  => '',
+            'gallery_image_4_url'  => '',
+            'gallery_image_5_url'  => '',
+            'gallery_image_6_url'  => '',
+        ];
+    }
+
+    private static function homeHeroDefaults(): array
+    {
+        return array_merge(self::heroDefaults(), [
+            'hero_highlighted_text' => '',
+            'hero_slide_4_url'      => '',
+        ]);
+    }
+
+    private static function serviceAreaDefaults(): array
+    {
+        return [
+            'service_area_eyebrow' => 'Service Areas',
+            'service_area_heading' => '',
+            'service_area_copy'    => '',
+            'service_area_url'     => '/service-areas/',
+        ];
+    }
+
+    private static function imageLeftTextRightDefaults(): array
+    {
+        return [
+            'split_eyebrow'      => '',
+            'split_heading'      => '',
+            'split_highlight'    => '',
+            'split_content_copy' => '',
+            'split_image_url'    => '',
+            'split_image_alt'    => '',
+        ];
+    }
+
     private static function contentImageDefaults(): array
     {
         return [
@@ -511,7 +651,12 @@ final class ElementorSectionLibrary
             "Follow Us:\n" => '{{social_heading}}',
             'https://www.facebook.com/p/Parrish-Well-Drilling-61552522930790/' => '{{facebook_url}}',
         ], 'contact_form_2');
-        return self::replaceWidgetSetting($template, 'html', 'html', '{{contact_form_iframe}}');
+        $template = self::replaceWidgetSetting($template, 'html', 'html', '{{contact_form_iframe}}');
+        if (isset($template['content'][0]['settings']) && is_array($template['content'][0]['settings'])) {
+            $template['content'][0]['settings']['_wnq_required_section'] = 'contact_iframe';
+        }
+
+        return $template;
     }
 
     private static function contactDetailsTemplate(): array
@@ -557,6 +702,67 @@ final class ElementorSectionLibrary
         ];
     }
 
+    private static function galleryTemplate(): array
+    {
+        return self::assetTemplate('gallery-section.json', [
+            'Our Recent Projects' => '{{gallery_eyebrow}}',
+            'Feature Work Gallery' => '{{gallery_heading}}',
+            'Looking for more projects?' => '{{gallery_closing_label}}',
+            'View All Projects' => '{{gallery_button_text}}',
+            '/projects' => '{{gallery_button_url}}',
+            'Connect with us for guidance' => '{{gallery_cta_label}}',
+            'https://snshauling.com/wp-content/uploads/2026/02/1000022739-high.webp' => '{{gallery_image_1_url}}',
+            'https://snshauling.com/wp-content/uploads/2026/02/1000022967-high.webp' => '{{gallery_image_2_url}}',
+            'https://snshauling.com/wp-content/uploads/2026/02/1000022988-high.webp' => '{{gallery_image_3_url}}',
+            'https://snshauling.com/wp-content/uploads/2026/02/1000022961-high.webp' => '{{gallery_image_4_url}}',
+            'https://snshauling.com/wp-content/uploads/2026/02/1000022974-high.webp' => '{{gallery_image_5_url}}',
+            'https://snshauling.com/wp-content/uploads/2026/02/1000022965-high.webp' => '{{gallery_image_6_url}}',
+        ], 'gallery');
+    }
+
+    private static function homeHeroTemplate(): array
+    {
+        return self::assetTemplate('home-hero-section.json', [
+            'Sheds, Carports & Metal Buildings in' => '{{h1}}',
+            ' Southwest Florida' => '{{hero_highlighted_text}}',
+            'Custom-built and in-stock sheds, carports, and metal buildings with flexible rent-to-own options. Serving Arcadia, Port Charlotte, North Port, Sarasota, Fort Myers, and surrounding areas.' => '{{hero_subheadline}}',
+            'Get Pricing' => '{{primary_cta_text}}',
+            '/contact/' => '{{primary_cta_url}}',
+            'Call for Avalibailtiy' => '{{secondary_cta_text}}',
+            '[elementor-tag id="614408f" name="contact-url" settings="%7B%22link_type%22%3A%22tel%22%2C%22tel_number%22%3A%229413915034%22%7D"]' => 'tel:{{phone_number}}',
+            'https://kingsheds769.com/wp-content/uploads/2026/04/a2-1.webp' => '{{hero_slide_1_url}}',
+            'https://kingsheds769.com/wp-content/uploads/2026/04/v1.webp' => '{{hero_slide_2_url}}',
+            'https://kingsheds769.com/wp-content/uploads/2026/04/c7.jpg' => '{{hero_slide_3_url}}',
+            'https://kingsheds769.com/wp-content/uploads/2026/04/mq7.jpg' => '{{hero_slide_4_url}}',
+        ], 'top_banner');
+    }
+
+    private static function serviceAreaTemplate(): array
+    {
+        return self::assetTemplate('service-area-section.json', [
+            'SERVICE AREAS' => '{{service_area_eyebrow}}',
+            '/about/' => '{{service_area_url}}',
+            'Serving Southwest Florida' => '{{service_area_heading}}',
+            'King Sheds proudly serves customers throughout Southwest Florida, providing high-quality sheds, carports, and metal buildings to both homeowners and businesses. Our service area includes Arcadia, Port Charlotte, North Port, Sarasota, Fort Myers, and Cape Coral, along with surrounding communities.' => '{{service_area_copy}}',
+        ], 'service_area');
+    }
+
+    private static function imageLeftTextRightTemplate(): array
+    {
+        return self::assetTemplate('image-left-text-right-section.json', [
+            'Vinyl Shed Permits' => '{{split_eyebrow}}',
+            'Nearby Vinyl Shed ' => '{{split_heading}}',
+            'Services' => '{{split_highlight}}',
+            '<p>In addition to vinyl sheds, King Sheds also offers a range of related services, including aluminum sheds, barn sheds, and metal-framed sheds.</p><ul><li>Aluminum sheds: Perfect for homeowners who want a lightweight and durable storage solution.</li><li>Barn sheds: Ideal for homeowners who need a larger storage space for equipment and supplies.</li><li>Metal-framed sheds: Durable and resistant to harsh weather conditions.</li></ul>' => '{{split_content_copy}}',
+            'https://kingsheds769.com/wp-content/uploads/2026/04/The-Carport-Company-21.jpg' => '{{split_image_url}}',
+        ], 'content_split');
+    }
+
+    private static function blogPostsTemplate(): array
+    {
+        return self::assetTemplate('blog-posts-section.json', [], 'blog_posts');
+    }
+
     private static function assetTemplate(string $filename, array $replacements, string $section_role): array
     {
         $path = dirname(__DIR__, 2) . '/assets/elementor/' . $filename;
@@ -567,6 +773,7 @@ final class ElementorSectionLibrary
         }
 
         $template = self::replaceTextValues($template, $replacements);
+        $template = self::clearPlaceholderImageIds($template);
         if (isset($template['content'][0]['settings']) && is_array($template['content'][0]['settings'])) {
             $template['content'][0]['settings']['_wnq_section_role'] = $section_role;
         }
@@ -587,6 +794,36 @@ final class ElementorSectionLibrary
         }
 
         return str_replace(array_keys($replacements), array_values($replacements), $value);
+    }
+
+    private static function clearPlaceholderImageIds($value)
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+        if (
+            isset($value['url'])
+            && is_string($value['url'])
+            && strpos($value['url'], '{{') !== false
+        ) {
+            if (array_key_exists('id', $value)) {
+                $value['id'] = '';
+            }
+            if (
+                array_key_exists('alt', $value)
+                && trim((string)$value['alt']) === ''
+                && preg_match('/\{\{\s*([^}]+_url)\s*\}\}/', $value['url'], $matches)
+            ) {
+                $value['alt'] = '{{' . preg_replace('/_url$/', '_alt', (string)$matches[1]) . '}}';
+            }
+        }
+        foreach ($value as $key => $child) {
+            if (is_array($child)) {
+                $value[$key] = self::clearPlaceholderImageIds($child);
+            }
+        }
+
+        return $value;
     }
 
     private static function replaceWidgetSetting($value, string $widget_type, string $setting, string $replacement)
@@ -633,11 +870,47 @@ final class ElementorSectionLibrary
         return false;
     }
 
+    private static function contentContainsContactIframe($value): bool
+    {
+        if (is_string($value)) {
+            if (strpos($value, '{{contact_form_iframe}}') !== false) {
+                return true;
+            }
+            if (!preg_match_all('/<iframe\b[^>]*>/i', $value, $matches)) {
+                return false;
+            }
+            foreach ($matches[0] as $iframe) {
+                $iframe = strtolower((string)$iframe);
+                foreach (['form', 'contact', 'quote', 'booking', 'appointment', 'leadconnector', 'msgsndr', 'jotform', 'typeform', 'formstack', 'wufoo', 'hubspot', 'calendly'] as $marker) {
+                    if (strpos($iframe, $marker) !== false) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+        if (!is_array($value)) {
+            return false;
+        }
+        foreach ($value as $child) {
+            if (self::contentContainsContactIframe($child)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static function contentStartsWithBanner(array $content): bool
     {
         $first = isset($content[0]) && is_array($content[0]) ? $content[0] : [];
         $settings = isset($first['settings']) && is_array($first['settings']) ? $first['settings'] : [];
-        $title = strtolower((string)($settings['_title'] ?? ''));
+        $title = strtolower(implode(' ', [
+            (string)($settings['_title'] ?? ''),
+            (string)($settings['_wnq_section_role'] ?? ''),
+            (string)($settings['_wnq_required_section'] ?? ''),
+        ]));
 
         return strpos($title, 'hero') !== false || strpos($title, 'banner') !== false;
     }
