@@ -535,14 +535,18 @@ final class AIElementorPageBuilderAdmin
     function updateImageSlots() {
       var type = selectedPageType();
       var sections = selectedSections();
+      var templateKeys = Array.prototype.slice.call(form.querySelectorAll('input[name="section_template_keys[]"]:checked')).map(function(input) {
+        return input.value;
+      });
       form.querySelectorAll('[data-image-slot]').forEach(function(slot) {
         var key = slot.getAttribute('data-image-slot') || '';
         var show = key === 'logo_image_url' || key === 'featured_image_url';
         if (key === 'hero_background_image_url') show = sections.indexOf('Hero') !== -1 || ['home', 'service', 'city', 'service_city', 'ads'].indexOf(type) !== -1;
         if (key === 'content_image_url') show = sections.indexOf('Services') !== -1 || sections.indexOf('About') !== -1 || ['service', 'service_city', 'about'].indexOf(type) !== -1;
-        if (key.indexOf('gallery_image_') === 0) show = sections.indexOf('Gallery') !== -1 || type === 'home';
+        if (key.indexOf('gallery_image_') === 0) show = sections.indexOf('Gallery') !== -1 || templateKeys.indexOf('gallery_section') !== -1;
+        if (key === 'split_image_url') show = sections.indexOf('Image + Text') !== -1;
         if (key === 'before_image_url' || key === 'after_image_url') show = sections.indexOf('Gallery') !== -1 && ['service', 'service_city', 'ads'].indexOf(type) !== -1;
-        if (key.indexOf('hero_slide_') === 0) show = false;
+        if (key.indexOf('hero_slide_') === 0) show = templateKeys.indexOf('home_hero_section') !== -1;
         slot.hidden = !show;
       });
     }
@@ -1925,6 +1929,22 @@ final class AIElementorPageBuilderAdmin
         if ($variables['hero_subheadline'] === '') {
             $variables['hero_subheadline'] = $variables['short_description'];
         }
+        if ($variables['city'] !== '') {
+            $variables['hero_highlighted_text'] = $variables['city'] . ($variables['state'] !== '' ? ', ' . $variables['state'] : '');
+            $variables['service_area_heading'] = 'Serving ' . $variables['city'] . ' and Surrounding Areas';
+        }
+        if ($variables['short_description'] !== '') {
+            $variables['service_area_copy'] = $variables['short_description'];
+            $variables['split_content_copy'] = $variables['short_description'];
+        }
+        if ($variables['service'] !== '') {
+            $variables['split_eyebrow'] = $variables['service'];
+            $variables['split_heading'] = 'More About ' . $variables['service'];
+            $variables['split_highlight'] = 'Services';
+        }
+        if ($variables['h1'] !== '') {
+            $variables['split_image_alt'] = $variables['h1'];
+        }
 
         return array_filter($variables, static fn($value) => $value !== '');
     }
@@ -1975,6 +1995,7 @@ final class AIElementorPageBuilderAdmin
             'ads'          => ['label' => 'Google Ads Landing Page', 'description' => 'Focused campaign conversion page'],
             'about'        => ['label' => 'About Page', 'description' => 'Company story, trust, and team'],
             'contact'      => ['label' => 'Contact Page', 'description' => 'Calls, forms, and location details'],
+            'blog'         => ['label' => 'Blog Page', 'description' => 'Dynamic archive of published WordPress posts'],
             'custom'       => ['label' => 'Custom Page', 'description' => 'Start with your own structure'],
         ];
     }
@@ -2021,6 +2042,9 @@ final class AIElementorPageBuilderAdmin
             'about' => ['About', 'Company story and differentiators', '', 'home,about'],
             'process' => ['Process', 'Simple step-by-step customer journey', '', 'home,service,service_city'],
             'gallery' => ['Gallery', 'Project, team, or service imagery', '', 'home,service'],
+            'service_area' => ['Service Areas', 'Local SEO introduction to cities and surrounding communities served', 'Recommended', 'home,city,service_city'],
+            'content_split' => ['Image + Text', 'Supporting copy and bullet points paired with a service image', '', 'home,service,city,service_city,about'],
+            'blog' => ['Blog Posts', 'Dynamic grid of existing WordPress posts', 'Blog Page', 'blog'],
             'reviews' => ['Reviews', 'Customer testimonials and ratings', 'Recommended', 'home,service,city,service_city'],
             'faq' => ['FAQ', 'Common questions and helpful answers', 'Recommended', 'home,service,city,service_city,contact'],
             'cta' => ['Final CTA', 'Closing offer and action prompt', 'Recommended', 'home,service,city,service_city,ads'],
@@ -2069,6 +2093,10 @@ final class AIElementorPageBuilderAdmin
             'faq'     => 'FAQ Templates',
             'reviews' => 'Reviews Sections',
             'process' => 'Process Sections',
+            'gallery' => 'Gallery Sections',
+            'service_area' => 'Service Area Sections',
+            'content_split' => 'Image + Text Sections',
+            'blog' => 'Blog Sections',
             'contact' => 'Contact Sections',
             'contact_form' => 'Contact Form Sections',
             'contact_details' => 'Contact Detail Sections',
@@ -2138,6 +2166,10 @@ final class AIElementorPageBuilderAdmin
             'contact_details' => ['contact details', 'phone address', 'phone, address'],
             'contact_form' => ['contact form', 'iframe'],
             'map'     => ['map', 'location map', 'google maps'],
+            'service_area' => ['service area', 'service_area', 'cities served', 'communities served'],
+            'content_split' => ['content split', 'content_split', 'image left', 'text right'],
+            'gallery' => ['gallery', 'project section', 'recent projects'],
+            'blog'    => ['blog', 'posts grid', 'posts archive'],
             'content' => ['content', 'text', 'image', 'two-column', 'two column', 'body'],
             'cta'     => ['cta', 'call to action', 'conversion'],
             'faq'     => ['faq', 'accordion', 'question'],
@@ -2331,12 +2363,17 @@ final class AIElementorPageBuilderAdmin
             'gallery_image_1_url'       => 'Gallery Image 1',
             'gallery_image_2_url'       => 'Gallery Image 2',
             'gallery_image_3_url'       => 'Gallery Image 3',
+            'gallery_image_4_url'       => 'Gallery Image 4',
+            'gallery_image_5_url'       => 'Gallery Image 5',
+            'gallery_image_6_url'       => 'Gallery Image 6',
+            'split_image_url'           => 'Image + Text Section Image',
             'before_image_url'          => 'Before Image',
             'after_image_url'           => 'After Image',
             'featured_image_url'        => 'Featured Image',
             'hero_slide_1_url'          => 'Hero Slide 1',
             'hero_slide_2_url'          => 'Hero Slide 2',
             'hero_slide_3_url'          => 'Hero Slide 3',
+            'hero_slide_4_url'          => 'Hero Slide 4',
         ];
     }
 
