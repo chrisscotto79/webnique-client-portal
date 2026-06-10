@@ -83,6 +83,7 @@ final class ElementorPageReceiver
         $slug = sanitize_title($body['slug'] ?? '');
         $post_content = wp_kses_post($body['post_content'] ?? '');
         $featured_image_id = absint($body['featured_image_id'] ?? 0);
+        $featured_image_url = esc_url_raw((string)($body['featured_image_url'] ?? ''));
         $page_settings = isset($body['page_settings']) && is_array($body['page_settings'])
             ? $body['page_settings']
             : ['hide_title' => 'yes'];
@@ -137,10 +138,15 @@ final class ElementorPageReceiver
         update_post_meta($page_id, '_wnq_h1', $h1);
         update_post_meta($page_id, '_meta_description', $meta_desc);
 
-        if ($featured_image_id > 0 && get_post_type($featured_image_id) === 'attachment') {
-            set_post_thumbnail($page_id, $featured_image_id);
-        } elseif (!empty($image_import['first_id'])) {
-            set_post_thumbnail($page_id, (int)$image_import['first_id']);
+        $featured_image = self::resolveFeaturedImage(
+            $featured_image_id,
+            $featured_image_url,
+            $image_import,
+            (int)$page_id,
+            $title
+        );
+        if (!empty($featured_image['id'])) {
+            set_post_thumbnail($page_id, (int)$featured_image['id']);
         }
 
         self::saveSeoMeta((int)$page_id, $title_tag, $meta_desc, $focus_kw);
@@ -155,9 +161,57 @@ final class ElementorPageReceiver
             'edit_url'      => admin_url('post.php?post=' . (int)$page_id . '&action=edit'),
             'elementor_url' => admin_url('post.php?post=' . (int)$page_id . '&action=elementor'),
             'pages_url'     => admin_url('edit.php?post_type=page'),
-            'images_imported' => count((array)($image_import['imported'] ?? [])),
+            'images_imported' => count((array)($image_import['imported'] ?? [])) + (!empty($featured_image['imported']) ? 1 : 0),
             'image_import_errors' => (array)($image_import['errors'] ?? []),
+            'featured_image_set' => !empty($featured_image['id']),
+            'featured_image_error' => (string)($featured_image['error'] ?? ''),
         ], 201);
+    }
+
+    private static function resolveFeaturedImage(
+        int $featured_image_id,
+        string $featured_image_url,
+        array $image_import,
+        int $page_id,
+        string $title
+    ): array {
+        if ($featured_image_url !== '') {
+            $result_key = self::imageResultKey($featured_image_url);
+            $already_imported = (array)($image_import['imported'][$result_key] ?? []);
+            if (!empty($already_imported['id'])) {
+                return ['id' => (int)$already_imported['id'], 'error' => '', 'imported' => false];
+            }
+
+            $local_id = attachment_url_to_postid($featured_image_url);
+            if ($local_id > 0 && get_post_type($local_id) === 'attachment') {
+                return ['id' => (int)$local_id, 'error' => '', 'imported' => false];
+            }
+
+            if (self::shouldImportImageUrl($featured_image_url)) {
+                $import = self::sideloadRemoteImage($featured_image_url, $page_id, $title . ' Featured Image');
+                if (is_array($import) && !empty($import['id'])) {
+                    return ['id' => (int)$import['id'], 'error' => '', 'imported' => true];
+                }
+
+                return [
+                    'id' => 0,
+                    'error' => is_string($import) ? $import : 'Featured image could not be imported.',
+                    'imported' => false,
+                ];
+            }
+
+            return ['id' => 0, 'error' => 'Featured image URL did not match an attachment on the client site.', 'imported' => false];
+        }
+
+        if ($featured_image_id > 0 && get_post_type($featured_image_id) === 'attachment') {
+            return ['id' => $featured_image_id, 'error' => '', 'imported' => false];
+        }
+
+        return [
+            'id' => (int)($image_import['first_id'] ?? 0),
+            'error' => '',
+            'imported' => false,
+        ];
     }
 
     private static function localizeElementorImages(array &$elementor, int $page_id, string $title): array
@@ -193,6 +247,10 @@ final class ElementorPageReceiver
                     $value['url'] = (string)$import['url'];
                     if (array_key_exists('source', $value)) {
                         $value['source'] = 'library';
+                    }
+                    $alt = sanitize_text_field((string)($value['alt'] ?? ''));
+                    if ($alt !== '') {
+                        update_post_meta((int)$import['id'], '_wp_attachment_image_alt', $alt);
                     }
                     if (!$result['first_id']) {
                         $result['first_id'] = (int)$import['id'];

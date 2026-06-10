@@ -17,7 +17,7 @@ if (!defined('ABSPATH')) {
 
 final class AIElementorPageBuilder
 {
-    public const MIN_REMOTE_AGENT_VERSION = '1.2.4';
+    public const MIN_REMOTE_AGENT_VERSION = '1.2.5';
 
     /**
      * Generate a draft page from an Elementor JSON template and variables.
@@ -86,6 +86,7 @@ final class AIElementorPageBuilder
             return $built;
         }
 
+        $option_featured_image_id = absint($options['featured_image_id'] ?? 0);
         $result = self::pushToAgent($agent, [
             'title'             => $built['title'],
             'slug'              => $built['slug'],
@@ -96,7 +97,10 @@ final class AIElementorPageBuilder
             'meta_description'  => $built['meta_description'],
             'h1'                => $built['h1'],
             'focus_keyword'     => $built['focus_keyword'],
-            'featured_image_id' => absint($options['featured_image_id'] ?? $built['variables']['featured_image_id'] ?? 0),
+            'featured_image_id' => $option_featured_image_id > 0
+                ? $option_featured_image_id
+                : absint($built['variables']['featured_image_id'] ?? 0),
+            'featured_image_url' => esc_url_raw((string)($built['variables']['featured_image_url'] ?? '')),
             'requires_elementor_pro' => true,
         ]);
 
@@ -656,12 +660,16 @@ final class AIElementorPageBuilder
 
     private static function maybeSetFeaturedImage(int $post_id, array $variables, array $options): void
     {
-        $image_id = absint($options['featured_image_id'] ?? $variables['featured_image_id'] ?? 0);
-        if ($image_id <= 0) {
-            return;
+        $option_image_id = absint($options['featured_image_id'] ?? 0);
+        $image_id = $option_image_id > 0
+            ? $option_image_id
+            : absint($variables['featured_image_id'] ?? 0);
+
+        if ($image_id <= 0 && !empty($variables['featured_image_url'])) {
+            $image_id = attachment_url_to_postid(esc_url_raw((string)$variables['featured_image_url']));
         }
 
-        if (get_post_type($image_id) === 'attachment') {
+        if ($image_id > 0 && get_post_type($image_id) === 'attachment') {
             set_post_thumbnail($post_id, $image_id);
         }
     }

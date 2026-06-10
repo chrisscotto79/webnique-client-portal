@@ -198,9 +198,8 @@ final class ElementorSectionLibrary
             $key = sanitize_key((string)$key);
             $template = self::template($key);
             if ($template && self::templateProvidesTopBanner($key, $template)) {
-                if (!$banner_keys) {
-                    $banner_keys[] = $key;
-                }
+                // A later explicit hero choice replaces the default simple hero.
+                $banner_keys = [$key];
             } else {
                 $other_keys[] = $key;
             }
@@ -254,7 +253,11 @@ final class ElementorSectionLibrary
             $banner = self::topBannerTemplate();
             $content = array_merge((array)($banner['content'] ?? []), $content);
         }
-        if ($page_type === 'contact' && !self::contentHasRequiredSection($content, 'contact_iframe')) {
+        if (
+            $page_type === 'contact'
+            && !self::contentHasRequiredSection($content, 'contact_iframe')
+            && !self::contentContainsContactIframe($content)
+        ) {
             $contact = self::contactIframeTemplate();
             $content = array_merge($content, (array)($contact['content'] ?? []));
         }
@@ -856,6 +859,23 @@ final class ElementorSectionLibrary
                 && isset($section['settings']['_wnq_required_section'])
                 && $section['settings']['_wnq_required_section'] === $required_section
             ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static function contentContainsContactIframe($value): bool
+    {
+        if (is_string($value)) {
+            return stripos($value, '<iframe') !== false || strpos($value, '{{contact_form_iframe}}') !== false;
+        }
+        if (!is_array($value)) {
+            return false;
+        }
+        foreach ($value as $child) {
+            if (self::contentContainsContactIframe($child)) {
                 return true;
             }
         }

@@ -86,6 +86,9 @@ final class AIElementorPageBuilderAdmin
                 }
                 echo '</ul>';
             }
+            if (!empty($result['featured_image_error'])) {
+                echo '<p><strong>Featured image warning:</strong> ' . esc_html((string)$result['featured_image_error']) . '</p>';
+            }
             echo '<p class="wnq-ai-success-actions">';
             if (!empty($result['elementor_url'])) {
                 echo '<a class="wnq-btn wnq-btn-primary" target="_blank" rel="noopener" href="' . esc_url($result['elementor_url']) . '">Edit in Elementor</a>';
@@ -583,16 +586,6 @@ final class AIElementorPageBuilderAdmin
         if (client && !client.value) {
           client.focus();
           client.reportValidity();
-          return false;
-        }
-      }
-      if (currentStep === 3 && selectedPageType() === 'contact') {
-        var iframe = form.querySelector('[name="contact_form_iframe"]');
-        if (iframe && !/<iframe[\s>]/i.test(iframe.value.trim())) {
-          iframe.setCustomValidity('Contact pages require a contact form iframe embed code.');
-          iframe.reportValidity();
-          iframe.focus();
-          iframe.setCustomValidity('');
           return false;
         }
       }
@@ -1618,14 +1611,6 @@ final class AIElementorPageBuilderAdmin
             );
         }
         $variables = array_merge($required_defaults, $variables);
-        $contact_iframe = $variables['contact_form_iframe'] ?? '';
-        if (
-            ($variables['page_type'] ?? '') === 'contact'
-            && (!is_string($contact_iframe) || !preg_match('/<iframe[\s>]/i', $contact_iframe))
-        ) {
-            self::redirectWithError('Contact pages require a contact form iframe embed code.');
-        }
-
         if ($use_custom_template) {
             $template_json = self::readTextInputOrFile('elementor_template', 'elementor_template_file');
         } else {
@@ -1640,6 +1625,15 @@ final class AIElementorPageBuilderAdmin
 
             $template_json = (string)wp_json_encode($template, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
             $variables = array_merge(ElementorSectionLibrary::defaultsFor($section_template_keys), $variables);
+        }
+
+        $contact_iframe = $variables['contact_form_iframe'] ?? '';
+        if (
+            ($variables['page_type'] ?? '') === 'contact'
+            && (!is_string($contact_iframe) || !preg_match('/<iframe[\s>]/i', $contact_iframe))
+            && !self::templateContainsEmbeddedIframe($template_json)
+        ) {
+            self::redirectWithError('Contact pages require a contact form iframe embed code.');
         }
 
         $uploaded_images = self::uploadedImageVariables($variables);
@@ -1817,6 +1811,11 @@ final class AIElementorPageBuilderAdmin
         }
 
         return (string)wp_unslash($_POST[$text_field] ?? '');
+    }
+
+    private static function templateContainsEmbeddedIframe(string $template_json): bool
+    {
+        return stripos($template_json, '<iframe') !== false;
     }
 
     private static function mergeVariables(array $base, array $incoming): array
