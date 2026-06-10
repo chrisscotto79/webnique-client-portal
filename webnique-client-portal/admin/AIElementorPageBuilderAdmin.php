@@ -1815,7 +1815,35 @@ final class AIElementorPageBuilderAdmin
 
     private static function templateContainsEmbeddedIframe(string $template_json): bool
     {
-        return stripos($template_json, '<iframe') !== false;
+        $decoded = json_decode($template_json, true);
+        return self::valueContainsContactIframe(is_array($decoded) ? $decoded : $template_json);
+    }
+
+    private static function valueContainsContactIframe($value): bool
+    {
+        if (is_array($value)) {
+            foreach ($value as $child) {
+                if (self::valueContainsContactIframe($child)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        if (!is_string($value) || !preg_match_all('/<iframe\b[^>]*>/i', $value, $matches)) {
+            return false;
+        }
+
+        foreach ($matches[0] as $iframe) {
+            $iframe = strtolower((string)$iframe);
+            foreach (['form', 'contact', 'quote', 'booking', 'appointment', 'leadconnector', 'msgsndr', 'jotform', 'typeform', 'formstack', 'wufoo', 'hubspot', 'calendly'] as $marker) {
+                if (strpos($iframe, $marker) !== false) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static function mergeVariables(array $base, array $incoming): array

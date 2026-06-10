@@ -50,6 +50,8 @@ final class BlogReceiver
             $sent_key = $request->get_param('api_key') ?? '';
         }
 
+        $sent_key = is_scalar($sent_key) ? (string)$sent_key : '';
+        $my_key = is_scalar($my_key) ? (string)$my_key : '';
         if (empty($sent_key) || !hash_equals($my_key, $sent_key)) {
             return new \WP_Error('invalid_api_key', 'Invalid API key.', ['status' => 403]);
         }

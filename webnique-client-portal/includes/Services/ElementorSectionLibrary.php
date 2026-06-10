@@ -249,7 +249,11 @@ final class ElementorSectionLibrary
     {
         $content = isset($template['content']) && is_array($template['content']) ? $template['content'] : [];
 
-        if (!self::contentHasRequiredSection($content, 'top_banner') && !self::contentStartsWithBanner($content)) {
+        if (
+            !self::contentHasRequiredSection($content, 'top_banner')
+            && !self::contentStartsWithBanner($content)
+            && !self::templateProvidesTopBanner('custom', $template)
+        ) {
             $banner = self::topBannerTemplate();
             $content = array_merge((array)($banner['content'] ?? []), $content);
         }
@@ -869,7 +873,22 @@ final class ElementorSectionLibrary
     private static function contentContainsContactIframe($value): bool
     {
         if (is_string($value)) {
-            return stripos($value, '<iframe') !== false || strpos($value, '{{contact_form_iframe}}') !== false;
+            if (strpos($value, '{{contact_form_iframe}}') !== false) {
+                return true;
+            }
+            if (!preg_match_all('/<iframe\b[^>]*>/i', $value, $matches)) {
+                return false;
+            }
+            foreach ($matches[0] as $iframe) {
+                $iframe = strtolower((string)$iframe);
+                foreach (['form', 'contact', 'quote', 'booking', 'appointment', 'leadconnector', 'msgsndr', 'jotform', 'typeform', 'formstack', 'wufoo', 'hubspot', 'calendly'] as $marker) {
+                    if (strpos($iframe, $marker) !== false) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
         if (!is_array($value)) {
             return false;
@@ -887,7 +906,11 @@ final class ElementorSectionLibrary
     {
         $first = isset($content[0]) && is_array($content[0]) ? $content[0] : [];
         $settings = isset($first['settings']) && is_array($first['settings']) ? $first['settings'] : [];
-        $title = strtolower((string)($settings['_title'] ?? ''));
+        $title = strtolower(implode(' ', [
+            (string)($settings['_title'] ?? ''),
+            (string)($settings['_wnq_section_role'] ?? ''),
+            (string)($settings['_wnq_required_section'] ?? ''),
+        ]));
 
         return strpos($title, 'hero') !== false || strpos($title, 'banner') !== false;
     }
