@@ -612,7 +612,7 @@ final class AIElementorPageBuilder
             ];
         }
 
-        $response = wp_remote_post($site_url . '/wp-json/wnq-agent/v1/create-elementor-page', [
+        $request_args = [
             'timeout' => 90,
             'headers' => [
                 'X-WNQ-Api-Key' => $api_key,
@@ -620,7 +620,8 @@ final class AIElementorPageBuilder
                 'User-Agent'    => 'GoldenWebMarketing-SEO-OS/1.0',
             ],
             'body' => wp_json_encode($payload),
-        ]);
+        ];
+        $response = wp_remote_post($site_url . '/wp-json/wnq-agent/v1/create-elementor-page', $request_args);
 
         if (is_wp_error($response)) {
             return [
@@ -634,6 +635,24 @@ final class AIElementorPageBuilder
         $body = json_decode($raw, true);
         if (!is_array($body)) {
             $body = [];
+        }
+
+        if (self::shouldRetryAgentRestFallback($response, $code, $body)) {
+            $fallback_url = add_query_arg(
+                'rest_route',
+                '/wnq-agent/v1/create-elementor-page',
+                $site_url . '/index.php'
+            );
+            $fallback_response = wp_remote_post($fallback_url, $request_args);
+            if (!is_wp_error($fallback_response)) {
+                $response = $fallback_response;
+                $code = wp_remote_retrieve_response_code($response);
+                $raw = wp_remote_retrieve_body($response);
+                $body = json_decode($raw, true);
+                if (!is_array($body)) {
+                    $body = [];
+                }
+            }
         }
 
         if ($code >= 200 && $code < 300) {
@@ -674,6 +693,16 @@ final class AIElementorPageBuilder
             'success' => false,
             'message' => 'Client draft creation failed: ' . $message,
         ];
+    }
+
+    private static function shouldRetryAgentRestFallback($response, int $code, array $body): bool
+    {
+        $content_type = strtolower((string)wp_remote_retrieve_header($response, 'content-type'));
+        if ($code >= 200 && $code < 300 && strpos($content_type, 'text/html') !== false) {
+            return true;
+        }
+
+        return $code === 404 && (string)($body['code'] ?? '') === 'rest_no_route';
     }
 
     private static function maybeSetFeaturedImage(int $post_id, array $variables, array $options): void
