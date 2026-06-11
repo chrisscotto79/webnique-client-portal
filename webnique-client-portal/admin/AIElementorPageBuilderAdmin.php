@@ -30,6 +30,7 @@ final class AIElementorPageBuilderAdmin
         add_action('admin_post_wnq_ai_elementor_save_template', [self::class, 'handleSaveTemplate']);
         add_action('admin_post_wnq_ai_elementor_delete_template', [self::class, 'handleDeleteTemplate']);
         add_action('admin_post_wnq_ai_elementor_generate_variables', [self::class, 'handleGenerateVariables']);
+        add_action('admin_post_wnq_ai_elementor_resubmit', [self::class, 'handleResubmit']);
     }
 
     public static function addMenuPage(): void
@@ -89,19 +90,31 @@ final class AIElementorPageBuilderAdmin
             if (!empty($result['featured_image_error'])) {
                 echo '<p><strong>Featured image warning:</strong> ' . esc_html((string)$result['featured_image_error']) . '</p>';
             }
-            echo '<p class="wnq-ai-success-actions">';
+            echo '<div class="wnq-ai-success-actions">';
             if (!empty($result['elementor_url'])) {
                 echo '<a class="wnq-btn wnq-btn-primary" target="_blank" rel="noopener" href="' . esc_url($result['elementor_url']) . '">Edit in Elementor</a>';
             }
             if (!empty($result['preview_url'])) {
-                echo '<a class="wnq-btn" target="_blank" rel="noopener" href="' . esc_url($result['preview_url']) . '">View Draft</a>';
+                echo '<a class="wnq-btn" target="_blank" rel="noopener" href="' . esc_url($result['preview_url']) . '">View Page</a>';
+            } elseif (!empty($result['page_url'])) {
+                echo '<a class="wnq-btn" target="_blank" rel="noopener" href="' . esc_url($result['page_url']) . '">View Page</a>';
             }
+            if (!empty($result['pages_url'])) {
+                echo '<a class="wnq-btn" target="_blank" rel="noopener" href="' . esc_url($result['pages_url']) . '">Open Client Pages</a>';
+            }
+            self::renderResubmitButton();
             echo '<a class="wnq-btn" href="' . esc_url(admin_url('admin.php?page=wnq-seo-hub-ai-elementor')) . '">Create Another Page</a>';
-            echo '</p></div></div>';
+            echo '</div></div></div>';
         }
 
         if ($error !== '') {
-            echo '<div class="wnq-hub-notice error"><p>' . esc_html($error) . '</p></div>';
+            echo '<div class="wnq-hub-notice error"><p>' . esc_html($error) . '</p>';
+            if (get_transient(self::requestTransientKey())) {
+                echo '<div class="wnq-ai-success-actions">';
+                self::renderResubmitButton();
+                echo '</div>';
+            }
+            echo '</div>';
         }
         if ($notice === 'template_saved') {
             echo '<div class="wnq-hub-notice success"><p>Template saved to the library.</p></div>';
@@ -1652,11 +1665,44 @@ final class AIElementorPageBuilderAdmin
             $variables = self::mergeVariables($variables, $custom_uploaded_images);
         }
 
-        $result = AIElementorPageBuilder::generateRemoteDraft($agent_key_id, $template_json, $variables, [
-            'post_title'        => sanitize_text_field(wp_unslash($_POST['post_title'] ?? '')),
-            'featured_image_id' => absint($_POST['featured_image_id'] ?? 0),
-        ]);
+        $request = [
+            'agent_key_id' => $agent_key_id,
+            'template_json' => $template_json,
+            'variables' => $variables,
+            'options' => [
+                'post_title'        => sanitize_text_field(wp_unslash($_POST['post_title'] ?? '')),
+                'featured_image_id' => absint($_POST['featured_image_id'] ?? 0),
+            ],
+        ];
+        set_transient(self::requestTransientKey(), $request, HOUR_IN_SECONDS);
 
+        $result = AIElementorPageBuilder::generateRemoteDraft($agent_key_id, $template_json, $variables, $request['options']);
+
+        self::finishGenerationRequest($result);
+    }
+
+    public static function handleResubmit(): void
+    {
+        self::checkCap();
+        check_admin_referer('wnq_ai_elementor_resubmit');
+
+        $request = get_transient(self::requestTransientKey());
+        if (!is_array($request)) {
+            self::redirectWithError('The previous page request has expired. Reopen the builder and submit it again.');
+        }
+
+        $result = AIElementorPageBuilder::generateRemoteDraft(
+            absint($request['agent_key_id'] ?? 0),
+            (string)($request['template_json'] ?? ''),
+            is_array($request['variables'] ?? null) ? $request['variables'] : [],
+            is_array($request['options'] ?? null) ? $request['options'] : []
+        );
+
+        self::finishGenerationRequest($result);
+    }
+
+    private static function finishGenerationRequest(array $result): void
+    {
         if (empty($result['success'])) {
             self::redirectWithError((string)($result['message'] ?? 'Draft generation failed.'));
         }
@@ -1669,6 +1715,19 @@ final class AIElementorPageBuilderAdmin
             'created' => 1,
         ], admin_url('admin.php')));
         exit;
+    }
+
+    private static function renderResubmitButton(): void
+    {
+        if (!get_transient(self::requestTransientKey())) {
+            return;
+        }
+
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:inline-flex;">';
+        wp_nonce_field('wnq_ai_elementor_resubmit');
+        echo '<input type="hidden" name="action" value="wnq_ai_elementor_resubmit">';
+        echo '<button type="submit" class="wnq-btn">Resubmit Page Request</button>';
+        echo '</form>';
     }
 
     public static function handleSaveTemplate(): void
@@ -1913,6 +1972,11 @@ final class AIElementorPageBuilderAdmin
     private static function resultTransientKey(): string
     {
         return 'wnq_ai_elementor_result_' . get_current_user_id();
+    }
+
+    private static function requestTransientKey(): string
+    {
+        return 'wnq_ai_elementor_request_' . get_current_user_id();
     }
 
     private static function aiPayloadTransientKey(): string

@@ -637,6 +637,24 @@ final class AIElementorPageBuilder
         }
 
         if ($code >= 200 && $code < 300) {
+            $page_id = absint($body['page_id'] ?? 0);
+            $status = sanitize_key((string)($body['status'] ?? ''));
+            if ($page_id <= 0 || $status !== 'draft_created') {
+                $response_type = wp_remote_retrieve_header($response, 'content-type');
+                return [
+                    'success' => false,
+                    'message' => 'The client site returned HTTP ' . $code . ' but did not confirm that a WordPress draft was created. '
+                        . 'Update the SEO Agent on the client site, verify the selected site URL, and resubmit the request.'
+                        . ($response_type ? ' Response type: ' . sanitize_text_field((string)$response_type) . '.' : ''),
+                ];
+            }
+
+            $body['page_url'] = !empty($body['page_url']) ? $body['page_url'] : $site_url . '/?page_id=' . $page_id;
+            $body['preview_url'] = !empty($body['preview_url']) ? $body['preview_url'] : $site_url . '/?page_id=' . $page_id . '&preview=true';
+            $body['edit_url'] = !empty($body['edit_url']) ? $body['edit_url'] : $site_url . '/wp-admin/post.php?post=' . $page_id . '&action=edit';
+            $body['elementor_url'] = !empty($body['elementor_url']) ? $body['elementor_url'] : $site_url . '/wp-admin/post.php?post=' . $page_id . '&action=elementor';
+            $body['pages_url'] = !empty($body['pages_url']) ? $body['pages_url'] : $site_url . '/wp-admin/edit.php?post_type=page';
+
             return array_merge([
                 'success' => true,
                 'message' => 'Draft created on the selected client site.',
