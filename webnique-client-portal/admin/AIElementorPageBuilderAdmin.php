@@ -346,7 +346,7 @@ final class AIElementorPageBuilderAdmin
               $site_label = ($agent['site_name'] ?? '') ?: parse_url($agent['site_url'] ?? '', PHP_URL_HOST) ?: ($agent['site_url'] ?? '');
               $label = trim(($agent['client_label'] ?? '') . ' - ' . $site_label);
             ?>
-            <option value="<?php echo (int)$agent['id']; ?>" data-client-name="<?php echo esc_attr((string)($agent['client_label'] ?? '')); ?>" data-client-phone="<?php echo esc_attr((string)($agent['client_phone'] ?? '')); ?>" data-client-website="<?php echo esc_attr((string)($agent['client_website'] ?? $agent['site_url'] ?? '')); ?>" data-client-services="<?php echo esc_attr((string)($agent['client_services'] ?? '')); ?>" data-site-url="<?php echo esc_attr((string)($agent['site_url'] ?? '')); ?>"><?php echo esc_html($label); ?></option>
+            <option value="<?php echo (int)$agent['id']; ?>" data-client-name="<?php echo esc_attr((string)($agent['client_label'] ?? '')); ?>" data-client-phone="<?php echo esc_attr((string)($agent['client_phone'] ?? '')); ?>" data-client-email="<?php echo esc_attr((string)($agent['client_email'] ?? '')); ?>" data-client-website="<?php echo esc_attr((string)($agent['client_website'] ?? $agent['site_url'] ?? '')); ?>" data-client-services="<?php echo esc_attr((string)($agent['client_services'] ?? '')); ?>" data-client-address="<?php echo esc_attr((string)($agent['client_address'] ?? '')); ?>" data-client-city="<?php echo esc_attr((string)($agent['client_city'] ?? '')); ?>" data-client-state="<?php echo esc_attr((string)($agent['client_state'] ?? '')); ?>" data-client-primary-color="<?php echo esc_attr((string)($agent['client_primary_color'] ?? '')); ?>" data-client-secondary-color="<?php echo esc_attr((string)($agent['client_secondary_color'] ?? '')); ?>" data-client-body-font="<?php echo esc_attr((string)($agent['client_body_font'] ?? '')); ?>" data-client-heading-font="<?php echo esc_attr((string)($agent['client_heading_font'] ?? '')); ?>" data-site-url="<?php echo esc_attr((string)($agent['site_url'] ?? '')); ?>"><?php echo esc_html($label); ?></option>
           <?php endforeach; ?>
         </select>
         <?php if (empty($agents)): ?><p class="description">No active sites found. Connect one under <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-seo-hub-api')); ?>">API Management</a>.</p><?php endif; ?>
@@ -715,12 +715,23 @@ final class AIElementorPageBuilderAdmin
         var autofill = {
           business_name: option ? option.getAttribute('data-client-name') : '',
           phone_number: option ? option.getAttribute('data-client-phone') : '',
+          business_email: option ? option.getAttribute('data-client-email') : '',
           website_url: option ? option.getAttribute('data-client-website') : '',
-          service: option ? option.getAttribute('data-client-services') : ''
+          service: option ? option.getAttribute('data-client-services') : '',
+          business_address: option ? option.getAttribute('data-client-address') : '',
+          city: option ? option.getAttribute('data-client-city') : '',
+          state: option ? option.getAttribute('data-client-state') : '',
+          accent_color: option ? option.getAttribute('data-client-primary-color') : '',
+          hero_background_color: option ? option.getAttribute('data-client-secondary-color') : '',
+          body_font_family: option ? option.getAttribute('data-client-body-font') : '',
+          heading_font_family: option ? option.getAttribute('data-client-heading-font') : '',
+          button_font_family: option ? option.getAttribute('data-client-body-font') : ''
         };
         Object.keys(autofill).forEach(function(name) {
           var field = form.querySelector('[name="' + name + '"]');
-          if (field && !field.value && autofill[name]) field.value = autofill[name];
+          var isDefaultColor = (name === 'accent_color' && field && field.value.toLowerCase() === '#d9be42')
+            || (name === 'hero_background_color' && field && field.value.toLowerCase() === '#07131c');
+          if (field && autofill[name] && (!field.value || isDefaultColor)) field.value = autofill[name];
         });
         if (advancedPayloadGenerated) populateAdvancedPayload();
       });
@@ -1608,7 +1619,7 @@ final class AIElementorPageBuilderAdmin
         }
         $template_json = '';
         $variables_json = trim(self::readTextInputOrFile('variables_json', 'variables_json_file'));
-        $variables = self::simpleModeVariables();
+        $variables = self::mergeClientDefaults(self::simpleModeVariables(), self::clientVariablesForAgent($agent_key_id));
         if ($variables_json !== '') {
             $advanced_variables = json_decode($variables_json, true);
             if (!is_array($advanced_variables)) {
@@ -1990,7 +2001,7 @@ final class AIElementorPageBuilderAdmin
             'page_type', 'page_title', 'business_name', 'service', 'city', 'state',
             'h1', 'hero_subheadline', 'primary_cta_text', 'secondary_cta_text',
             'phone_number', 'business_email', 'business_address', 'website_url', 'main_offer', 'accent_color', 'hero_background_color',
-            'tone_of_voice', 'title_tag', 'primary_keyword',
+            'tone_of_voice', 'title_tag', 'primary_keyword', 'body_font_family', 'heading_font_family', 'button_font_family',
         ];
         $textarea_fields = ['short_description', 'meta_description'];
         $variables = [];
@@ -2042,7 +2053,8 @@ final class AIElementorPageBuilderAdmin
 
     private static function sanitizeContactIframe(string $value): string
     {
-        return wp_kses($value, [
+        $scripts = self::approvedContactEmbedScripts($value);
+        $clean = wp_kses($value, [
             'iframe' => [
                 'src'             => true,
                 'title'           => true,
@@ -2060,8 +2072,82 @@ final class AIElementorPageBuilderAdmin
                 'loading'         => true,
                 'referrerpolicy'  => true,
                 'sandbox'         => true,
+                'data-*'          => true,
+                'aria-*'          => true,
             ],
         ]);
+
+        return trim($clean . ($scripts ? "\n" . implode("\n", $scripts) : ''));
+    }
+
+    private static function approvedContactEmbedScripts(string $value): array
+    {
+        if (!preg_match_all('/<script\b[^>]*\bsrc=(["\'])(.*?)\1[^>]*>\s*<\/script>/is', $value, $matches)) {
+            return [];
+        }
+
+        $allowed_hosts = [
+            'link.msgsndr.com',
+            'api.leadconnectorhq.com',
+            'widgets.leadconnectorhq.com',
+            'form.jotform.com',
+            'cdn.jotfor.ms',
+            'embed.typeform.com',
+            'js.hsforms.net',
+            'assets.calendly.com',
+        ];
+        $scripts = [];
+        foreach ($matches[2] as $src) {
+            $src = esc_url_raw((string)$src);
+            $host = strtolower((string)wp_parse_url($src, PHP_URL_HOST));
+            if ($src === '' || !in_array($host, $allowed_hosts, true)) {
+                continue;
+            }
+            $scripts[$src] = '<script src="' . esc_url($src) . '"></script>';
+        }
+
+        return array_values($scripts);
+    }
+
+    private static function clientVariablesForAgent(int $agent_key_id): array
+    {
+        foreach (self::connectedAgents() as $agent) {
+            if (absint($agent['id'] ?? 0) !== $agent_key_id) {
+                continue;
+            }
+
+            return array_filter([
+                'business_name'          => sanitize_text_field((string)($agent['client_label'] ?? '')),
+                'phone_number'           => sanitize_text_field((string)($agent['client_phone'] ?? '')),
+                'business_email'         => sanitize_email((string)($agent['client_email'] ?? '')),
+                'website_url'            => esc_url_raw((string)($agent['client_website'] ?? $agent['site_url'] ?? '')),
+                'service'                => sanitize_text_field((string)($agent['client_services'] ?? '')),
+                'business_address'       => sanitize_text_field((string)($agent['client_address'] ?? '')),
+                'city'                   => sanitize_text_field((string)($agent['client_city'] ?? '')),
+                'state'                  => sanitize_text_field((string)($agent['client_state'] ?? '')),
+                'accent_color'           => sanitize_hex_color((string)($agent['client_primary_color'] ?? '')) ?: '',
+                'hero_background_color'  => sanitize_hex_color((string)($agent['client_secondary_color'] ?? '')) ?: '',
+                'body_font_family'       => sanitize_text_field((string)($agent['client_body_font'] ?? '')),
+                'heading_font_family'    => sanitize_text_field((string)($agent['client_heading_font'] ?? '')),
+                'button_font_family'     => sanitize_text_field((string)($agent['client_body_font'] ?? '')),
+            ], static fn($value) => $value !== '');
+        }
+
+        return [];
+    }
+
+    private static function mergeClientDefaults(array $variables, array $defaults): array
+    {
+        foreach ($defaults as $key => $value) {
+            $current = trim((string)($variables[$key] ?? ''));
+            $is_default_color = ($key === 'accent_color' && strcasecmp($current, '#d9be42') === 0)
+                || ($key === 'hero_background_color' && in_array(strtolower($current), ['#07131c', '#111111'], true));
+            if ($current === '' || $is_default_color) {
+                $variables[$key] = $value;
+            }
+        }
+
+        return $variables;
     }
 
     private static function recordGeneratedDraft(array $result): void
@@ -2111,6 +2197,9 @@ final class AIElementorPageBuilderAdmin
             ['accent_color', 'Primary Brand Color', 'color', '#d9be42'],
             ['hero_background_color', 'Secondary Brand Color', 'color', '#07131c'],
             ['tone_of_voice', 'Tone of Voice', 'text', 'Professional, clear, conversion-focused'],
+            ['body_font_family', 'Body Font', 'text', 'Roboto'],
+            ['heading_font_family', 'Heading Font', 'text', 'Poppins'],
+            ['button_font_family', 'Button Font', 'text', 'Roboto'],
             ['title_tag', 'SEO Title', 'text', 'Emergency Plumber in Orlando | PrimeFlow'],
             ['primary_keyword', 'Primary SEO Keyword', 'text', 'emergency plumber Orlando'],
         ];
@@ -2121,7 +2210,7 @@ final class AIElementorPageBuilderAdmin
         }
         echo '<label class="wnq-ai-field-wide"><strong>Short Description</strong><textarea name="short_description" rows="4" placeholder="Briefly describe the business, service, and value proposition." data-wnq-field-label="Short Description"></textarea></label>';
         echo '<label class="wnq-ai-field-wide"><strong>Meta Description</strong><textarea name="meta_description" rows="3" placeholder="Search-friendly summary for the page." data-wnq-field-label="Meta Description"></textarea></label>';
-        echo '<label class="wnq-ai-field-wide" data-contact-only hidden><strong>Contact Form Iframe</strong><textarea name="contact_form_iframe" rows="5" placeholder=\'<iframe src="https://forms.example.com/contact" title="Contact form"></iframe>\' data-wnq-field-label="Contact Form Iframe"></textarea><span class="description">Required for Contact Pages. Paste the complete iframe embed code.</span></label>';
+        echo '<label class="wnq-ai-field-wide" data-contact-only hidden><strong>Contact Form Embed Code</strong><textarea name="contact_form_iframe" rows="5" placeholder=\'<iframe src="https://forms.example.com/contact" title="Contact form"></iframe>\' data-wnq-field-label="Contact Form Embed Code"></textarea><span class="description">Required for Contact Pages. Paste the complete provider embed, including its iframe and companion script when supplied.</span></label>';
     }
 
     private static function renderSimpleSectionCards(array $templates): void
@@ -2414,10 +2503,18 @@ final class AIElementorPageBuilderAdmin
                 }
             }
             $client_profiles[$client_id] = [
-                'label'    => $client['company'] ?: $client['name'] ?: $client_id,
-                'phone'    => sanitize_text_field((string)($client['phone'] ?? '')),
-                'website'  => esc_url_raw((string)($client['website'] ?? '')),
-                'services' => sanitize_text_field((string)$services),
+                'label'           => $client['company'] ?: $client['name'] ?: $client_id,
+                'phone'           => sanitize_text_field((string)($client['phone'] ?? '')),
+                'email'           => sanitize_email((string)($client['email'] ?? '')),
+                'website'         => esc_url_raw((string)($client['website'] ?? '')),
+                'services'        => sanitize_text_field((string)$services),
+                'address'         => sanitize_text_field((string)($client['business_address'] ?? '')),
+                'city'            => sanitize_text_field((string)($client['city'] ?? '')),
+                'state'           => sanitize_text_field((string)($client['state'] ?? '')),
+                'primary_color'   => sanitize_hex_color((string)($client['primary_color'] ?? '')) ?: '',
+                'secondary_color' => sanitize_hex_color((string)($client['secondary_color'] ?? '')) ?: '',
+                'body_font'       => sanitize_text_field((string)($client['body_font'] ?? '')),
+                'heading_font'    => sanitize_text_field((string)($client['heading_font'] ?? '')),
             ];
         }
 
@@ -2430,8 +2527,16 @@ final class AIElementorPageBuilderAdmin
             $profile = $client_profiles[$client_id] ?? [];
             $agent['client_label'] = $profile['label'] ?? $client_id;
             $agent['client_phone'] = $profile['phone'] ?? '';
+            $agent['client_email'] = $profile['email'] ?? '';
             $agent['client_website'] = $profile['website'] ?? '';
             $agent['client_services'] = $profile['services'] ?? '';
+            $agent['client_address'] = $profile['address'] ?? '';
+            $agent['client_city'] = $profile['city'] ?? '';
+            $agent['client_state'] = $profile['state'] ?? '';
+            $agent['client_primary_color'] = $profile['primary_color'] ?? '';
+            $agent['client_secondary_color'] = $profile['secondary_color'] ?? '';
+            $agent['client_body_font'] = $profile['body_font'] ?? '';
+            $agent['client_heading_font'] = $profile['heading_font'] ?? '';
             $agents[] = $agent;
         }
 

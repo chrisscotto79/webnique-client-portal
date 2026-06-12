@@ -141,6 +141,8 @@ final class AIElementorPageBuilder
             $template,
             (string)($variables['page_type'] ?? 'custom')
         );
+        $template = self::stripElementorGlobalReferences($template, $variables);
+        $template = self::applyBrandTypography($template, $variables);
         $content = self::extractElementorContent($template);
         $tokens = self::buildTokenMap($variables);
         $elementor_data = self::replacePlaceholdersRecursive($content, $tokens);
@@ -260,7 +262,8 @@ final class AIElementorPageBuilder
 
     private static function sanitizeContactIframe(string $value): string
     {
-        return wp_kses($value, [
+        $scripts = self::approvedContactEmbedScripts($value);
+        $clean = wp_kses($value, [
             'iframe' => [
                 'src'             => true,
                 'title'           => true,
@@ -278,8 +281,116 @@ final class AIElementorPageBuilder
                 'loading'         => true,
                 'referrerpolicy'  => true,
                 'sandbox'         => true,
+                'data-*'          => true,
+                'aria-*'          => true,
             ],
         ]);
+
+        return trim($clean . ($scripts ? "\n" . implode("\n", $scripts) : ''));
+    }
+
+    private static function approvedContactEmbedScripts(string $value): array
+    {
+        if (!preg_match_all('/<script\b[^>]*\bsrc=(["\'])(.*?)\1[^>]*>\s*<\/script>/is', $value, $matches)) {
+            return [];
+        }
+
+        $allowed_hosts = [
+            'link.msgsndr.com',
+            'api.leadconnectorhq.com',
+            'widgets.leadconnectorhq.com',
+            'form.jotform.com',
+            'cdn.jotfor.ms',
+            'embed.typeform.com',
+            'js.hsforms.net',
+            'assets.calendly.com',
+        ];
+        $scripts = [];
+        foreach ($matches[2] as $src) {
+            $src = esc_url_raw((string)$src);
+            $host = strtolower((string)wp_parse_url($src, PHP_URL_HOST));
+            if ($src === '' || !in_array($host, $allowed_hosts, true)) {
+                continue;
+            }
+            $scripts[$src] = '<script src="' . esc_url($src) . '"></script>';
+        }
+
+        return array_values($scripts);
+    }
+
+    private static function stripElementorGlobalReferences($value, array $variables)
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+
+        $globals = isset($value['__globals__']) && is_array($value['__globals__']) ? $value['__globals__'] : [];
+        foreach ($globals as $setting_key => $reference) {
+            $setting_key = (string)$setting_key;
+            $reference = strtolower((string)$reference);
+            if (strpos($reference, 'typography') !== false) {
+                $font_key = preg_replace('/_typography$/', '_font_family', $setting_key);
+                $font_key = is_string($font_key) ? $font_key : $setting_key . '_font_family';
+                $font = self::fontForSetting($font_key, $variables);
+                if ($font !== '') {
+                    $value[$font_key] = $font;
+                }
+            } elseif (strpos($reference, 'colors?id=primary') !== false || strpos($reference, 'colors?id=accent') !== false) {
+                $color = sanitize_hex_color((string)($variables['accent_color'] ?? '')) ?: '';
+                if ($color !== '') {
+                    $value[$setting_key] = $color;
+                }
+            } elseif (strpos($reference, 'colors?id=secondary') !== false) {
+                $color = sanitize_hex_color((string)($variables['hero_background_color'] ?? '')) ?: '';
+                if ($color !== '') {
+                    $value[$setting_key] = $color;
+                }
+            }
+        }
+        unset($value['__globals__']);
+        foreach ($value as $key => $child) {
+            $value[$key] = self::stripElementorGlobalReferences($child, $variables);
+        }
+
+        return $value;
+    }
+
+    private static function applyBrandTypography($value, array $variables)
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+
+        foreach ($value as $key => $child) {
+            $key_text = strtolower((string)$key);
+            if (is_string($child) && str_ends_with($key_text, 'font_family')) {
+                $font = self::fontForSetting($key_text, $variables);
+                if ($font !== '') {
+                    $value[$key] = $font;
+                }
+                continue;
+            }
+            $value[$key] = self::applyBrandTypography($child, $variables);
+        }
+
+        return $value;
+    }
+
+    private static function fontForSetting(string $setting_key, array $variables): string
+    {
+        $body_font = sanitize_text_field((string)($variables['body_font_family'] ?? ''));
+        $heading_font = sanitize_text_field((string)($variables['heading_font_family'] ?? ''));
+        $button_font = sanitize_text_field((string)($variables['button_font_family'] ?? $body_font));
+        $setting_key = strtolower($setting_key);
+
+        if ($button_font !== '' && strpos($setting_key, 'button') !== false) {
+            return $button_font;
+        }
+        if ($heading_font !== '' && preg_match('/title|heading|headline|words/', $setting_key)) {
+            return $heading_font;
+        }
+
+        return $body_font;
     }
 
     private static function normalizeVariables(array $variables): array

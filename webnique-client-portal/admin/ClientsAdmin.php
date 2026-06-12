@@ -1096,6 +1096,22 @@ final class ClientsAdmin
                         </td>
                     </tr>
                     <tr>
+                        <th><label for="business_address">Business Address</label></th>
+                        <td><input type="text" name="business_address" id="business_address" value="<?php echo esc_attr($client['business_address'] ?? ''); ?>" class="regular-text"></td>
+                    </tr>
+                    <tr>
+                        <th><label for="city">City / State</label></th>
+                        <td><input type="text" name="city" id="city" value="<?php echo esc_attr($client['city'] ?? ''); ?>" placeholder="City"> <input type="text" name="state" id="state" value="<?php echo esc_attr($client['state'] ?? ''); ?>" placeholder="State" style="width:100px;"></td>
+                    </tr>
+                    <tr>
+                        <th><label for="primary_color">Brand Colors</label></th>
+                        <td><input type="text" name="primary_color" id="primary_color" value="<?php echo esc_attr(sanitize_hex_color($client['primary_color'] ?? '') ?: ''); ?>" placeholder="#D9BE42" pattern="#[0-9A-Fa-f]{6}"> <input type="text" name="secondary_color" value="<?php echo esc_attr(sanitize_hex_color($client['secondary_color'] ?? '') ?: ''); ?>" placeholder="#07131C" pattern="#[0-9A-Fa-f]{6}"></td>
+                    </tr>
+                    <tr>
+                        <th><label for="body_font">Brand Fonts</label></th>
+                        <td><input type="text" name="body_font" id="body_font" value="<?php echo esc_attr($client['body_font'] ?? ''); ?>" placeholder="Body font, e.g. Roboto"> <input type="text" name="heading_font" value="<?php echo esc_attr($client['heading_font'] ?? ''); ?>" placeholder="Heading font, e.g. Poppins"></td>
+                    </tr>
+                    <tr>
                         <th><label for="status">Status</label></th>
                         <td>
                             <select name="status" id="status">
@@ -1301,6 +1317,13 @@ final class ClientsAdmin
             'phone' => sanitize_text_field($_POST['phone'] ?? ''),
             'company' => sanitize_text_field($_POST['company'] ?? ''),
             'website' => esc_url_raw($_POST['website'] ?? ''),
+            'business_address' => sanitize_text_field($_POST['business_address'] ?? ''),
+            'city' => sanitize_text_field($_POST['city'] ?? ''),
+            'state' => sanitize_text_field($_POST['state'] ?? ''),
+            'primary_color' => sanitize_hex_color($_POST['primary_color'] ?? '') ?: '',
+            'secondary_color' => sanitize_hex_color($_POST['secondary_color'] ?? '') ?: '',
+            'body_font' => sanitize_text_field($_POST['body_font'] ?? ''),
+            'heading_font' => sanitize_text_field($_POST['heading_font'] ?? ''),
             'status' => sanitize_text_field($_POST['status'] ?? 'active'),
             'tier' => sanitize_text_field($_POST['tier'] ?? 'website'),
             'billing_email' => sanitize_email($_POST['billing_email'] ?? ''),
