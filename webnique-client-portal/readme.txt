@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.14
+Stable tag: 2.4.18
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -17,6 +17,12 @@ Golden Web Marketing Client Portal is a custom WordPress plugin built exclusivel
 This plugin is designed as a multi-tenant client portal hosted by Golden Web Marketing, where each client logs in using standard WordPress credentials and accesses only their own data.
 
 The portal is intentionally built in phases, starting with a clean v1 foundation and expanding over time to support advanced SEO analytics, reporting, audits, and Google Ads.
+
+Elementor Shortcode
+
+Add either `[wnq_portal]` or `[gwm_client_portal]` to an Elementor Shortcode widget. Logged-in users must have a `wnq_client_id` value assigned to their WordPress user profile.
+
+The client dashboard includes account health, reports, a basic customer CRM, messages, work progress, billing status, learning resources, and the stored business profile. Golden Web Marketing staff can review all client portal activity under Golden Web Marketing Portal > Client Portal Dashboard.
 
 Core Objectives
 

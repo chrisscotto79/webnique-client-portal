@@ -25,6 +25,7 @@ final class Shortcode
     public static function register(): void
     {
         add_shortcode('wnq_portal', [self::class, 'render']);
+        add_shortcode('gwm_client_portal', [self::class, 'render']);
     }
 
     /**
@@ -154,15 +155,6 @@ final class Shortcode
             ],
         ]);
 
-        // 🔥 Firebase Configuration
-        wp_localize_script('wnq-portal-app', 'WNQ_FIREBASE_CONFIG', [
-            'apiKey'            => 'AIzaSyDlN2rZlJYC0u1_mq9oEqApb1crQe-Nrk8',
-            'authDomain'        => 'webnique-client-portal.firebaseapp.com',
-            'projectId'         => 'webnique-client-portal',
-            'storageBucket'     => 'webnique-client-portal.firebasestorage.app',
-            'messagingSenderId' => '174763137944',
-            'appId'             => '1:174763137944:web:2e6e6b3adb39b9ccc5a9ed',
-        ]);
     }
 
     /**
