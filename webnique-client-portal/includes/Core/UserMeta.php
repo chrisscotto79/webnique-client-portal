@@ -35,7 +35,7 @@ final class UserMeta
         <td>
           <input type="text" name="wnq_client_id" id="wnq_client_id" value="<?php echo $clientId; ?>" class="regular-text" />
           <p class="description">
-            Internal tenant ID used by the Golden Web Marketing Client Portal. (v1: 1 WP user → 1 client)
+            Internal tenant ID used by the Golden Web Marketing Client Portal. Multiple portal users may share one client ID.
           </p>
         </td>
       </tr>
