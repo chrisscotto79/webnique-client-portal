@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Golden Web Marketing Client Portal
  * Description: Complete client management with portal, analytics, billing, tasks, SEO tracking, and messaging
- * Version: 2.4.17
+ * Version: 2.4.18
  * Author: Golden Web Marketing
  * Requires at least: 6.0
  * Requires PHP: 8.0
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WNQ_PORTAL_VERSION', '2.4.17');
+define('WNQ_PORTAL_VERSION', '2.4.18');
 define('WNQ_PORTAL_PATH', plugin_dir_path(__FILE__));
 define('WNQ_PORTAL_URL', plugin_dir_url(__FILE__));
 
@@ -106,6 +106,14 @@ register_activation_hook(__FILE__, function() {
             \WNQ\Models\Task::createTable();
         }
     }
+
+    $client_portal_model = WNQ_PORTAL_PATH . 'includes/Models/ClientPortal.php';
+    if (file_exists($client_portal_model)) {
+        require_once $client_portal_model;
+        if (class_exists('WNQ\\Models\\ClientPortal')) {
+            \WNQ\Models\ClientPortal::createTables();
+        }
+    }
     
     $analytics_config = WNQ_PORTAL_PATH . 'includes/Models/AnalyticsConfig.php';
     if (file_exists($analytics_config)) {
@@ -149,7 +157,7 @@ add_filter('the_title', function($title, $id = null) {
         return $title;
     }
     $post = $id ? get_post($id) : get_post();
-    if ($post && !empty($post->post_content) && has_shortcode($post->post_content, 'wnq_portal')) {
+    if ($post && !empty($post->post_content) && (has_shortcode($post->post_content, 'wnq_portal') || has_shortcode($post->post_content, 'gwm_client_portal'))) {
         return '';
     }
     return $title;
@@ -158,7 +166,7 @@ add_filter('the_title', function($title, $id = null) {
 // PORTAL PAGE — Always disable comments on pages using [wnq_portal]
 add_filter('comments_open', function($open, $post_id = null) {
     $post = $post_id ? get_post($post_id) : get_post();
-    if ($post && !empty($post->post_content) && has_shortcode($post->post_content, 'wnq_portal')) {
+    if ($post && !empty($post->post_content) && (has_shortcode($post->post_content, 'wnq_portal') || has_shortcode($post->post_content, 'gwm_client_portal'))) {
         return false;
     }
     return $open;
@@ -166,7 +174,7 @@ add_filter('comments_open', function($open, $post_id = null) {
 
 add_filter('pings_open', function($open, $post_id = null) {
     $post = $post_id ? get_post($post_id) : get_post();
-    if ($post && !empty($post->post_content) && has_shortcode($post->post_content, 'wnq_portal')) {
+    if ($post && !empty($post->post_content) && (has_shortcode($post->post_content, 'wnq_portal') || has_shortcode($post->post_content, 'gwm_client_portal'))) {
         return false;
     }
     return $open;

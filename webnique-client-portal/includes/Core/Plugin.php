@@ -40,6 +40,7 @@ final class Plugin
      */
     if (is_admin()) {
       add_action('admin_menu', [\WNQ\Admin\AdminMenu::class, 'register']);
+      \WNQ\Admin\ClientPortalAdmin::register();
     }
   }
 
@@ -49,6 +50,7 @@ final class Plugin
   public static function activate(): void
   {
     self::includes();
+    \WNQ\Models\ClientPortal::createTables();
     Activator::run();
   }
 
@@ -61,6 +63,9 @@ final class Plugin
      * Controllers (✅ required for REST routes)
      */
     require_once WNQ_PORTAL_PATH . 'includes/Controllers/DashboardController.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Models/Client.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Models/ClientPortal.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Models/Task.php';
 
     /**
      * Core
@@ -91,5 +96,6 @@ final class Plugin
      */
     require_once WNQ_PORTAL_PATH . 'admin/AdminMenu.php';
     require_once WNQ_PORTAL_PATH . 'admin/AdminSettings.php';
+    require_once WNQ_PORTAL_PATH . 'admin/ClientPortalAdmin.php';
   }
 }
