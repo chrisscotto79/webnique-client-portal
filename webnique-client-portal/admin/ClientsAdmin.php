@@ -18,6 +18,7 @@ namespace WNQ\Admin;
 
 use WNQ\Models\Client;
 use WNQ\Models\FinanceEntry;
+use WNQ\Core\ClientPortalUsers;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -33,6 +34,7 @@ final class ClientsAdmin
         add_action('admin_post_wnq_mark_paid', [self::class, 'handleMarkPaid']);
         add_action('admin_post_wnq_save_finance_entry', [self::class, 'handleSaveFinanceEntry']);
         add_action('admin_post_wnq_delete_finance_entry', [self::class, 'handleDeleteFinanceEntry']);
+        add_action('admin_post_wnq_create_client_portal_user', [self::class, 'handleCreatePortalUser']);
     }
 
     public static function addSubmenu(): void
@@ -1020,6 +1022,9 @@ final class ClientsAdmin
         ?>
         <div class="wrap">
             <h1>Edit Client: <?php echo esc_html($client['name']); ?></h1>
+            <?php if (isset($_GET['portal_user'])): ?>
+                <div class="notice notice-success is-dismissible"><p>Client portal login <?php echo esc_html(sanitize_key(wp_unslash($_GET['portal_user']))); ?> successfully.</p></div>
+            <?php endif; ?>
             <?php self::renderClientForm($client); ?>
         </div>
         <?php
@@ -1277,15 +1282,21 @@ final class ClientsAdmin
             </p>
         </form>
 
+        <?php if ($is_edit): ?>
+            <?php self::renderPortalUsers($client); ?>
+        <?php endif; ?>
+
         <style>
-        .wnq-client-form .form-section {
+        .wnq-client-form .form-section,
+        .wnq-portal-access {
             background: white;
             padding: 20px;
             margin-bottom: 20px;
             border: 1px solid #c3c4c7;
             border-radius: 4px;
         }
-        .wnq-client-form .form-section h2 {
+        .wnq-client-form .form-section h2,
+        .wnq-portal-access h2 {
             margin-top: 0;
             padding-bottom: 10px;
             border-bottom: 1px solid #dcdcde;
@@ -1299,6 +1310,109 @@ final class ClientsAdmin
         }
         </style>
         <?php
+    }
+
+    private static function renderPortalUsers(array $client): void
+    {
+        $users = get_users([
+            'meta_key'   => 'wnq_client_id',
+            'meta_value' => (string)$client['client_id'],
+            'orderby'    => 'display_name',
+        ]);
+        ?>
+        <div class="form-section wnq-portal-access">
+            <h2>Client Portal Login</h2>
+            <p>Create a restricted login for this client. Portal users are redirected to the configured client portal page and cannot access the WordPress dashboard.</p>
+            <?php if ($users): ?>
+                <table class="widefat striped" style="max-width:850px;margin-bottom:18px;">
+                    <thead><tr><th>User</th><th>Email</th><th>Role</th><th>Login</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($users as $user): ?>
+                        <tr>
+                            <td><strong><?php echo esc_html($user->display_name ?: $user->user_login); ?></strong></td>
+                            <td><?php echo esc_html($user->user_email); ?></td>
+                            <td><?php echo esc_html(in_array(ClientPortalUsers::ROLE, (array)$user->roles, true) ? 'Client Portal User' : implode(', ', $user->roles)); ?></td>
+                            <td><a href="<?php echo esc_url(wp_login_url(ClientPortalUsers::portalUrl())); ?>">Open Login Page</a></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                <?php wp_nonce_field('wnq_create_client_portal_user_' . (int)$client['id']); ?>
+                <input type="hidden" name="action" value="wnq_create_client_portal_user">
+                <input type="hidden" name="client_id" value="<?php echo esc_attr($client['client_id']); ?>">
+                <input type="hidden" name="client_record_id" value="<?php echo (int)$client['id']; ?>">
+                <label><strong>Name</strong><br><input type="text" name="display_name" value="<?php echo esc_attr($client['name'] ?? ''); ?>" class="regular-text" required></label>
+                <label style="display:block;margin-top:10px;"><strong>Email</strong><br><input type="email" name="email" value="<?php echo esc_attr($client['email'] ?? ''); ?>" class="regular-text" required></label>
+                <p class="description">If the email already belongs to a WordPress user, that user will be linked to this client. Existing administrator roles will not be changed.</p>
+                <button type="submit" class="button button-primary">Create or Link Portal Login</button>
+                <a class="button" href="<?php echo esc_url(ClientPortalUsers::portalUrl()); ?>" target="_blank" rel="noopener">Open Portal Page</a>
+            </form>
+        </div>
+        <?php
+    }
+
+    public static function handleCreatePortalUser(): void
+    {
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
+            wp_die('Insufficient permissions');
+        }
+        $client_record_id = absint($_POST['client_record_id'] ?? 0);
+        check_admin_referer('wnq_create_client_portal_user_' . $client_record_id);
+        $client = Client::getById($client_record_id);
+        if (!$client || !hash_equals((string)$client['client_id'], sanitize_text_field(wp_unslash($_POST['client_id'] ?? '')))) {
+            wp_die('Invalid client.');
+        }
+
+        $email = sanitize_email(wp_unslash($_POST['email'] ?? ''));
+        $display_name = sanitize_text_field(wp_unslash($_POST['display_name'] ?? ''));
+        if (!is_email($email) || $display_name === '') {
+            wp_die('A valid name and email are required.');
+        }
+
+        ClientPortalUsers::ensureRole();
+        $existing = get_user_by('email', $email);
+        $created = false;
+        if ($existing instanceof \WP_User) {
+            $user_id = (int)$existing->ID;
+        } else {
+            $base = sanitize_user(strstr($email, '@', true) ?: sanitize_title($display_name), true);
+            $login = $base !== '' ? $base : 'client';
+            $suffix = 1;
+            while (username_exists($login)) {
+                $login = $base . $suffix;
+                $suffix++;
+            }
+            $user_id = wp_insert_user([
+                'user_login'   => $login,
+                'user_email'   => $email,
+                'display_name' => $display_name,
+                'user_pass'    => wp_generate_password(24, true, true),
+                'role'         => ClientPortalUsers::ROLE,
+            ]);
+            if (is_wp_error($user_id)) {
+                wp_die(esc_html($user_id->get_error_message()));
+            }
+            $created = true;
+        }
+
+        update_user_meta((int)$user_id, 'wnq_client_id', (string)$client['client_id']);
+        $user = get_user_by('id', (int)$user_id);
+        if ($user instanceof \WP_User && !$user->has_cap('manage_options') && !in_array(ClientPortalUsers::ROLE, (array)$user->roles, true)) {
+            $user->set_role(ClientPortalUsers::ROLE);
+        }
+        if ($created) {
+            wp_new_user_notification((int)$user_id, null, 'user');
+        }
+
+        wp_safe_redirect(add_query_arg([
+            'page'   => 'wnq-clients',
+            'action' => 'edit',
+            'id'     => $client_record_id,
+            'portal_user' => $created ? 'created' : 'linked',
+        ], admin_url('admin.php')));
+        exit;
     }
 
     public static function handleSaveClient(): void

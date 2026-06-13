@@ -34,6 +34,7 @@ final class Plugin
      * Core user meta (client ↔ WP user mapping)
      */
     add_action('init', [\WNQ\Core\UserMeta::class, 'register']);
+    \WNQ\Core\ClientPortalUsers::register();
 
     /**
      * Admin (Golden Web Marketing-only)
@@ -75,6 +76,7 @@ final class Plugin
     require_once WNQ_PORTAL_PATH . 'includes/Core/Router.php';
     require_once WNQ_PORTAL_PATH . 'includes/Core/Logger.php';
     require_once WNQ_PORTAL_PATH . 'includes/Core/UserMeta.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Core/ClientPortalUsers.php';
 
     /**
      * Services

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Golden Web Marketing Client Portal
  * Description: Complete client management with portal, analytics, billing, tasks, SEO tracking, and messaging
- * Version: 2.4.18
+ * Version: 2.4.19
  * Author: Golden Web Marketing
  * Requires at least: 6.0
  * Requires PHP: 8.0
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WNQ_PORTAL_VERSION', '2.4.18');
+define('WNQ_PORTAL_VERSION', '2.4.19');
 define('WNQ_PORTAL_PATH', plugin_dir_path(__FILE__));
 define('WNQ_PORTAL_URL', plugin_dir_url(__FILE__));
 
@@ -339,6 +339,16 @@ add_action('admin_post_wnq_delete_client_from_clients', function() {
         require_once WNQ_PORTAL_PATH . 'includes/Models/Client.php';
         require_once $clients_admin;
         \WNQ\Admin\ClientsAdmin::handleDeleteClient();
+    }
+});
+
+add_action('admin_post_wnq_create_client_portal_user', function() {
+    $clients_admin = WNQ_PORTAL_PATH . 'admin/ClientsAdmin.php';
+    if (file_exists($clients_admin)) {
+        require_once WNQ_PORTAL_PATH . 'includes/Models/Client.php';
+        require_once WNQ_PORTAL_PATH . 'includes/Core/ClientPortalUsers.php';
+        require_once $clients_admin;
+        \WNQ\Admin\ClientsAdmin::handleCreatePortalUser();
     }
 });
 
