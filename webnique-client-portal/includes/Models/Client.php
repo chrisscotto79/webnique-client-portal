@@ -19,10 +19,24 @@ if (!defined('ABSPATH')) {
  */
 final class Client
 {
+    private const SCHEMA_VERSION = '2';
+
     /**
      * Table name
      */
     private static string $table = 'wnq_clients';
+    private static bool $schema_ready = false;
+
+    private static function ensureSchema(): void
+    {
+        if (self::$schema_ready) {
+            return;
+        }
+        self::$schema_ready = true;
+        if ((string)get_option('wnq_clients_schema_version', '') !== self::SCHEMA_VERSION) {
+            self::createTable();
+        }
+    }
 
     /**
      * Create clients table
@@ -41,6 +55,13 @@ final class Client
             phone varchar(50) DEFAULT NULL,
             company varchar(255) DEFAULT NULL,
             website varchar(255) DEFAULT NULL,
+            business_address varchar(500) DEFAULT NULL,
+            city varchar(100) DEFAULT NULL,
+            state varchar(100) DEFAULT NULL,
+            primary_color varchar(20) DEFAULT NULL,
+            secondary_color varchar(20) DEFAULT NULL,
+            body_font varchar(100) DEFAULT NULL,
+            heading_font varchar(100) DEFAULT NULL,
             
             -- Account Status
             status varchar(50) DEFAULT 'active',
@@ -80,6 +101,7 @@ final class Client
 
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         dbDelta($sql);
+        update_option('wnq_clients_schema_version', self::SCHEMA_VERSION, false);
     }
 
     /**
@@ -87,6 +109,7 @@ final class Client
      */
     public static function getAll(): array
     {
+        self::ensureSchema();
         global $wpdb;
         $table_name = $wpdb->prefix . self::$table;
 
@@ -103,6 +126,7 @@ final class Client
      */
     public static function getById(int $id): ?array
     {
+        self::ensureSchema();
         global $wpdb;
         $table_name = $wpdb->prefix . self::$table;
 
@@ -119,6 +143,7 @@ final class Client
      */
     public static function getByClientId(string $client_id): ?array
     {
+        self::ensureSchema();
         global $wpdb;
         $table_name = $wpdb->prefix . self::$table;
 
@@ -135,6 +160,7 @@ final class Client
      */
     public static function create(array $data): int|false
     {
+        self::ensureSchema();
         global $wpdb;
         $table_name = $wpdb->prefix . self::$table;
 
@@ -157,6 +183,13 @@ final class Client
             'phone' => isset($data['phone']) ? sanitize_text_field($data['phone']) : null,
             'company' => isset($data['company']) ? sanitize_text_field($data['company']) : null,
             'website' => isset($data['website']) ? esc_url_raw($data['website']) : null,
+            'business_address' => isset($data['business_address']) ? sanitize_text_field($data['business_address']) : null,
+            'city' => isset($data['city']) ? sanitize_text_field($data['city']) : null,
+            'state' => isset($data['state']) ? sanitize_text_field($data['state']) : null,
+            'primary_color' => isset($data['primary_color']) ? (sanitize_hex_color($data['primary_color']) ?: null) : null,
+            'secondary_color' => isset($data['secondary_color']) ? (sanitize_hex_color($data['secondary_color']) ?: null) : null,
+            'body_font' => isset($data['body_font']) ? sanitize_text_field($data['body_font']) : null,
+            'heading_font' => isset($data['heading_font']) ? sanitize_text_field($data['heading_font']) : null,
             'status' => isset($data['status']) ? sanitize_text_field($data['status']) : 'active',
             'tier' => isset($data['tier']) ? sanitize_text_field($data['tier']) : 'website',
         ];
@@ -238,6 +271,7 @@ final class Client
      */
     public static function update(int $id, array $data): bool
     {
+        self::ensureSchema();
         global $wpdb;
         $table_name = $wpdb->prefix . self::$table;
 
@@ -258,6 +292,16 @@ final class Client
         }
         if (isset($data['website'])) {
             $update_data['website'] = esc_url_raw($data['website']);
+        }
+        foreach (['business_address', 'city', 'state', 'body_font', 'heading_font'] as $field) {
+            if (isset($data[$field])) {
+                $update_data[$field] = sanitize_text_field($data[$field]);
+            }
+        }
+        foreach (['primary_color', 'secondary_color'] as $field) {
+            if (isset($data[$field])) {
+                $update_data[$field] = sanitize_hex_color($data[$field]) ?: '';
+            }
         }
         if (isset($data['status'])) {
             $update_data['status'] = sanitize_text_field($data['status']);
