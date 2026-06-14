@@ -8,6 +8,7 @@
 namespace WNQ\PublicSite;
 
 use WNQ\Core\Permissions;
+use WNQ\Models\Client;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -44,6 +45,17 @@ final class Shortcode
         // Get current user's client ID
         $clientId  = Permissions::currentUserClientId();
         $canManage = Permissions::currentUserCanManagePortal();
+        $viewAsClients = $canManage ? self::viewAsClients() : [];
+
+        if ($canManage) {
+            $requestedClientId = sanitize_text_field(wp_unslash($_GET['wnq_view_as'] ?? ''));
+            $allowedClientIds = array_column($viewAsClients, 'clientId');
+            if ($requestedClientId !== '' && in_array($requestedClientId, $allowedClientIds, true)) {
+                $clientId = $requestedClientId;
+            } elseif (($clientId === null || !in_array($clientId, $allowedClientIds, true)) && $viewAsClients) {
+                $clientId = (string)$viewAsClients[0]['clientId'];
+            }
+        }
 
         // Check if user has access
         if ($clientId === null && !$canManage) {
@@ -51,7 +63,7 @@ final class Shortcode
         }
 
         // Enqueue frontend assets
-        self::enqueueAssets($clientId ?? '');
+        self::enqueueAssets($clientId ?? '', $viewAsClients);
 
         // Prepare shell args
         $args = [
@@ -97,7 +109,7 @@ final class Shortcode
     /**
      * Enqueue frontend assets and localize config
      */
-    private static function enqueueAssets(string $clientId): void
+    private static function enqueueAssets(string $clientId, array $viewAsClients = []): void
     {
         $version = defined('WNQ_PORTAL_VERSION') ? WNQ_PORTAL_VERSION : '2.0.0';
 
@@ -135,6 +147,7 @@ final class Shortcode
             'nonce'            => wp_create_nonce('wp_rest'),
             'clientId'         => $clientId,
             'isAdmin'          => current_user_can('wnq_manage_portal') || current_user_can('manage_options'),
+            'viewAsClients'    => $viewAsClients,
             'userId'           => get_current_user_id(),
             'ajaxUrl'          => admin_url('admin-ajax.php'),
             'lostpasswordUrl'  => wp_lostpassword_url(),
@@ -155,6 +168,43 @@ final class Shortcode
             ],
         ]);
 
+    }
+
+    /**
+     * Build the safe, admin-only list used by the frontend preview switcher.
+     */
+    private static function viewAsClients(): array
+    {
+        $options = [];
+        foreach (Client::getAll() as $client) {
+            $clientId = sanitize_text_field((string)($client['client_id'] ?? ''));
+            if ($clientId === '') {
+                continue;
+            }
+
+            $users = get_users([
+                'meta_key'   => 'wnq_client_id',
+                'meta_value' => $clientId,
+                'fields'     => ['display_name', 'user_email'],
+                'orderby'    => 'display_name',
+            ]);
+            $userLabels = array_values(array_filter(array_map(
+                static fn($user): string => sanitize_text_field(
+                    (string)($user->display_name ?: $user->user_email)
+                    . ($user->display_name && $user->user_email ? ' (' . $user->user_email . ')' : '')
+                ),
+                $users
+            )));
+            $business = sanitize_text_field((string)($client['company'] ?: $client['name'] ?: $clientId));
+
+            $options[] = [
+                'clientId' => $clientId,
+                'label'    => $business . ($userLabels ? ' — ' . implode(', ', $userLabels) : ' — No portal login'),
+                'business' => $business,
+            ];
+        }
+
+        return $options;
     }
 
     /**

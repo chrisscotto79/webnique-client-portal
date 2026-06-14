@@ -60,6 +60,7 @@ final class ClientPortalUsers
 
     public static function portalUrl(): string
     {
-        return esc_url_raw((string)get_option('wnq_portal_page_url', home_url('/client-portal/')));
+        $url = trim((string)get_option('wnq_portal_page_url', ''));
+        return esc_url_raw($url !== '' ? $url : home_url('/client-portal/'));
     }
 }
