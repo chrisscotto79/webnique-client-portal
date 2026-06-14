@@ -40,7 +40,7 @@ final class ClientsAdmin
     public static function addSubmenu(): void
     {
         $capability = current_user_can('wnq_manage_portal') ? 'wnq_manage_portal' : 'manage_options';
-        add_submenu_page('wnq-portal', 'Money Mangment', 'Money Mangment', $capability, 'wnq-clients', [self::class, 'render']);
+        add_submenu_page('wnq-portal', 'Clients & Billing', 'Clients & Billing', $capability, 'wnq-clients', [self::class, 'render']);
     }
 
     private static function ensureFinanceModel(): void
@@ -119,8 +119,8 @@ final class ClientsAdmin
         <div class="wrap wnq-clients-admin">
             <div class="wnq-header">
                 <div>
-                    <h1>Money Mangment</h1>
-                    <p class="subtitle">Manage clients, track payments, and view analytics</p>
+                    <h1>Clients & Billing</h1>
+                    <p class="subtitle">Manage clients, portal logins, payments, and analytics</p>
                 </div>
                 <a href="<?php echo admin_url('admin.php?page=wnq-clients&action=add'); ?>" class="page-title-action">+ Add New Client</a>
             </div>
@@ -274,6 +274,12 @@ final class ClientsAdmin
                                         <!-- Edit -->
                                         <a href="<?php echo admin_url('admin.php?page=wnq-clients&action=edit&id=' . $client['id']); ?>" class="button button-small">
                                             Edit
+                                        </a>
+                                        <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-clients&action=edit&id=' . $client['id'] . '#wnq-client-portal-login')); ?>" class="button button-small" title="Create or manage this client's portal login">
+                                            Portal Login
+                                        </a>
+                                        <a href="<?php echo esc_url(add_query_arg('wnq_view_as', $client['client_id'], ClientPortalUsers::portalUrl())); ?>" class="button button-small" target="_blank" rel="noopener" title="Preview the frontend portal as this client">
+                                            View Portal
                                         </a>
 
                                         <!-- Delete -->
@@ -1025,6 +1031,7 @@ final class ClientsAdmin
             <?php if (isset($_GET['portal_user'])): ?>
                 <div class="notice notice-success is-dismissible"><p>Client portal login <?php echo esc_html(sanitize_key(wp_unslash($_GET['portal_user']))); ?> successfully.</p></div>
             <?php endif; ?>
+            <?php self::renderPortalUsers($client); ?>
             <?php self::renderClientForm($client); ?>
         </div>
         <?php
@@ -1282,10 +1289,6 @@ final class ClientsAdmin
             </p>
         </form>
 
-        <?php if ($is_edit): ?>
-            <?php self::renderPortalUsers($client); ?>
-        <?php endif; ?>
-
         <style>
         .wnq-client-form .form-section,
         .wnq-portal-access {
@@ -1320,7 +1323,7 @@ final class ClientsAdmin
             'orderby'    => 'display_name',
         ]);
         ?>
-        <div class="form-section wnq-portal-access">
+        <div class="form-section wnq-portal-access" id="wnq-client-portal-login">
             <h2>Client Portal Login</h2>
             <p>Create a restricted login for this client. Portal users are redirected to the configured client portal page and cannot access the WordPress dashboard.</p>
             <?php if ($users): ?>

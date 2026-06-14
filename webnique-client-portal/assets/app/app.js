@@ -14,7 +14,9 @@
   const money = (value) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(value || 0));
   const date = (value) => value ? new Date(`${value}`.replace(" ", "T")).toLocaleDateString() : "Not set";
   const api = async (path, options = {}) => {
-    const response = await fetch(`${cfg.restUrl.replace(/\/$/, "")}${path}`, {
+    const requestUrl = new URL(`${cfg.restUrl.replace(/\/$/, "")}${path}`);
+    if (cfg.isAdmin && state.clientId) requestUrl.searchParams.set("client_id", state.clientId);
+    const response = await fetch(requestUrl.toString(), {
       credentials: "same-origin",
       headers: { "X-WP-Nonce": cfg.nonce, "Content-Type": "application/json" },
       ...options,
@@ -26,13 +28,24 @@
   const status = (tone, label) => `<span class="wnq-status is-${esc(tone)}"><i></i>${esc(label)}</span>`;
   const empty = (message) => `<div class="wnq-empty">${esc(message)}</div>`;
   const heading = (eyebrow, title, copy = "") => `<header class="wnq-page-head"><span>${esc(eyebrow)}</span><h1>${esc(title)}</h1>${copy ? `<p>${esc(copy)}</p>` : ""}</header>`;
+  const viewAs = () => {
+    if (!cfg.isAdmin || !Array.isArray(cfg.viewAsClients) || !cfg.viewAsClients.length) return "";
+    return `<div class="wnq-view-as"><label for="wnq-view-as"><span>Admin Preview</span><strong>View as client/user</strong></label>
+      <select id="wnq-view-as">${cfg.viewAsClients.map((client) => `<option value="${esc(client.clientId)}" ${client.clientId === state.clientId ? "selected" : ""}>${esc(client.label)}</option>`).join("")}</select></div>`;
+  };
   const shell = () => {
     root.innerHTML = `<div class="wnq-portal">
       <aside class="wnq-sidebar"><div class="wnq-brand"><strong>Golden Web Marketing</strong><span>Client Portal</span></div>
+      ${viewAs()}
       <nav>${tabs.map(([key, label]) => `<button type="button" data-tab="${key}">${label}</button>`).join("")}</nav>
       <div class="wnq-sidebar-foot"><span>Signed in as</span><strong>${esc(cfg.user?.name || "Client")}</strong></div></aside>
       <main class="wnq-main"><div id="wnq-view">${empty("Loading dashboard...")}</div></main></div>`;
     root.querySelectorAll("[data-tab]").forEach((button) => button.addEventListener("click", () => show(button.dataset.tab)));
+    root.querySelector("#wnq-view-as")?.addEventListener("change", (event) => {
+      state.clientId = event.currentTarget.value;
+      state.cache = {};
+      show("overview", true);
+    });
   };
   const setActive = (key) => root.querySelectorAll("[data-tab]").forEach((button) => button.classList.toggle("is-active", button.dataset.tab === key));
   const load = async (resource, refresh = false) => {
