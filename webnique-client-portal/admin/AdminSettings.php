@@ -28,6 +28,8 @@ final class AdminSettings
         $portal_page_url = get_option('wnq_portal_page_url', home_url('/client-portal/'));
         $brand_primary = get_option('wnq_brand_primary', '#0d539e');
         $default_billing_cycle = get_option('wnq_default_billing_cycle', 'monthly');
+        $stripe_publishable_key = get_option('wnq_stripe_test_publishable_key', '');
+        $stripe_secret_key = get_option('wnq_stripe_test_secret_key', '');
         $seo_enabled = function_exists('wnq_seo_features_enabled') && wnq_seo_features_enabled();
 
         ?>
@@ -69,6 +71,21 @@ final class AdminSettings
                                         <option value="annually" <?php selected($default_billing_cycle, 'annually'); ?>>Annually</option>
                                     </select>
                                 </td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <div class="settings-panel">
+                        <h2>Stripe Test Connection</h2>
+                        <p class="description">Stored server-side for testing. These values are not exposed in the frontend portal.</p>
+                        <table class="form-table" role="presentation">
+                            <tr>
+                                <th><label for="wnq_stripe_test_publishable_key">Test Publishable Key</label></th>
+                                <td><input type="text" name="wnq_stripe_test_publishable_key" id="wnq_stripe_test_publishable_key" value="<?php echo esc_attr($stripe_publishable_key); ?>" class="large-text" placeholder="pk_test_..."></td>
+                            </tr>
+                            <tr>
+                                <th><label for="wnq_stripe_test_secret_key">Test Secret Key</label></th>
+                                <td><input type="text" name="wnq_stripe_test_secret_key" id="wnq_stripe_test_secret_key" value="<?php echo esc_attr($stripe_secret_key); ?>" class="large-text" placeholder="sk_test_..." autocomplete="off"></td>
                             </tr>
                         </table>
                     </div>
@@ -203,6 +220,8 @@ final class AdminSettings
         update_option('wnq_portal_page_url', esc_url_raw($_POST['wnq_portal_page_url'] ?? ''));
         update_option('wnq_brand_primary', $brand_primary);
         update_option('wnq_default_billing_cycle', $billing_cycle);
+        update_option('wnq_stripe_test_publishable_key', sanitize_text_field($_POST['wnq_stripe_test_publishable_key'] ?? ''));
+        update_option('wnq_stripe_test_secret_key', sanitize_text_field($_POST['wnq_stripe_test_secret_key'] ?? ''));
         update_option('wnq_support_name', sanitize_text_field($_POST['wnq_support_name'] ?? ''));
         update_option('wnq_support_title', sanitize_text_field($_POST['wnq_support_title'] ?? ''));
         update_option('wnq_support_email', sanitize_email($_POST['wnq_support_email'] ?? ''));
