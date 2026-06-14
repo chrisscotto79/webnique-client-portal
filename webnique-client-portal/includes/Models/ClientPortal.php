@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
 
 final class ClientPortal
 {
-    private const SCHEMA_VERSION = '1';
+    private const SCHEMA_VERSION = '2';
     private static bool $schema_ready = false;
 
     public static function ensureSchema(): void
@@ -41,18 +41,22 @@ final class ClientPortal
             email varchar(255) DEFAULT NULL,
             address varchar(500) DEFAULT NULL,
             service varchar(255) DEFAULT NULL,
+            lead_source varchar(100) DEFAULT NULL,
             status varchar(30) NOT NULL DEFAULT 'new',
             follow_up_date date DEFAULT NULL,
+            job_date date DEFAULT NULL,
             job_count int(11) NOT NULL DEFAULT 0,
             estimated_value decimal(12,2) NOT NULL DEFAULT 0.00,
             final_value decimal(12,2) NOT NULL DEFAULT 0.00,
+            job_cost decimal(12,2) NOT NULL DEFAULT 0.00,
             notes text DEFAULT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             KEY client_id (client_id),
             KEY status (status),
-            KEY follow_up_date (follow_up_date)
+            KEY follow_up_date (follow_up_date),
+            KEY job_date (job_date)
         ) $charset;");
 
         dbDelta("CREATE TABLE IF NOT EXISTS {$wpdb->prefix}wnq_portal_messages (
@@ -103,13 +107,11 @@ final class ClientPortal
         global $wpdb;
         $id = absint($data['id'] ?? 0);
         $status = sanitize_key($data['status'] ?? 'new');
-        if (!in_array($status, ['new', 'contacted', 'scheduled', 'completed', 'closed'], true)) {
+        if (!in_array($status, ['new', 'contacted', 'estimate_sent', 'scheduled', 'completed', 'won', 'lost', 'closed'], true)) {
             $status = 'new';
         }
-        $follow_up = sanitize_text_field((string)($data['follow_up_date'] ?? ''));
-        if ($follow_up !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $follow_up)) {
-            $follow_up = '';
-        }
+        $follow_up = self::dateField($data['follow_up_date'] ?? '');
+        $job_date = self::dateField($data['job_date'] ?? '');
         $record = [
             'client_id'       => sanitize_text_field($client_id),
             'name'            => sanitize_text_field((string)($data['name'] ?? '')),
@@ -117,11 +119,14 @@ final class ClientPortal
             'email'           => sanitize_email((string)($data['email'] ?? '')),
             'address'         => sanitize_text_field((string)($data['address'] ?? '')),
             'service'         => sanitize_text_field((string)($data['service'] ?? '')),
+            'lead_source'     => sanitize_text_field((string)($data['lead_source'] ?? '')),
             'status'          => $status,
             'follow_up_date'  => $follow_up ?: null,
+            'job_date'        => $job_date ?: null,
             'job_count'       => max(0, absint($data['job_count'] ?? 0)),
             'estimated_value' => max(0, round((float)($data['estimated_value'] ?? 0), 2)),
             'final_value'     => max(0, round((float)($data['final_value'] ?? 0), 2)),
+            'job_cost'        => max(0, round((float)($data['job_cost'] ?? 0), 2)),
             'notes'           => sanitize_textarea_field((string)($data['notes'] ?? '')),
         ];
         if ($record['name'] === '') {
@@ -145,7 +150,8 @@ final class ClientPortal
                 SUM(status='scheduled') scheduled_count,
                 SUM(status='completed') completed_count,
                 COALESCE(SUM(job_count),0) job_count,
-                COALESCE(SUM(final_value),0) revenue
+                COALESCE(SUM(final_value),0) revenue,
+                COALESCE(SUM(job_cost),0) cost
              FROM {$wpdb->prefix}wnq_portal_customers WHERE client_id=%s",
             $client_id
         ), ARRAY_A) ?: [];
@@ -156,7 +162,46 @@ final class ClientPortal
             'completed_count' => absint($row['completed_count'] ?? 0),
             'job_count'       => absint($row['job_count'] ?? 0),
             'revenue'         => (float)($row['revenue'] ?? 0),
+            'cost'            => (float)($row['cost'] ?? 0),
+            'profit'          => (float)($row['revenue'] ?? 0) - (float)($row['cost'] ?? 0),
         ];
+    }
+
+    public static function getMonthlyPerformance(string $client_id, int $months = 6): array
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $months = max(3, min(12, $months));
+        $start = date('Y-m-01', strtotime('-' . ($months - 1) . ' months'));
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT DATE_FORMAT(COALESCE(job_date, created_at), '%%Y-%%m') month_key,
+                COALESCE(SUM(job_count),0) jobs,
+                COALESCE(SUM(final_value),0) revenue,
+                COALESCE(SUM(job_cost),0) cost
+             FROM {$wpdb->prefix}wnq_portal_customers
+             WHERE client_id=%s AND COALESCE(job_date, DATE(created_at)) >= %s
+             GROUP BY month_key ORDER BY month_key ASC",
+            $client_id,
+            $start
+        ), ARRAY_A) ?: [];
+        $indexed = array_column($rows, null, 'month_key');
+        $result = [];
+        for ($offset = $months - 1; $offset >= 0; $offset--) {
+            $timestamp = strtotime('-' . $offset . ' months');
+            $key = date('Y-m', $timestamp);
+            $row = $indexed[$key] ?? [];
+            $revenue = (float)($row['revenue'] ?? 0);
+            $cost = (float)($row['cost'] ?? 0);
+            $result[] = [
+                'month'   => $key,
+                'label'   => date('M', $timestamp),
+                'jobs'    => absint($row['jobs'] ?? 0),
+                'revenue' => $revenue,
+                'cost'    => $cost,
+                'profit'  => $revenue - $cost,
+            ];
+        }
+        return $result;
     }
 
     public static function getMessages(string $client_id, int $limit = 50): array
@@ -167,6 +212,38 @@ final class ClientPortal
             "SELECT * FROM {$wpdb->prefix}wnq_portal_messages WHERE client_id=%s ORDER BY created_at DESC, id DESC LIMIT %d",
             $client_id,
             max(1, min(200, $limit))
+        ), ARRAY_A) ?: [];
+    }
+
+    public static function getUnreadMessageCount(?string $client_id = null, string $sender_role = 'client'): int
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $role = $sender_role === 'admin' ? 'admin' : 'client';
+        if ($client_id !== null && $client_id !== '') {
+            return (int)$wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->prefix}wnq_portal_messages WHERE client_id=%s AND sender_role=%s AND status='unread'",
+                $client_id,
+                $role
+            ));
+        }
+        return (int)$wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}wnq_portal_messages WHERE sender_role=%s AND status='unread'",
+            $role
+        ));
+    }
+
+    public static function getUnreadClientMessages(int $limit = 20): array
+    {
+        self::ensureSchema();
+        global $wpdb;
+        return $wpdb->get_results($wpdb->prepare(
+            "SELECT m.*, COALESCE(c.company,c.name,m.client_id) client_name
+             FROM {$wpdb->prefix}wnq_portal_messages m
+             LEFT JOIN {$wpdb->prefix}wnq_clients c ON c.client_id=m.client_id
+             WHERE m.sender_role='client' AND m.status='unread'
+             ORDER BY m.created_at DESC, m.id DESC LIMIT %d",
+            max(1, min(100, $limit))
         ), ARRAY_A) ?: [];
     }
 
@@ -186,7 +263,22 @@ final class ClientPortal
             'message'        => $message,
             'status'         => 'unread',
         ]);
-        return $result === false ? false : (int)$wpdb->insert_id;
+        if ($result === false) {
+            return false;
+        }
+        $id = (int)$wpdb->insert_id;
+        if ($sender_role !== 'admin') {
+            $client = Client::getByClientId($client_id) ?: [];
+            $recipient = sanitize_email((string)get_option('wnq_support_email', get_option('admin_email')));
+            if ($recipient !== '') {
+                wp_mail(
+                    $recipient,
+                    'New client portal message from ' . sanitize_text_field((string)($client['company'] ?: $client['name'] ?: $client_id)),
+                    $message
+                );
+            }
+        }
+        return $id;
     }
 
     public static function markMessagesRead(string $client_id, string $sender_role): void
@@ -221,12 +313,17 @@ final class ClientPortal
         if (!self::tableExists($wpdb->prefix . 'wnq_seo_reports')) {
             return [];
         }
-        return $wpdb->get_results($wpdb->prepare(
+        $rows = $wpdb->get_results($wpdb->prepare(
             "SELECT id,report_type,period_start,period_end,status,generated_at FROM {$wpdb->prefix}wnq_seo_reports
              WHERE client_id=%s ORDER BY period_start DESC, generated_at DESC LIMIT %d",
             $client_id,
             max(1, min(50, $limit))
         ), ARRAY_A) ?: [];
+        return array_map(static function (array $row): array {
+            $row['view_url'] = self::reportExportUrl((int)$row['id']);
+            $row['pdf_url'] = self::reportExportUrl((int)$row['id'], 'pdf');
+            return $row;
+        }, $rows);
     }
 
     public static function getReport(int $id, string $client_id): ?array
@@ -245,6 +342,8 @@ final class ClientPortal
             return null;
         }
         $row['summary_html'] = wp_kses_post((string)($row['summary_html'] ?? ''));
+        $row['view_url'] = self::reportExportUrl($id);
+        $row['pdf_url'] = self::reportExportUrl($id, 'pdf');
         return $row;
     }
 
@@ -266,7 +365,7 @@ final class ClientPortal
             $actions[] = ['type' => 'messages', 'label' => $unread_messages . ' unread message' . ($unread_messages === 1 ? '' : 's')];
         }
         if ($open_tasks > 0) {
-            $actions[] = ['type' => 'work', 'label' => $open_tasks . ' work item' . ($open_tasks === 1 ? '' : 's') . ' in progress'];
+            $actions[] = ['type' => 'customers', 'label' => $open_tasks . ' marketing work item' . ($open_tasks === 1 ? '' : 's') . ' in progress'];
         }
 
         return [
@@ -281,6 +380,7 @@ final class ClientPortal
             'open_tasks'      => $open_tasks,
             'unread_messages' => $unread_messages,
             'latest_report'   => $reports[0] ?? null,
+            'performance'     => self::getMonthlyPerformance($client_id),
         ];
     }
 
@@ -331,5 +431,21 @@ final class ClientPortal
     {
         global $wpdb;
         return (string)$wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($table))) === $table;
+    }
+
+    private static function dateField($value): string
+    {
+        $date = sanitize_text_field((string)$value);
+        return preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) ? $date : '';
+    }
+
+    private static function reportExportUrl(int $report_id, string $format = 'html'): string
+    {
+        return add_query_arg([
+            'action'    => 'wnq_portal_export_report',
+            'report_id' => $report_id,
+            'format'    => $format,
+            '_wpnonce'  => wp_create_nonce('wnq_portal_export_report_' . $report_id),
+        ], admin_url('admin-post.php'));
     }
 }

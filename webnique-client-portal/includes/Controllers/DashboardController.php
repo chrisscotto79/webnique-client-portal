@@ -51,7 +51,7 @@ final class DashboardController
       },
     ]);
 
-    foreach (['overview', 'customers', 'messages', 'work', 'reports', 'profile'] as $resource) {
+    foreach (['overview', 'customers', 'messages', 'work', 'reports', 'profile', 'performance'] as $resource) {
       register_rest_route('wnq/v1', '/portal/' . $resource, [
         'methods'  => 'GET',
         'callback' => [self::class, 'getPortalResource'],
@@ -142,6 +142,7 @@ final class DashboardController
       'work'      => ClientPortal::getTasks($client_id),
       'reports'   => ClientPortal::getReports($client_id),
       'profile'   => ClientPortal::publicClient(Client::getByClientId($client_id) ?: []),
+      'performance' => ClientPortal::getMonthlyPerformance($client_id),
       default     => [],
     };
     if ($resource === 'messages' && !Permissions::currentUserCanManagePortal()) {
