@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
 
 final class ClientPortal
 {
-    private const SCHEMA_VERSION = '2';
+    private const SCHEMA_VERSION = '3';
     private static bool $schema_ready = false;
 
     public static function ensureSchema(): void
@@ -64,14 +64,33 @@ final class ClientPortal
             client_id varchar(100) NOT NULL,
             sender_user_id bigint(20) UNSIGNED DEFAULT NULL,
             sender_role varchar(20) NOT NULL DEFAULT 'client',
+            ticket_key varchar(40) DEFAULT NULL,
+            category varchar(50) DEFAULT 'general',
+            priority varchar(20) DEFAULT 'normal',
+            ticket_status varchar(20) DEFAULT 'open',
             subject varchar(255) DEFAULT NULL,
             message text NOT NULL,
             status varchar(20) NOT NULL DEFAULT 'unread',
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             KEY client_id (client_id),
+            KEY ticket_key (ticket_key),
+            KEY ticket_status (ticket_status),
             KEY status (status),
             KEY created_at (created_at)
+        ) $charset;");
+
+        dbDelta("CREATE TABLE IF NOT EXISTS {$wpdb->prefix}wnq_portal_learning_requests (
+            id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            client_id varchar(100) NOT NULL,
+            request_type varchar(50) NOT NULL DEFAULT 'topic',
+            title varchar(255) NOT NULL,
+            details text DEFAULT NULL,
+            status varchar(20) NOT NULL DEFAULT 'submitted',
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY client_id (client_id),
+            KEY status (status)
         ) $charset;");
 
         update_option('wnq_client_portal_schema_version', self::SCHEMA_VERSION, false);
@@ -215,6 +234,37 @@ final class ClientPortal
         ), ARRAY_A) ?: [];
     }
 
+    public static function getTickets(string $client_id, int $limit = 50): array
+    {
+        $messages = array_reverse(self::getMessages($client_id, max(1, min(200, $limit * 10))));
+        $tickets = [];
+        foreach ($messages as $message) {
+            $key = (string)($message['ticket_key'] ?: 'legacy-' . $message['id']);
+            if (!isset($tickets[$key])) {
+                $tickets[$key] = [
+                    'ticket_key'    => $key,
+                    'subject'       => (string)($message['subject'] ?: 'Support request'),
+                    'category'      => (string)($message['category'] ?: 'general'),
+                    'priority'      => (string)($message['priority'] ?: 'normal'),
+                    'ticket_status' => (string)($message['ticket_status'] ?: 'open'),
+                    'created_at'    => (string)$message['created_at'],
+                    'updated_at'    => (string)$message['created_at'],
+                    'unread'        => false,
+                    'messages'      => [],
+                ];
+            }
+            $tickets[$key]['messages'][] = $message;
+            $tickets[$key]['updated_at'] = (string)$message['created_at'];
+            $tickets[$key]['ticket_status'] = (string)($message['ticket_status'] ?: $tickets[$key]['ticket_status']);
+            if (($message['status'] ?? '') === 'unread' && ($message['sender_role'] ?? '') === 'admin') {
+                $tickets[$key]['unread'] = true;
+            }
+        }
+        $tickets = array_values($tickets);
+        usort($tickets, static fn($a, $b) => strcmp($b['updated_at'], $a['updated_at']));
+        return array_slice($tickets, 0, $limit);
+    }
+
     public static function getUnreadMessageCount(?string $client_id = null, string $sender_role = 'client'): int
     {
         self::ensureSchema();
@@ -255,10 +305,23 @@ final class ClientPortal
         if ($message === '') {
             return false;
         }
+        $ticket_key = sanitize_key((string)($data['ticket_key'] ?? ''));
+        if ($ticket_key === '') {
+            $ticket_key = 'tkt-' . strtolower(wp_generate_password(8, false, false));
+        }
+        $category = sanitize_key((string)($data['category'] ?? 'general'));
+        $priority = sanitize_key((string)($data['priority'] ?? 'normal'));
+        $ticket_status = sanitize_key((string)($data['ticket_status'] ?? 'open'));
+        if (!in_array($priority, ['low', 'normal', 'high', 'urgent'], true)) $priority = 'normal';
+        if (!in_array($ticket_status, ['open', 'in_progress', 'waiting', 'resolved', 'closed'], true)) $ticket_status = 'open';
         $result = $wpdb->insert($wpdb->prefix . 'wnq_portal_messages', [
             'client_id'      => sanitize_text_field($client_id),
             'sender_user_id' => get_current_user_id() ?: null,
             'sender_role'    => $sender_role === 'admin' ? 'admin' : 'client',
+            'ticket_key'     => $ticket_key,
+            'category'       => $category,
+            'priority'       => $priority,
+            'ticket_status'  => $ticket_status,
             'subject'        => sanitize_text_field((string)($data['subject'] ?? '')),
             'message'        => $message,
             'status'         => 'unread',
@@ -279,6 +342,63 @@ final class ClientPortal
             }
         }
         return $id;
+    }
+
+    public static function getLearningRequests(string $client_id): array
+    {
+        self::ensureSchema();
+        global $wpdb;
+        return $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM {$wpdb->prefix}wnq_portal_learning_requests WHERE client_id=%s ORDER BY created_at DESC, id DESC LIMIT 50",
+            $client_id
+        ), ARRAY_A) ?: [];
+    }
+
+    public static function createLearningRequest(string $client_id, array $data): int|false
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $title = sanitize_text_field((string)($data['title'] ?? ''));
+        if ($title === '') return false;
+        $request_type = sanitize_key((string)($data['request_type'] ?? 'topic'));
+        if (!in_array($request_type, ['topic', 'course', 'help'], true)) {
+            $request_type = 'topic';
+        }
+        $result = $wpdb->insert($wpdb->prefix . 'wnq_portal_learning_requests', [
+            'client_id'    => sanitize_text_field($client_id),
+            'request_type' => $request_type,
+            'title'        => $title,
+            'details'      => sanitize_textarea_field((string)($data['details'] ?? '')),
+            'status'       => 'submitted',
+        ]);
+        return $result === false ? false : (int)$wpdb->insert_id;
+    }
+
+    public static function courses(): array
+    {
+        return [
+            ['id' => 'reviews', 'title' => 'Build a Reliable Review System', 'category' => 'Reputation', 'duration' => '18 min', 'description' => 'Create a repeatable process for earning more quality Google reviews.'],
+            ['id' => 'photos', 'title' => 'Project Photos That Build Trust', 'category' => 'Content', 'duration' => '14 min', 'description' => 'Capture before, during, and after photos that support sales and SEO.'],
+            ['id' => 'leads', 'title' => 'Follow Up and Convert More Leads', 'category' => 'Sales', 'duration' => '22 min', 'description' => 'Use a simple follow-up rhythm that keeps opportunities from going cold.'],
+            ['id' => 'reports', 'title' => 'Understand Your Monthly Report', 'category' => 'Marketing', 'duration' => '16 min', 'description' => 'Know which rankings, traffic, and lead numbers deserve attention.'],
+        ];
+    }
+
+    public static function updatePublicProfile(string $client_id, array $data): bool
+    {
+        $client = Client::getByClientId($client_id);
+        if (!$client) return false;
+        $services = array_values(array_filter(array_map('sanitize_text_field', preg_split('/[\r\n,]+/', (string)($data['active_services'] ?? '')) ?: [])));
+        return Client::update((int)$client['id'], [
+            'company'          => sanitize_text_field((string)($data['company'] ?? '')),
+            'email'            => sanitize_email((string)($data['email'] ?? '')),
+            'phone'            => sanitize_text_field((string)($data['phone'] ?? '')),
+            'website'          => esc_url_raw((string)($data['website'] ?? '')),
+            'business_address' => sanitize_text_field((string)($data['business_address'] ?? '')),
+            'city'             => sanitize_text_field((string)($data['city'] ?? '')),
+            'state'            => sanitize_text_field((string)($data['state'] ?? '')),
+            'active_services'  => $services,
+        ]);
     }
 
     public static function markMessagesRead(string $client_id, string $sender_role): void

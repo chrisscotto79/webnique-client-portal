@@ -148,6 +148,7 @@ final class Shortcode
             'clientId'         => $clientId,
             'isAdmin'          => current_user_can('wnq_manage_portal') || current_user_can('manage_options'),
             'viewAsClients'    => $viewAsClients,
+            'logoUrl'          => esc_url_raw(WNQ_PORTAL_URL . 'assets/images/golden-web-marketing-logo.png'),
             'userId'           => get_current_user_id(),
             'ajaxUrl'          => admin_url('admin-ajax.php'),
             'lostpasswordUrl'  => wp_lostpassword_url(),
