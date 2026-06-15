@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
 
 final class ClientPortal
 {
-    private const SCHEMA_VERSION = '3';
+    private const SCHEMA_VERSION = '4';
     private static bool $schema_ready = false;
 
     public static function ensureSchema(): void
@@ -70,6 +70,7 @@ final class ClientPortal
             ticket_status varchar(20) DEFAULT 'open',
             subject varchar(255) DEFAULT NULL,
             message text NOT NULL,
+            attachments longtext DEFAULT NULL,
             status varchar(20) NOT NULL DEFAULT 'unread',
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
@@ -90,6 +91,26 @@ final class ClientPortal
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             KEY client_id (client_id),
+            KEY status (status)
+        ) $charset;");
+
+        dbDelta("CREATE TABLE IF NOT EXISTS {$wpdb->prefix}wnq_portal_requests (
+            id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            client_id varchar(100) NOT NULL,
+            request_key varchar(40) NOT NULL,
+            request_type varchar(50) NOT NULL,
+            title varchar(255) NOT NULL,
+            details text DEFAULT NULL,
+            priority varchar(20) NOT NULL DEFAULT 'normal',
+            status varchar(20) NOT NULL DEFAULT 'submitted',
+            request_data longtext DEFAULT NULL,
+            attachments longtext DEFAULT NULL,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY request_key (request_key),
+            KEY client_id (client_id),
+            KEY request_type (request_type),
             KEY status (status)
         ) $charset;");
 
@@ -227,11 +248,15 @@ final class ClientPortal
     {
         self::ensureSchema();
         global $wpdb;
-        return $wpdb->get_results($wpdb->prepare(
+        $rows = $wpdb->get_results($wpdb->prepare(
             "SELECT * FROM {$wpdb->prefix}wnq_portal_messages WHERE client_id=%s ORDER BY created_at DESC, id DESC LIMIT %d",
             $client_id,
             max(1, min(200, $limit))
         ), ARRAY_A) ?: [];
+        return array_map(static function (array $row): array {
+            $row['attachments'] = self::jsonArray($row['attachments'] ?? '');
+            return $row;
+        }, $rows);
     }
 
     public static function getTickets(string $client_id, int $limit = 50): array
@@ -250,6 +275,7 @@ final class ClientPortal
                     'created_at'    => (string)$message['created_at'],
                     'updated_at'    => (string)$message['created_at'],
                     'unread'        => false,
+                    'response_time' => self::responseTime((string)($message['priority'] ?: 'normal')),
                     'messages'      => [],
                 ];
             }
@@ -324,24 +350,121 @@ final class ClientPortal
             'ticket_status'  => $ticket_status,
             'subject'        => sanitize_text_field((string)($data['subject'] ?? '')),
             'message'        => $message,
+            'attachments'    => wp_json_encode(self::sanitizeAttachments($data['attachments'] ?? [])),
             'status'         => 'unread',
         ]);
         if ($result === false) {
             return false;
         }
         $id = (int)$wpdb->insert_id;
-        if ($sender_role !== 'admin') {
-            $client = Client::getByClientId($client_id) ?: [];
-            $recipient = sanitize_email((string)get_option('wnq_support_email', get_option('admin_email')));
-            if ($recipient !== '') {
-                wp_mail(
-                    $recipient,
-                    'New client portal message from ' . sanitize_text_field((string)($client['company'] ?: $client['name'] ?: $client_id)),
-                    $message
-                );
-            }
+        $client = Client::getByClientId($client_id) ?: [];
+        $recipient = $sender_role === 'admin'
+            ? sanitize_email((string)($client['email'] ?? ''))
+            : sanitize_email((string)get_option('wnq_support_email', get_option('admin_email')));
+        if ($recipient !== '') {
+            $company = sanitize_text_field((string)($client['company'] ?: $client['name'] ?: $client_id));
+            $subject = sanitize_text_field((string)($data['subject'] ?? 'Support ticket update'));
+            wp_mail(
+                $recipient,
+                ($sender_role === 'admin' ? 'Reply from Golden Web Marketing: ' : 'New client portal ticket from ' . $company . ': ') . $subject,
+                $message . "\n\nView the full ticket in the client portal."
+            );
         }
         return $id;
+    }
+
+    public static function getRequests(string $client_id, int $limit = 100): array
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM {$wpdb->prefix}wnq_portal_requests WHERE client_id=%s ORDER BY updated_at DESC, id DESC LIMIT %d",
+            $client_id,
+            max(1, min(300, $limit))
+        ), ARRAY_A) ?: [];
+        return array_map(static function (array $row): array {
+            $row['request_data'] = self::jsonArray($row['request_data'] ?? '');
+            $row['attachments'] = self::jsonArray($row['attachments'] ?? '');
+            return $row;
+        }, $rows);
+    }
+
+    public static function createRequest(string $client_id, array $data): int|false
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $type = sanitize_key((string)($data['request_type'] ?? ''));
+        $types = array_keys(self::requestTypes());
+        if (!in_array($type, $types, true)) return false;
+        $title = sanitize_text_field((string)($data['title'] ?? ''));
+        if ($title === '') return false;
+        $priority = sanitize_key((string)($data['priority'] ?? 'normal'));
+        if (!in_array($priority, ['low', 'normal', 'high', 'urgent'], true)) $priority = 'normal';
+        $request_data = [];
+        foreach ((array)($data['request_data'] ?? []) as $key => $value) {
+            $request_data[sanitize_key((string)$key)] = sanitize_textarea_field((string)$value);
+        }
+        $result = $wpdb->insert($wpdb->prefix . 'wnq_portal_requests', [
+            'client_id'    => sanitize_text_field($client_id),
+            'request_key'  => 'req-' . strtolower(wp_generate_password(8, false, false)),
+            'request_type' => $type,
+            'title'        => $title,
+            'details'      => sanitize_textarea_field((string)($data['details'] ?? '')),
+            'priority'     => $priority,
+            'status'       => 'submitted',
+            'request_data' => wp_json_encode($request_data),
+            'attachments'  => wp_json_encode(self::sanitizeAttachments($data['attachments'] ?? [])),
+        ]);
+        if ($result === false) return false;
+        $client = Client::getByClientId($client_id) ?: [];
+        $recipient = sanitize_email((string)get_option('wnq_support_email', get_option('admin_email')));
+        if ($recipient !== '') {
+            wp_mail($recipient, 'New portal request from ' . sanitize_text_field((string)($client['company'] ?: $client['name'] ?: $client_id)), $title . "\n\n" . sanitize_textarea_field((string)($data['details'] ?? '')));
+        }
+        return (int)$wpdb->insert_id;
+    }
+
+    public static function updateRequestStatus(int $id, string $client_id, string $status): bool
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $status = sanitize_key($status);
+        if (!in_array($status, ['submitted', 'reviewing', 'scheduled', 'in_progress', 'completed', 'declined'], true)) return false;
+        $request = $wpdb->get_row($wpdb->prepare("SELECT title,status FROM {$wpdb->prefix}wnq_portal_requests WHERE id=%d AND client_id=%s", $id, $client_id), ARRAY_A);
+        if (!$request) return false;
+        $updated = $wpdb->update($wpdb->prefix . 'wnq_portal_requests', ['status' => $status], ['id' => $id, 'client_id' => $client_id]) !== false;
+        if ($updated && ($request['status'] ?? '') !== $status) {
+            $client = Client::getByClientId($client_id) ?: [];
+            $recipient = sanitize_email((string)($client['email'] ?? ''));
+            if ($recipient !== '') {
+                wp_mail($recipient, 'Request update from Golden Web Marketing', 'Your request "' . sanitize_text_field((string)$request['title']) . '" is now ' . str_replace('_', ' ', $status) . ".\n\nView the request in your client portal.");
+            }
+        }
+        return $updated;
+    }
+
+    public static function getOpenRequestCount(?string $client_id = null): int
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $open = ['submitted', 'reviewing', 'scheduled', 'in_progress'];
+        $placeholders = implode(',', array_fill(0, count($open), '%s'));
+        if ($client_id !== null && $client_id !== '') {
+            $args = array_merge([$client_id], $open);
+            return (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}wnq_portal_requests WHERE client_id=%s AND status IN ($placeholders)", $args));
+        }
+        return (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}wnq_portal_requests WHERE status IN ($placeholders)", $open));
+    }
+
+    public static function requestTypes(): array
+    {
+        return [
+            'website_update' => ['label' => 'Website Edit', 'description' => 'Request a change to an existing page.'],
+            'new_page'       => ['label' => 'New Page', 'description' => 'Request a new service, city, or landing page.'],
+            'blog'           => ['label' => 'Blog Content', 'description' => 'Request a blog topic or content update.'],
+            'report_question'=> ['label' => 'Report Question', 'description' => 'Ask about rankings, traffic, leads, or results.'],
+            'strategy_call'  => ['label' => 'Strategy Call', 'description' => 'Request time to discuss priorities and next steps.'],
+        ];
     }
 
     public static function getLearningRequests(string $client_id): array
@@ -475,6 +598,7 @@ final class ClientPortal
         $messages = self::getMessages($client_id, 50);
         $reports = self::getReports($client_id, 12);
         $open_tasks = count(array_filter($tasks, static fn($task) => ($task['status'] ?? '') !== 'done'));
+        $open_requests = self::getOpenRequestCount($client_id);
         $unread_messages = count(array_filter($messages, static fn($message) => ($message['status'] ?? '') === 'unread' && ($message['sender_role'] ?? '') === 'admin'));
         $billing = self::billingHealth($client);
         $actions = [];
@@ -487,6 +611,9 @@ final class ClientPortal
         if ($open_tasks > 0) {
             $actions[] = ['type' => 'customers', 'label' => $open_tasks . ' marketing work item' . ($open_tasks === 1 ? '' : 's') . ' in progress'];
         }
+        if ($open_requests > 0) {
+            $actions[] = ['type' => 'requests', 'label' => $open_requests . ' request' . ($open_requests === 1 ? '' : 's') . ' being handled'];
+        }
 
         return [
             'client'          => self::publicClient($client),
@@ -498,6 +625,7 @@ final class ClientPortal
             'actions'         => $actions,
             'customers'       => $customers,
             'open_tasks'      => $open_tasks,
+            'open_requests'   => $open_requests,
             'unread_messages' => $unread_messages,
             'latest_report'   => $reports[0] ?? null,
             'performance'     => self::getMonthlyPerformance($client_id),
@@ -532,6 +660,37 @@ final class ClientPortal
         }
         $decoded = json_decode((string)$services, true);
         return is_array($decoded) ? array_values(array_filter(array_map('sanitize_text_field', $decoded))) : [];
+    }
+
+    private static function responseTime(string $priority): string
+    {
+        return match ($priority) {
+            'urgent' => 'Expected response within 4 business hours',
+            'high'   => 'Expected response within 1 business day',
+            'low'    => 'Expected response within 3 business days',
+            default  => 'Expected response within 2 business days',
+        };
+    }
+
+    private static function sanitizeAttachments($attachments): array
+    {
+        $clean = [];
+        foreach (is_array($attachments) ? $attachments : [] as $attachment) {
+            if (!is_array($attachment) || empty($attachment['url'])) continue;
+            $clean[] = [
+                'name' => sanitize_file_name((string)($attachment['name'] ?? 'attachment')),
+                'url'  => esc_url_raw((string)$attachment['url']),
+                'type' => sanitize_mime_type((string)($attachment['type'] ?? '')),
+            ];
+        }
+        return $clean;
+    }
+
+    private static function jsonArray($value): array
+    {
+        if (is_array($value)) return $value;
+        $decoded = json_decode((string)$value, true);
+        return is_array($decoded) ? $decoded : [];
     }
 
     private static function billingHealth(array $client): array
