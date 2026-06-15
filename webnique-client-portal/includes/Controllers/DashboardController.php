@@ -51,7 +51,7 @@ final class DashboardController
       },
     ]);
 
-    foreach (['overview', 'customers', 'messages', 'work', 'reports', 'profile', 'performance'] as $resource) {
+    foreach (['overview', 'customers', 'messages', 'tickets', 'work', 'reports', 'profile', 'performance', 'learning'] as $resource) {
       register_rest_route('wnq/v1', '/portal/' . $resource, [
         'methods'  => 'GET',
         'callback' => [self::class, 'getPortalResource'],
@@ -68,6 +68,18 @@ final class DashboardController
     register_rest_route('wnq/v1', '/portal/messages', [
       'methods'  => 'POST',
       'callback' => [self::class, 'sendMessage'],
+      'permission_callback' => [self::class, 'canUsePortal'],
+    ]);
+
+    register_rest_route('wnq/v1', '/portal/learning-requests', [
+      'methods'  => 'POST',
+      'callback' => [self::class, 'saveLearningRequest'],
+      'permission_callback' => [self::class, 'canUsePortal'],
+    ]);
+
+    register_rest_route('wnq/v1', '/portal/profile', [
+      'methods'  => 'POST',
+      'callback' => [self::class, 'saveProfile'],
       'permission_callback' => [self::class, 'canUsePortal'],
     ]);
 
@@ -139,13 +151,15 @@ final class DashboardController
       'overview'  => ClientPortal::overview($client_id),
       'customers' => ClientPortal::getCustomers($client_id),
       'messages'  => ClientPortal::getMessages($client_id),
+      'tickets'   => ClientPortal::getTickets($client_id),
       'work'      => ClientPortal::getTasks($client_id),
       'reports'   => ClientPortal::getReports($client_id),
       'profile'   => ClientPortal::publicClient(Client::getByClientId($client_id) ?: []),
       'performance' => ClientPortal::getMonthlyPerformance($client_id),
+      'learning'  => ['courses' => ClientPortal::courses(), 'requests' => ClientPortal::getLearningRequests($client_id)],
       default     => [],
     };
-    if ($resource === 'messages' && !Permissions::currentUserCanManagePortal()) {
+    if (in_array($resource, ['messages', 'tickets'], true) && !Permissions::currentUserCanManagePortal()) {
       ClientPortal::markMessagesRead($client_id, 'admin');
     }
     return new \WP_REST_Response(['ok' => true, 'data' => $data], 200);
@@ -171,6 +185,26 @@ final class DashboardController
     return $id
       ? new \WP_REST_Response(['ok' => true, 'id' => $id], 200)
       : new \WP_REST_Response(['ok' => false, 'error' => 'Message is required.'], 400);
+  }
+
+  public static function saveLearningRequest(\WP_REST_Request $request): \WP_REST_Response
+  {
+    $client_id = self::requestClientId($request);
+    $body = $request->get_json_params();
+    $id = $client_id !== '' && is_array($body) ? ClientPortal::createLearningRequest($client_id, $body) : false;
+    return $id
+      ? new \WP_REST_Response(['ok' => true, 'id' => $id], 200)
+      : new \WP_REST_Response(['ok' => false, 'error' => 'A request title is required.'], 400);
+  }
+
+  public static function saveProfile(\WP_REST_Request $request): \WP_REST_Response
+  {
+    $client_id = self::requestClientId($request);
+    $body = $request->get_json_params();
+    $saved = $client_id !== '' && is_array($body) && ClientPortal::updatePublicProfile($client_id, $body);
+    return $saved
+      ? new \WP_REST_Response(['ok' => true, 'data' => ClientPortal::publicClient(Client::getByClientId($client_id) ?: [])], 200)
+      : new \WP_REST_Response(['ok' => false, 'error' => 'Business profile could not be saved.'], 400);
   }
 
   public static function getReport(\WP_REST_Request $request): \WP_REST_Response

@@ -26,6 +26,7 @@
     return data.data ?? data;
   };
   const status = (tone, label) => `<span class="wnq-status is-${esc(tone)}"><i></i>${esc(label)}</span>`;
+  const humanize = (value) => String(value || "").replaceAll("_", " ");
   const empty = (message) => `<div class="wnq-empty">${esc(message)}</div>`;
   const heading = (eyebrow, title, copy = "") => `<header class="wnq-page-head"><span>${esc(eyebrow)}</span><h1>${esc(title)}</h1>${copy ? `<p>${esc(copy)}</p>` : ""}</header>`;
   const trend = (value) => `<strong class="${Number(value) >= 0 ? "wnq-positive" : "wnq-negative"}">${money(value)}</strong>`;
@@ -43,7 +44,7 @@
   };
   const shell = () => {
     root.innerHTML = `<div class="wnq-portal">
-      <aside class="wnq-sidebar"><div class="wnq-brand"><strong>Golden Web Marketing</strong><span>Client Portal</span></div>
+      <aside class="wnq-sidebar"><div class="wnq-brand"><img src="${esc(cfg.logoUrl || "")}" alt="Golden Web Marketing"><span>Client Portal</span></div>
       ${viewAs()}
       <nav>${tabs.map(([key, label]) => `<button type="button" data-tab="${key}">${label}</button>`).join("")}</nav>
       <div class="wnq-sidebar-foot"><span>Signed in as</span><strong>${esc(cfg.user?.name || "Client")}</strong></div></aside>
@@ -146,17 +147,34 @@
   const field = (name, label, value = "", required = false, type = "text") => `<label><span>${esc(label)}</span><input type="${type}" name="${name}" value="${esc(value)}" ${required ? "required" : ""} ${type === "number" ? 'min="0" step="0.01"' : ""}></label>`;
 
   async function messages(view, refresh) {
-    const rows = await load("messages", refresh);
+    const tickets = await load("tickets", refresh);
     const messagesTab = root.querySelector('[data-tab="messages"]');
     if (messagesTab) messagesTab.textContent = "Messages";
-    view.innerHTML = `${heading("Communication", "Messages", "Send questions and updates directly to Golden Web Marketing.")}
-      <form class="wnq-panel wnq-message-form"><label><span>Subject</span><input name="subject" placeholder="What is this about?"></label><label><span>Message</span><textarea name="message" rows="4" required></textarea></label><button class="wnq-button">Send Message</button></form>
-      <div class="wnq-panel">${rows.length ? rows.map((row) => `<article class="wnq-message"><div>${status(row.sender_role === "admin" ? "green" : "yellow", row.sender_role === "admin" ? "Golden Web Marketing" : "You")}<time>${date(row.created_at)}</time></div><strong>${esc(row.subject || "Message")}</strong><p>${esc(row.message)}</p></article>`).join("") : empty("No messages yet.")}</div>`;
-    view.querySelector("form").addEventListener("submit", async (event) => {
-      event.preventDefault(); await api("/portal/messages", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
-      delete state.cache.messages; delete state.cache.overview; show("messages", true);
+    view.innerHTML = `${heading("Support", "Support Tickets", "Create a request, track its status, and keep every reply together.")}
+      <div class="wnq-toolbar"><button class="wnq-button" id="wnq-new-ticket">New Support Ticket</button></div><div id="wnq-ticket-compose"></div>
+      <div class="wnq-ticket-layout"><div class="wnq-ticket-list">${tickets.length ? tickets.map(ticketCard).join("") : empty("No support tickets yet.")}</div><div id="wnq-ticket-thread">${empty("Select a ticket to view the conversation.")}</div></div>`;
+    const compose = view.querySelector("#wnq-ticket-compose");
+    view.querySelector("#wnq-new-ticket").addEventListener("click", () => {
+      compose.innerHTML = ticketForm();
+      bindTicketForm(compose.querySelector("form"));
     });
+    view.querySelectorAll("[data-ticket]").forEach((button) => button.addEventListener("click", () => openTicket(button.dataset.ticket, tickets, view)));
   }
+
+  const ticketCard = (ticket) => `<button type="button" class="wnq-ticket-card ${ticket.unread ? "is-unread" : ""}" data-ticket="${esc(ticket.ticket_key)}"><div><strong>${esc(ticket.subject)}</strong>${status(ticket.ticket_status === "resolved" || ticket.ticket_status === "closed" ? "green" : "yellow", humanize(ticket.ticket_status))}</div><p>${esc(ticket.messages?.[ticket.messages.length - 1]?.message || "")}</p><small>${esc(ticket.ticket_key.toUpperCase())} · ${esc(humanize(ticket.category))} · Updated ${date(ticket.updated_at)}</small></button>`;
+  const ticketForm = (ticket = {}) => `<form class="wnq-panel wnq-ticket-form"><input type="hidden" name="ticket_key" value="${esc(ticket.ticket_key || "")}">${ticket.ticket_key ? `<input type="hidden" name="subject" value="${esc(ticket.subject)}"><input type="hidden" name="category" value="${esc(ticket.category)}"><input type="hidden" name="priority" value="${esc(ticket.priority)}">` : `${field("subject", "Subject", "", true)}<label><span>Category</span><select name="category"><option value="general">General Support</option><option value="website">Website Update</option><option value="seo">SEO / Report</option><option value="billing">Billing</option><option value="training">Training</option></select></label><label><span>Priority</span><select name="priority"><option value="normal">Normal</option><option value="low">Low</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>`}<label class="is-wide"><span>${ticket.ticket_key ? "Reply" : "How can we help?"}</span><textarea name="message" rows="5" required></textarea></label><div class="wnq-form-actions"><button class="wnq-button">${ticket.ticket_key ? "Send Reply" : "Create Ticket"}</button></div></form>`;
+  const bindTicketForm = (form) => form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await api("/portal/messages", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+    delete state.cache.tickets; delete state.cache.overview; show("messages", true);
+  });
+  const openTicket = (key, tickets, view) => {
+    const ticket = tickets.find((item) => item.ticket_key === key);
+    if (!ticket) return;
+    const thread = view.querySelector("#wnq-ticket-thread");
+    thread.innerHTML = `<section class="wnq-panel wnq-ticket-thread"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">${esc(ticket.ticket_key.toUpperCase())}</span><h2>${esc(ticket.subject)}</h2></div>${status(ticket.ticket_status === "resolved" || ticket.ticket_status === "closed" ? "green" : "yellow", humanize(ticket.ticket_status))}</div><div class="wnq-thread-messages">${ticket.messages.map((message) => `<article class="${message.sender_role === "admin" ? "is-support" : "is-client"}"><div><strong>${message.sender_role === "admin" ? "Golden Web Marketing" : "You"}</strong><time>${date(message.created_at)}</time></div><p>${esc(message.message)}</p></article>`).join("")}</div>${ticketForm(ticket)}</section>`;
+    bindTicketForm(thread.querySelector("form"));
+  };
 
   async function billing(view, refresh) {
     const data = await load("overview", refresh); const client = data.client || {};
@@ -165,19 +183,28 @@
       <div class="wnq-panel"><div class="wnq-billing-total"><span>Monthly service rate</span><strong>${money(client.monthly_rate)}</strong></div><p>Last payment: ${date(client.last_payment_date)}</p><p class="wnq-note">Stripe payment management will appear here once Stripe is connected.</p></div>`;
   }
 
-  function learning(view) {
-    const lessons = [["Request More Reviews","A simple process for asking happy customers for Google reviews."],["Take Better Project Photos","Capture useful before, during, and after photos."],["Follow Up With Customers","Use simple follow-ups to keep opportunities moving."],["Understand Your Reports","Know which marketing numbers deserve your attention."]];
-    view.innerHTML = `${heading("Resources", "Learning Center", "Short guides that help you get more value from your marketing.")}
-      <div class="wnq-learning">${lessons.map(([title, copy]) => `<article><span>Guide</span><h2>${esc(title)}</h2><p>${esc(copy)}</p><button class="wnq-link" disabled>Coming soon</button></article>`).join("")}</div>`;
+  async function learning(view, refresh) {
+    const data = await load("learning", refresh);
+    view.innerHTML = `${heading("Resources", "Learning Center", "Practical courses for improving your marketing, sales, and customer experience.")}
+      <section><div class="wnq-section-head"><div><span class="wnq-eyebrow">Courses</span><h2>Recommended for your business</h2></div></div><div class="wnq-learning">${data.courses.map((course) => `<article><span>${esc(course.category)} · ${esc(course.duration)}</span><h2>${esc(course.title)}</h2><p>${esc(course.description)}</p><button class="wnq-link" disabled>Course coming soon</button></article>`).join("")}</div></section>
+      <section class="wnq-panel"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">Requests</span><h2>Request a guide or course</h2></div></div><form class="wnq-learning-request wnq-form"><label><span>Request Type</span><select name="request_type"><option value="topic">New Topic</option><option value="course">New Course</option><option value="help">One-on-One Help</option></select></label>${field("title", "What would you like help with?", "", true)}<label class="is-wide"><span>Details</span><textarea name="details" rows="4"></textarea></label><div class="wnq-form-actions"><button class="wnq-button">Submit Request</button></div></form>${data.requests.length ? `<div class="wnq-request-list">${data.requests.map((row) => `<div><strong>${esc(row.title)}</strong>${status(row.status === "completed" ? "green" : "yellow", row.status)}<small>${date(row.created_at)}</small></div>`).join("")}</div>` : ""}</section>`;
+    view.querySelector("form").addEventListener("submit", async (event) => {
+      event.preventDefault(); await api("/portal/learning-requests", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
+      delete state.cache.learning; show("learning", true);
+    });
   }
 
   async function profile(view, refresh) {
     const client = await load("profile", refresh);
-    view.innerHTML = `${heading("Business", "Business Profile", "The information Golden Web Marketing uses for your account.")}
-      <div class="wnq-panel wnq-profile">${profileRow("Business", client.company || client.name)}${profileRow("Phone", client.phone)}${profileRow("Email", client.email)}${profileRow("Website", client.website)}${profileRow("Address", [client.business_address, client.city, client.state].filter(Boolean).join(", "))}${profileRow("Services", (client.active_services || []).join(", "))}</div>
-      <p class="wnq-note">Send a message to request profile changes.</p>`;
+    view.innerHTML = `${heading("Business", "Business Profile", "Keep the public business information used across your account accurate.")}
+      <form class="wnq-panel wnq-form wnq-profile-form">${field("company", "Business Name", client.company || client.name, true)}${field("phone", "Phone", client.phone)}${field("email", "Email", client.email, true, "email")}${field("website", "Website", client.website, false, "url")}${field("business_address", "Business Address", client.business_address)}${field("city", "City", client.city)}${field("state", "State", client.state)}<label class="is-wide"><span>Services</span><textarea name="active_services" rows="4" placeholder="One service per line">${esc((client.active_services || []).join("\n"))}</textarea></label><div class="wnq-form-actions"><button class="wnq-button">Save Business Profile</button><span id="wnq-profile-status"></span></div></form>`;
+    view.querySelector("form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const result = await api("/portal/profile", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) });
+      state.cache.profile = result; delete state.cache.overview;
+      view.querySelector("#wnq-profile-status").textContent = "Profile saved.";
+    });
   }
-  const profileRow = (label, value) => `<div><span>${esc(label)}</span><strong>${esc(value || "Not set")}</strong></div>`;
 
   shell();
   show("overview");

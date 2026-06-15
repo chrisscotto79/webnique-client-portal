@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.21
+Stable tag: 2.4.22
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,14 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.22 - Client Portal Experience
+
+- Replaced the sidebar wordmark with the Golden Web Marketing logo
+- Added threaded support tickets with categories, priorities, statuses, and admin replies
+- Added a learning center course library and client learning request form
+- Made public business profile information editable by the linked client
+- Refined the responsive client portal layout and form styling
+
 2.1.0 - SEO Operating System
 
 Complete AI-powered SEO OS integrated into hub:

@@ -128,7 +128,8 @@ final class ClientPortalAdmin
     {
         $client_id = (string)$client['client_id'];
         $customers = ClientPortal::getCustomers($client_id, 30);
-        $messages = ClientPortal::getMessages($client_id, 30);
+        $tickets = ClientPortal::getTickets($client_id, 30);
+        $learning_requests = ClientPortal::getLearningRequests($client_id);
         ClientPortal::markMessagesRead($client_id, 'client');
         $tasks = ClientPortal::getTasks($client_id, 30);
         $reports = ClientPortal::getReports($client_id, 20);
@@ -141,18 +142,55 @@ final class ClientPortalAdmin
                     <?php wp_nonce_field('wnq_portal_admin_message'); ?>
                     <input type="hidden" name="action" value="wnq_portal_admin_message">
                     <input type="hidden" name="client_id" value="<?php echo esc_attr($client_id); ?>">
-                    <input type="text" name="subject" placeholder="Subject" class="regular-text">
-                    <textarea name="message" rows="3" placeholder="Send the client a message" required></textarea>
-                    <button class="button button-primary">Send Message</button>
+                    <input type="text" name="subject" placeholder="Subject" class="regular-text" required>
+                    <select name="category">
+                        <option value="general">General Support</option>
+                        <option value="website">Website Update</option>
+                        <option value="seo">SEO / Report</option>
+                        <option value="billing">Billing</option>
+                        <option value="training">Training</option>
+                    </select>
+                    <select name="priority">
+                        <option value="normal">Normal Priority</option>
+                        <option value="high">High Priority</option>
+                        <option value="urgent">Urgent</option>
+                        <option value="low">Low Priority</option>
+                    </select>
+                    <textarea name="message" rows="3" placeholder="Start a new support ticket" required></textarea>
+                    <button class="button button-primary">Create Ticket</button>
                 </form>
             </div>
             <?php self::performanceChart(ClientPortal::getMonthlyPerformance($client_id)); ?>
             <?php self::table('CRM & Job History', $customers, ['name' => 'Customer', 'service' => 'Service', 'lead_source' => 'Source', 'status' => 'Status', 'job_date' => 'Job Date', 'job_count' => 'Jobs', 'final_value' => 'Revenue', 'job_cost' => 'Cost']); ?>
             <?php self::table('Marketing Work History', $tasks, ['title' => 'Item', 'status' => 'Status', 'priority' => 'Priority', 'due_date' => 'Due']); ?>
             <?php self::reportsTable($reports); ?>
-            <?php self::table('Messages', $messages, ['sender_role' => 'From', 'subject' => 'Subject', 'message' => 'Message', 'created_at' => 'Sent']); ?>
+            <?php self::tickets($client_id, $tickets); ?>
+            <?php self::table('Learning Requests', $learning_requests, ['request_type' => 'Type', 'title' => 'Request', 'details' => 'Details', 'status' => 'Status', 'created_at' => 'Submitted']); ?>
         </div>
         <?php
+    }
+
+    private static function tickets(string $client_id, array $tickets): void
+    {
+        echo '<div class="wnq-cp-panel"><h2>Support Tickets</h2><div class="wnq-cp-tickets">';
+        foreach ($tickets as $ticket) {
+            echo '<details class="wnq-cp-ticket"><summary><span><strong>' . esc_html((string)$ticket['subject']) . '</strong><small>' . esc_html(strtoupper((string)$ticket['ticket_key']) . ' · ' . (string)$ticket['category'] . ' · ' . (string)$ticket['priority']) . '</small></span>';
+            self::status(in_array($ticket['ticket_status'], ['resolved', 'closed'], true) ? 'green' : 'yellow', str_replace('_', ' ', (string)$ticket['ticket_status']));
+            echo '</summary><div class="wnq-cp-thread">';
+            foreach ($ticket['messages'] as $message) {
+                echo '<article class="' . (($message['sender_role'] ?? '') === 'admin' ? 'is-admin' : 'is-client') . '"><header><strong>' . (($message['sender_role'] ?? '') === 'admin' ? 'Golden Web Marketing' : 'Client') . '</strong><time>' . esc_html((string)$message['created_at']) . '</time></header><p>' . nl2br(esc_html((string)$message['message'])) . '</p></article>';
+            }
+            echo '</div><form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" class="wnq-cp-ticket-reply">';
+            wp_nonce_field('wnq_portal_admin_message');
+            echo '<input type="hidden" name="action" value="wnq_portal_admin_message"><input type="hidden" name="client_id" value="' . esc_attr($client_id) . '"><input type="hidden" name="ticket_key" value="' . esc_attr((string)$ticket['ticket_key']) . '"><input type="hidden" name="subject" value="' . esc_attr((string)$ticket['subject']) . '"><input type="hidden" name="category" value="' . esc_attr((string)$ticket['category']) . '"><input type="hidden" name="priority" value="' . esc_attr((string)$ticket['priority']) . '">';
+            echo '<textarea name="message" rows="3" placeholder="Reply to this ticket" required></textarea><select name="ticket_status">';
+            foreach (['open' => 'Open', 'in_progress' => 'In Progress', 'waiting' => 'Waiting on Client', 'resolved' => 'Resolved', 'closed' => 'Closed'] as $value => $label) {
+                echo '<option value="' . esc_attr($value) . '"' . selected($ticket['ticket_status'], $value, false) . '>' . esc_html($label) . '</option>';
+            }
+            echo '</select><button class="button button-primary">Send Reply</button></form></details>';
+        }
+        if (!$tickets) echo '<p>No support tickets yet.</p>';
+        echo '</div></div>';
     }
 
     private static function performanceChart(array $rows): void
@@ -200,8 +238,12 @@ final class ClientPortalAdmin
         check_admin_referer('wnq_portal_admin_message');
         $client_id = sanitize_text_field(wp_unslash($_POST['client_id'] ?? ''));
         ClientPortal::createMessage($client_id, [
-            'subject' => wp_unslash($_POST['subject'] ?? ''),
-            'message' => wp_unslash($_POST['message'] ?? ''),
+            'ticket_key'    => wp_unslash($_POST['ticket_key'] ?? ''),
+            'category'      => wp_unslash($_POST['category'] ?? 'general'),
+            'priority'      => wp_unslash($_POST['priority'] ?? 'normal'),
+            'ticket_status' => wp_unslash($_POST['ticket_status'] ?? 'open'),
+            'subject'       => wp_unslash($_POST['subject'] ?? ''),
+            'message'       => wp_unslash($_POST['message'] ?? ''),
         ], 'admin');
         wp_safe_redirect(admin_url('admin.php?page=wnq-client-portal-dashboard&client_id=' . rawurlencode($client_id)));
         exit;
@@ -268,7 +310,9 @@ final class ClientPortalAdmin
         .wnq-cp-admin{max-width:1500px}.wnq-cp-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px;margin:24px 0}
         .wnq-cp-stats div,.wnq-cp-panel{background:#fff;border:1px solid #dcdcde;padding:20px;margin-bottom:20px}.wnq-cp-stats strong{display:block;font-size:28px}.wnq-cp-stats span{color:#646970}.wnq-cp-inbox{border-left:4px solid #d7b846}.wnq-cp-inbox>a{display:grid;grid-template-columns:220px 220px 1fr;gap:15px;padding:12px 0;border-bottom:1px solid #eee;text-decoration:none;color:#1d2327}.wnq-cp-inbox small{color:#646970}
         .wnq-cp-status{display:inline-block;padding:5px 9px;border-radius:4px;font-weight:700}.wnq-cp-status.is-green{background:#dcfce7;color:#166534}.wnq-cp-status.is-yellow{background:#fef3c7;color:#92400e}.wnq-cp-status.is-red{background:#fee2e2;color:#991b1b}
-        .is-positive{color:#166534;font-weight:700}.is-negative{color:#991b1b;font-weight:700}.wnq-cp-chart{height:230px;display:grid;grid-template-columns:repeat(6,minmax(70px,1fr));gap:18px;align-items:end;border-bottom:1px solid #dcdcde;padding:20px 10px 0}.wnq-cp-chart>div{height:100%;display:flex;flex-direction:column;justify-content:flex-end;text-align:center;gap:5px}.wnq-cp-bar{display:block;min-height:3px;background:#16a34a}.wnq-cp-bar.is-negative{background:#dc2626}.wnq-cp-chart small{color:#646970}.wnq-cp-panel textarea{display:block;width:100%;max-width:700px;margin:10px 0}.wnq-cp-detail{margin-top:30px}@media(max-width:782px){.wnq-cp-stats{grid-template-columns:1fr}.wnq-cp-panel{overflow:auto}}
+        .is-positive{color:#166534;font-weight:700}.is-negative{color:#991b1b;font-weight:700}.wnq-cp-chart{height:230px;display:grid;grid-template-columns:repeat(6,minmax(70px,1fr));gap:18px;align-items:end;border-bottom:1px solid #dcdcde;padding:20px 10px 0}.wnq-cp-chart>div{height:100%;display:flex;flex-direction:column;justify-content:flex-end;text-align:center;gap:5px}.wnq-cp-bar{display:block;min-height:3px;background:#16a34a}.wnq-cp-bar.is-negative{background:#dc2626}.wnq-cp-chart small{color:#646970}.wnq-cp-panel textarea{display:block;width:100%;max-width:700px;margin:10px 0}.wnq-cp-detail{margin-top:30px}
+        .wnq-cp-tickets{display:grid;gap:12px}.wnq-cp-ticket{border:1px solid #dcdcde;border-radius:6px;background:#f9f9f9}.wnq-cp-ticket summary{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:16px;cursor:pointer}.wnq-cp-ticket summary span,.wnq-cp-ticket summary small{display:block}.wnq-cp-ticket summary small{color:#646970;margin-top:4px}.wnq-cp-thread{display:grid;gap:10px;padding:0 16px 16px}.wnq-cp-thread article{max-width:75%;padding:12px 14px;border-radius:6px;background:#fff;border:1px solid #dcdcde}.wnq-cp-thread article.is-admin{justify-self:end;background:#fff8db}.wnq-cp-thread header{display:flex;justify-content:space-between;gap:20px}.wnq-cp-thread time{color:#646970;font-size:11px}.wnq-cp-ticket-reply{display:flex;align-items:end;gap:10px;padding:16px;border-top:1px solid #dcdcde;background:#fff}.wnq-cp-ticket-reply textarea{flex:1;margin:0}.wnq-cp-panel>form select{margin:0 6px 8px 0}
+        @media(max-width:782px){.wnq-cp-stats{grid-template-columns:1fr}.wnq-cp-panel{overflow:auto}.wnq-cp-ticket-reply{display:block}.wnq-cp-thread article{max-width:100%}}
         </style>';
     }
 }
