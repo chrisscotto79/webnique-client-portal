@@ -71,6 +71,12 @@ final class DashboardController
       'permission_callback' => [self::class, 'canUsePortal'],
     ]);
 
+    register_rest_route('wnq/v1', '/portal/tickets/(?P<ticket_key>[a-z0-9-]+)', [
+      'methods'  => 'GET',
+      'callback' => [self::class, 'getTicket'],
+      'permission_callback' => [self::class, 'canUsePortal'],
+    ]);
+
     register_rest_route('wnq/v1', '/portal/learning-requests', [
       'methods'  => 'POST',
       'callback' => [self::class, 'saveLearningRequest'],
@@ -166,10 +172,24 @@ final class DashboardController
       'learning'  => ['courses' => ClientPortal::courses(), 'requests' => ClientPortal::getLearningRequests($client_id)],
       default     => [],
     };
-    if (in_array($resource, ['messages', 'tickets'], true) && !Permissions::currentUserCanManagePortal()) {
-      ClientPortal::markMessagesRead($client_id, 'admin');
-    }
     return new \WP_REST_Response(['ok' => true, 'data' => $data], 200);
+  }
+
+  public static function getTicket(\WP_REST_Request $request): \WP_REST_Response
+  {
+    $client_id = self::requestClientId($request);
+    $ticket_key = sanitize_key((string)($request['ticket_key'] ?? ''));
+    $ticket = $client_id !== '' ? ClientPortal::getTicket($client_id, $ticket_key) : null;
+    if (!$ticket) {
+      return new \WP_REST_Response(['ok' => false, 'error' => 'Ticket not found.'], 404);
+    }
+    ClientPortal::markTicketMessagesRead(
+      $client_id,
+      $ticket_key,
+      Permissions::currentUserCanManagePortal() ? 'client' : 'admin'
+    );
+    $ticket['unread'] = false;
+    return new \WP_REST_Response(['ok' => true, 'data' => $ticket], 200);
   }
 
   public static function saveCustomer(\WP_REST_Request $request): \WP_REST_Response
@@ -187,12 +207,19 @@ final class DashboardController
   {
     $client_id = self::requestClientId($request);
     $body = self::requestBody($request);
-    $body['attachments'] = self::handleUploads($request);
     $role = Permissions::currentUserCanManagePortal() ? 'admin' : 'client';
+    $error = ClientPortal::messageValidationError($client_id, $body, $role);
+    if ($error !== '') {
+      return new \WP_REST_Response(['ok' => false, 'error' => $error], 400);
+    }
+    $body['attachments'] = self::handleUploads($request);
     $id = $client_id !== '' && is_array($body) ? ClientPortal::createMessage($client_id, $body, $role) : false;
+    if (!$id) {
+      ClientPortal::deletePrivateAttachments($body['attachments']);
+    }
     return $id
       ? new \WP_REST_Response(['ok' => true, 'id' => $id], 200)
-      : new \WP_REST_Response(['ok' => false, 'error' => 'Message is required.'], 400);
+      : new \WP_REST_Response(['ok' => false, 'error' => 'The support ticket could not be saved.'], 400);
   }
 
   public static function saveLearningRequest(\WP_REST_Request $request): \WP_REST_Response
@@ -222,8 +249,14 @@ final class DashboardController
     $body['request_data'] = isset($body['request_data']) && is_string($body['request_data'])
       ? (json_decode($body['request_data'], true) ?: [])
       : ($body['request_data'] ?? []);
+    if ($client_id === '' || !ClientPortal::isValidRequestInput($body)) {
+      return new \WP_REST_Response(['ok' => false, 'error' => 'Choose a request type and add a title.'], 400);
+    }
     $body['attachments'] = self::handleUploads($request);
-    $id = $client_id !== '' ? ClientPortal::createRequest($client_id, $body) : false;
+    $id = ClientPortal::createRequest($client_id, $body);
+    if (!$id) {
+      ClientPortal::deletePrivateAttachments($body['attachments']);
+    }
     return $id
       ? new \WP_REST_Response(['ok' => true, 'id' => $id], 200)
       : new \WP_REST_Response(['ok' => false, 'error' => 'Choose a request type and add a title.'], 400);
@@ -273,13 +306,10 @@ final class DashboardController
     } else {
       $normalized[] = $group;
     }
-    require_once ABSPATH . 'wp-admin/includes/file.php';
     foreach (array_slice($normalized, 0, 5) as $file) {
       if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK || (int)($file['size'] ?? 0) > 10 * MB_IN_BYTES) continue;
-      $uploaded = wp_handle_upload($file, ['test_form' => false]);
-      if (!empty($uploaded['url']) && empty($uploaded['error'])) {
-        $uploads[] = ['name' => sanitize_file_name((string)$file['name']), 'url' => esc_url_raw((string)$uploaded['url']), 'type' => sanitize_mime_type((string)($uploaded['type'] ?? ''))];
-      }
+      $uploaded = ClientPortal::storePrivateUpload($file);
+      if ($uploaded) $uploads[] = $uploaded;
     }
     return $uploads;
   }

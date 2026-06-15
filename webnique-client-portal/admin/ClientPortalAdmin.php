@@ -9,6 +9,7 @@ namespace WNQ\Admin;
 
 use WNQ\Models\Client;
 use WNQ\Models\ClientPortal;
+use WNQ\Core\Permissions;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -22,6 +23,7 @@ final class ClientPortalAdmin
         add_action('admin_post_wnq_portal_admin_message', [self::class, 'handleMessage']);
         add_action('admin_post_wnq_portal_request_status', [self::class, 'handleRequestStatus']);
         add_action('admin_post_wnq_portal_export_report', [self::class, 'handleReportExport']);
+        add_action('admin_post_wnq_portal_download_attachment', [self::class, 'handleAttachmentDownload']);
         add_action('admin_notices', [self::class, 'messageNotice']);
     }
 
@@ -134,7 +136,6 @@ final class ClientPortalAdmin
         $tickets = ClientPortal::getTickets($client_id, 30);
         $learning_requests = ClientPortal::getLearningRequests($client_id);
         $service_requests = ClientPortal::getRequests($client_id);
-        ClientPortal::markMessagesRead($client_id, 'client');
         $tasks = ClientPortal::getTasks($client_id, 30);
         $reports = ClientPortal::getReports($client_id, 20);
         ?>
@@ -274,15 +275,23 @@ final class ClientPortalAdmin
         self::checkCapability();
         check_admin_referer('wnq_portal_admin_message');
         $client_id = sanitize_text_field(wp_unslash($_POST['client_id'] ?? ''));
-        ClientPortal::createMessage($client_id, [
+        $body = [
             'ticket_key'    => wp_unslash($_POST['ticket_key'] ?? ''),
             'category'      => wp_unslash($_POST['category'] ?? 'general'),
             'priority'      => wp_unslash($_POST['priority'] ?? 'normal'),
             'ticket_status' => wp_unslash($_POST['ticket_status'] ?? 'open'),
             'subject'       => wp_unslash($_POST['subject'] ?? ''),
             'message'       => wp_unslash($_POST['message'] ?? ''),
-            'attachments'   => self::handleUploads(),
-        ], 'admin');
+        ];
+        if (ClientPortal::messageValidationError($client_id, $body, 'admin') === '') {
+            if (sanitize_key((string)$body['ticket_key']) !== '') {
+                ClientPortal::markTicketMessagesRead($client_id, sanitize_key((string)$body['ticket_key']), 'client');
+            }
+            $body['attachments'] = self::handleUploads();
+            if (!ClientPortal::createMessage($client_id, $body, 'admin')) {
+                ClientPortal::deletePrivateAttachments($body['attachments']);
+            }
+        }
         wp_safe_redirect(admin_url('admin.php?page=wnq-client-portal-dashboard&client_id=' . rawurlencode($client_id)));
         exit;
     }
@@ -300,7 +309,6 @@ final class ClientPortalAdmin
     private static function handleUploads(): array
     {
         if (empty($_FILES['attachments']['name'])) return [];
-        require_once ABSPATH . 'wp-admin/includes/file.php';
         $files = $_FILES['attachments'];
         $uploads = [];
         $names = is_array($files['name']) ? array_keys($files['name']) : [0];
@@ -313,10 +321,31 @@ final class ClientPortalAdmin
                 'size' => $files['size'][$index] ?? 0,
             ] : $files;
             if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK || (int)($file['size'] ?? 0) > 10 * MB_IN_BYTES) continue;
-            $uploaded = wp_handle_upload($file, ['test_form' => false]);
-            if (!empty($uploaded['url']) && empty($uploaded['error'])) $uploads[] = ['name' => sanitize_file_name((string)$file['name']), 'url' => esc_url_raw((string)$uploaded['url']), 'type' => sanitize_mime_type((string)($uploaded['type'] ?? ''))];
+            $uploaded = ClientPortal::storePrivateUpload($file);
+            if ($uploaded) $uploads[] = $uploaded;
         }
         return $uploads;
+    }
+
+    public static function handleAttachmentDownload(): void
+    {
+        $client_id = sanitize_text_field(wp_unslash($_GET['client_id'] ?? ''));
+        $token = preg_replace('/[^a-f0-9]/', '', strtolower((string)wp_unslash($_GET['token'] ?? '')));
+        if (!is_user_logged_in() || (!Permissions::canAccessClient($client_id) && !Permissions::currentUserCanManagePortal())) {
+            wp_die('You do not have access to this attachment.', 'Forbidden', ['response' => 403]);
+        }
+        check_admin_referer('wnq_portal_attachment_' . $client_id . '_' . $token);
+        $attachment = ClientPortal::findPrivateAttachment($client_id, $token);
+        $path = $attachment ? ClientPortal::privateAttachmentPath($attachment) : '';
+        if (!$attachment || $path === '' || !is_file($path) || !is_readable($path)) {
+            wp_die('Attachment not found.', 'Not Found', ['response' => 404]);
+        }
+        nocache_headers();
+        header('Content-Type: ' . ($attachment['type'] ?: 'application/octet-stream'));
+        header('Content-Disposition: attachment; filename="' . sanitize_file_name((string)$attachment['name']) . '"');
+        header('Content-Length: ' . (string)filesize($path));
+        readfile($path);
+        exit;
     }
 
     public static function handleReportExport(): void

@@ -180,9 +180,14 @@
     delete state.cache.tickets; delete state.cache.overview; show("messages", true);
   });
   const attachments = (items = []) => items.length ? `<div class="wnq-attachments">${items.map((item) => `<a href="${esc(item.url)}" target="_blank" rel="noopener">${esc(item.name)}</a>`).join("")}</div>` : "";
-  const openTicket = (key, tickets, view) => {
-    const ticket = tickets.find((item) => item.ticket_key === key);
+  const openTicket = async (key, tickets, view) => {
+    const summary = tickets.find((item) => item.ticket_key === key);
+    if (!summary) return;
+    const ticket = await api(`/portal/tickets/${encodeURIComponent(key)}`);
     if (!ticket) return;
+    const index = tickets.findIndex((item) => item.ticket_key === key);
+    if (index >= 0) tickets[index] = ticket;
+    view.querySelector(`[data-ticket="${key}"]`)?.classList.remove("is-unread");
     const thread = view.querySelector("#wnq-ticket-thread");
     const closed = ["resolved", "closed"].includes(ticket.ticket_status);
     thread.innerHTML = `<section class="wnq-panel wnq-ticket-thread"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">${esc(ticket.ticket_key.toUpperCase())}</span><h2>${esc(ticket.subject)}</h2><small>${esc(ticket.response_time)}</small></div>${status(closed ? "green" : "yellow", humanize(ticket.ticket_status))}</div><div class="wnq-thread-messages">${ticket.messages.map((message) => `<article class="${message.sender_role === "admin" ? "is-support" : "is-client"}"><div><strong>${message.sender_role === "admin" ? "Golden Web Marketing" : "You"}</strong><time>${date(message.created_at)}</time></div><p>${esc(message.message)}</p>${attachments(message.attachments)}</article>`).join("")}</div>${closed ? `<button class="wnq-button" id="wnq-reopen-ticket">Reopen Ticket</button>` : ticketForm(ticket)}</section>`;
