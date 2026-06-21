@@ -82,6 +82,7 @@ final class Plugin
      * Services
      */
     require_once WNQ_PORTAL_PATH . 'includes/Services/FirebaseStore.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Services/GoogleAdsClient.php';
 
     /**
      * Views

@@ -33,6 +33,10 @@ final class AdminSettings
         $google_ads_has_developer_token = (string)get_option('wnq_google_ads_developer_token', '') !== '';
         $google_ads_access_level = get_option('wnq_google_ads_access_level', 'test');
         $google_ads_service_account_email = get_option('wnq_google_ads_service_account_email', 'webnique-portal@webnique-client-portal-486204.iam.gserviceaccount.com');
+        $google_ads_manager_customer_id = get_option('wnq_google_ads_manager_customer_id', '');
+        $google_ads_has_oauth_client_id = (string)get_option('wnq_google_ads_oauth_client_id', '') !== '';
+        $google_ads_has_oauth_client_secret = (string)get_option('wnq_google_ads_oauth_client_secret', '') !== '';
+        $google_ads_has_refresh_token = (string)get_option('wnq_google_ads_refresh_token', '') !== '';
         $seo_enabled = function_exists('wnq_seo_features_enabled') && wnq_seo_features_enabled();
 
         ?>
@@ -110,6 +114,13 @@ final class AdminSettings
                                 </td>
                             </tr>
                             <tr>
+                                <th><label for="wnq_google_ads_manager_customer_id">Manager Customer ID</label></th>
+                                <td>
+                                    <input type="text" name="wnq_google_ads_manager_customer_id" id="wnq_google_ads_manager_customer_id" value="<?php echo esc_attr($google_ads_manager_customer_id); ?>" class="regular-text" placeholder="725-731-6543">
+                                    <p class="description">Your Google Ads manager account ID. The API uses this to list child/client accounts.</p>
+                                </td>
+                            </tr>
+                            <tr>
                                 <th><label for="wnq_google_ads_access_level">Access Level</label></th>
                                 <td>
                                     <select name="wnq_google_ads_access_level" id="wnq_google_ads_access_level">
@@ -125,6 +136,25 @@ final class AdminSettings
                                 <td>
                                     <input type="email" name="wnq_google_ads_service_account_email" id="wnq_google_ads_service_account_email" value="<?php echo esc_attr($google_ads_service_account_email); ?>" class="large-text">
                                     <p class="description">Invite this account to each Google Ads account with read-only access.</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th><label for="wnq_google_ads_oauth_client_id">OAuth Client ID</label></th>
+                                <td>
+                                    <input type="password" name="wnq_google_ads_oauth_client_id" id="wnq_google_ads_oauth_client_id" value="" class="large-text" placeholder="<?php echo esc_attr($google_ads_has_oauth_client_id ? 'Saved - leave blank to keep current client ID' : 'OAuth client ID'); ?>" autocomplete="off">
+                                </td>
+                            </tr>
+                            <tr>
+                                <th><label for="wnq_google_ads_oauth_client_secret">OAuth Client Secret</label></th>
+                                <td>
+                                    <input type="password" name="wnq_google_ads_oauth_client_secret" id="wnq_google_ads_oauth_client_secret" value="" class="large-text" placeholder="<?php echo esc_attr($google_ads_has_oauth_client_secret ? 'Saved - leave blank to keep current secret' : 'OAuth client secret'); ?>" autocomplete="off">
+                                </td>
+                            </tr>
+                            <tr>
+                                <th><label for="wnq_google_ads_refresh_token">OAuth Refresh Token</label></th>
+                                <td>
+                                    <input type="password" name="wnq_google_ads_refresh_token" id="wnq_google_ads_refresh_token" value="" class="large-text" placeholder="<?php echo esc_attr($google_ads_has_refresh_token ? 'Saved - leave blank to keep current refresh token' : 'OAuth refresh token'); ?>" autocomplete="off">
+                                    <p class="description">Required by Google Ads API for read-only reports. The developer token alone cannot fetch account data.</p>
                                 </td>
                             </tr>
                         </table>
@@ -179,6 +209,8 @@ final class AdminSettings
                         <dd><span class="status-pill <?php echo $google_ads_has_developer_token ? 'active' : 'inactive'; ?>"><?php echo $google_ads_has_developer_token ? 'Saved' : 'Missing'; ?></span></dd>
                         <dt>Google Ads Access</dt>
                         <dd><?php echo esc_html(ucfirst((string)$google_ads_access_level)); ?></dd>
+                        <dt>Google Ads OAuth</dt>
+                        <dd><span class="status-pill <?php echo ($google_ads_has_oauth_client_id && $google_ads_has_oauth_client_secret && $google_ads_has_refresh_token) ? 'active' : 'inactive'; ?>"><?php echo ($google_ads_has_oauth_client_id && $google_ads_has_oauth_client_secret && $google_ads_has_refresh_token) ? 'Saved' : 'Missing'; ?></span></dd>
                         <dt>Analytics Admin</dt>
                         <dd><?php echo class_exists('WNQ\\Admin\\AnalyticsAdmin') ? 'Available' : 'Loads on demand'; ?></dd>
                     </dl>
@@ -283,6 +315,19 @@ final class AdminSettings
         }
         update_option('wnq_google_ads_access_level', $google_ads_access_level, false);
         update_option('wnq_google_ads_service_account_email', sanitize_email($_POST['wnq_google_ads_service_account_email'] ?? ''), false);
+        $google_ads_manager_customer_id = preg_replace('/[^0-9-]/', '', sanitize_text_field($_POST['wnq_google_ads_manager_customer_id'] ?? ''));
+        update_option('wnq_google_ads_manager_customer_id', $google_ads_manager_customer_id, false);
+        delete_transient('wnq_google_ads_accounts_' . md5($google_ads_manager_customer_id));
+        foreach ([
+            'wnq_google_ads_oauth_client_id',
+            'wnq_google_ads_oauth_client_secret',
+            'wnq_google_ads_refresh_token',
+        ] as $secret_option) {
+            $secret_value = sanitize_text_field(wp_unslash($_POST[$secret_option] ?? ''));
+            if ($secret_value !== '') {
+                update_option($secret_option, $secret_value, false);
+            }
+        }
         update_option('wnq_support_name', sanitize_text_field($_POST['wnq_support_name'] ?? ''));
         update_option('wnq_support_title', sanitize_text_field($_POST['wnq_support_title'] ?? ''));
         update_option('wnq_support_email', sanitize_email($_POST['wnq_support_email'] ?? ''));

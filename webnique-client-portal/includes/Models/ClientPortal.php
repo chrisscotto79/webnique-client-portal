@@ -7,6 +7,8 @@
 
 namespace WNQ\Models;
 
+use WNQ\Services\GoogleAdsClient;
+
 if (!defined('ABSPATH')) {
     exit;
 }
@@ -268,8 +270,46 @@ final class ClientPortal
     public static function getAdsResource(string $client_id): array
     {
         $settings = self::adsSettings($client_id);
-        $has_oauth = !empty($settings['oauth_client_id']) && !empty($settings['oauth_client_secret']) && !empty($settings['refresh_token']);
-        $ready = !empty($settings['developer_token']) && !empty($settings['customer_id']) && $has_oauth;
+        $raw_settings = self::adsSettings($client_id, false);
+        $has_oauth = !empty($raw_settings['oauth_client_id']) && !empty($raw_settings['oauth_client_secret']) && !empty($raw_settings['refresh_token']);
+        $client = Client::getByClientId($client_id) ?: [];
+        $match = null;
+        $ads_errors = [];
+        $summary = [
+            'spend' => 0,
+            'clicks' => 0,
+            'impressions' => 0,
+            'ctr' => 0,
+            'conversions' => 0,
+            'cost_per_conversion' => 0,
+        ];
+        $campaigns = [];
+
+        if (class_exists(GoogleAdsClient::class)) {
+            $ads = new GoogleAdsClient($raw_settings);
+            if ($ads->isConfigured()) {
+                if ((string)($raw_settings['customer_id'] ?? '') === '') {
+                    $match = $ads->matchClient($client);
+                    if ($match && (int)($match['match_score'] ?? 0) >= 70) {
+                        $raw_settings['customer_id'] = (string)$match['customer_id'];
+                        $settings['customer_id'] = (string)$match['customer_id'];
+                        $settings['matched_account_name'] = (string)$match['name'];
+                        self::saveAdsSettings($client_id, [
+                            'customer_id' => (string)$match['customer_id'],
+                            'matched_account_name' => (string)$match['name'],
+                        ]);
+                    }
+                }
+                if ((string)($raw_settings['customer_id'] ?? '') !== '') {
+                    $performance = $ads->accountPerformance((string)$raw_settings['customer_id']);
+                    $summary = $performance['summary'] ?? $summary;
+                    $campaigns = $performance['campaigns'] ?? [];
+                }
+                $ads_errors = $ads->errors();
+            }
+        }
+
+        $ready = !empty($raw_settings['developer_token']) && !empty($raw_settings['manager_customer_id']) && !empty($raw_settings['customer_id']) && $has_oauth;
         return [
             'configured' => $ready,
             'mode' => 'read_only',
@@ -277,29 +317,28 @@ final class ClientPortal
             'service_account_email' => (string)($settings['service_account_email'] ?: 'webnique-portal@webnique-client-portal-486204.iam.gserviceaccount.com'),
             'customer_id' => (string)($settings['customer_id'] ?? ''),
             'manager_customer_id' => (string)($settings['manager_customer_id'] ?? ''),
+            'matched_account_name' => (string)($settings['matched_account_name'] ?? ($match['name'] ?? '')),
+            'match_score' => (int)($match['match_score'] ?? 0),
             'has_api_key' => !empty($settings['api_key']),
             'has_developer_token' => !empty($settings['developer_token']),
             'has_oauth' => $has_oauth,
-            'summary' => [
-                'spend' => 0,
-                'clicks' => 0,
-                'conversions' => 0,
-                'cost_per_conversion' => 0,
-            ],
-            'campaigns' => [],
+            'summary' => $summary,
+            'campaigns' => $campaigns,
+            'errors' => $ads_errors,
             'requirements' => [
-                'Google Ads customer ID for this client',
+                'Google Ads manager customer ID',
                 'Google Ads developer token',
-                'OAuth refresh token or approved service-account OAuth flow',
-                'Read-only access granted to the service account user',
+                'OAuth client ID, client secret, and refresh token',
+                'Client Ads account linked under the manager account',
             ],
         ];
     }
 
     public static function saveAdsSettings(string $client_id, array $data): bool
     {
-        $settings = self::adsSettings($client_id, false);
-        $allowed = ['api_key', 'developer_token', 'customer_id', 'manager_customer_id', 'service_account_email', 'oauth_client_id', 'oauth_client_secret', 'refresh_token'];
+        $stored = get_option(self::adsOptionKey($client_id), []);
+        $settings = is_array($stored) ? $stored : [];
+        $allowed = ['api_key', 'developer_token', 'customer_id', 'manager_customer_id', 'service_account_email', 'oauth_client_id', 'oauth_client_secret', 'refresh_token', 'matched_account_name'];
         foreach ($allowed as $key) {
             if (!array_key_exists($key, $data)) {
                 continue;
@@ -317,6 +356,7 @@ final class ClientPortal
             }
         }
         update_option(self::adsOptionKey($client_id), $settings, false);
+        delete_transient('wnq_google_ads_accounts_' . md5((string)($settings['manager_customer_id'] ?? get_option('wnq_google_ads_manager_customer_id', ''))));
         return true;
     }
 
@@ -329,11 +369,12 @@ final class ClientPortal
             'api_key' => '',
             'developer_token' => (string)get_option('wnq_google_ads_developer_token', ''),
             'customer_id' => '',
-            'manager_customer_id' => '',
+            'manager_customer_id' => (string)get_option('wnq_google_ads_manager_customer_id', ''),
             'service_account_email' => $global_service_account ?: 'webnique-portal@webnique-client-portal-486204.iam.gserviceaccount.com',
-            'oauth_client_id' => '',
-            'oauth_client_secret' => '',
-            'refresh_token' => '',
+            'oauth_client_id' => (string)get_option('wnq_google_ads_oauth_client_id', ''),
+            'oauth_client_secret' => (string)get_option('wnq_google_ads_oauth_client_secret', ''),
+            'refresh_token' => (string)get_option('wnq_google_ads_refresh_token', ''),
+            'matched_account_name' => '',
         ];
         $settings = array_merge($defaults, $settings);
         if ($masked) {
