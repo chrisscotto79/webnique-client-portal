@@ -12,7 +12,12 @@
   ];
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
   const money = (value) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(value || 0));
-  const date = (value) => value ? new Date(`${value}`.replace(" ", "T")).toLocaleDateString() : "Not set";
+  const date = (value) => {
+    if (!value) return "Not set";
+    const raw = String(value);
+    const normalized = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00:00` : raw.replace(" ", "T");
+    return new Date(normalized).toLocaleDateString();
+  };
   const attr = (value) => esc(JSON.stringify(value));
   const activeLabel = (key) => tabs.find(([tab]) => tab === key)?.[1] || "Dashboard";
   const api = async (path, options = {}) => {
@@ -143,9 +148,12 @@
     const statusFilter = sessionStorage.getItem("wnqCrmStatus") || "all";
     const visibleRows = filterCrmRows(rows, crmSearch, statusFilter);
     const totals = crmTotals(visibleRows);
-    const leads = visibleRows.filter((row) => !jobStatuses.includes(row.status) && row.record_type !== "job");
-    const jobs = visibleRows.filter((row) => jobStatuses.includes(row.status) || row.record_type === "job");
-    const upcoming = jobs.filter((row) => row.job_date && row.job_date >= today && ![...wonStatuses, ...lostStatuses].includes(row.status));
+    const isFinished = (row) => [...wonStatuses, ...lostStatuses].includes(row.status);
+    const isJob = (row) => row.record_type === "job" || jobStatuses.includes(row.status) || Boolean(row.job_date) || Number(row.job_count || 0) > 0 || Number(row.final_value || 0) > 0;
+    const leads = visibleRows.filter((row) => !isJob(row) && !isFinished(row));
+    const jobs = visibleRows.filter(isJob);
+    const scheduledJobs = jobs.filter((row) => row.job_date && !isFinished(row));
+    const upcoming = scheduledJobs.filter((row) => row.job_date >= today);
     const overdue = visibleRows.filter((row) => row.follow_up_date && row.follow_up_date < today && ![...wonStatuses, ...lostStatuses].includes(row.status));
     const completed = visibleRows.filter((row) => wonStatuses.includes(row.status));
     const lost = visibleRows.filter((row) => lostStatuses.includes(row.status));
@@ -182,7 +190,7 @@
       <div class="wnq-crm-tab" data-crm-panel="dashboard">${crmDashboard({ performance, upcoming, overdue, totals, avgJob, closeRate, topServices, topCustomers })}</div>
       <div class="wnq-crm-tab" data-crm-panel="leads">${crmTable(leads, "Lead Pipeline", "No leads are recorded yet.")}</div>
       <div class="wnq-crm-tab" data-crm-panel="jobs">${crmTable(jobs, "Job Management", "No jobs are recorded yet.")}</div>
-      <div class="wnq-crm-tab" data-crm-panel="calendar">${crmCalendar(upcoming)}</div>
+      <div class="wnq-crm-tab" data-crm-panel="calendar">${crmCalendar(scheduledJobs)}</div>
       <div class="wnq-crm-tab" data-crm-panel="followups">${crmTable(overdue, "Overdue Follow-ups", "No overdue follow-ups.")}</div>
       <div class="wnq-crm-tab" data-crm-panel="reports">${crmReports({ rows: visibleRows, totals, avgJob, closeRate, topServices, topCustomers, completed, lost })}</div>
       <div class="wnq-crm-tab" data-crm-panel="settings">${crmSettings()}</div>
@@ -195,6 +203,7 @@
     };
     const setCrmTab = (key) => {
       sessionStorage.setItem("wnqCrmTab", key);
+      if (formRoot) formRoot.innerHTML = "";
       view.querySelectorAll("[data-crm-tab]").forEach((button) => button.classList.toggle("is-active", button.dataset.crmTab === key));
       view.querySelectorAll("[data-crm-panel]").forEach((panel) => panel.classList.toggle("is-active", panel.dataset.crmPanel === key));
     };
@@ -210,6 +219,8 @@
     setCrmTab(activeCrmTab);
     const openForm = (row = {}) => {
       formRoot.innerHTML = customerForm(row);
+      view.querySelectorAll("[data-crm-tab]").forEach((button) => button.classList.remove("is-active"));
+      view.querySelectorAll("[data-crm-panel]").forEach((panel) => panel.classList.remove("is-active"));
       formRoot.scrollIntoView({ behavior: "smooth", block: "start" });
       formRoot.querySelector("form").addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -231,7 +242,7 @@
           if (submit) { submit.disabled = false; submit.textContent = "Save Record"; }
         }
       });
-      formRoot.querySelector("[data-cancel]").addEventListener("click", () => formRoot.innerHTML = "");
+      formRoot.querySelector("[data-cancel]").addEventListener("click", () => setCrmTab(sessionStorage.getItem("wnqCrmTab") || "dashboard"));
     };
     view.querySelector("#wnq-add-customer")?.addEventListener("click", () => openForm());
     view.querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => openForm(JSON.parse(button.dataset.edit))));

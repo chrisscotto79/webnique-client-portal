@@ -162,6 +162,7 @@ final class ClientPortal
         self::ensureSchema();
         global $wpdb;
         $id = absint($data['id'] ?? 0);
+        $name = (string)($data['name'] ?? $data['customer_name'] ?? $data['customerName'] ?? '');
         $record_type = sanitize_key($data['record_type'] ?? 'customer');
         if (!in_array($record_type, ['lead', 'customer', 'job'], true)) {
             $record_type = 'customer';
@@ -175,14 +176,14 @@ final class ClientPortal
         $job_date = self::dateField($data['job_date'] ?? '');
         $completion_date = self::dateField($data['completion_date'] ?? '');
         $job_count = max(0, absint($data['job_count'] ?? 0));
-        $final_value = max(0, round((float)($data['final_value'] ?? 0), 2));
+        $final_value = self::moneyAmount($data['final_value'] ?? 0);
         if ($job_count === 0 && ($final_value > 0 || in_array($status, ['completed', 'won', 'closed'], true))) {
             $job_count = 1;
         }
         $record = [
             'client_id'       => sanitize_text_field($client_id),
             'record_type'     => $record_type,
-            'name'            => sanitize_text_field((string)($data['name'] ?? '')),
+            'name'            => sanitize_text_field($name),
             'phone'           => sanitize_text_field((string)($data['phone'] ?? '')),
             'email'           => sanitize_email((string)($data['email'] ?? '')),
             'address'         => sanitize_text_field((string)($data['address'] ?? '')),
@@ -196,9 +197,9 @@ final class ClientPortal
             'job_date'        => $job_date ?: null,
             'completion_date' => $completion_date ?: null,
             'job_count'       => $job_count,
-            'estimated_value' => max(0, round((float)($data['estimated_value'] ?? 0), 2)),
+            'estimated_value' => self::moneyAmount($data['estimated_value'] ?? 0),
             'final_value'     => $final_value,
-            'job_cost'        => max(0, round((float)($data['job_cost'] ?? 0), 2)),
+            'job_cost'        => self::moneyAmount($data['job_cost'] ?? 0),
             'notes'           => sanitize_textarea_field((string)($data['notes'] ?? '')),
             'internal_notes'  => sanitize_textarea_field((string)($data['internal_notes'] ?? '')),
             'lost_reason'     => sanitize_textarea_field((string)($data['lost_reason'] ?? '')),
@@ -476,6 +477,12 @@ final class ClientPortal
             ];
         }
         return $result;
+    }
+
+    private static function moneyAmount($value): float
+    {
+        $normalized = preg_replace('/[^0-9.\-]/', '', (string)$value);
+        return max(0, round((float)$normalized, 2));
     }
 
     public static function getMessages(string $client_id, int $limit = 50): array
@@ -991,7 +998,19 @@ final class ClientPortal
         $size = (int)($file['size'] ?? 0);
         if ($size < 1 || $size > 10 * MB_IN_BYTES) return null;
         require_once ABSPATH . 'wp-admin/includes/file.php';
-        $checked = wp_check_filetype_and_ext((string)$file['tmp_name'], sanitize_file_name((string)($file['name'] ?? 'attachment')), get_allowed_mime_types());
+        $allowed_mimes = [
+            'jpg'  => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'png'  => 'image/png',
+            'webp' => 'image/webp',
+            'gif'  => 'image/gif',
+            'pdf'  => 'application/pdf',
+            'doc'  => 'application/msword',
+            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'txt'  => 'text/plain',
+            'csv'  => 'text/csv',
+        ];
+        $checked = wp_check_filetype_and_ext((string)$file['tmp_name'], sanitize_file_name((string)($file['name'] ?? 'attachment')), $allowed_mimes);
         if (empty($checked['type']) || empty($checked['ext'])) return null;
         $directory = self::privateUploadDirectory();
         if ($directory === '' || (!is_dir($directory) && !wp_mkdir_p($directory))) return null;
@@ -1028,16 +1047,24 @@ final class ClientPortal
         global $wpdb;
         $token = preg_replace('/[^a-f0-9]/', '', strtolower($token));
         if ($client_id === '' || strlen($token) !== 32) return null;
-        foreach (['wnq_portal_messages', 'wnq_portal_requests'] as $suffix) {
-            $rows = $wpdb->get_col($wpdb->prepare(
-                "SELECT attachments FROM {$wpdb->prefix}{$suffix} WHERE client_id=%s AND attachments LIKE %s",
-                $client_id,
-                '%' . $wpdb->esc_like($token) . '%'
-            )) ?: [];
-            foreach ($rows as $json) {
-                foreach (self::jsonArray($json) as $attachment) {
-                    if (is_array($attachment) && hash_equals($token, (string)($attachment['token'] ?? ''))) {
-                        return self::sanitizeAttachments([$attachment])[0] ?? null;
+        $locations = [
+            'wnq_portal_messages' => ['attachments'],
+            'wnq_portal_requests' => ['attachments'],
+            'wnq_portal_customers' => ['files', 'before_photos', 'after_photos'],
+        ];
+        foreach ($locations as $suffix => $columns) {
+            foreach ($columns as $column) {
+                $table = $wpdb->prefix . $suffix;
+                $rows = $wpdb->get_col($wpdb->prepare(
+                    "SELECT {$column} FROM {$table} WHERE client_id=%s AND {$column} LIKE %s",
+                    $client_id,
+                    '%' . $wpdb->esc_like($token) . '%'
+                )) ?: [];
+                foreach ($rows as $json) {
+                    foreach (self::jsonArray($json) as $attachment) {
+                        if (is_array($attachment) && hash_equals($token, (string)($attachment['token'] ?? ''))) {
+                            return self::sanitizeAttachments([$attachment])[0] ?? null;
+                        }
                     }
                 }
             }
