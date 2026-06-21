@@ -600,6 +600,15 @@ if (wnq_seo_features_enabled()) {
         }
     });
 
+    add_action('admin_post_wnq_sync_local_seo_tasks', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::handleSyncLocalTasks();
+        }
+    });
+
     add_action('admin_post_wnq_save_seo_report', function() {
         $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
         if (file_exists($seo_admin)) {
@@ -702,6 +711,15 @@ if (wnq_seo_features_enabled()) {
             require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
             require_once $seo_admin;
             \WNQ\Admin\SEOAdmin::ajaxUpdateTaskNotes();
+        }
+    });
+
+    add_action('wp_ajax_wnq_seo_bulk_update_tasks', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::ajaxBulkUpdateTasks();
         }
     });
 }

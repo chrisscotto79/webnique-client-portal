@@ -379,6 +379,22 @@ final class SEOAdmin
                         </form>
                     <?php endif; ?>
                 </div>
+            <?php elseif ($selected_service === 'local'): ?>
+                <div class="monthly-controls">
+                    <div class="month-selector-wrapper">
+                        <strong>Local citation library</strong>
+                        <span>Safely add any missing recommended citation tasks without resetting completed work.</span>
+                    </div>
+                    <form method="post" action="<?php echo admin_url('admin-post.php'); ?>" style="display: inline;">
+                        <?php wp_nonce_field('wnq_sync_local_seo_tasks'); ?>
+                        <input type="hidden" name="action" value="wnq_sync_local_seo_tasks">
+                        <input type="hidden" name="client_id" value="<?php echo esc_attr($client_id); ?>">
+                        <input type="hidden" name="redirect_url" value="<?php echo esc_url($_SERVER['REQUEST_URI']); ?>">
+                        <button type="submit" class="btn-init-month">
+                            Add Missing Local Citation Tasks
+                        </button>
+                    </form>
+                </div>
             <?php endif; ?>
 
             <?php if (!empty($tasks_by_group)): ?>
@@ -392,6 +408,18 @@ final class SEOAdmin
                             <?php endif; ?>
                         </div>
                         <span class="task-count"><?php echo count($tasks); ?> tasks</span>
+                    </div>
+
+                    <div class="seo-bulk-toolbar" data-client-id="<?php echo esc_attr($client_id); ?>">
+                        <label class="seo-select-all">
+                            <input type="checkbox" id="seo-select-all-tasks">
+                            <span>Select visible tasks</span>
+                        </label>
+                        <span class="seo-selected-count"><strong>0</strong> selected</span>
+                        <button type="button" class="seo-bulk-action" data-status="completed">Mark Complete</button>
+                        <button type="button" class="seo-bulk-action" data-status="in_progress">Mark In Progress</button>
+                        <button type="button" class="seo-bulk-action" data-status="pending">Reset Pending</button>
+                        <span class="seo-bulk-result" aria-live="polite"></span>
                     </div>
 
                     <?php if (empty($tasks) && $selected_service !== 'monthly'): ?>
@@ -463,25 +491,14 @@ final class SEOAdmin
 
                             <div class="tasks-list">
                                 <?php foreach ($group_tasks as $task): ?>
-                                    <div class="task-item task-<?php echo esc_attr($task['status']); ?>">
+                                    <div class="task-item task-<?php echo esc_attr($task['status']); ?>" data-task-id="<?php echo esc_attr($task['id']); ?>" data-status="<?php echo esc_attr($task['status']); ?>">
+                                        <label class="task-bulk-select" title="Select for bulk action">
+                                            <input type="checkbox" class="seo-task-select" value="<?php echo esc_attr($task['id']); ?>">
+                                        </label>
                                         <div class="task-checkbox">
-                                            <?php if ($task['status'] === 'completed'): ?>
-                                                <form method="post" action="<?php echo admin_url('admin-post.php'); ?>" style="display: inline;">
-                                                    <?php wp_nonce_field('wnq_uncomplete_seo_task'); ?>
-                                                    <input type="hidden" name="action" value="wnq_uncomplete_seo_task">
-                                                    <input type="hidden" name="task_id" value="<?php echo esc_attr($task['id']); ?>">
-                                                    <input type="hidden" name="redirect_url" value="<?php echo esc_url($_SERVER['REQUEST_URI']); ?>">
-                                                    <button type="submit" class="checkbox-btn completed" title="Click to uncheck">✅</button>
-                                                </form>
-                                            <?php else: ?>
-                                                <form method="post" action="<?php echo admin_url('admin-post.php'); ?>" style="display: inline;">
-                                                    <?php wp_nonce_field('wnq_complete_seo_task'); ?>
-                                                    <input type="hidden" name="action" value="wnq_complete_seo_task">
-                                                    <input type="hidden" name="task_id" value="<?php echo esc_attr($task['id']); ?>">
-                                                    <input type="hidden" name="redirect_url" value="<?php echo esc_url($_SERVER['REQUEST_URI']); ?>">
-                                                    <button type="submit" class="checkbox-btn">☐</button>
-                                                </form>
-                                            <?php endif; ?>
+                                            <button type="button" class="checkbox-btn seo-task-toggle <?php echo $task['status'] === 'completed' ? 'completed' : ''; ?>" data-task-id="<?php echo esc_attr($task['id']); ?>" data-status="<?php echo $task['status'] === 'completed' ? 'pending' : 'completed'; ?>" title="<?php echo $task['status'] === 'completed' ? 'Click to uncheck' : 'Click to complete'; ?>">
+                                                <?php echo $task['status'] === 'completed' ? '✅' : '☐'; ?>
+                                            </button>
                                         </div>
                                         <div class="task-content">
                                             <div class="task-name"><?php echo esc_html($task['task_name']); ?></div>
@@ -499,14 +516,7 @@ final class SEOAdmin
                                         </div>
                                         <div class="task-actions">
                                             <?php if ($task['status'] !== 'completed'): ?>
-                                                <form method="post" action="<?php echo admin_url('admin-post.php'); ?>" style="display: inline;">
-                                                    <?php wp_nonce_field('wnq_update_seo_task'); ?>
-                                                    <input type="hidden" name="action" value="wnq_update_seo_task">
-                                                    <input type="hidden" name="task_id" value="<?php echo esc_attr($task['id']); ?>">
-                                                    <input type="hidden" name="status" value="in_progress">
-                                                    <input type="hidden" name="redirect_url" value="<?php echo esc_url($_SERVER['REQUEST_URI']); ?>">
-                                                    <button type="submit" class="btn-action">Start</button>
-                                                </form>
+                                                <button type="button" class="btn-action seo-task-status" data-task-id="<?php echo esc_attr($task['id']); ?>" data-status="in_progress">Start</button>
                                             <?php endif; ?>
                                             <button onclick="editTaskNotes(<?php echo $task['id']; ?>)" class="btn-action">Notes</button>
                                             <form method="post" action="<?php echo admin_url('admin-post.php'); ?>" style="display: inline;">
@@ -546,11 +556,104 @@ final class SEOAdmin
         
         <script>
         jQuery(document).ready(function($) {
+            const seoTaskNonce = '<?php echo esc_js(wp_create_nonce('wnq_seo_task_ajax')); ?>';
+            const ajaxUrl = '<?php echo esc_url(admin_url('admin-ajax.php')); ?>';
+
             $('#month-selector').on('change', function() {
                 const url = new URL(window.location.href);
                 url.searchParams.set('month', $(this).val());
                 window.location.href = url.toString();
             });
+
+            function updateSelectedCount() {
+                const selected = $('.seo-task-select:checked').length;
+                $('.seo-selected-count strong').text(selected);
+                $('.seo-bulk-action').prop('disabled', selected < 1);
+                $('#seo-select-all-tasks').prop('checked', selected > 0 && selected === $('.seo-task-select').length);
+            }
+
+            function setTaskState(taskId, status) {
+                const $task = $('.task-item[data-task-id="' + taskId + '"]');
+                const isCompleted = status === 'completed';
+                $task.removeClass('task-pending task-in_progress task-completed').addClass('task-' + status).attr('data-status', status);
+                $task.find('.seo-task-toggle')
+                    .toggleClass('completed', isCompleted)
+                    .attr('data-status', isCompleted ? 'pending' : 'completed')
+                    .attr('title', isCompleted ? 'Click to uncheck' : 'Click to complete')
+                    .text(isCompleted ? '✅' : '☐');
+                $task.find('.task-completed-date').remove();
+                if (isCompleted) {
+                    $task.find('.task-content').append('<div class="task-completed-date">Completed: just now</div>');
+                    $task.find('.seo-task-status[data-status="in_progress"]').remove();
+                } else if (!$task.find('.seo-task-status[data-status="in_progress"]').length) {
+                    $task.find('.task-actions').prepend('<button type="button" class="btn-action seo-task-status" data-task-id="' + taskId + '" data-status="in_progress">Start</button>');
+                }
+            }
+
+            function refreshTaskProgressSummary() {
+                const total = $('.task-item').length;
+                const completed = $('.task-item[data-status="completed"]').length;
+                const inProgress = $('.task-item[data-status="in_progress"]').length;
+                const pending = $('.task-item[data-status="pending"]').length;
+                const pct = total ? Math.round((completed / total) * 1000) / 10 : 0;
+                $('.progress-percentage').text(pct + '%');
+                $('.progress-fill-large').css('width', pct + '%');
+                $('.progress-stats .stat-item').eq(0).find('strong').text(completed);
+                $('.progress-stats .stat-item').eq(1).find('strong').text(inProgress);
+                $('.progress-stats .stat-item').eq(2).find('strong').text(pending);
+                $('.progress-stats .stat-item').eq(3).find('strong').text(total);
+                $('.service-tab.active .tab-count').text(completed + '/' + total);
+            }
+
+            function updateTaskStatus(taskIds, status, $trigger) {
+                const ids = Array.isArray(taskIds) ? taskIds : [taskIds];
+                if (!ids.length) return;
+                const $result = $('.seo-bulk-result');
+                if ($trigger) {
+                    $trigger.prop('disabled', true).addClass('is-loading');
+                }
+                $result.removeClass('success error').text('Saving...');
+                $.post(ajaxUrl, {
+                    action: 'wnq_seo_bulk_update_tasks',
+                    nonce: seoTaskNonce,
+                    task_ids: ids,
+                    status: status
+                }).done(function(response) {
+                    if (!response.success) {
+                        $result.addClass('error').text((response.data && response.data.message) || 'Could not update tasks.');
+                        return;
+                    }
+                    (response.data.task_ids || ids).forEach(function(taskId) {
+                        setTaskState(taskId, status);
+                    });
+                    refreshTaskProgressSummary();
+                    $('.seo-task-select:checked').prop('checked', false);
+                    updateSelectedCount();
+                    $result.addClass('success').text(response.data.message || 'Tasks updated.');
+                    setTimeout(function() { $result.removeClass('success error').text(''); }, 3500);
+                }).fail(function() {
+                    $result.addClass('error').text('Network error. Try again.');
+                }).always(function() {
+                    if ($trigger) {
+                        $trigger.prop('disabled', false).removeClass('is-loading');
+                    }
+                });
+            }
+
+            $('#seo-select-all-tasks').on('change', function() {
+                $('.seo-task-select').prop('checked', $(this).is(':checked'));
+                updateSelectedCount();
+            });
+
+            $(document).on('change', '.seo-task-select', updateSelectedCount);
+            $(document).on('click', '.seo-task-toggle, .seo-task-status', function() {
+                updateTaskStatus($(this).data('task-id'), $(this).data('status'), $(this));
+            });
+            $('.seo-bulk-action').on('click', function() {
+                const ids = $('.seo-task-select:checked').map(function() { return $(this).val(); }).get();
+                updateTaskStatus(ids, $(this).data('status'), $(this));
+            });
+            updateSelectedCount();
         });
 
         function editTaskNotes(taskId) {
@@ -817,6 +920,18 @@ final class SEOAdmin
         .task-item { display: flex; align-items: flex-start; gap: 16px; padding: 16px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; }
         .task-item.task-completed { background: #f0fdf4; border-color: #86efac; }
         .task-item.task-in_progress { background: #fef3c7; border-color: #fde68a; }
+        .seo-bulk-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 16px; margin: 0 0 20px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; }
+        .seo-select-all { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; color: #1e293b; }
+        .seo-selected-count { color: #64748b; font-weight: 700; margin-right: auto; }
+        .seo-bulk-action { padding: 8px 12px; background: #fff; border: 1px solid #cbd5e1; border-radius: 7px; color: #1e293b; font-weight: 700; cursor: pointer; }
+        .seo-bulk-action:hover:not(:disabled) { border-color: #10b981; color: #047857; }
+        .seo-bulk-action:disabled { opacity: .45; cursor: not-allowed; }
+        .seo-bulk-action.is-loading, .seo-task-toggle.is-loading, .seo-task-status.is-loading { opacity: .65; cursor: progress; }
+        .seo-bulk-result { font-weight: 700; color: #64748b; min-width: 160px; }
+        .seo-bulk-result.success { color: #059669; }
+        .seo-bulk-result.error { color: #dc2626; }
+        .task-bulk-select { flex-shrink: 0; padding-top: 6px; }
+        .task-bulk-select input { width: 18px; height: 18px; }
         .task-checkbox { flex-shrink: 0; }
         .checkbox-btn { width: 32px; height: 32px; border: 2px solid #cbd5e0; background: white; border-radius: 6px; cursor: pointer; font-size: 20px; display: flex; align-items: center; justify-content: center; padding: 0; }
         .checkbox-btn:hover { border-color: #10b981; background: #f0fdf4; }
@@ -890,6 +1005,21 @@ final class SEOAdmin
 
         $redirect_url = isset($_POST['redirect_url']) ? $_POST['redirect_url'] : admin_url('admin.php?page=wnq-seo&view=client&client=' . urlencode($client_id) . '&service=' . $service_type);
         wp_redirect($redirect_url);
+        exit;
+    }
+
+    public static function handleSyncLocalTasks(): void
+    {
+        check_admin_referer('wnq_sync_local_seo_tasks');
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) wp_die('Insufficient permissions');
+
+        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        if ($client_id !== '') {
+            SEO::syncLocalTasks($client_id);
+        }
+
+        $redirect_url = isset($_POST['redirect_url']) ? esc_url_raw(wp_unslash($_POST['redirect_url'])) : admin_url('admin.php?page=wnq-seo&view=client&client=' . urlencode($client_id) . '&service=local');
+        wp_safe_redirect($redirect_url);
         exit;
     }
 
@@ -1003,5 +1133,101 @@ final class SEOAdmin
         $redirect_url = isset($_POST['redirect_url']) ? $_POST['redirect_url'] : admin_url('admin.php?page=wnq-seo');
         wp_redirect($redirect_url);
         exit;
+    }
+
+    public static function ajaxBulkUpdateTasks(): void
+    {
+        check_ajax_referer('wnq_seo_task_ajax', 'nonce');
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Insufficient permissions.'], 403);
+        }
+
+        $task_ids = isset($_POST['task_ids']) ? (array) wp_unslash($_POST['task_ids']) : [];
+        $status = sanitize_key((string)($_POST['status'] ?? ''));
+        if (!in_array($status, ['pending', 'in_progress', 'completed'], true)) {
+            wp_send_json_error(['message' => 'Invalid task status.'], 400);
+        }
+
+        $task_ids = array_values(array_filter(array_map('absint', $task_ids)));
+        if (!$task_ids) {
+            wp_send_json_error(['message' => 'Select at least one task.'], 400);
+        }
+
+        $result = SEO::bulkUpdateTaskStatus($task_ids, $status);
+        wp_send_json_success([
+            'message' => sprintf(
+                '%d task%s updated%s.',
+                (int)$result['updated'],
+                (int)$result['updated'] === 1 ? '' : 's',
+                (int)$result['failed'] > 0 ? ' and ' . (int)$result['failed'] . ' failed' : ''
+            ),
+            'task_ids' => $task_ids,
+            'status' => $status,
+            'updated' => (int)$result['updated'],
+            'failed' => (int)$result['failed'],
+        ]);
+    }
+
+    public static function ajaxToggleTask(): void
+    {
+        $nonce = sanitize_text_field((string)($_POST['nonce'] ?? ''));
+        if (!wp_verify_nonce($nonce, 'wnq_seo_task_ajax') && !wp_verify_nonce($nonce, 'wnq_seohub_nonce')) {
+            wp_send_json_error(['message' => 'Invalid security token.'], 403);
+        }
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Insufficient permissions.'], 403);
+        }
+
+        $task_id = absint($_POST['task_id'] ?? $_POST['entity_id'] ?? 0);
+        $task = $task_id ? SEO::getTask($task_id) : null;
+        if (!$task) {
+            wp_send_json_error(['message' => 'Task not found.'], 404);
+        }
+        $status = ((string)$task['status'] === 'completed') ? 'pending' : 'completed';
+        SEO::updateTaskStatus($task_id, $status)
+            ? wp_send_json_success(['message' => 'Task updated.', 'task_id' => $task_id, 'status' => $status])
+            : wp_send_json_error(['message' => 'Task could not be updated.'], 400);
+    }
+
+    public static function ajaxUpdateTaskStatus(): void
+    {
+        $nonce = sanitize_text_field((string)($_POST['nonce'] ?? ''));
+        if (!wp_verify_nonce($nonce, 'wnq_seo_task_ajax') && !wp_verify_nonce($nonce, 'wnq_seohub_nonce')) {
+            wp_send_json_error(['message' => 'Invalid security token.'], 403);
+        }
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Insufficient permissions.'], 403);
+        }
+
+        $task_id = absint($_POST['task_id'] ?? $_POST['entity_id'] ?? 0);
+        $status = sanitize_key((string)($_POST['status'] ?? ''));
+        if (!$task_id || !in_array($status, ['pending', 'in_progress', 'completed'], true)) {
+            wp_send_json_error(['message' => 'Invalid task update.'], 400);
+        }
+
+        SEO::updateTaskStatus($task_id, $status)
+            ? wp_send_json_success(['message' => 'Task status updated.', 'task_id' => $task_id, 'status' => $status])
+            : wp_send_json_error(['message' => 'Task could not be updated.'], 400);
+    }
+
+    public static function ajaxUpdateTaskNotes(): void
+    {
+        $nonce = sanitize_text_field((string)($_POST['nonce'] ?? ''));
+        if (!wp_verify_nonce($nonce, 'wnq_seo_task_ajax') && !wp_verify_nonce($nonce, 'wnq_seohub_nonce')) {
+            wp_send_json_error(['message' => 'Invalid security token.'], 403);
+        }
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Insufficient permissions.'], 403);
+        }
+
+        $task_id = absint($_POST['task_id'] ?? $_POST['entity_id'] ?? 0);
+        $notes = sanitize_textarea_field((string)($_POST['notes'] ?? ''));
+        if (!$task_id) {
+            wp_send_json_error(['message' => 'Task not found.'], 404);
+        }
+
+        SEO::updateTask($task_id, ['notes' => $notes])
+            ? wp_send_json_success(['message' => 'Task notes updated.', 'task_id' => $task_id, 'notes' => $notes])
+            : wp_send_json_error(['message' => 'Task notes could not be updated.'], 400);
     }
 }
