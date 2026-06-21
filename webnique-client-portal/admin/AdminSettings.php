@@ -30,6 +30,9 @@ final class AdminSettings
         $default_billing_cycle = get_option('wnq_default_billing_cycle', 'monthly');
         $stripe_publishable_key = get_option('wnq_stripe_test_publishable_key', '');
         $stripe_secret_key = get_option('wnq_stripe_test_secret_key', '');
+        $google_ads_has_developer_token = (string)get_option('wnq_google_ads_developer_token', '') !== '';
+        $google_ads_access_level = get_option('wnq_google_ads_access_level', 'test');
+        $google_ads_service_account_email = get_option('wnq_google_ads_service_account_email', 'webnique-portal@webnique-client-portal-486204.iam.gserviceaccount.com');
         $seo_enabled = function_exists('wnq_seo_features_enabled') && wnq_seo_features_enabled();
 
         ?>
@@ -91,6 +94,43 @@ final class AdminSettings
                     </div>
 
                     <div class="settings-panel">
+                        <h2>Google Ads API</h2>
+                        <p class="description">Stored server-side for read-only Ads reporting. The developer token is never printed back into the page after it is saved.</p>
+                        <table class="form-table" role="presentation">
+                            <tr>
+                                <th><label for="wnq_google_ads_developer_token">Developer Token</label></th>
+                                <td>
+                                    <input type="password" name="wnq_google_ads_developer_token" id="wnq_google_ads_developer_token" value="" class="large-text" placeholder="<?php echo esc_attr($google_ads_has_developer_token ? 'Saved - leave blank to keep current token' : 'Enter Google Ads developer token'); ?>" autocomplete="off">
+                                    <?php if ($google_ads_has_developer_token): ?>
+                                        <label class="wnq-inline-check">
+                                            <input type="checkbox" name="wnq_google_ads_clear_developer_token" value="1">
+                                            Clear saved token
+                                        </label>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th><label for="wnq_google_ads_access_level">Access Level</label></th>
+                                <td>
+                                    <select name="wnq_google_ads_access_level" id="wnq_google_ads_access_level">
+                                        <option value="test" <?php selected($google_ads_access_level, 'test'); ?>>Test Account Access</option>
+                                        <option value="basic" <?php selected($google_ads_access_level, 'basic'); ?>>Basic Access</option>
+                                        <option value="standard" <?php selected($google_ads_access_level, 'standard'); ?>>Standard Access</option>
+                                    </select>
+                                    <p class="description">This is a label for the portal status. Google controls the actual API access level.</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th><label for="wnq_google_ads_service_account_email">Service Account Email</label></th>
+                                <td>
+                                    <input type="email" name="wnq_google_ads_service_account_email" id="wnq_google_ads_service_account_email" value="<?php echo esc_attr($google_ads_service_account_email); ?>" class="large-text">
+                                    <p class="description">Invite this account to each Google Ads account with read-only access.</p>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <div class="settings-panel">
                         <h2>Support Contact</h2>
                         <table class="form-table" role="presentation">
                             <tr>
@@ -135,6 +175,10 @@ final class AdminSettings
                         <dd><span class="status-pill active">Enabled</span></dd>
                         <dt>Firebase Project</dt>
                         <dd><?php echo esc_html(defined('FIREBASE_PROJECT_ID') && FIREBASE_PROJECT_ID ? FIREBASE_PROJECT_ID : 'Not configured'); ?></dd>
+                        <dt>Google Ads Token</dt>
+                        <dd><span class="status-pill <?php echo $google_ads_has_developer_token ? 'active' : 'inactive'; ?>"><?php echo $google_ads_has_developer_token ? 'Saved' : 'Missing'; ?></span></dd>
+                        <dt>Google Ads Access</dt>
+                        <dd><?php echo esc_html(ucfirst((string)$google_ads_access_level)); ?></dd>
                         <dt>Analytics Admin</dt>
                         <dd><?php echo class_exists('WNQ\\Admin\\AnalyticsAdmin') ? 'Available' : 'Loads on demand'; ?></dd>
                     </dl>
@@ -172,6 +216,10 @@ final class AdminSettings
         .settings-status dd {
             margin: 4px 0 0;
             font-size: 14px;
+        }
+        .wnq-inline-check {
+            display: block;
+            margin-top: 8px;
         }
         .status-pill {
             display: inline-block;
@@ -222,6 +270,19 @@ final class AdminSettings
         update_option('wnq_default_billing_cycle', $billing_cycle);
         update_option('wnq_stripe_test_publishable_key', sanitize_text_field($_POST['wnq_stripe_test_publishable_key'] ?? ''));
         update_option('wnq_stripe_test_secret_key', sanitize_text_field($_POST['wnq_stripe_test_secret_key'] ?? ''));
+        $google_ads_token = sanitize_text_field(wp_unslash($_POST['wnq_google_ads_developer_token'] ?? ''));
+        $clear_google_ads_token = !empty($_POST['wnq_google_ads_clear_developer_token']);
+        if ($clear_google_ads_token) {
+            update_option('wnq_google_ads_developer_token', '', false);
+        } elseif ($google_ads_token !== '') {
+            update_option('wnq_google_ads_developer_token', $google_ads_token, false);
+        }
+        $google_ads_access_level = sanitize_key($_POST['wnq_google_ads_access_level'] ?? 'test');
+        if (!in_array($google_ads_access_level, ['test', 'basic', 'standard'], true)) {
+            $google_ads_access_level = 'test';
+        }
+        update_option('wnq_google_ads_access_level', $google_ads_access_level, false);
+        update_option('wnq_google_ads_service_account_email', sanitize_email($_POST['wnq_google_ads_service_account_email'] ?? ''), false);
         update_option('wnq_support_name', sanitize_text_field($_POST['wnq_support_name'] ?? ''));
         update_option('wnq_support_title', sanitize_text_field($_POST['wnq_support_title'] ?? ''));
         update_option('wnq_support_email', sanitize_email($_POST['wnq_support_email'] ?? ''));

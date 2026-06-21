@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
 
 final class ClientPortal
 {
-    private const SCHEMA_VERSION = '5';
+    private const SCHEMA_VERSION = '6';
     private static bool $schema_ready = false;
 
     public static function ensureSchema(): void
@@ -36,26 +36,38 @@ final class ClientPortal
         dbDelta("CREATE TABLE IF NOT EXISTS {$wpdb->prefix}wnq_portal_customers (
             id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
             client_id varchar(100) NOT NULL,
+            record_type varchar(30) NOT NULL DEFAULT 'customer',
             name varchar(255) NOT NULL,
             phone varchar(50) DEFAULT NULL,
             email varchar(255) DEFAULT NULL,
             address varchar(500) DEFAULT NULL,
+            job_address varchar(500) DEFAULT NULL,
             service varchar(255) DEFAULT NULL,
+            crew varchar(255) DEFAULT NULL,
             lead_source varchar(100) DEFAULT NULL,
             status varchar(30) NOT NULL DEFAULT 'new',
             follow_up_date date DEFAULT NULL,
+            reminder_date date DEFAULT NULL,
             job_date date DEFAULT NULL,
+            completion_date date DEFAULT NULL,
             job_count int(11) NOT NULL DEFAULT 0,
             estimated_value decimal(12,2) NOT NULL DEFAULT 0.00,
             final_value decimal(12,2) NOT NULL DEFAULT 0.00,
             job_cost decimal(12,2) NOT NULL DEFAULT 0.00,
             notes text DEFAULT NULL,
+            internal_notes text DEFAULT NULL,
+            lost_reason text DEFAULT NULL,
+            files longtext DEFAULT NULL,
+            before_photos longtext DEFAULT NULL,
+            after_photos longtext DEFAULT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             KEY client_id (client_id),
+            KEY record_type (record_type),
             KEY status (status),
             KEY follow_up_date (follow_up_date),
+            KEY reminder_date (reminder_date),
             KEY job_date (job_date)
         ) $charset;");
 
@@ -123,11 +135,12 @@ final class ClientPortal
         self::ensureSchema();
         global $wpdb;
         $limit = max(1, min(500, $limit));
-        return $wpdb->get_results($wpdb->prepare(
+        $rows = $wpdb->get_results($wpdb->prepare(
             "SELECT * FROM {$wpdb->prefix}wnq_portal_customers WHERE client_id=%s ORDER BY updated_at DESC, id DESC LIMIT %d",
             $client_id,
             $limit
         ), ARRAY_A) ?: [];
+        return array_map([self::class, 'hydrateCustomerRecord'], $rows);
     }
 
     public static function getCustomer(int $id, string $client_id): ?array
@@ -139,7 +152,7 @@ final class ClientPortal
             $id,
             $client_id
         ), ARRAY_A);
-        return $row ?: null;
+        return $row ? self::hydrateCustomerRecord($row) : null;
     }
 
     public static function saveCustomer(string $client_id, array $data): int|false
@@ -147,31 +160,59 @@ final class ClientPortal
         self::ensureSchema();
         global $wpdb;
         $id = absint($data['id'] ?? 0);
+        $record_type = sanitize_key($data['record_type'] ?? 'customer');
+        if (!in_array($record_type, ['lead', 'customer', 'job'], true)) {
+            $record_type = 'customer';
+        }
         $status = sanitize_key($data['status'] ?? 'new');
-        if (!in_array($status, ['new', 'contacted', 'estimate_sent', 'scheduled', 'completed', 'won', 'lost', 'closed'], true)) {
+        if (!in_array($status, self::customerStatuses(), true)) {
             $status = 'new';
         }
         $follow_up = self::dateField($data['follow_up_date'] ?? '');
+        $reminder_date = self::dateField($data['reminder_date'] ?? '');
         $job_date = self::dateField($data['job_date'] ?? '');
+        $completion_date = self::dateField($data['completion_date'] ?? '');
+        $job_count = max(0, absint($data['job_count'] ?? 0));
+        $final_value = max(0, round((float)($data['final_value'] ?? 0), 2));
+        if ($job_count === 0 && ($final_value > 0 || in_array($status, ['completed', 'won', 'closed'], true))) {
+            $job_count = 1;
+        }
         $record = [
             'client_id'       => sanitize_text_field($client_id),
+            'record_type'     => $record_type,
             'name'            => sanitize_text_field((string)($data['name'] ?? '')),
             'phone'           => sanitize_text_field((string)($data['phone'] ?? '')),
             'email'           => sanitize_email((string)($data['email'] ?? '')),
             'address'         => sanitize_text_field((string)($data['address'] ?? '')),
+            'job_address'     => sanitize_text_field((string)($data['job_address'] ?? '')),
             'service'         => sanitize_text_field((string)($data['service'] ?? '')),
+            'crew'            => sanitize_text_field((string)($data['crew'] ?? '')),
             'lead_source'     => sanitize_text_field((string)($data['lead_source'] ?? '')),
             'status'          => $status,
             'follow_up_date'  => $follow_up ?: null,
+            'reminder_date'   => $reminder_date ?: null,
             'job_date'        => $job_date ?: null,
-            'job_count'       => max(0, absint($data['job_count'] ?? 0)),
+            'completion_date' => $completion_date ?: null,
+            'job_count'       => $job_count,
             'estimated_value' => max(0, round((float)($data['estimated_value'] ?? 0), 2)),
-            'final_value'     => max(0, round((float)($data['final_value'] ?? 0), 2)),
+            'final_value'     => $final_value,
             'job_cost'        => max(0, round((float)($data['job_cost'] ?? 0), 2)),
             'notes'           => sanitize_textarea_field((string)($data['notes'] ?? '')),
+            'internal_notes'  => sanitize_textarea_field((string)($data['internal_notes'] ?? '')),
+            'lost_reason'     => sanitize_textarea_field((string)($data['lost_reason'] ?? '')),
         ];
         if ($record['name'] === '') {
             return false;
+        }
+        foreach (['files', 'before_photos', 'after_photos'] as $attachment_key) {
+            if (!empty($data[$attachment_key]) && is_array($data[$attachment_key])) {
+                $existing = [];
+                if ($id > 0) {
+                    $existing_record = self::getCustomer($id, $client_id);
+                    $existing = is_array($existing_record[$attachment_key] ?? null) ? $existing_record[$attachment_key] : [];
+                }
+                $record[$attachment_key] = wp_json_encode(array_values(array_merge($existing, $data[$attachment_key])));
+            }
         }
         if ($id > 0 && self::getCustomer($id, $client_id)) {
             $result = $wpdb->update($wpdb->prefix . 'wnq_portal_customers', $record, ['id' => $id, 'client_id' => $client_id]);
@@ -187,9 +228,10 @@ final class ClientPortal
         global $wpdb;
         $row = $wpdb->get_row($wpdb->prepare(
             "SELECT COUNT(*) total,
-                SUM(status='new') new_count,
-                SUM(status='scheduled') scheduled_count,
-                SUM(status='completed') completed_count,
+                SUM(status IN ('new','contacted','estimate_sent')) new_count,
+                SUM(status IN ('scheduled','in_progress')) scheduled_count,
+                SUM(status IN ('completed','won','closed')) completed_count,
+                SUM(status IN ('lost','canceled')) lost_count,
                 COALESCE(SUM(job_count),0) job_count,
                 COALESCE(SUM(final_value),0) revenue,
                 COALESCE(SUM(job_cost),0) cost
@@ -201,11 +243,112 @@ final class ClientPortal
             'new_count'       => absint($row['new_count'] ?? 0),
             'scheduled_count' => absint($row['scheduled_count'] ?? 0),
             'completed_count' => absint($row['completed_count'] ?? 0),
+            'lost_count'      => absint($row['lost_count'] ?? 0),
             'job_count'       => absint($row['job_count'] ?? 0),
             'revenue'         => (float)($row['revenue'] ?? 0),
             'cost'            => (float)($row['cost'] ?? 0),
             'profit'          => (float)($row['revenue'] ?? 0) - (float)($row['cost'] ?? 0),
         ];
+    }
+
+    public static function customerStatuses(): array
+    {
+        return ['new', 'contacted', 'estimate_sent', 'scheduled', 'in_progress', 'completed', 'won', 'lost', 'closed', 'canceled'];
+    }
+
+    private static function hydrateCustomerRecord(array $row): array
+    {
+        foreach (['files', 'before_photos', 'after_photos'] as $key) {
+            $row[$key] = self::hydrateAttachments(self::jsonArray($row[$key] ?? ''), (string)($row['client_id'] ?? ''));
+        }
+        $row['profit'] = (float)($row['final_value'] ?? 0) - (float)($row['job_cost'] ?? 0);
+        return $row;
+    }
+
+    public static function getAdsResource(string $client_id): array
+    {
+        $settings = self::adsSettings($client_id);
+        $has_oauth = !empty($settings['oauth_client_id']) && !empty($settings['oauth_client_secret']) && !empty($settings['refresh_token']);
+        $ready = !empty($settings['developer_token']) && !empty($settings['customer_id']) && $has_oauth;
+        return [
+            'configured' => $ready,
+            'mode' => 'read_only',
+            'access_level' => (string)get_option('wnq_google_ads_access_level', 'test'),
+            'service_account_email' => (string)($settings['service_account_email'] ?: 'webnique-portal@webnique-client-portal-486204.iam.gserviceaccount.com'),
+            'customer_id' => (string)($settings['customer_id'] ?? ''),
+            'manager_customer_id' => (string)($settings['manager_customer_id'] ?? ''),
+            'has_api_key' => !empty($settings['api_key']),
+            'has_developer_token' => !empty($settings['developer_token']),
+            'has_oauth' => $has_oauth,
+            'summary' => [
+                'spend' => 0,
+                'clicks' => 0,
+                'conversions' => 0,
+                'cost_per_conversion' => 0,
+            ],
+            'campaigns' => [],
+            'requirements' => [
+                'Google Ads customer ID for this client',
+                'Google Ads developer token',
+                'OAuth refresh token or approved service-account OAuth flow',
+                'Read-only access granted to the service account user',
+            ],
+        ];
+    }
+
+    public static function saveAdsSettings(string $client_id, array $data): bool
+    {
+        $settings = self::adsSettings($client_id, false);
+        $allowed = ['api_key', 'developer_token', 'customer_id', 'manager_customer_id', 'service_account_email', 'oauth_client_id', 'oauth_client_secret', 'refresh_token'];
+        foreach ($allowed as $key) {
+            if (!array_key_exists($key, $data)) {
+                continue;
+            }
+            $value = trim((string)$data[$key]);
+            if ($value === 'Saved') {
+                continue;
+            }
+            if ($key === 'service_account_email') {
+                $settings[$key] = sanitize_email($value);
+            } elseif ($key === 'customer_id' || $key === 'manager_customer_id') {
+                $settings[$key] = preg_replace('/[^0-9-]/', '', $value);
+            } else {
+                $settings[$key] = sanitize_text_field($value);
+            }
+        }
+        update_option(self::adsOptionKey($client_id), $settings, false);
+        return true;
+    }
+
+    private static function adsSettings(string $client_id, bool $masked = true): array
+    {
+        $settings = get_option(self::adsOptionKey($client_id), []);
+        $settings = is_array($settings) ? $settings : [];
+        $global_service_account = sanitize_email((string)get_option('wnq_google_ads_service_account_email', 'webnique-portal@webnique-client-portal-486204.iam.gserviceaccount.com'));
+        $defaults = [
+            'api_key' => '',
+            'developer_token' => (string)get_option('wnq_google_ads_developer_token', ''),
+            'customer_id' => '',
+            'manager_customer_id' => '',
+            'service_account_email' => $global_service_account ?: 'webnique-portal@webnique-client-portal-486204.iam.gserviceaccount.com',
+            'oauth_client_id' => '',
+            'oauth_client_secret' => '',
+            'refresh_token' => '',
+        ];
+        $settings = array_merge($defaults, $settings);
+        if ($masked) {
+            foreach (['api_key', 'developer_token', 'oauth_client_secret', 'refresh_token'] as $secret) {
+                if (!empty($settings[$secret])) {
+                    $settings[$secret] = 'Saved';
+                }
+            }
+        }
+        return $settings;
+    }
+
+    private static function adsOptionKey(string $client_id): string
+    {
+        return 'wnq_google_ads_settings_' . md5($client_id);
     }
 
     public static function getMonthlyPerformance(string $client_id, int $months = 6): array
