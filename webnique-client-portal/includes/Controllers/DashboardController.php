@@ -51,7 +51,7 @@ final class DashboardController
       },
     ]);
 
-    foreach (['overview', 'customers', 'messages', 'tickets', 'requests', 'work', 'reports', 'profile', 'performance', 'learning'] as $resource) {
+    foreach (['overview', 'customers', 'messages', 'tickets', 'requests', 'work', 'reports', 'profile', 'performance', 'learning', 'ads'] as $resource) {
       register_rest_route('wnq/v1', '/portal/' . $resource, [
         'methods'  => 'GET',
         'callback' => [self::class, 'getPortalResource'],
@@ -92,6 +92,12 @@ final class DashboardController
     register_rest_route('wnq/v1', '/portal/profile', [
       'methods'  => 'POST',
       'callback' => [self::class, 'saveProfile'],
+      'permission_callback' => [self::class, 'canUsePortal'],
+    ]);
+
+    register_rest_route('wnq/v1', '/portal/ads-settings', [
+      'methods'  => 'POST',
+      'callback' => [self::class, 'saveAdsSettings'],
       'permission_callback' => [self::class, 'canUsePortal'],
     ]);
 
@@ -170,6 +176,7 @@ final class DashboardController
       'profile'   => ClientPortal::publicClient(Client::getByClientId($client_id) ?: []),
       'performance' => ClientPortal::getMonthlyPerformance($client_id),
       'learning'  => ['courses' => ClientPortal::courses(), 'requests' => ClientPortal::getLearningRequests($client_id)],
+      'ads'       => ClientPortal::getAdsResource($client_id),
       default     => [],
     };
     return new \WP_REST_Response(['ok' => true, 'data' => $data], 200);
@@ -196,8 +203,14 @@ final class DashboardController
   {
     $client_id = self::requestClientId($request);
     $body = self::requestBody($request);
+    $body['files'] = self::handleUploads($request, 'attachments');
+    $body['before_photos'] = self::handleUploads($request, 'before_photos');
+    $body['after_photos'] = self::handleUploads($request, 'after_photos');
     $id = $client_id !== '' && is_array($body) ? ClientPortal::saveCustomer($client_id, $body) : false;
     if (!$id) {
+      ClientPortal::deletePrivateAttachments($body['files']);
+      ClientPortal::deletePrivateAttachments($body['before_photos']);
+      ClientPortal::deletePrivateAttachments($body['after_photos']);
       return new \WP_REST_Response(['ok' => false, 'error' => 'Customer name is required.'], 400);
     }
     return new \WP_REST_Response(['ok' => true, 'id' => $id, 'data' => ClientPortal::getCustomer((int)$id, $client_id)], 200);
@@ -240,6 +253,19 @@ final class DashboardController
     return $saved
       ? new \WP_REST_Response(['ok' => true, 'data' => ClientPortal::publicClient(Client::getByClientId($client_id) ?: [])], 200)
       : new \WP_REST_Response(['ok' => false, 'error' => 'Business profile could not be saved.'], 400);
+  }
+
+  public static function saveAdsSettings(\WP_REST_Request $request): \WP_REST_Response
+  {
+    if (!Permissions::currentUserCanManagePortal()) {
+      return new \WP_REST_Response(['ok' => false, 'error' => 'Only admins can update Google Ads settings.'], 403);
+    }
+    $client_id = self::requestClientId($request);
+    $body = self::requestBody($request);
+    $saved = $client_id !== '' && is_array($body) && ClientPortal::saveAdsSettings($client_id, $body);
+    return $saved
+      ? new \WP_REST_Response(['ok' => true, 'data' => ClientPortal::getAdsResource($client_id)], 200)
+      : new \WP_REST_Response(['ok' => false, 'error' => 'Google Ads settings could not be saved.'], 400);
   }
 
   public static function saveRequest(\WP_REST_Request $request): \WP_REST_Response
@@ -286,11 +312,11 @@ final class DashboardController
     return is_array($json) ? $json : (array)$request->get_params();
   }
 
-  private static function handleUploads(\WP_REST_Request $request): array
+  private static function handleUploads(\WP_REST_Request $request, string $field = 'attachments'): array
   {
     $files = $request->get_file_params();
-    if (empty($files['attachments'])) return [];
-    $group = $files['attachments'];
+    if (empty($files[$field])) return [];
+    $group = $files[$field];
     $uploads = [];
     $normalized = [];
     if (is_array($group['name'] ?? null)) {
