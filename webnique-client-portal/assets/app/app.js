@@ -24,8 +24,13 @@
       headers: { "X-WP-Nonce": cfg.nonce, ...(isForm ? {} : { "Content-Type": "application/json" }) },
       ...options,
     });
-    const data = await response.json().catch(() => ({ ok: false, error: "Invalid server response." }));
-    if (!response.ok) throw new Error(data.error || "Request failed.");
+    const data = await response.json().catch(() => null);
+    if (!data) {
+      throw new Error(`Invalid server response (${response.status}). Please refresh and try again.`);
+    }
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || data.message || `Request failed (${response.status}).`);
+    }
     return data.data ?? data;
   };
   const status = (tone, label) => `<span class="wnq-status is-${esc(tone)}"><i></i>${esc(label)}</span>`;
@@ -33,6 +38,20 @@
   const empty = (message) => `<div class="wnq-empty">${esc(message)}</div>`;
   const heading = (eyebrow, title, copy = "") => `<header class="wnq-page-head"><span>${esc(eyebrow)}</span><h1>${esc(title)}</h1>${copy ? `<p>${esc(copy)}</p>` : ""}</header>`;
   const trend = (value) => `<strong class="${Number(value) >= 0 ? "wnq-positive" : "wnq-negative"}">${money(value)}</strong>`;
+  const hasSelectedFiles = (form) => Array.from(form.querySelectorAll('input[type="file"]')).some((input) => input.files && input.files.length > 0);
+  const formObject = (form) => {
+    const data = {};
+    new FormData(form).forEach((value, key) => {
+      if (typeof File !== "undefined" && value instanceof File) return;
+      data[key.replace(/\[\]$/, "")] = value;
+    });
+    return data;
+  };
+  const formStatus = (target, tone, message) => {
+    const existing = target.querySelector(".wnq-form-status");
+    if (existing) existing.remove();
+    target.insertAdjacentHTML("afterbegin", `<div class="wnq-form-status is-${esc(tone)}">${esc(message)}</div>`);
+  };
   const performanceChart = (rows = []) => {
     const max = Math.max(1, ...rows.map((row) => Math.max(Math.abs(Number(row.profit || 0)), Number(row.jobs || 0))));
     return `<div class="wnq-chart">${rows.map((row) => {
@@ -197,13 +216,20 @@
         event.preventDefault();
         const form = event.currentTarget;
         const submit = form.querySelector('[type="submit"]');
+        const name = form.querySelector('[name="name"]');
+        if (!String(name?.value || "").trim()) {
+          formStatus(form, "red", "Customer name is required before this can be saved.");
+          name?.focus();
+          return;
+        }
         if (submit) { submit.disabled = true; submit.textContent = "Saving..."; }
         try {
-          await api("/portal/customers", { method: "POST", body: new FormData(form) });
+          const body = hasSelectedFiles(form) ? new FormData(form) : JSON.stringify(formObject(form));
+          await api("/portal/customers", { method: "POST", body });
           sessionStorage.setItem("wnqCrmNotice", "CRM record saved.");
           delete state.cache.customers; delete state.cache.overview; delete state.cache.performance; show("customers", true);
         } catch (error) {
-          formRoot.insertAdjacentHTML("afterbegin", `<div class="wnq-error"><strong>Record was not saved.</strong><p>${esc(error.message)}</p></div>`);
+          formStatus(form, "red", `Record was not saved. ${error.message}`);
           if (submit) { submit.disabled = false; submit.textContent = "Save Record"; }
         }
       });
@@ -281,25 +307,44 @@
         <div><span>Access Level</span><strong>${esc(humanize(data.access_level || "test"))}</strong></div>
       </div>
       <div class="wnq-metrics">${metric("Spend", money(data.summary?.spend || 0), "Selected period")}${metric("Clicks", data.summary?.clicks || 0, "Ad clicks")}${metric("Conversions", data.summary?.conversions || 0, "Tracked leads")}${metric("Cost / Conversion", money(data.summary?.cost_per_conversion || 0), "Spend per lead")}</div>
-      <section class="wnq-panel"><div class="wnq-panel-head"><h2>Account Match</h2>${status(data.customer_id ? "green" : "yellow", data.customer_id ? "Matched" : "Waiting")}</div><p><strong>${esc(data.matched_account_name || "No Ads account matched yet")}</strong>${data.customer_id ? ` · ${esc(data.customer_id)}` : ""}${data.match_score ? ` · ${esc(data.match_score)}% match` : ""}</p>${data.errors?.length ? `<div class="wnq-error"><strong>Google Ads API message</strong><p>${esc(data.errors[0])}</p></div>` : ""}</section>
+      <section class="wnq-panel"><div class="wnq-panel-head"><h2>Account Match</h2>${status(data.customer_id ? "green" : "yellow", data.customer_id ? "Matched" : "Waiting")}</div><p><strong>${esc(data.matched_account_name || "No Ads account matched yet")}</strong>${data.customer_id ? ` · ${esc(data.customer_id)}` : ""}${data.match_score ? ` · ${esc(data.match_score)}% match` : ""}</p>${adsDiagnostics(data)}</section>
       ${cfg.isAdmin ? adsSettingsForm(data) : adsClientNotice(data)}
       <section class="wnq-panel wnq-table-wrap"><div class="wnq-panel-head"><h2>Campaigns</h2></div><table><thead><tr><th>Campaign</th><th>Status</th><th>Spend</th><th>Clicks</th><th>Impr.</th><th>CTR</th><th>Conversions</th></tr></thead><tbody>${data.campaigns?.length ? data.campaigns.map((row) => `<tr><td><strong>${esc(row.name)}</strong></td><td>${status(row.status === "enabled" ? "green" : "yellow", row.status)}</td><td>${money(row.spend)}</td><td>${esc(row.clicks)}</td><td>${esc(row.impressions)}</td><td>${esc(Math.round(Number(row.ctr || 0) * 10000) / 100)}%</td><td>${esc(row.conversions)}</td></tr>`).join("") : `<tr><td colspan="7">${empty("Google Ads reporting is ready for setup. No campaign data is being pulled yet.")}</td></tr>`}</tbody></table></section>`;
     const form = view.querySelector("#wnq-ads-settings");
     if (form) {
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
-        const result = await api("/portal/ads-settings", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
-        state.cache.ads = result; show("ads", true);
+        const submit = form.querySelector('[type="submit"]');
+        if (submit) { submit.disabled = true; submit.textContent = "Saving..."; }
+        try {
+          const result = await api("/portal/ads-settings", { method: "POST", body: JSON.stringify(formObject(form)) });
+          state.cache.ads = result;
+          sessionStorage.setItem("wnqAdsNotice", "Ads settings saved. Refreshing account match...");
+          show("ads", true);
+        } catch (error) {
+          formStatus(form, "red", `Ads settings were not saved. ${error.message}`);
+          if (submit) { submit.disabled = false; submit.textContent = "Save Ads Setup"; }
+        }
       });
     }
   }
 
-  const adsSettingsForm = (data) => `<form class="wnq-panel wnq-form" id="wnq-ads-settings"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">Admin Setup</span><h2>Google Ads Read-only Connection</h2></div></div>
+  const adsDiagnostics = (data) => {
+    const messages = [...(data.errors || []), ...(data.diagnostics || [])].filter(Boolean);
+    const checks = data.setup_checks || [];
+    return `${messages.length ? `<div class="wnq-error"><strong>Google Ads setup message</strong>${messages.map((message) => `<p>${esc(message)}</p>`).join("")}</div>` : ""}${checks.length ? `<div class="wnq-setup-checks">${checks.map((check) => `<span class="${check.ok ? "is-ok" : "is-needed"}">${esc(check.label)}</span>`).join("")}</div>` : ""}`;
+  };
+  const adsSettingsForm = (data) => {
+    const notice = sessionStorage.getItem("wnqAdsNotice") || "";
+    if (notice) sessionStorage.removeItem("wnqAdsNotice");
+    return `<form class="wnq-panel wnq-form" id="wnq-ads-settings"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">Admin Setup</span><h2>Google Ads Read-only Connection</h2></div></div>
+    ${notice ? `<div class="wnq-form-status is-green">${esc(notice)}</div>` : ""}
     ${field("customer_id", "Google Ads Customer ID", data.customer_id || "")}${field("manager_customer_id", "Manager Account ID", data.manager_customer_id || "")}${field("service_account_email", "Service Account Email", data.service_account_email || "")}
-    ${field("api_key", "API Key", data.has_api_key ? "Saved" : "", false, "password")}${field("developer_token", "Developer Token", data.has_developer_token ? "Saved" : "", false, "password")}${field("oauth_client_id", "OAuth Client ID", data.has_oauth ? "Saved" : "")}
-    ${field("oauth_client_secret", "OAuth Client Secret", data.has_oauth ? "Saved" : "", false, "password")}${field("refresh_token", "OAuth Refresh Token", data.has_oauth ? "Saved" : "", false, "password")}
+    ${field("api_key", "API Key", data.has_api_key ? "Saved" : "", false, "password")}${field("developer_token", "Developer Token", data.has_developer_token ? "Saved" : "", false, "password")}${field("oauth_client_id", "OAuth Client ID", data.has_oauth_client_id ? "Saved" : "")}
+    ${field("oauth_client_secret", "OAuth Client Secret", data.has_oauth_client_secret ? "Saved" : "", false, "password")}${field("refresh_token", "OAuth Refresh Token", data.has_refresh_token ? "Saved" : "", false, "password")}
     <div class="is-wide wnq-ads-requirements"><strong>Still needed for live API pulls</strong>${(data.requirements || []).map((item) => `<span>${esc(item)}</span>`).join("")}<p class="wnq-note">The API key is stored server-side. The frontend only receives saved/not-saved flags.</p></div>
-    <div class="wnq-form-actions"><button class="wnq-button">Save Ads Setup</button></div></form>`;
+    <div class="wnq-form-actions"><button class="wnq-button" type="submit">Save Ads Setup</button></div></form>`;
+  };
   const adsClientNotice = (data) => `<section class="wnq-panel"><div class="wnq-panel-head"><h2>Ads Access</h2>${status(data.configured ? "green" : "yellow", data.configured ? "Connected" : "Pending")}</div><p class="wnq-note">Once Golden Web Marketing connects your Google Ads account, this tab will show read-only campaign results and reporting.</p></section>`;
 
   async function messages(view, refresh) {
