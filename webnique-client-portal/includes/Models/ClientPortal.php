@@ -271,10 +271,16 @@ final class ClientPortal
     {
         $settings = self::adsSettings($client_id);
         $raw_settings = self::adsSettings($client_id, false);
-        $has_oauth = !empty($raw_settings['oauth_client_id']) && !empty($raw_settings['oauth_client_secret']) && !empty($raw_settings['refresh_token']);
+        $has_developer_token = !empty($raw_settings['developer_token']);
+        $has_manager_customer_id = !empty($raw_settings['manager_customer_id']);
+        $has_oauth_client_id = !empty($raw_settings['oauth_client_id']);
+        $has_oauth_client_secret = !empty($raw_settings['oauth_client_secret']);
+        $has_refresh_token = !empty($raw_settings['refresh_token']);
+        $has_oauth = $has_oauth_client_id && $has_oauth_client_secret && $has_refresh_token;
         $client = Client::getByClientId($client_id) ?: [];
         $match = null;
         $ads_errors = [];
+        $diagnostics = [];
         $summary = [
             'spend' => 0,
             'clicks' => 0,
@@ -284,6 +290,7 @@ final class ClientPortal
             'cost_per_conversion' => 0,
         ];
         $campaigns = [];
+        $access_level = (string)get_option('wnq_google_ads_access_level', 'test');
 
         if (class_exists(GoogleAdsClient::class)) {
             $ads = new GoogleAdsClient($raw_settings);
@@ -306,31 +313,67 @@ final class ClientPortal
                     $campaigns = $performance['campaigns'] ?? [];
                 }
                 $ads_errors = $ads->errors();
+                if ((string)($raw_settings['customer_id'] ?? '') === '' && !$match && empty($ads_errors)) {
+                    $diagnostics[] = 'No linked client Google Ads account was returned from the manager account. Confirm the client account accepted the manager invitation and that the OAuth user can view it.';
+                } elseif ((string)($raw_settings['customer_id'] ?? '') === '' && $match) {
+                    $diagnostics[] = 'A possible Google Ads account match was found, but the name match was below the automatic connection threshold. Enter the customer ID manually or update the Ads account name to match the client more closely.';
+                }
+            } else {
+                if (!$has_developer_token) {
+                    $diagnostics[] = 'Google Ads developer token is missing.';
+                }
+                if (!$has_manager_customer_id) {
+                    $diagnostics[] = 'Google Ads manager customer ID is missing.';
+                }
+                if (!$has_oauth) {
+                    $diagnostics[] = 'OAuth client ID, client secret, and refresh token are required. A Google Ads API key alone cannot fetch account or campaign data.';
+                }
             }
+        } else {
+            $diagnostics[] = 'Google Ads API client class is not loaded in the plugin.';
         }
 
-        $ready = !empty($raw_settings['developer_token']) && !empty($raw_settings['manager_customer_id']) && !empty($raw_settings['customer_id']) && $has_oauth;
+        if ($access_level === 'test') {
+            $diagnostics[] = 'Your developer token is labeled Test Account Access. Production client accounts will not return live data until Google approves Basic Access, or unless you connect Google Ads test accounts.';
+        }
+
+        $ready = $has_developer_token && $has_manager_customer_id && !empty($raw_settings['customer_id']) && $has_oauth && $access_level !== 'test';
         return [
             'configured' => $ready,
             'mode' => 'read_only',
-            'access_level' => (string)get_option('wnq_google_ads_access_level', 'test'),
+            'access_level' => $access_level,
             'service_account_email' => (string)($settings['service_account_email'] ?: 'webnique-portal@webnique-client-portal-486204.iam.gserviceaccount.com'),
             'customer_id' => (string)($settings['customer_id'] ?? ''),
             'manager_customer_id' => (string)($settings['manager_customer_id'] ?? ''),
             'matched_account_name' => (string)($settings['matched_account_name'] ?? ($match['name'] ?? '')),
             'match_score' => (int)($match['match_score'] ?? 0),
             'has_api_key' => !empty($settings['api_key']),
-            'has_developer_token' => !empty($settings['developer_token']),
+            'has_developer_token' => $has_developer_token,
+            'has_manager_customer_id' => $has_manager_customer_id,
+            'has_oauth_client_id' => $has_oauth_client_id,
+            'has_oauth_client_secret' => $has_oauth_client_secret,
+            'has_refresh_token' => $has_refresh_token,
             'has_oauth' => $has_oauth,
             'summary' => $summary,
             'campaigns' => $campaigns,
             'errors' => $ads_errors,
-            'requirements' => [
-                'Google Ads manager customer ID',
-                'Google Ads developer token',
-                'OAuth client ID, client secret, and refresh token',
-                'Client Ads account linked under the manager account',
+            'diagnostics' => $diagnostics,
+            'setup_checks' => [
+                ['label' => 'Manager customer ID', 'ok' => $has_manager_customer_id],
+                ['label' => 'Developer token', 'ok' => $has_developer_token],
+                ['label' => 'OAuth client ID', 'ok' => $has_oauth_client_id],
+                ['label' => 'OAuth client secret', 'ok' => $has_oauth_client_secret],
+                ['label' => 'OAuth refresh token', 'ok' => $has_refresh_token],
+                ['label' => 'Matched client account', 'ok' => !empty($raw_settings['customer_id'])],
+                ['label' => 'Basic API access', 'ok' => $access_level !== 'test'],
             ],
+            'requirements' => array_values(array_filter([
+                $has_manager_customer_id ? '' : 'Google Ads manager customer ID',
+                $has_developer_token ? '' : 'Google Ads developer token',
+                $has_oauth ? '' : 'OAuth client ID, client secret, and refresh token',
+                !empty($raw_settings['customer_id']) ? '' : 'Client Ads account linked under the manager account',
+                $access_level !== 'test' ? '' : 'Google Ads API Basic Access for production accounts',
+            ])),
         ];
     }
 
@@ -339,12 +382,17 @@ final class ClientPortal
         $stored = get_option(self::adsOptionKey($client_id), []);
         $settings = is_array($stored) ? $stored : [];
         $allowed = ['api_key', 'developer_token', 'customer_id', 'manager_customer_id', 'service_account_email', 'oauth_client_id', 'oauth_client_secret', 'refresh_token', 'matched_account_name'];
+        $inherited_keys = ['api_key', 'developer_token', 'manager_customer_id', 'service_account_email', 'oauth_client_id', 'oauth_client_secret', 'refresh_token'];
         foreach ($allowed as $key) {
             if (!array_key_exists($key, $data)) {
                 continue;
             }
             $value = trim((string)$data[$key]);
-            if ($value === 'Saved') {
+            if ($value === 'Saved' || str_starts_with($value, 'Saved -')) {
+                continue;
+            }
+            if ($value === '' && in_array($key, $inherited_keys, true)) {
+                unset($settings[$key]);
                 continue;
             }
             if ($key === 'service_account_email') {
@@ -357,6 +405,7 @@ final class ClientPortal
         }
         update_option(self::adsOptionKey($client_id), $settings, false);
         delete_transient('wnq_google_ads_accounts_' . md5((string)($settings['manager_customer_id'] ?? get_option('wnq_google_ads_manager_customer_id', ''))));
+        delete_transient('wnq_google_ads_accounts_' . md5((string)get_option('wnq_google_ads_manager_customer_id', '')));
         return true;
     }
 
