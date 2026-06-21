@@ -195,7 +195,7 @@
       <div class="wnq-health">
         <div><span>API Status</span>${status(data.configured ? "green" : "yellow", data.configured ? "Connected" : "Setup needed")}</div>
         <div><span>Access Mode</span><strong>${esc(humanize(data.mode || "read_only"))}</strong></div>
-        <div><span>Service Account</span><strong>${esc(data.service_account_email || "Not set")}</strong></div>
+        <div><span>Access Level</span><strong>${esc(humanize(data.access_level || "test"))}</strong></div>
       </div>
       <div class="wnq-metrics">${metric("Spend", money(data.summary?.spend || 0), "Selected period")}${metric("Clicks", data.summary?.clicks || 0, "Ad clicks")}${metric("Conversions", data.summary?.conversions || 0, "Tracked leads")}${metric("Cost / Conversion", money(data.summary?.cost_per_conversion || 0), "Spend per lead")}</div>
       ${cfg.isAdmin ? adsSettingsForm(data) : adsClientNotice(data)}

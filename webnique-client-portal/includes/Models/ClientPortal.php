@@ -273,6 +273,7 @@ final class ClientPortal
         return [
             'configured' => $ready,
             'mode' => 'read_only',
+            'access_level' => (string)get_option('wnq_google_ads_access_level', 'test'),
             'service_account_email' => (string)($settings['service_account_email'] ?: 'webnique-portal@webnique-client-portal-486204.iam.gserviceaccount.com'),
             'customer_id' => (string)($settings['customer_id'] ?? ''),
             'manager_customer_id' => (string)($settings['manager_customer_id'] ?? ''),
@@ -323,12 +324,13 @@ final class ClientPortal
     {
         $settings = get_option(self::adsOptionKey($client_id), []);
         $settings = is_array($settings) ? $settings : [];
+        $global_service_account = sanitize_email((string)get_option('wnq_google_ads_service_account_email', 'webnique-portal@webnique-client-portal-486204.iam.gserviceaccount.com'));
         $defaults = [
             'api_key' => '',
-            'developer_token' => '',
+            'developer_token' => (string)get_option('wnq_google_ads_developer_token', ''),
             'customer_id' => '',
             'manager_customer_id' => '',
-            'service_account_email' => 'webnique-portal@webnique-client-portal-486204.iam.gserviceaccount.com',
+            'service_account_email' => $global_service_account ?: 'webnique-portal@webnique-client-portal-486204.iam.gserviceaccount.com',
             'oauth_client_id' => '',
             'oauth_client_secret' => '',
             'refresh_token' => '',
