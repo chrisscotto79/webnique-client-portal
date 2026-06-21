@@ -206,12 +206,22 @@ final class DashboardController
     $body['files'] = self::handleUploads($request, 'attachments');
     $body['before_photos'] = self::handleUploads($request, 'before_photos');
     $body['after_photos'] = self::handleUploads($request, 'after_photos');
-    $id = $client_id !== '' && is_array($body) ? ClientPortal::saveCustomer($client_id, $body) : false;
+    if ($client_id === '') {
+      ClientPortal::deletePrivateAttachments($body['files']);
+      ClientPortal::deletePrivateAttachments($body['before_photos']);
+      ClientPortal::deletePrivateAttachments($body['after_photos']);
+      return new \WP_REST_Response(['ok' => false, 'error' => 'No client is linked to this portal user.'], 403);
+    }
+    $submitted_name = trim((string)($body['name'] ?? $body['customer_name'] ?? $body['customerName'] ?? ''));
+    $id = ClientPortal::saveCustomer($client_id, $body);
     if (!$id) {
       ClientPortal::deletePrivateAttachments($body['files']);
       ClientPortal::deletePrivateAttachments($body['before_photos']);
       ClientPortal::deletePrivateAttachments($body['after_photos']);
-      return new \WP_REST_Response(['ok' => false, 'error' => 'Customer name is required.'], 400);
+      return new \WP_REST_Response([
+        'ok' => false,
+        'error' => $submitted_name === '' ? 'Customer name is required.' : 'The CRM record could not be saved. Please refresh and try again.',
+      ], 400);
     }
     return new \WP_REST_Response(['ok' => true, 'id' => $id, 'data' => ClientPortal::getCustomer((int)$id, $client_id)], 200);
   }
@@ -308,15 +318,42 @@ final class DashboardController
 
   private static function requestBody(\WP_REST_Request $request): array
   {
+    $merged = [];
+    foreach ([$request->get_params(), $request->get_body_params(), $_POST ?? []] as $source) {
+      if (!is_array($source) || empty($source)) {
+        continue;
+      }
+      $merged = array_merge($merged, wp_unslash($source));
+    }
     $json = $request->get_json_params();
-    $params = (array)$request->get_params();
-    $body_params = (array)$request->get_body_params();
-    $merged = array_merge($params, $body_params);
     if (is_array($json) && !empty($json)) {
       $merged = array_merge($merged, $json);
     }
+    foreach (self::knownRequestBodyFields() as $key) {
+      if (array_key_exists($key, $merged)) {
+        continue;
+      }
+      $value = $request->get_param($key);
+      if ($value !== null) {
+        $merged[$key] = $value;
+      }
+    }
     unset($merged['client_id'], $merged['rest_route']);
     return $merged;
+  }
+
+  private static function knownRequestBodyFields(): array
+  {
+    return [
+      'id', 'record_type', 'name', 'customer_name', 'customerName', 'phone', 'email',
+      'address', 'job_address', 'service', 'crew', 'lead_source', 'status',
+      'follow_up_date', 'reminder_date', 'job_date', 'completion_date', 'job_count',
+      'estimated_value', 'final_value', 'job_cost', 'notes', 'internal_notes',
+      'lost_reason', 'subject', 'message', 'category', 'priority', 'ticket_status',
+      'request_type', 'title', 'details', 'request_data', 'customer_id',
+      'manager_customer_id', 'service_account_email', 'api_key', 'developer_token',
+      'oauth_client_id', 'oauth_client_secret', 'refresh_token',
+    ];
   }
 
   private static function handleUploads(\WP_REST_Request $request, string $field = 'attachments'): array
