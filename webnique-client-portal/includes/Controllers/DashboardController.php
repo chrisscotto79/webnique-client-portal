@@ -309,7 +309,14 @@ final class DashboardController
   private static function requestBody(\WP_REST_Request $request): array
   {
     $json = $request->get_json_params();
-    return is_array($json) ? $json : (array)$request->get_params();
+    $params = (array)$request->get_params();
+    $body_params = (array)$request->get_body_params();
+    $merged = array_merge($params, $body_params);
+    if (is_array($json) && !empty($json)) {
+      $merged = array_merge($merged, $json);
+    }
+    unset($merged['client_id'], $merged['rest_route']);
+    return $merged;
   }
 
   private static function handleUploads(\WP_REST_Request $request, string $field = 'attachments'): array

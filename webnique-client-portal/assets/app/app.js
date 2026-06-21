@@ -38,7 +38,6 @@
   const empty = (message) => `<div class="wnq-empty">${esc(message)}</div>`;
   const heading = (eyebrow, title, copy = "") => `<header class="wnq-page-head"><span>${esc(eyebrow)}</span><h1>${esc(title)}</h1>${copy ? `<p>${esc(copy)}</p>` : ""}</header>`;
   const trend = (value) => `<strong class="${Number(value) >= 0 ? "wnq-positive" : "wnq-negative"}">${money(value)}</strong>`;
-  const hasSelectedFiles = (form) => Array.from(form.querySelectorAll('input[type="file"]')).some((input) => input.files && input.files.length > 0);
   const formObject = (form) => {
     const data = {};
     new FormData(form).forEach((value, key) => {
@@ -216,7 +215,7 @@
         event.preventDefault();
         const form = event.currentTarget;
         const submit = form.querySelector('[type="submit"]');
-        const name = form.querySelector('[name="name"]');
+        const name = form.elements.namedItem("name");
         if (!String(name?.value || "").trim()) {
           formStatus(form, "red", "Customer name is required before this can be saved.");
           name?.focus();
@@ -224,8 +223,7 @@
         }
         if (submit) { submit.disabled = true; submit.textContent = "Saving..."; }
         try {
-          const body = hasSelectedFiles(form) ? new FormData(form) : JSON.stringify(formObject(form));
-          await api("/portal/customers", { method: "POST", body });
+          await api("/portal/customers", { method: "POST", body: new FormData(form) });
           sessionStorage.setItem("wnqCrmNotice", "CRM record saved.");
           delete state.cache.customers; delete state.cache.overview; delete state.cache.performance; show("customers", true);
         } catch (error) {
@@ -284,7 +282,7 @@
         ${field("follow_up_date", "Follow-up Date", row.follow_up_date, false, "date")}${field("reminder_date", "Reminder Date", row.reminder_date, false, "date")}${field("job_date", "Job Date", row.job_date, false, "date")}${field("completion_date", "Completion Date", row.completion_date, false, "date")}
       </fieldset>
       <fieldset class="wnq-crm-form-section"><legend>Revenue & Profit</legend>
-        ${field("job_count", "Job Count", row.job_count || 0, false, "number")}${field("estimated_value", "Estimated Value", row.estimated_value || 0, false, "number")}${field("final_value", "Final Revenue", row.final_value || 0, false, "number")}${field("job_cost", "Job Cost", row.job_cost || 0, false, "number")}
+        ${field("job_count", "Jobs Completed", row.job_count || 0, false, "number", "0 until the work is completed. Use 1 for one completed job.")}${moneyField("estimated_value", "Estimated Value", row.estimated_value || 0)}${moneyField("final_value", "Final Revenue", row.final_value || 0)}${moneyField("job_cost", "Job Cost", row.job_cost || 0)}
       </fieldset>
       <fieldset class="wnq-crm-form-section"><legend>Notes & Files</legend>
         <label class="is-wide"><span>Customer Notes / Service History</span><textarea name="notes" rows="3">${esc(row.notes || "")}</textarea></label>
@@ -296,7 +294,8 @@
       </fieldset>
       <div class="wnq-form-actions"><button class="wnq-button" type="submit">Save Record</button><button type="button" class="wnq-button is-secondary" data-cancel>Cancel</button></div></form>`;
   };
-  const field = (name, label, value = "", required = false, type = "text") => `<label><span>${esc(label)}</span><input type="${type}" name="${name}" value="${esc(value)}" ${required ? "required" : ""} ${type === "number" ? 'min="0" step="0.01"' : ""}></label>`;
+  const field = (name, label, value = "", required = false, type = "text", hint = "") => `<label><span>${esc(label)}</span><input type="${type}" name="${name}" value="${esc(value)}" ${required ? "required" : ""} ${type === "number" ? 'min="0" step="0.01"' : ""}>${hint ? `<small>${esc(hint)}</small>` : ""}</label>`;
+  const moneyField = (name, label, value = "") => `<label class="wnq-money-field"><span>${esc(label)}</span><div><b>$</b><input type="number" name="${esc(name)}" value="${esc(value)}" min="0" step="0.01" inputmode="decimal"></div></label>`;
 
   async function ads(view, refresh) {
     const data = await load("ads", refresh);
