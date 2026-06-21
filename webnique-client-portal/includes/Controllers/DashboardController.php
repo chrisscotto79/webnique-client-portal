@@ -51,7 +51,7 @@ final class DashboardController
       },
     ]);
 
-    foreach (['overview', 'customers', 'messages', 'tickets', 'work', 'reports', 'profile', 'performance', 'learning'] as $resource) {
+    foreach (['overview', 'customers', 'messages', 'tickets', 'requests', 'work', 'reports', 'profile', 'performance', 'learning'] as $resource) {
       register_rest_route('wnq/v1', '/portal/' . $resource, [
         'methods'  => 'GET',
         'callback' => [self::class, 'getPortalResource'],
@@ -71,9 +71,21 @@ final class DashboardController
       'permission_callback' => [self::class, 'canUsePortal'],
     ]);
 
+    register_rest_route('wnq/v1', '/portal/tickets/(?P<ticket_key>[a-z0-9-]+)', [
+      'methods'  => 'GET',
+      'callback' => [self::class, 'getTicket'],
+      'permission_callback' => [self::class, 'canUsePortal'],
+    ]);
+
     register_rest_route('wnq/v1', '/portal/learning-requests', [
       'methods'  => 'POST',
       'callback' => [self::class, 'saveLearningRequest'],
+      'permission_callback' => [self::class, 'canUsePortal'],
+    ]);
+
+    register_rest_route('wnq/v1', '/portal/requests', [
+      'methods'  => 'POST',
+      'callback' => [self::class, 'saveRequest'],
       'permission_callback' => [self::class, 'canUsePortal'],
     ]);
 
@@ -152,6 +164,7 @@ final class DashboardController
       'customers' => ClientPortal::getCustomers($client_id),
       'messages'  => ClientPortal::getMessages($client_id),
       'tickets'   => ClientPortal::getTickets($client_id),
+      'requests'  => ['types' => ClientPortal::requestTypes(), 'items' => ClientPortal::getRequests($client_id)],
       'work'      => ClientPortal::getTasks($client_id),
       'reports'   => ClientPortal::getReports($client_id),
       'profile'   => ClientPortal::publicClient(Client::getByClientId($client_id) ?: []),
@@ -159,16 +172,30 @@ final class DashboardController
       'learning'  => ['courses' => ClientPortal::courses(), 'requests' => ClientPortal::getLearningRequests($client_id)],
       default     => [],
     };
-    if (in_array($resource, ['messages', 'tickets'], true) && !Permissions::currentUserCanManagePortal()) {
-      ClientPortal::markMessagesRead($client_id, 'admin');
-    }
     return new \WP_REST_Response(['ok' => true, 'data' => $data], 200);
+  }
+
+  public static function getTicket(\WP_REST_Request $request): \WP_REST_Response
+  {
+    $client_id = self::requestClientId($request);
+    $ticket_key = sanitize_key((string)($request['ticket_key'] ?? ''));
+    $ticket = $client_id !== '' ? ClientPortal::getTicket($client_id, $ticket_key) : null;
+    if (!$ticket) {
+      return new \WP_REST_Response(['ok' => false, 'error' => 'Ticket not found.'], 404);
+    }
+    ClientPortal::markTicketMessagesRead(
+      $client_id,
+      $ticket_key,
+      Permissions::currentUserCanManagePortal() ? 'client' : 'admin'
+    );
+    $ticket['unread'] = false;
+    return new \WP_REST_Response(['ok' => true, 'data' => $ticket], 200);
   }
 
   public static function saveCustomer(\WP_REST_Request $request): \WP_REST_Response
   {
     $client_id = self::requestClientId($request);
-    $body = $request->get_json_params();
+    $body = self::requestBody($request);
     $id = $client_id !== '' && is_array($body) ? ClientPortal::saveCustomer($client_id, $body) : false;
     if (!$id) {
       return new \WP_REST_Response(['ok' => false, 'error' => 'Customer name is required.'], 400);
@@ -179,18 +206,26 @@ final class DashboardController
   public static function sendMessage(\WP_REST_Request $request): \WP_REST_Response
   {
     $client_id = self::requestClientId($request);
-    $body = $request->get_json_params();
+    $body = self::requestBody($request);
     $role = Permissions::currentUserCanManagePortal() ? 'admin' : 'client';
+    $error = ClientPortal::messageValidationError($client_id, $body, $role);
+    if ($error !== '') {
+      return new \WP_REST_Response(['ok' => false, 'error' => $error], 400);
+    }
+    $body['attachments'] = self::handleUploads($request);
     $id = $client_id !== '' && is_array($body) ? ClientPortal::createMessage($client_id, $body, $role) : false;
+    if (!$id) {
+      ClientPortal::deletePrivateAttachments($body['attachments']);
+    }
     return $id
       ? new \WP_REST_Response(['ok' => true, 'id' => $id], 200)
-      : new \WP_REST_Response(['ok' => false, 'error' => 'Message is required.'], 400);
+      : new \WP_REST_Response(['ok' => false, 'error' => 'The support ticket could not be saved.'], 400);
   }
 
   public static function saveLearningRequest(\WP_REST_Request $request): \WP_REST_Response
   {
     $client_id = self::requestClientId($request);
-    $body = $request->get_json_params();
+    $body = self::requestBody($request);
     $id = $client_id !== '' && is_array($body) ? ClientPortal::createLearningRequest($client_id, $body) : false;
     return $id
       ? new \WP_REST_Response(['ok' => true, 'id' => $id], 200)
@@ -200,11 +235,31 @@ final class DashboardController
   public static function saveProfile(\WP_REST_Request $request): \WP_REST_Response
   {
     $client_id = self::requestClientId($request);
-    $body = $request->get_json_params();
+    $body = self::requestBody($request);
     $saved = $client_id !== '' && is_array($body) && ClientPortal::updatePublicProfile($client_id, $body);
     return $saved
       ? new \WP_REST_Response(['ok' => true, 'data' => ClientPortal::publicClient(Client::getByClientId($client_id) ?: [])], 200)
       : new \WP_REST_Response(['ok' => false, 'error' => 'Business profile could not be saved.'], 400);
+  }
+
+  public static function saveRequest(\WP_REST_Request $request): \WP_REST_Response
+  {
+    $client_id = self::requestClientId($request);
+    $body = self::requestBody($request);
+    $body['request_data'] = isset($body['request_data']) && is_string($body['request_data'])
+      ? (json_decode($body['request_data'], true) ?: [])
+      : ($body['request_data'] ?? []);
+    if ($client_id === '' || !ClientPortal::isValidRequestInput($body)) {
+      return new \WP_REST_Response(['ok' => false, 'error' => 'Choose a request type and add a title.'], 400);
+    }
+    $body['attachments'] = self::handleUploads($request);
+    $id = ClientPortal::createRequest($client_id, $body);
+    if (!$id) {
+      ClientPortal::deletePrivateAttachments($body['attachments']);
+    }
+    return $id
+      ? new \WP_REST_Response(['ok' => true, 'id' => $id], 200)
+      : new \WP_REST_Response(['ok' => false, 'error' => 'Choose a request type and add a title.'], 400);
   }
 
   public static function getReport(\WP_REST_Request $request): \WP_REST_Response
@@ -223,6 +278,40 @@ final class DashboardController
       return $requested;
     }
     return sanitize_text_field((string)(Permissions::currentUserClientId() ?? ''));
+  }
+
+  private static function requestBody(\WP_REST_Request $request): array
+  {
+    $json = $request->get_json_params();
+    return is_array($json) ? $json : (array)$request->get_params();
+  }
+
+  private static function handleUploads(\WP_REST_Request $request): array
+  {
+    $files = $request->get_file_params();
+    if (empty($files['attachments'])) return [];
+    $group = $files['attachments'];
+    $uploads = [];
+    $normalized = [];
+    if (is_array($group['name'] ?? null)) {
+      foreach (array_keys($group['name']) as $index) {
+        $normalized[] = [
+          'name' => $group['name'][$index] ?? '',
+          'type' => $group['type'][$index] ?? '',
+          'tmp_name' => $group['tmp_name'][$index] ?? '',
+          'error' => $group['error'][$index] ?? UPLOAD_ERR_NO_FILE,
+          'size' => $group['size'][$index] ?? 0,
+        ];
+      }
+    } else {
+      $normalized[] = $group;
+    }
+    foreach (array_slice($normalized, 0, 5) as $file) {
+      if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK || (int)($file['size'] ?? 0) > 10 * MB_IN_BYTES) continue;
+      $uploaded = ClientPortal::storePrivateUpload($file);
+      if ($uploaded) $uploads[] = $uploaded;
+    }
+    return $uploads;
   }
 
   public static function bootstrapClient(\WP_REST_Request $request): \WP_REST_Response

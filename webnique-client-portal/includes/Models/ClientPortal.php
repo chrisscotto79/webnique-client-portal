@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
 
 final class ClientPortal
 {
-    private const SCHEMA_VERSION = '3';
+    private const SCHEMA_VERSION = '5';
     private static bool $schema_ready = false;
 
     public static function ensureSchema(): void
@@ -70,6 +70,7 @@ final class ClientPortal
             ticket_status varchar(20) DEFAULT 'open',
             subject varchar(255) DEFAULT NULL,
             message text NOT NULL,
+            attachments longtext DEFAULT NULL,
             status varchar(20) NOT NULL DEFAULT 'unread',
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
@@ -93,6 +94,27 @@ final class ClientPortal
             KEY status (status)
         ) $charset;");
 
+        dbDelta("CREATE TABLE IF NOT EXISTS {$wpdb->prefix}wnq_portal_requests (
+            id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            client_id varchar(100) NOT NULL,
+            request_key varchar(40) NOT NULL,
+            request_type varchar(50) NOT NULL,
+            title varchar(255) NOT NULL,
+            details text DEFAULT NULL,
+            priority varchar(20) NOT NULL DEFAULT 'normal',
+            status varchar(20) NOT NULL DEFAULT 'submitted',
+            request_data longtext DEFAULT NULL,
+            attachments longtext DEFAULT NULL,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY request_key (request_key),
+            KEY client_id (client_id),
+            KEY request_type (request_type),
+            KEY status (status)
+        ) $charset;");
+
+        self::migrateLegacyAttachments();
         update_option('wnq_client_portal_schema_version', self::SCHEMA_VERSION, false);
     }
 
@@ -227,42 +249,67 @@ final class ClientPortal
     {
         self::ensureSchema();
         global $wpdb;
-        return $wpdb->get_results($wpdb->prepare(
+        $rows = $wpdb->get_results($wpdb->prepare(
             "SELECT * FROM {$wpdb->prefix}wnq_portal_messages WHERE client_id=%s ORDER BY created_at DESC, id DESC LIMIT %d",
             $client_id,
             max(1, min(200, $limit))
         ), ARRAY_A) ?: [];
+        return array_map(static function (array $row): array {
+            $row['attachments'] = self::hydrateAttachments(self::jsonArray($row['attachments'] ?? ''), (string)$row['client_id']);
+            return $row;
+        }, $rows);
     }
 
     public static function getTickets(string $client_id, int $limit = 50): array
     {
-        $messages = array_reverse(self::getMessages($client_id, max(1, min(200, $limit * 10))));
-        $tickets = [];
-        foreach ($messages as $message) {
-            $key = (string)($message['ticket_key'] ?: 'legacy-' . $message['id']);
-            if (!isset($tickets[$key])) {
-                $tickets[$key] = [
-                    'ticket_key'    => $key,
-                    'subject'       => (string)($message['subject'] ?: 'Support request'),
-                    'category'      => (string)($message['category'] ?: 'general'),
-                    'priority'      => (string)($message['priority'] ?: 'normal'),
-                    'ticket_status' => (string)($message['ticket_status'] ?: 'open'),
-                    'created_at'    => (string)$message['created_at'],
-                    'updated_at'    => (string)$message['created_at'],
-                    'unread'        => false,
-                    'messages'      => [],
-                ];
-            }
-            $tickets[$key]['messages'][] = $message;
-            $tickets[$key]['updated_at'] = (string)$message['created_at'];
-            $tickets[$key]['ticket_status'] = (string)($message['ticket_status'] ?: $tickets[$key]['ticket_status']);
-            if (($message['status'] ?? '') === 'unread' && ($message['sender_role'] ?? '') === 'admin') {
-                $tickets[$key]['unread'] = true;
-            }
-        }
-        $tickets = array_values($tickets);
-        usort($tickets, static fn($a, $b) => strcmp($b['updated_at'], $a['updated_at']));
-        return array_slice($tickets, 0, $limit);
+        self::ensureSchema();
+        global $wpdb;
+        $limit = max(1, min(100, $limit));
+        $table = $wpdb->prefix . 'wnq_portal_messages';
+        $wpdb->query($wpdb->prepare(
+            "UPDATE $table SET ticket_key=CONCAT('legacy-', id) WHERE client_id=%s AND (ticket_key IS NULL OR ticket_key='')",
+            $client_id
+        ));
+        $keys = $wpdb->get_col($wpdb->prepare(
+            "SELECT ticket_key FROM $table WHERE client_id=%s GROUP BY ticket_key ORDER BY MAX(created_at) DESC, MAX(id) DESC LIMIT %d",
+            $client_id,
+            $limit
+        )) ?: [];
+        return array_values(array_filter(array_map(
+            static fn($key) => self::getTicket($client_id, sanitize_key((string)$key)),
+            $keys
+        )));
+    }
+
+    public static function getTicket(string $client_id, string $ticket_key): ?array
+    {
+        self::ensureSchema();
+        global $wpdb;
+        if ($client_id === '' || $ticket_key === '') return null;
+        $messages = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM {$wpdb->prefix}wnq_portal_messages WHERE client_id=%s AND ticket_key=%s ORDER BY created_at ASC, id ASC",
+            $client_id,
+            $ticket_key
+        ), ARRAY_A) ?: [];
+        if (!$messages) return null;
+        $messages = array_map(static function (array $row): array {
+            $row['attachments'] = self::hydrateAttachments(self::jsonArray($row['attachments'] ?? ''), (string)$row['client_id']);
+            return $row;
+        }, $messages);
+        $first = $messages[0];
+        $latest = $messages[count($messages) - 1];
+        return [
+            'ticket_key'    => $ticket_key,
+            'subject'       => (string)($latest['subject'] ?: $first['subject'] ?: 'Support request'),
+            'category'      => (string)($latest['category'] ?: $first['category'] ?: 'general'),
+            'priority'      => (string)($latest['priority'] ?: $first['priority'] ?: 'normal'),
+            'ticket_status' => (string)($latest['ticket_status'] ?: 'open'),
+            'created_at'    => (string)$first['created_at'],
+            'updated_at'    => (string)$latest['created_at'],
+            'unread'        => count(array_filter($messages, static fn($message) => ($message['status'] ?? '') === 'unread' && ($message['sender_role'] ?? '') === 'admin')) > 0,
+            'response_time' => self::responseTime((string)($latest['priority'] ?: 'normal')),
+            'messages'      => $messages,
+        ];
     }
 
     public static function getUnreadMessageCount(?string $client_id = null, string $sender_role = 'client'): int
@@ -301,47 +348,185 @@ final class ClientPortal
     {
         self::ensureSchema();
         global $wpdb;
+        $sender_role = $sender_role === 'admin' ? 'admin' : 'client';
         $message = sanitize_textarea_field((string)($data['message'] ?? ''));
         if ($message === '') {
             return false;
         }
         $ticket_key = sanitize_key((string)($data['ticket_key'] ?? ''));
+        $existing = $ticket_key !== '' ? self::getTicket($client_id, $ticket_key) : null;
+        if ($ticket_key !== '' && !$existing) {
+            return false;
+        }
+        if ($sender_role === 'client' && $existing && in_array((string)$existing['ticket_status'], ['resolved', 'closed'], true) && sanitize_key((string)($data['ticket_status'] ?? '')) !== 'open') {
+            return false;
+        }
         if ($ticket_key === '') {
             $ticket_key = 'tkt-' . strtolower(wp_generate_password(8, false, false));
         }
-        $category = sanitize_key((string)($data['category'] ?? 'general'));
-        $priority = sanitize_key((string)($data['priority'] ?? 'normal'));
-        $ticket_status = sanitize_key((string)($data['ticket_status'] ?? 'open'));
+        $subject = $existing ? (string)$existing['subject'] : sanitize_text_field((string)($data['subject'] ?? ''));
+        if ($subject === '') return false;
+        $category = $existing ? (string)$existing['category'] : sanitize_key((string)($data['category'] ?? 'general'));
+        if (!in_array($category, ['general', 'website', 'seo', 'billing', 'training'], true)) $category = 'general';
+        $priority = $existing ? (string)$existing['priority'] : sanitize_key((string)($data['priority'] ?? 'normal'));
+        $ticket_status = $existing ? (string)$existing['ticket_status'] : 'open';
         if (!in_array($priority, ['low', 'normal', 'high', 'urgent'], true)) $priority = 'normal';
-        if (!in_array($ticket_status, ['open', 'in_progress', 'waiting', 'resolved', 'closed'], true)) $ticket_status = 'open';
+        if ($sender_role === 'admin') {
+            $requested_status = sanitize_key((string)($data['ticket_status'] ?? $ticket_status));
+            if (in_array($requested_status, ['open', 'in_progress', 'waiting', 'resolved', 'closed'], true)) {
+                $ticket_status = $requested_status;
+            }
+        } elseif ($existing && in_array($ticket_status, ['resolved', 'closed'], true) && sanitize_key((string)($data['ticket_status'] ?? '')) === 'open') {
+            $ticket_status = 'open';
+        }
         $result = $wpdb->insert($wpdb->prefix . 'wnq_portal_messages', [
             'client_id'      => sanitize_text_field($client_id),
             'sender_user_id' => get_current_user_id() ?: null,
-            'sender_role'    => $sender_role === 'admin' ? 'admin' : 'client',
+            'sender_role'    => $sender_role,
             'ticket_key'     => $ticket_key,
             'category'       => $category,
             'priority'       => $priority,
             'ticket_status'  => $ticket_status,
-            'subject'        => sanitize_text_field((string)($data['subject'] ?? '')),
+            'subject'        => $subject,
             'message'        => $message,
+            'attachments'    => wp_json_encode(self::sanitizeAttachments($data['attachments'] ?? [])),
             'status'         => 'unread',
         ]);
         if ($result === false) {
             return false;
         }
         $id = (int)$wpdb->insert_id;
-        if ($sender_role !== 'admin') {
-            $client = Client::getByClientId($client_id) ?: [];
-            $recipient = sanitize_email((string)get_option('wnq_support_email', get_option('admin_email')));
-            if ($recipient !== '') {
-                wp_mail(
-                    $recipient,
-                    'New client portal message from ' . sanitize_text_field((string)($client['company'] ?: $client['name'] ?: $client_id)),
-                    $message
-                );
-            }
+        $client = Client::getByClientId($client_id) ?: [];
+        $recipient = $sender_role === 'admin'
+            ? sanitize_email((string)($client['email'] ?? ''))
+            : sanitize_email((string)get_option('wnq_support_email', get_option('admin_email')));
+        if ($recipient !== '') {
+            $company = sanitize_text_field((string)($client['company'] ?: $client['name'] ?: $client_id));
+            wp_mail(
+                $recipient,
+                ($sender_role === 'admin' ? 'Reply from Golden Web Marketing: ' : 'New client portal ticket from ' . $company . ': ') . $subject,
+                $message . "\n\nView the full ticket in the client portal."
+            );
         }
         return $id;
+    }
+
+    public static function messageValidationError(string $client_id, array $data, string $sender_role = 'client'): string
+    {
+        if ($client_id === '') return 'No client is linked to this account.';
+        if (sanitize_textarea_field((string)($data['message'] ?? '')) === '') return 'Message is required.';
+        $ticket_key = sanitize_key((string)($data['ticket_key'] ?? ''));
+        if ($ticket_key === '' && sanitize_text_field((string)($data['subject'] ?? '')) === '') {
+            return 'A subject is required when creating a support ticket.';
+        }
+        if ($ticket_key !== '') {
+            $ticket = self::getTicket($client_id, $ticket_key);
+            if (!$ticket) return 'The selected support ticket could not be found.';
+            if ($sender_role !== 'admin' && in_array((string)$ticket['ticket_status'], ['resolved', 'closed'], true) && sanitize_key((string)($data['ticket_status'] ?? '')) !== 'open') {
+                return 'Reopen this ticket before adding another reply.';
+            }
+        }
+        return '';
+    }
+
+    public static function getRequests(string $client_id, int $limit = 100): array
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM {$wpdb->prefix}wnq_portal_requests WHERE client_id=%s ORDER BY updated_at DESC, id DESC LIMIT %d",
+            $client_id,
+            max(1, min(300, $limit))
+        ), ARRAY_A) ?: [];
+        return array_map(static function (array $row): array {
+            $row['request_data'] = self::jsonArray($row['request_data'] ?? '');
+            $row['attachments'] = self::hydrateAttachments(self::jsonArray($row['attachments'] ?? ''), (string)$row['client_id']);
+            return $row;
+        }, $rows);
+    }
+
+    public static function isValidRequestInput(array $data): bool
+    {
+        return in_array(sanitize_key((string)($data['request_type'] ?? '')), array_keys(self::requestTypes()), true)
+            && sanitize_text_field((string)($data['title'] ?? '')) !== '';
+    }
+
+    public static function createRequest(string $client_id, array $data): int|false
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $type = sanitize_key((string)($data['request_type'] ?? ''));
+        $types = array_keys(self::requestTypes());
+        if (!in_array($type, $types, true)) return false;
+        $title = sanitize_text_field((string)($data['title'] ?? ''));
+        if ($title === '') return false;
+        $priority = sanitize_key((string)($data['priority'] ?? 'normal'));
+        if (!in_array($priority, ['low', 'normal', 'high', 'urgent'], true)) $priority = 'normal';
+        $request_data = [];
+        foreach ((array)($data['request_data'] ?? []) as $key => $value) {
+            $request_data[sanitize_key((string)$key)] = sanitize_textarea_field((string)$value);
+        }
+        $result = $wpdb->insert($wpdb->prefix . 'wnq_portal_requests', [
+            'client_id'    => sanitize_text_field($client_id),
+            'request_key'  => 'req-' . strtolower(wp_generate_password(8, false, false)),
+            'request_type' => $type,
+            'title'        => $title,
+            'details'      => sanitize_textarea_field((string)($data['details'] ?? '')),
+            'priority'     => $priority,
+            'status'       => 'submitted',
+            'request_data' => wp_json_encode($request_data),
+            'attachments'  => wp_json_encode(self::sanitizeAttachments($data['attachments'] ?? [])),
+        ]);
+        if ($result === false) return false;
+        $client = Client::getByClientId($client_id) ?: [];
+        $recipient = sanitize_email((string)get_option('wnq_support_email', get_option('admin_email')));
+        if ($recipient !== '') {
+            wp_mail($recipient, 'New portal request from ' . sanitize_text_field((string)($client['company'] ?: $client['name'] ?: $client_id)), $title . "\n\n" . sanitize_textarea_field((string)($data['details'] ?? '')));
+        }
+        return (int)$wpdb->insert_id;
+    }
+
+    public static function updateRequestStatus(int $id, string $client_id, string $status): bool
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $status = sanitize_key($status);
+        if (!in_array($status, ['submitted', 'reviewing', 'scheduled', 'in_progress', 'completed', 'declined'], true)) return false;
+        $request = $wpdb->get_row($wpdb->prepare("SELECT title,status FROM {$wpdb->prefix}wnq_portal_requests WHERE id=%d AND client_id=%s", $id, $client_id), ARRAY_A);
+        if (!$request) return false;
+        $updated = $wpdb->update($wpdb->prefix . 'wnq_portal_requests', ['status' => $status], ['id' => $id, 'client_id' => $client_id]) !== false;
+        if ($updated && ($request['status'] ?? '') !== $status) {
+            $client = Client::getByClientId($client_id) ?: [];
+            $recipient = sanitize_email((string)($client['email'] ?? ''));
+            if ($recipient !== '') {
+                wp_mail($recipient, 'Request update from Golden Web Marketing', 'Your request "' . sanitize_text_field((string)$request['title']) . '" is now ' . str_replace('_', ' ', $status) . ".\n\nView the request in your client portal.");
+            }
+        }
+        return $updated;
+    }
+
+    public static function getOpenRequestCount(?string $client_id = null): int
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $open = ['submitted', 'reviewing', 'scheduled', 'in_progress'];
+        $placeholders = implode(',', array_fill(0, count($open), '%s'));
+        if ($client_id !== null && $client_id !== '') {
+            $args = array_merge([$client_id], $open);
+            return (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}wnq_portal_requests WHERE client_id=%s AND status IN ($placeholders)", $args));
+        }
+        return (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}wnq_portal_requests WHERE status IN ($placeholders)", $open));
+    }
+
+    public static function requestTypes(): array
+    {
+        return [
+            'website_update' => ['label' => 'Website Edit', 'description' => 'Request a change to an existing page.'],
+            'new_page'       => ['label' => 'New Page', 'description' => 'Request a new service, city, or landing page.'],
+            'blog'           => ['label' => 'Blog Content', 'description' => 'Request a blog topic or content update.'],
+            'report_question'=> ['label' => 'Report Question', 'description' => 'Ask about rankings, traffic, leads, or results.'],
+            'strategy_call'  => ['label' => 'Strategy Call', 'description' => 'Request time to discuss priorities and next steps.'],
+        ];
     }
 
     public static function getLearningRequests(string $client_id): array
@@ -412,6 +597,22 @@ final class ClientPortal
         );
     }
 
+    public static function markTicketMessagesRead(string $client_id, string $ticket_key, string $sender_role): void
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $wpdb->update(
+            $wpdb->prefix . 'wnq_portal_messages',
+            ['status' => 'read'],
+            [
+                'client_id' => $client_id,
+                'ticket_key' => sanitize_key($ticket_key),
+                'sender_role' => $sender_role === 'admin' ? 'admin' : 'client',
+                'status' => 'unread',
+            ]
+        );
+    }
+
     public static function getTasks(string $client_id, int $limit = 20): array
     {
         global $wpdb;
@@ -475,6 +676,7 @@ final class ClientPortal
         $messages = self::getMessages($client_id, 50);
         $reports = self::getReports($client_id, 12);
         $open_tasks = count(array_filter($tasks, static fn($task) => ($task['status'] ?? '') !== 'done'));
+        $open_requests = self::getOpenRequestCount($client_id);
         $unread_messages = count(array_filter($messages, static fn($message) => ($message['status'] ?? '') === 'unread' && ($message['sender_role'] ?? '') === 'admin'));
         $billing = self::billingHealth($client);
         $actions = [];
@@ -487,6 +689,9 @@ final class ClientPortal
         if ($open_tasks > 0) {
             $actions[] = ['type' => 'customers', 'label' => $open_tasks . ' marketing work item' . ($open_tasks === 1 ? '' : 's') . ' in progress'];
         }
+        if ($open_requests > 0) {
+            $actions[] = ['type' => 'requests', 'label' => $open_requests . ' request' . ($open_requests === 1 ? '' : 's') . ' being handled'];
+        }
 
         return [
             'client'          => self::publicClient($client),
@@ -498,6 +703,7 @@ final class ClientPortal
             'actions'         => $actions,
             'customers'       => $customers,
             'open_tasks'      => $open_tasks,
+            'open_requests'   => $open_requests,
             'unread_messages' => $unread_messages,
             'latest_report'   => $reports[0] ?? null,
             'performance'     => self::getMonthlyPerformance($client_id),
@@ -532,6 +738,200 @@ final class ClientPortal
         }
         $decoded = json_decode((string)$services, true);
         return is_array($decoded) ? array_values(array_filter(array_map('sanitize_text_field', $decoded))) : [];
+    }
+
+    private static function responseTime(string $priority): string
+    {
+        return match ($priority) {
+            'urgent' => 'Expected response within 4 business hours',
+            'high'   => 'Expected response within 1 business day',
+            'low'    => 'Expected response within 3 business days',
+            default  => 'Expected response within 2 business days',
+        };
+    }
+
+    public static function storePrivateUpload(array $file): ?array
+    {
+        if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK || empty($file['tmp_name']) || !is_uploaded_file((string)$file['tmp_name'])) {
+            return null;
+        }
+        $size = (int)($file['size'] ?? 0);
+        if ($size < 1 || $size > 10 * MB_IN_BYTES) return null;
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        $checked = wp_check_filetype_and_ext((string)$file['tmp_name'], sanitize_file_name((string)($file['name'] ?? 'attachment')), get_allowed_mime_types());
+        if (empty($checked['type']) || empty($checked['ext'])) return null;
+        $directory = self::privateUploadDirectory();
+        if ($directory === '' || (!is_dir($directory) && !wp_mkdir_p($directory))) return null;
+        self::protectPrivateUploadDirectory($directory);
+        $token = str_replace('-', '', wp_generate_uuid4());
+        $filename = $token . '.' . sanitize_key((string)$checked['ext']);
+        $destination = trailingslashit($directory) . $filename;
+        if (!move_uploaded_file((string)$file['tmp_name'], $destination)) return null;
+        @chmod($destination, 0640);
+        return [
+            'name'  => sanitize_file_name((string)(($checked['proper_filename'] ?? '') ?: ($file['name'] ?? '') ?: 'attachment')),
+            'token' => $token,
+            'path'  => $filename,
+            'type'  => sanitize_mime_type((string)$checked['type']),
+            'size'  => $size,
+        ];
+    }
+
+    public static function deletePrivateAttachments($attachments): void
+    {
+        $directory = self::privateUploadDirectory();
+        if ($directory === '') return;
+        foreach (is_array($attachments) ? $attachments : [] as $attachment) {
+            $path = sanitize_file_name((string)($attachment['path'] ?? ''));
+            if ($path === '') continue;
+            $file = trailingslashit($directory) . $path;
+            if (is_file($file)) wp_delete_file($file);
+        }
+    }
+
+    public static function findPrivateAttachment(string $client_id, string $token): ?array
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $token = preg_replace('/[^a-f0-9]/', '', strtolower($token));
+        if ($client_id === '' || strlen($token) !== 32) return null;
+        foreach (['wnq_portal_messages', 'wnq_portal_requests'] as $suffix) {
+            $rows = $wpdb->get_col($wpdb->prepare(
+                "SELECT attachments FROM {$wpdb->prefix}{$suffix} WHERE client_id=%s AND attachments LIKE %s",
+                $client_id,
+                '%' . $wpdb->esc_like($token) . '%'
+            )) ?: [];
+            foreach ($rows as $json) {
+                foreach (self::jsonArray($json) as $attachment) {
+                    if (is_array($attachment) && hash_equals($token, (string)($attachment['token'] ?? ''))) {
+                        return self::sanitizeAttachments([$attachment])[0] ?? null;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    public static function attachmentDownloadUrl(string $client_id, string $token): string
+    {
+        return add_query_arg([
+            'action'    => 'wnq_portal_download_attachment',
+            'client_id' => $client_id,
+            'token'     => $token,
+            '_wpnonce'  => wp_create_nonce('wnq_portal_attachment_' . $client_id . '_' . $token),
+        ], admin_url('admin-post.php'));
+    }
+
+    public static function privateAttachmentPath(array $attachment): string
+    {
+        $path = sanitize_file_name((string)($attachment['path'] ?? ''));
+        return $path === '' ? '' : trailingslashit(self::privateUploadDirectory()) . $path;
+    }
+
+    private static function sanitizeAttachments($attachments): array
+    {
+        $clean = [];
+        foreach (is_array($attachments) ? $attachments : [] as $attachment) {
+            if (!is_array($attachment)) continue;
+            $item = [
+                'name' => sanitize_file_name((string)($attachment['name'] ?? 'attachment')),
+                'type' => sanitize_mime_type((string)($attachment['type'] ?? '')),
+                'size' => absint($attachment['size'] ?? 0),
+            ];
+            $token = preg_replace('/[^a-f0-9]/', '', strtolower((string)($attachment['token'] ?? '')));
+            $path = sanitize_file_name((string)($attachment['path'] ?? ''));
+            if (strlen($token) === 32 && $path !== '') {
+                $item['token'] = $token;
+                $item['path'] = $path;
+            } elseif (!empty($attachment['url'])) {
+                // Preserve access to legacy uploads while all new files use protected references.
+                $item['url'] = esc_url_raw((string)$attachment['url']);
+            } else {
+                continue;
+            }
+            $clean[] = $item;
+        }
+        return $clean;
+    }
+
+    private static function hydrateAttachments(array $attachments, string $client_id): array
+    {
+        return array_map(static function (array $attachment) use ($client_id): array {
+            if (!empty($attachment['token'])) {
+                $attachment['url'] = self::attachmentDownloadUrl($client_id, (string)$attachment['token']);
+                unset($attachment['path'], $attachment['token']);
+            }
+            return $attachment;
+        }, self::sanitizeAttachments($attachments));
+    }
+
+    private static function privateUploadDirectory(): string
+    {
+        $uploads = wp_upload_dir();
+        return empty($uploads['error']) ? trailingslashit((string)$uploads['basedir']) . 'wnq-private' : '';
+    }
+
+    private static function protectPrivateUploadDirectory(string $directory): void
+    {
+        $files = [
+            '.htaccess' => "Deny from all\n",
+            'web.config' => "<?xml version=\"1.0\" encoding=\"UTF-8\"?><configuration><system.webServer><authorization><deny users=\"*\" /></authorization></system.webServer></configuration>",
+            'index.php' => "<?php\nhttp_response_code(404);\nexit;\n",
+        ];
+        foreach ($files as $name => $contents) {
+            $path = trailingslashit($directory) . $name;
+            if (!file_exists($path)) @file_put_contents($path, $contents);
+        }
+    }
+
+    private static function migrateLegacyAttachments(): void
+    {
+        global $wpdb;
+        $uploads = wp_upload_dir();
+        $directory = self::privateUploadDirectory();
+        if (!empty($uploads['error']) || $directory === '' || (!is_dir($directory) && !wp_mkdir_p($directory))) return;
+        self::protectPrivateUploadDirectory($directory);
+        $base_url = trailingslashit((string)$uploads['baseurl']);
+        $base_dir = trailingslashit((string)$uploads['basedir']);
+        foreach (['wnq_portal_messages', 'wnq_portal_requests'] as $suffix) {
+            $table = $wpdb->prefix . $suffix;
+            $rows = $wpdb->get_results("SELECT id,attachments FROM $table WHERE attachments LIKE '%\"url\"%'", ARRAY_A) ?: [];
+            foreach ($rows as $row) {
+                $changed = false;
+                $attachments = self::jsonArray($row['attachments'] ?? '');
+                foreach ($attachments as &$attachment) {
+                    $url = esc_url_raw((string)($attachment['url'] ?? ''));
+                    if ($url === '' || !str_starts_with($url, $base_url)) continue;
+                    $source = $base_dir . ltrim(substr($url, strlen($base_url)), '/');
+                    if (!is_file($source) || !is_readable($source)) continue;
+                    $token = str_replace('-', '', wp_generate_uuid4());
+                    $extension = sanitize_key((string)pathinfo($source, PATHINFO_EXTENSION));
+                    $filename = $token . ($extension !== '' ? '.' . $extension : '');
+                    $destination = trailingslashit($directory) . $filename;
+                    if (!@rename($source, $destination) && (!@copy($source, $destination) || !@unlink($source))) continue;
+                    @chmod($destination, 0640);
+                    $attachment = [
+                        'name' => sanitize_file_name((string)($attachment['name'] ?? basename($source))),
+                        'token' => $token,
+                        'path' => $filename,
+                        'type' => sanitize_mime_type((string)($attachment['type'] ?? '')),
+                        'size' => (int)filesize($destination),
+                    ];
+                    $changed = true;
+                }
+                unset($attachment);
+                if ($changed) {
+                    $wpdb->update($table, ['attachments' => wp_json_encode(self::sanitizeAttachments($attachments))], ['id' => absint($row['id'])]);
+                }
+            }
+        }
+    }
+
+    private static function jsonArray($value): array
+    {
+        if (is_array($value)) return $value;
+        $decoded = json_decode((string)$value, true);
+        return is_array($decoded) ? $decoded : [];
     }
 
     private static function billingHealth(array $client): array

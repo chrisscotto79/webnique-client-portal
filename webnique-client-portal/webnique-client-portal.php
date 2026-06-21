@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Golden Web Marketing Client Portal
  * Description: Complete client management with portal, analytics, billing, tasks, SEO tracking, and messaging
- * Version: 2.4.22
+ * Version: 2.4.23
  * Author: Golden Web Marketing
  * Requires at least: 6.0
  * Requires PHP: 8.0
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WNQ_PORTAL_VERSION', '2.4.22');
+define('WNQ_PORTAL_VERSION', '2.4.23');
 define('WNQ_PORTAL_PATH', plugin_dir_path(__FILE__));
 define('WNQ_PORTAL_URL', plugin_dir_url(__FILE__));
 
@@ -600,6 +600,15 @@ if (wnq_seo_features_enabled()) {
         }
     });
 
+    add_action('admin_post_wnq_sync_local_seo_tasks', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::handleSyncLocalTasks();
+        }
+    });
+
     add_action('admin_post_wnq_save_seo_report', function() {
         $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
         if (file_exists($seo_admin)) {
@@ -702,6 +711,15 @@ if (wnq_seo_features_enabled()) {
             require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
             require_once $seo_admin;
             \WNQ\Admin\SEOAdmin::ajaxUpdateTaskNotes();
+        }
+    });
+
+    add_action('wp_ajax_wnq_seo_bulk_update_tasks', function() {
+        $seo_admin = WNQ_PORTAL_PATH . 'admin/SEOAdmin.php';
+        if (file_exists($seo_admin)) {
+            require_once WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
+            require_once $seo_admin;
+            \WNQ\Admin\SEOAdmin::ajaxBulkUpdateTasks();
         }
     });
 }

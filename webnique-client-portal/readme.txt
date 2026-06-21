@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.22
+Stable tag: 2.4.23
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,13 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.23 - Support Tickets and Request Center
+
+- Added searchable and filterable support tickets with file attachments
+- Added expected response times, client reopen controls, and reply email notifications
+- Added a dynamic Request Center for website edits, new pages, blogs, report questions, and strategy calls
+- Added agency-side request status management, request counts, and client status notifications
+
 2.4.22 - Client Portal Experience
 
 - Replaced the sidebar wordmark with the Golden Web Marketing logo

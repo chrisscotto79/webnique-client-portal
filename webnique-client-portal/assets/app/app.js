@@ -7,7 +7,7 @@
   const state = { active: "overview", cache: {}, clientId: cfg.clientId || "" };
   const tabs = [
     ["overview", "Overview"], ["reports", "Reports"], ["customers", "CRM & Jobs"],
-    ["messages", "Messages"], ["billing", "Billing"],
+    ["messages", "Support"], ["requests", "Requests"], ["billing", "Billing"],
     ["learning", "Learning"], ["profile", "Business Profile"]
   ];
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
@@ -16,9 +16,10 @@
   const api = async (path, options = {}) => {
     const requestUrl = new URL(`${cfg.restUrl.replace(/\/$/, "")}${path}`);
     if (cfg.isAdmin && state.clientId) requestUrl.searchParams.set("client_id", state.clientId);
+    const isForm = options.body instanceof FormData;
     const response = await fetch(requestUrl.toString(), {
       credentials: "same-origin",
-      headers: { "X-WP-Nonce": cfg.nonce, "Content-Type": "application/json" },
+      headers: { "X-WP-Nonce": cfg.nonce, ...(isForm ? {} : { "Content-Type": "application/json" }) },
       ...options,
     });
     const data = await response.json().catch(() => ({ ok: false, error: "Invalid server response." }));
@@ -67,7 +68,7 @@
     const view = root.querySelector("#wnq-view");
     view.innerHTML = empty(`Loading ${key}...`);
     try {
-      const renderers = { overview, reports, customers, messages, billing, learning, profile };
+      const renderers = { overview, reports, customers, messages, requests, billing, learning, profile };
       await renderers[key](view, refresh);
     } catch (error) {
       view.innerHTML = `<div class="wnq-error"><strong>Unable to load this section.</strong><p>${esc(error.message)}</p></div>`;
@@ -149,31 +150,84 @@
   async function messages(view, refresh) {
     const tickets = await load("tickets", refresh);
     const messagesTab = root.querySelector('[data-tab="messages"]');
-    if (messagesTab) messagesTab.textContent = "Messages";
+    if (messagesTab) messagesTab.textContent = "Support";
     view.innerHTML = `${heading("Support", "Support Tickets", "Create a request, track its status, and keep every reply together.")}
-      <div class="wnq-toolbar"><button class="wnq-button" id="wnq-new-ticket">New Support Ticket</button></div><div id="wnq-ticket-compose"></div>
-      <div class="wnq-ticket-layout"><div class="wnq-ticket-list">${tickets.length ? tickets.map(ticketCard).join("") : empty("No support tickets yet.")}</div><div id="wnq-ticket-thread">${empty("Select a ticket to view the conversation.")}</div></div>`;
+      <div class="wnq-toolbar wnq-ticket-toolbar"><input type="search" id="wnq-ticket-search" placeholder="Search tickets"><select id="wnq-ticket-filter"><option value="all">All tickets</option><option value="open">Open</option><option value="in_progress">In progress</option><option value="waiting">Waiting</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select><button class="wnq-button" id="wnq-new-ticket">New Support Ticket</button></div><div id="wnq-ticket-compose"></div>
+      <div class="wnq-ticket-layout"><div class="wnq-ticket-list"></div><div id="wnq-ticket-thread">${empty("Select a ticket to view the conversation.")}</div></div>`;
     const compose = view.querySelector("#wnq-ticket-compose");
+    const list = view.querySelector(".wnq-ticket-list");
+    const renderList = () => {
+      const query = view.querySelector("#wnq-ticket-search").value.toLowerCase();
+      const filter = view.querySelector("#wnq-ticket-filter").value;
+      const filtered = tickets.filter((ticket) => (filter === "all" || ticket.ticket_status === filter) && `${ticket.subject} ${ticket.ticket_key} ${ticket.category}`.toLowerCase().includes(query));
+      list.innerHTML = filtered.length ? filtered.map(ticketCard).join("") : empty("No tickets match this search.");
+      list.querySelectorAll("[data-ticket]").forEach((button) => button.addEventListener("click", () => openTicket(button.dataset.ticket, tickets, view)));
+    };
+    renderList();
+    view.querySelector("#wnq-ticket-search").addEventListener("input", renderList);
+    view.querySelector("#wnq-ticket-filter").addEventListener("change", renderList);
     view.querySelector("#wnq-new-ticket").addEventListener("click", () => {
       compose.innerHTML = ticketForm();
       bindTicketForm(compose.querySelector("form"));
     });
-    view.querySelectorAll("[data-ticket]").forEach((button) => button.addEventListener("click", () => openTicket(button.dataset.ticket, tickets, view)));
   }
 
-  const ticketCard = (ticket) => `<button type="button" class="wnq-ticket-card ${ticket.unread ? "is-unread" : ""}" data-ticket="${esc(ticket.ticket_key)}"><div><strong>${esc(ticket.subject)}</strong>${status(ticket.ticket_status === "resolved" || ticket.ticket_status === "closed" ? "green" : "yellow", humanize(ticket.ticket_status))}</div><p>${esc(ticket.messages?.[ticket.messages.length - 1]?.message || "")}</p><small>${esc(ticket.ticket_key.toUpperCase())} · ${esc(humanize(ticket.category))} · Updated ${date(ticket.updated_at)}</small></button>`;
-  const ticketForm = (ticket = {}) => `<form class="wnq-panel wnq-ticket-form"><input type="hidden" name="ticket_key" value="${esc(ticket.ticket_key || "")}">${ticket.ticket_key ? `<input type="hidden" name="subject" value="${esc(ticket.subject)}"><input type="hidden" name="category" value="${esc(ticket.category)}"><input type="hidden" name="priority" value="${esc(ticket.priority)}">` : `${field("subject", "Subject", "", true)}<label><span>Category</span><select name="category"><option value="general">General Support</option><option value="website">Website Update</option><option value="seo">SEO / Report</option><option value="billing">Billing</option><option value="training">Training</option></select></label><label><span>Priority</span><select name="priority"><option value="normal">Normal</option><option value="low">Low</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>`}<label class="is-wide"><span>${ticket.ticket_key ? "Reply" : "How can we help?"}</span><textarea name="message" rows="5" required></textarea></label><div class="wnq-form-actions"><button class="wnq-button">${ticket.ticket_key ? "Send Reply" : "Create Ticket"}</button></div></form>`;
+  const ticketCard = (ticket) => `<button type="button" class="wnq-ticket-card ${ticket.unread ? "is-unread" : ""}" data-ticket="${esc(ticket.ticket_key)}"><div><strong>${esc(ticket.subject)}</strong>${status(ticket.ticket_status === "resolved" || ticket.ticket_status === "closed" ? "green" : "yellow", humanize(ticket.ticket_status))}</div><p>${esc(ticket.messages?.[ticket.messages.length - 1]?.message || "")}</p><small>${esc(ticket.ticket_key.toUpperCase())} · ${esc(humanize(ticket.category))} · Updated ${date(ticket.updated_at)}</small><em>${esc(ticket.response_time)}</em></button>`;
+  const ticketForm = (ticket = {}) => `<form class="wnq-panel wnq-ticket-form" enctype="multipart/form-data"><input type="hidden" name="ticket_key" value="${esc(ticket.ticket_key || "")}">${ticket.ticket_key ? `<input type="hidden" name="subject" value="${esc(ticket.subject)}"><input type="hidden" name="category" value="${esc(ticket.category)}"><input type="hidden" name="priority" value="${esc(ticket.priority)}">` : `${field("subject", "Subject", "", true)}<label><span>Category</span><select name="category"><option value="general">General Support</option><option value="website">Website Update</option><option value="seo">SEO / Report</option><option value="billing">Billing</option><option value="training">Training</option></select></label><label><span>Priority</span><select name="priority"><option value="normal">Normal</option><option value="low">Low</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>`}<label class="is-wide"><span>${ticket.ticket_key ? "Reply" : "How can we help?"}</span><textarea name="message" rows="5" required></textarea></label><label class="is-wide wnq-upload"><span>Add screenshots or files</span><input type="file" name="attachments[]" multiple accept="image/*,.pdf,.doc,.docx,.txt"><small>Up to 5 files, 10 MB each.</small></label><div class="wnq-form-actions"><button class="wnq-button">${ticket.ticket_key ? "Send Reply" : "Create Ticket"}</button></div></form>`;
   const bindTicketForm = (form) => form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await api("/portal/messages", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+    await api("/portal/messages", { method: "POST", body: new FormData(form) });
     delete state.cache.tickets; delete state.cache.overview; show("messages", true);
   });
-  const openTicket = (key, tickets, view) => {
-    const ticket = tickets.find((item) => item.ticket_key === key);
+  const attachments = (items = []) => items.length ? `<div class="wnq-attachments">${items.map((item) => `<a href="${esc(item.url)}" target="_blank" rel="noopener">${esc(item.name)}</a>`).join("")}</div>` : "";
+  const openTicket = async (key, tickets, view) => {
+    const summary = tickets.find((item) => item.ticket_key === key);
+    if (!summary) return;
+    const ticket = await api(`/portal/tickets/${encodeURIComponent(key)}`);
     if (!ticket) return;
+    const index = tickets.findIndex((item) => item.ticket_key === key);
+    if (index >= 0) tickets[index] = ticket;
+    view.querySelector(`[data-ticket="${key}"]`)?.classList.remove("is-unread");
     const thread = view.querySelector("#wnq-ticket-thread");
-    thread.innerHTML = `<section class="wnq-panel wnq-ticket-thread"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">${esc(ticket.ticket_key.toUpperCase())}</span><h2>${esc(ticket.subject)}</h2></div>${status(ticket.ticket_status === "resolved" || ticket.ticket_status === "closed" ? "green" : "yellow", humanize(ticket.ticket_status))}</div><div class="wnq-thread-messages">${ticket.messages.map((message) => `<article class="${message.sender_role === "admin" ? "is-support" : "is-client"}"><div><strong>${message.sender_role === "admin" ? "Golden Web Marketing" : "You"}</strong><time>${date(message.created_at)}</time></div><p>${esc(message.message)}</p></article>`).join("")}</div>${ticketForm(ticket)}</section>`;
-    bindTicketForm(thread.querySelector("form"));
+    const closed = ["resolved", "closed"].includes(ticket.ticket_status);
+    thread.innerHTML = `<section class="wnq-panel wnq-ticket-thread"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">${esc(ticket.ticket_key.toUpperCase())}</span><h2>${esc(ticket.subject)}</h2><small>${esc(ticket.response_time)}</small></div>${status(closed ? "green" : "yellow", humanize(ticket.ticket_status))}</div><div class="wnq-thread-messages">${ticket.messages.map((message) => `<article class="${message.sender_role === "admin" ? "is-support" : "is-client"}"><div><strong>${message.sender_role === "admin" ? "Golden Web Marketing" : "You"}</strong><time>${date(message.created_at)}</time></div><p>${esc(message.message)}</p>${attachments(message.attachments)}</article>`).join("")}</div>${closed ? `<button class="wnq-button" id="wnq-reopen-ticket">Reopen Ticket</button>` : ticketForm(ticket)}</section>`;
+    if (closed) {
+      thread.querySelector("#wnq-reopen-ticket").addEventListener("click", async () => {
+        const data = new FormData(); data.set("ticket_key", ticket.ticket_key); data.set("subject", ticket.subject); data.set("category", ticket.category); data.set("priority", ticket.priority); data.set("ticket_status", "open"); data.set("message", "Ticket reopened by client.");
+        await api("/portal/messages", { method: "POST", body: data }); delete state.cache.tickets; delete state.cache.overview; show("messages", true);
+      });
+    } else bindTicketForm(thread.querySelector("form"));
+  };
+
+  async function requests(view, refresh) {
+    const data = await load("requests", refresh);
+    const types = data.types || {};
+    view.innerHTML = `${heading("Request Center", "What can we help with?", "Submit structured requests so our team has everything needed to get started.")}
+      <div class="wnq-request-types">${Object.entries(types).map(([key, item]) => `<button type="button" data-request-type="${esc(key)}"><strong>${esc(item.label)}</strong><span>${esc(item.description)}</span></button>`).join("")}</div>
+      <div id="wnq-service-request-form"></div><section class="wnq-panel"><div class="wnq-panel-head"><h2>Your Requests</h2></div><div class="wnq-service-request-list">${data.items.length ? data.items.map(requestCard).join("") : empty("No requests submitted yet.")}</div></section>`;
+    view.querySelectorAll("[data-request-type]").forEach((button) => button.addEventListener("click", () => openRequestForm(button.dataset.requestType, types, view)));
+  }
+
+  const requestCard = (item) => `<article><div><span>${esc(item.request_key.toUpperCase())}</span><strong>${esc(item.title)}</strong><p>${esc(item.details || "")}</p><small>${esc(humanize(item.request_type))} · Submitted ${date(item.created_at)}</small>${attachments(item.attachments)}</div>${status(item.status === "completed" ? "green" : item.status === "declined" ? "red" : "yellow", humanize(item.status))}</article>`;
+  const requestFields = {
+    website_update: [["page_url", "Page URL", "url"], ["requested_change", "What should change?", "textarea"]],
+    new_page: [["page_type", "Page Type", "text"], ["primary_service", "Primary Service", "text"], ["target_city", "Target City", "text"]],
+    blog: [["topic", "Topic", "text"], ["target_keywords", "Target Keywords", "text"]],
+    report_question: [["report_period", "Report Month", "month"], ["question", "What would you like explained?", "textarea"]],
+    strategy_call: [["preferred_date", "Preferred Date", "date"], ["preferred_time", "Preferred Time", "time"], ["goals", "What should we discuss?", "textarea"]],
+  };
+  const openRequestForm = (type, types, view) => {
+    const rootForm = view.querySelector("#wnq-service-request-form");
+    const dynamic = (requestFields[type] || []).map(([name, label, inputType]) => inputType === "textarea" ? `<label class="is-wide"><span>${esc(label)}</span><textarea name="${esc(name)}" rows="4"></textarea></label>` : field(name, label, "", false, inputType)).join("");
+    rootForm.innerHTML = `<form class="wnq-panel wnq-form wnq-service-request-form" enctype="multipart/form-data"><input type="hidden" name="request_type" value="${esc(type)}"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">New Request</span><h2>${esc(types[type]?.label || "Request")}</h2></div></div>${field("title", "Request Title", "", true)}<label><span>Priority</span><select name="priority"><option value="normal">Normal</option><option value="low">Low</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>${dynamic}<label class="is-wide"><span>Additional Details</span><textarea name="details" rows="4"></textarea></label><label class="is-wide wnq-upload"><span>Attachments</span><input type="file" name="attachments[]" multiple accept="image/*,.pdf,.doc,.docx,.txt"><small>Up to 5 files, 10 MB each.</small></label><div class="wnq-form-actions"><button class="wnq-button">Submit Request</button><button type="button" class="wnq-button is-secondary" data-cancel>Cancel</button></div></form>`;
+    const form = rootForm.querySelector("form");
+    form.querySelector("[data-cancel]").addEventListener("click", () => rootForm.innerHTML = "");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault(); const data = new FormData(form); const requestData = {};
+      (requestFields[type] || []).forEach(([name]) => { requestData[name] = data.get(name) || ""; data.delete(name); });
+      data.set("request_data", JSON.stringify(requestData));
+      await api("/portal/requests", { method: "POST", body: data }); delete state.cache.requests; show("requests", true);
+    });
   };
 
   async function billing(view, refresh) {

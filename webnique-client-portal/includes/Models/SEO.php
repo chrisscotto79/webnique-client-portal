@@ -167,6 +167,43 @@ final class SEO
         ], ['id' => $id]);
     }
 
+    public static function updateTaskStatus(int $id, string $status): bool
+    {
+        $status = sanitize_key($status);
+        if (!in_array($status, ['pending', 'in_progress', 'completed'], true)) {
+            return false;
+        }
+        $task = self::getTask($id);
+        if (!$task) {
+            return false;
+        }
+        if ((string)($task['status'] ?? '') === $status) {
+            return true;
+        }
+
+        return $status === 'completed'
+            ? self::completeTask($id)
+            : self::updateTask($id, [
+                'status' => $status,
+                'completed_date' => null,
+            ]);
+    }
+
+    public static function bulkUpdateTaskStatus(array $task_ids, string $status): array
+    {
+        $updated = 0;
+        $failed = 0;
+
+        foreach (array_unique(array_map('absint', $task_ids)) as $task_id) {
+            if ($task_id < 1) {
+                continue;
+            }
+            self::updateTaskStatus($task_id, $status) ? $updated++ : $failed++;
+        }
+
+        return ['updated' => $updated, 'failed' => $failed];
+    }
+
     public static function deleteTask(int $id): bool
     {
         global $wpdb;
@@ -606,6 +643,45 @@ final class SEO
         }
 
         return self::importTasksFromTemplate($client_id, $service_type, $templates[$service_type], $month_year);
+    }
+
+    public static function syncLocalTasks(string $client_id): array
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'wnq_seo_tasks';
+        $templates = self::getLocalTasks();
+        $existing = self::getTasksByClient($client_id, 'local', null);
+        $existing_names = array_fill_keys(array_map(static fn($task) => (string)$task['task_name'], $existing), true);
+        $max_sort = (int)$wpdb->get_var($wpdb->prepare(
+            "SELECT COALESCE(MAX(sort_order), 0) FROM $table WHERE client_id=%s AND service_type='local' AND month_year IS NULL",
+            $client_id
+        ));
+        $imported = 0;
+        $skipped = 0;
+        $failed = 0;
+
+        foreach ($templates as $task_group => $tasks) {
+            foreach ($tasks as $task_name) {
+                if (isset($existing_names[$task_name])) {
+                    $skipped++;
+                    continue;
+                }
+                $max_sort++;
+                $inserted = $wpdb->insert($table, [
+                    'client_id' => $client_id,
+                    'service_type' => 'local',
+                    'task_group' => $task_group,
+                    'task_name' => $task_name,
+                    'status' => 'pending',
+                    'is_recurring' => 0,
+                    'month_year' => null,
+                    'sort_order' => $max_sort,
+                ]);
+                $inserted ? $imported++ : $failed++;
+            }
+        }
+
+        return ['imported' => $imported, 'skipped' => $skipped, 'failed' => $failed];
     }
 
     /**
@@ -1294,17 +1370,92 @@ final class SEO
                 'Create NAP consistency checklist',
             ],
             'Core Citation Building (15-20 Citations)' => [
-                'Submit to Google Business Profile',
-                'Submit to Bing Places',
-                'Submit to Apple Maps',
-                'Submit to Yelp',
-                'Submit to Facebook Business',
-                'Submit to Yellow Pages',
-                'Submit to BBB (Better Business Bureau)',
-                'Submit to Chamber of Commerce',
-                'Submit to industry-specific directories (5-10)',
-                'Verify all citations are accurate',
-                'Document all citations in spreadsheet',
+                'Tier 1 citation: Google Business Profile',
+                'Tier 1 citation: Apple Business Connect / Apple Maps',
+                'Tier 1 citation: Bing Places / Bing Maps',
+                'Tier 1 citation: Facebook Business Page',
+                'Tier 1 citation: Yelp',
+                'Tier 1 citation: BBB',
+                'Tier 1 citation: Yellow Pages',
+                'Tier 1 citation: Nextdoor',
+                'Tier 1 citation: MapQuest',
+                'Tier 1 citation: Foursquare',
+                'Tier 1 citation: Data Axle',
+                'Tier 1 citation: Dun & Bradstreet',
+                'Tier 1 citation: ChamberofCommerce.com',
+                'Verify Tier 1 citations are accurate and live',
+                'Document Tier 1 citation URLs in the client tracker',
+            ],
+            'Strong General Citations (Tier 2)' => [
+                'Tier 2 citation: Manta',
+                'Tier 2 citation: Hotfrog',
+                'Tier 2 citation: EZlocal',
+                'Tier 2 citation: MerchantCircle',
+                'Tier 2 citation: Brownbook',
+                'Tier 2 citation: Cylex',
+                'Tier 2 citation: ShowMeLocal',
+                'Tier 2 citation: Local.com',
+                'Tier 2 citation: Alignable',
+                'Tier 2 citation: Tupalo',
+                'Tier 2 citation: CitySquares',
+                'Tier 2 citation: eLocal',
+                'Tier 2 citation: Superpages / DexKnows',
+                'Tier 2 citation: Kompass',
+                'Tier 2 citation: Opendi',
+                'Tier 2 citation: 2FindLocal',
+                'Tier 2 citation: BizHwy',
+                'Tier 2 citation: USCity.net',
+                'Tier 2 citation: FindUsLocal',
+                'Tier 2 citation: YellowBot',
+                'Tier 2 citation: 411.info',
+                'Tier 2 citation: GoLocal247',
+                'Tier 2 citation: Hub.biz',
+                'Verify Tier 2 citation consistency for NAP, website, and categories',
+                'Document Tier 2 citation URLs in the client tracker',
+            ],
+            'Navigation & Map Citations' => [
+                'Submit or verify TomTom listing',
+                'Submit or verify HERE WeGo listing',
+                'Submit or verify Waze listing',
+                'Submit or verify Garmin listing',
+                'Submit or verify Uber map listing',
+                'Submit or verify Lyft map listing',
+                'Review OpenStreetMap business/map data',
+                'Confirm map citation NAP matches official business profile',
+            ],
+            'Review & Trust Profiles' => [
+                'Review Google Business Profile review settings',
+                'Review Facebook recommendations setup',
+                'Review Yelp profile accuracy',
+                'Review BBB profile accuracy',
+                'Create or verify Trustpilot profile when relevant',
+                'Create or verify Birdeye profile when relevant',
+                'Create or verify Reputation.com profile when relevant',
+                'Confirm review profile links are documented',
+            ],
+            'Home-Service Citation Opportunities' => [
+                'Create or verify Angi profile for home-service clients',
+                'Create or verify HomeAdvisor profile for home-service clients',
+                'Create or verify Porch profile for home-service clients',
+                'Create or verify Thumbtack profile for service-lead clients',
+                'Create or verify Houzz profile for home, remodeling, or design clients',
+                'Create or verify BuildZoom profile for contractor clients',
+                'Create or verify Networx profile for contractor clients',
+                'Create or verify Bark profile when relevant',
+                'Create or verify Fixr profile when relevant',
+                'Create or verify Modernize profile when relevant',
+                'Create or verify The Blue Book profile for commercial contractors',
+                'Create or verify Thomasnet profile for industrial or B2B trade clients',
+                'Document skipped home-service citations that are not relevant',
+            ],
+            'Niche Citation Opportunities (Tier 3)' => [
+                'Identify industry-specific directories for this client',
+                'Identify city or chamber directories in the client service area',
+                'For auto detailing clients, check auto detailing directories',
+                'For ceramic coating clients, check installer directories and coating brand profiles',
+                'For contractor clients, check trade-specific directories',
+                'Prioritize Tier 3 citations only when competing in tougher local searches',
+                'Document selected Tier 3 citations and why they were chosen',
             ],
             'Review Foundation Setup' => [
                 'Set up review monitoring system',
