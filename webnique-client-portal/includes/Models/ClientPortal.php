@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 
 final class ClientPortal
 {
-    private const SCHEMA_VERSION = '7';
+    private const SCHEMA_VERSION = '8';
     private static bool $schema_ready = false;
     private static string $last_error = '';
 
@@ -28,7 +28,7 @@ final class ClientPortal
         global $wpdb;
         $customers_table = $wpdb->prefix . 'wnq_portal_customers';
         $table_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $customers_table)) === $customers_table;
-        if ((string)get_option('wnq_client_portal_schema_version', '') !== self::SCHEMA_VERSION || !$table_exists) {
+        if ((string)get_option('wnq_client_portal_schema_version', '') !== self::SCHEMA_VERSION || !$table_exists || self::customerColumnsMissing($customers_table)) {
             self::createTables();
         }
     }
@@ -39,7 +39,7 @@ final class ClientPortal
         $charset = $wpdb->get_charset_collate();
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 
-        dbDelta("CREATE TABLE IF NOT EXISTS {$wpdb->prefix}wnq_portal_customers (
+        dbDelta("CREATE TABLE {$wpdb->prefix}wnq_portal_customers (
             id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
             client_id varchar(100) NOT NULL,
             record_type varchar(30) NOT NULL DEFAULT 'customer',
@@ -132,8 +132,98 @@ final class ClientPortal
             KEY status (status)
         ) $charset;");
 
+        self::ensureCustomerColumns();
+        self::ensureCustomerIndexes();
         self::migrateLegacyAttachments();
         update_option('wnq_client_portal_schema_version', self::SCHEMA_VERSION, false);
+    }
+
+    private static function ensureCustomerColumns(): void
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'wnq_portal_customers';
+        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) {
+            return;
+        }
+        $existing = self::tableColumns($table);
+        foreach (self::customerColumnDefinitions() as $column => $definition) {
+            if (in_array($column, $existing, true)) {
+                continue;
+            }
+            $wpdb->query("ALTER TABLE `{$table}` ADD COLUMN {$definition}");
+        }
+    }
+
+    private static function ensureCustomerIndexes(): void
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'wnq_portal_customers';
+        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) {
+            return;
+        }
+        $indexes = $wpdb->get_col("SHOW INDEX FROM `{$table}`", 2) ?: [];
+        foreach (['record_type', 'status', 'follow_up_date', 'reminder_date', 'job_date'] as $index) {
+            if (in_array($index, $indexes, true) && in_array($index, self::tableColumns($table), true)) {
+                continue;
+            }
+            if (!in_array($index, self::tableColumns($table), true)) {
+                continue;
+            }
+            $wpdb->query("ALTER TABLE `{$table}` ADD INDEX `{$index}` (`{$index}`)");
+        }
+    }
+
+    private static function customerColumnsMissing(string $table): bool
+    {
+        $existing = self::tableColumns($table);
+        if (!$existing) {
+            return true;
+        }
+        foreach (array_keys(self::customerColumnDefinitions()) as $column) {
+            if (!in_array($column, $existing, true)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static function tableColumns(string $table): array
+    {
+        global $wpdb;
+        return array_map('strval', $wpdb->get_col("SHOW COLUMNS FROM `{$table}`", 0) ?: []);
+    }
+
+    private static function customerColumnDefinitions(): array
+    {
+        return [
+            'client_id'       => "`client_id` varchar(100) NOT NULL DEFAULT ''",
+            'record_type'     => "`record_type` varchar(30) NOT NULL DEFAULT 'customer'",
+            'name'            => "`name` varchar(255) NOT NULL DEFAULT ''",
+            'phone'           => "`phone` varchar(50) DEFAULT NULL",
+            'email'           => "`email` varchar(255) DEFAULT NULL",
+            'address'         => "`address` varchar(500) DEFAULT NULL",
+            'job_address'     => "`job_address` varchar(500) DEFAULT NULL",
+            'service'         => "`service` varchar(255) DEFAULT NULL",
+            'crew'            => "`crew` varchar(255) DEFAULT NULL",
+            'lead_source'     => "`lead_source` varchar(100) DEFAULT NULL",
+            'status'          => "`status` varchar(30) NOT NULL DEFAULT 'new'",
+            'follow_up_date'  => "`follow_up_date` date DEFAULT NULL",
+            'reminder_date'   => "`reminder_date` date DEFAULT NULL",
+            'job_date'        => "`job_date` date DEFAULT NULL",
+            'completion_date' => "`completion_date` date DEFAULT NULL",
+            'job_count'       => "`job_count` int(11) NOT NULL DEFAULT 0",
+            'estimated_value' => "`estimated_value` decimal(12,2) NOT NULL DEFAULT 0.00",
+            'final_value'     => "`final_value` decimal(12,2) NOT NULL DEFAULT 0.00",
+            'job_cost'        => "`job_cost` decimal(12,2) NOT NULL DEFAULT 0.00",
+            'notes'           => "`notes` text DEFAULT NULL",
+            'internal_notes'  => "`internal_notes` text DEFAULT NULL",
+            'lost_reason'     => "`lost_reason` text DEFAULT NULL",
+            'files'           => "`files` longtext DEFAULT NULL",
+            'before_photos'   => "`before_photos` longtext DEFAULT NULL",
+            'after_photos'    => "`after_photos` longtext DEFAULT NULL",
+            'created_at'      => "`created_at` datetime DEFAULT CURRENT_TIMESTAMP",
+            'updated_at'      => "`updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
+        ];
     }
 
     public static function getCustomers(string $client_id, int $limit = 100): array
