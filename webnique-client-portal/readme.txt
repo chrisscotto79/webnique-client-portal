@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.27
+Stable tag: 2.4.28
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,12 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.28 - CRM QA and UI Polish
+
+- Hardened CRM table repair for partial deployments and missing customer/job columns
+- Improved CRM save feedback, date handling, job/revenue labels, and visible portal versioning
+- Refined CRM controls and form styling for a cleaner client-facing workflow
+
 2.4.27 - CRM Database Migration Repair
 
 - Added an explicit CRM customer table migration for older installs missing job/revenue columns

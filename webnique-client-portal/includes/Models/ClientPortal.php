@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 
 final class ClientPortal
 {
-    private const SCHEMA_VERSION = '8';
+    private const SCHEMA_VERSION = '9';
     private static bool $schema_ready = false;
     private static string $last_error = '';
 
@@ -145,12 +145,16 @@ final class ClientPortal
         if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) {
             return;
         }
+        $safe_table = self::sqlIdentifier($table);
         $existing = self::tableColumns($table);
         foreach (self::customerColumnDefinitions() as $column => $definition) {
             if (in_array($column, $existing, true)) {
                 continue;
             }
-            $wpdb->query("ALTER TABLE `{$table}` ADD COLUMN {$definition}");
+            $result = $wpdb->query("ALTER TABLE {$safe_table} ADD COLUMN {$definition}");
+            if (false === $result && $wpdb->last_error) {
+                self::$last_error = $wpdb->last_error;
+            }
         }
     }
 
@@ -161,15 +165,18 @@ final class ClientPortal
         if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) {
             return;
         }
-        $indexes = $wpdb->get_col("SHOW INDEX FROM `{$table}`", 2) ?: [];
+        $safe_table = self::sqlIdentifier($table);
+        $indexes = $wpdb->get_col("SHOW INDEX FROM {$safe_table}", 2) ?: [];
+        $columns = self::tableColumns($table);
         foreach (['record_type', 'status', 'follow_up_date', 'reminder_date', 'job_date'] as $index) {
-            if (in_array($index, $indexes, true) && in_array($index, self::tableColumns($table), true)) {
+            if (!in_array($index, $columns, true) || in_array($index, $indexes, true)) {
                 continue;
             }
-            if (!in_array($index, self::tableColumns($table), true)) {
-                continue;
+            $safe_index = self::sqlIdentifier($index);
+            $result = $wpdb->query("ALTER TABLE {$safe_table} ADD INDEX {$safe_index} ({$safe_index})");
+            if (false === $result && $wpdb->last_error) {
+                self::$last_error = $wpdb->last_error;
             }
-            $wpdb->query("ALTER TABLE `{$table}` ADD INDEX `{$index}` (`{$index}`)");
         }
     }
 
@@ -190,7 +197,12 @@ final class ClientPortal
     private static function tableColumns(string $table): array
     {
         global $wpdb;
-        return array_map('strval', $wpdb->get_col("SHOW COLUMNS FROM `{$table}`", 0) ?: []);
+        return array_map('strval', $wpdb->get_col('SHOW COLUMNS FROM ' . self::sqlIdentifier($table), 0) ?: []);
+    }
+
+    private static function sqlIdentifier(string $identifier): string
+    {
+        return '`' . str_replace('`', '``', $identifier) . '`';
     }
 
     private static function customerColumnDefinitions(): array
