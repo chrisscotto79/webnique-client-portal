@@ -23,9 +23,12 @@
   const api = async (path, options = {}) => {
     const requestUrl = new URL(`${cfg.restUrl.replace(/\/$/, "")}${path}`);
     if (cfg.isAdmin && state.clientId) requestUrl.searchParams.set("client_id", state.clientId);
+    const method = String(options.method || "GET").toUpperCase();
+    if (method === "GET") requestUrl.searchParams.set("_wnq", Date.now());
     const isForm = options.body instanceof FormData;
     const response = await fetch(requestUrl.toString(), {
       credentials: "same-origin",
+      cache: "no-store",
       headers: { "X-WP-Nonce": cfg.nonce, ...(isForm ? {} : { "Content-Type": "application/json" }) },
       ...options,
     });
@@ -51,6 +54,8 @@
     });
     return data;
   };
+  const formHasFiles = (form) => Array.from(form.querySelectorAll('input[type="file"]')).some((input) => Array.from(input.files || []).some((file) => file && file.size > 0));
+  const formBody = (form) => formHasFiles(form) ? new FormData(form) : JSON.stringify(formObject(form));
   const formStatus = (target, tone, message) => {
     const existing = target.querySelector(".wnq-form-status");
     if (existing) existing.remove();
@@ -73,7 +78,7 @@
       <aside class="wnq-sidebar"><div class="wnq-brand"><img src="${esc(cfg.logoUrl || "")}" alt="Golden Web Marketing"><span>Client Portal</span></div>
       ${viewAs()}
       <nav>${tabs.map(([key, label]) => `<button type="button" data-tab="${key}">${label}</button>`).join("")}</nav>
-      <div class="wnq-sidebar-foot"><span>Signed in as</span><strong>${esc(cfg.user?.name || "Client")}</strong></div></aside>
+      <div class="wnq-sidebar-foot"><span>Signed in as</span><strong>${esc(cfg.user?.name || "Client")}</strong><small>Portal v${esc(cfg.version || "unknown")}</small></div></aside>
       <main class="wnq-main"><div class="wnq-topbar"><div><span>Golden Web Marketing</span><strong id="wnq-top-title">Overview</strong></div><button type="button" class="wnq-button is-secondary" id="wnq-refresh-view">Refresh</button></div><div id="wnq-view">${empty("Loading dashboard...")}</div></main></div>`;
     root.querySelectorAll("[data-tab]").forEach((button) => button.addEventListener("click", () => show(button.dataset.tab)));
     root.querySelector("#wnq-refresh-view")?.addEventListener("click", () => show(state.active, true));
@@ -234,7 +239,7 @@
         }
         if (submit) { submit.disabled = true; submit.textContent = "Saving..."; }
         try {
-          await api("/portal/customers", { method: "POST", body: new FormData(form) });
+          await api("/portal/customers", { method: "POST", body: formBody(form) });
           sessionStorage.setItem("wnqCrmNotice", "CRM record saved.");
           delete state.cache.customers; delete state.cache.overview; delete state.cache.performance; show("customers", true);
         } catch (error) {

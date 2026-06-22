@@ -145,6 +145,7 @@ final class Shortcode
         wp_localize_script('wnq-portal-app', 'WNQ_PORTAL', [
             'restUrl'          => esc_url_raw(rest_url('wnq/v1')),
             'nonce'            => wp_create_nonce('wp_rest'),
+            'version'          => $version,
             'clientId'         => $clientId,
             'isAdmin'          => current_user_can('wnq_manage_portal') || current_user_can('manage_options'),
             'viewAsClients'    => $viewAsClients,

@@ -15,8 +15,9 @@ if (!defined('ABSPATH')) {
 
 final class ClientPortal
 {
-    private const SCHEMA_VERSION = '6';
+    private const SCHEMA_VERSION = '7';
     private static bool $schema_ready = false;
+    private static string $last_error = '';
 
     public static function ensureSchema(): void
     {
@@ -24,7 +25,10 @@ final class ClientPortal
             return;
         }
         self::$schema_ready = true;
-        if ((string)get_option('wnq_client_portal_schema_version', '') !== self::SCHEMA_VERSION) {
+        global $wpdb;
+        $customers_table = $wpdb->prefix . 'wnq_portal_customers';
+        $table_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $customers_table)) === $customers_table;
+        if ((string)get_option('wnq_client_portal_schema_version', '') !== self::SCHEMA_VERSION || !$table_exists) {
             self::createTables();
         }
     }
@@ -161,6 +165,7 @@ final class ClientPortal
     {
         self::ensureSchema();
         global $wpdb;
+        self::$last_error = '';
         $id = absint($data['id'] ?? 0);
         $name = (string)($data['name'] ?? $data['customer_name'] ?? $data['customerName'] ?? '');
         $record_type = sanitize_key($data['record_type'] ?? 'customer');
@@ -219,10 +224,23 @@ final class ClientPortal
         }
         if ($id > 0 && self::getCustomer($id, $client_id)) {
             $result = $wpdb->update($wpdb->prefix . 'wnq_portal_customers', $record, ['id' => $id, 'client_id' => $client_id]);
-            return $result === false ? false : $id;
+            if ($result === false) {
+                self::$last_error = (string)$wpdb->last_error;
+                return false;
+            }
+            return $id;
         }
         $result = $wpdb->insert($wpdb->prefix . 'wnq_portal_customers', $record);
-        return $result === false ? false : (int)$wpdb->insert_id;
+        if ($result === false) {
+            self::$last_error = (string)$wpdb->last_error;
+            return false;
+        }
+        return (int)$wpdb->insert_id;
+    }
+
+    public static function lastError(): string
+    {
+        return self::$last_error;
     }
 
     public static function getCustomerSummary(string $client_id): array
