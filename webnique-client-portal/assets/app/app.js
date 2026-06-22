@@ -16,7 +16,8 @@
     if (!value) return "Not set";
     const raw = String(value);
     const normalized = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00:00` : raw.replace(" ", "T");
-    return new Date(normalized).toLocaleDateString();
+    const parsed = new Date(normalized);
+    return Number.isNaN(parsed.getTime()) ? "Not set" : parsed.toLocaleDateString();
   };
   const attr = (value) => esc(JSON.stringify(value));
   const activeLabel = (key) => tabs.find(([tab]) => tab === key)?.[1] || "Dashboard";
@@ -79,7 +80,7 @@
       ${viewAs()}
       <nav>${tabs.map(([key, label]) => `<button type="button" data-tab="${key}">${label}</button>`).join("")}</nav>
       <div class="wnq-sidebar-foot"><span>Signed in as</span><strong>${esc(cfg.user?.name || "Client")}</strong><small>Portal v${esc(cfg.version || "unknown")}</small></div></aside>
-      <main class="wnq-main"><div class="wnq-topbar"><div><span>Golden Web Marketing</span><strong id="wnq-top-title">Overview</strong></div><button type="button" class="wnq-button is-secondary" id="wnq-refresh-view">Refresh</button></div><div id="wnq-view">${empty("Loading dashboard...")}</div></main></div>`;
+      <main class="wnq-main"><div class="wnq-topbar"><div><span>Golden Web Marketing <em>v${esc(cfg.version || "unknown")}</em></span><strong id="wnq-top-title">Overview</strong></div><button type="button" class="wnq-button is-secondary" id="wnq-refresh-view">Refresh</button></div><div id="wnq-view">${empty("Loading dashboard...")}</div></main></div>`;
     root.querySelectorAll("[data-tab]").forEach((button) => button.addEventListener("click", () => show(button.dataset.tab)));
     root.querySelector("#wnq-refresh-view")?.addEventListener("click", () => show(state.active, true));
     root.querySelector("#wnq-view-as")?.addEventListener("change", (event) => {
@@ -102,7 +103,7 @@
     view.innerHTML = empty(`Loading ${key}...`);
     try {
       const renderers = { overview, reports, customers, ads, messages, requests, billing, learning, profile };
-      await renderers[key](view, refresh);
+      await (renderers[key] || renderers.overview)(view, refresh);
     } catch (error) {
       view.innerHTML = `<div class="wnq-error"><strong>Unable to load this section.</strong><p>${esc(error.message)}</p></div>`;
     }
@@ -173,7 +174,7 @@
     view.innerHTML = `${heading("CRM & Job History", "Customers and Jobs", "Track leads, completed work, revenue, costs, profit, follow-ups, and marketing work in one place.")}
       ${crmNotice ? `<div class="wnq-success-inline">${esc(crmNotice)}</div>` : ""}
       <div class="wnq-crm-overview">
-        <div class="wnq-metrics">${metric("Records", visibleRows.length, `${rows.length} total in CRM`)}${metric("Jobs", totals.jobs, "Recorded jobs")}${metric("Revenue", money(totals.revenue), "Recorded revenue")}${metric("Profit", money(totals.revenue - totals.cost), "Revenue minus costs", totals.revenue - totals.cost >= 0 ? "positive" : "negative")}</div>
+        <div class="wnq-metrics">${metric("Records", visibleRows.length, `${rows.length} total in CRM`)}${metric("Jobs", totals.jobs, "Completed jobs tracked")}${metric("Revenue", money(totals.revenue), "Final revenue saved")}${metric("Profit", money(totals.revenue - totals.cost), "Revenue minus costs", totals.revenue - totals.cost >= 0 ? "positive" : "negative")}</div>
         <div class="wnq-crm-summary">
           ${crmPill("Open Leads", leads.length, "Needs follow-up", "yellow")}
           ${crmPill("Upcoming Jobs", upcoming.length, "Scheduled work", "green")}
@@ -237,6 +238,7 @@
           name?.focus();
           return;
         }
+        formStatus(form, "yellow", "Saving CRM record...");
         if (submit) { submit.disabled = true; submit.textContent = "Saving..."; }
         try {
           await api("/portal/customers", { method: "POST", body: formBody(form) });
@@ -269,11 +271,11 @@
     map[label].count += 1;
     return map;
   }, {})).sort((a, b) => b.total - a.total).slice(0, 5);
-  const crmDashboard = ({ performance, upcoming, overdue, totals, avgJob, closeRate, topServices, topCustomers }) => `<section class="wnq-panel"><div class="wnq-panel-head"><h2>Monthly Business Summary</h2><span>${trend(totals.revenue - totals.cost)} profit</span></div>${performanceChart(performance)}</section><div class="wnq-grid-2"><section class="wnq-panel">${miniList("Upcoming Jobs", upcoming, "No upcoming jobs.")}</section><section class="wnq-panel">${miniList("Overdue Follow-ups", overdue, "No overdue follow-ups.")}</section></div><div class="wnq-metrics">${metric("Average Job Value", money(avgJob), "Revenue divided by job count")}${metric("Close Rate", `${closeRate}%`, "Won or completed records")}${metric("Top Service", topServices[0]?.label || "Not set", "Highest recorded revenue")}${metric("Top Customer", topCustomers[0]?.label || "Not set", "Highest recorded revenue")}</div>`;
+  const crmDashboard = ({ performance, upcoming, overdue, totals, avgJob, closeRate, topServices, topCustomers }) => `<section class="wnq-panel"><div class="wnq-panel-head"><h2>Monthly Business Summary</h2><span>${trend(totals.revenue - totals.cost)} profit</span></div>${performanceChart(performance)}</section><div class="wnq-grid-2"><section class="wnq-panel">${miniList("Upcoming Jobs", upcoming, "No upcoming jobs.")}</section><section class="wnq-panel">${miniList("Overdue Follow-ups", overdue, "No overdue follow-ups.")}</section></div><div class="wnq-metrics">${metric("Average Job Value", money(avgJob), "Final revenue per completed job")}${metric("Close Rate", `${closeRate}%`, "Completed or won records")}${metric("Top Service", topServices[0]?.label || "Not set", "Highest recorded revenue")}${metric("Top Customer", topCustomers[0]?.label || "Not set", "Highest recorded revenue")}</div>`;
   const miniList = (title, rows, fallback) => `<div class="wnq-panel-head"><h2>${esc(title)}</h2></div>${rows.length ? rows.slice(0, 5).map((row) => `<div class="wnq-work-item"><div>${crmStatus(row.status)}<strong>${esc(row.name)}</strong></div><span>${date(row.job_date || row.follow_up_date)} · ${esc(row.service || "Service not set")}</span></div>`).join("") : empty(fallback)}`;
   const crmTable = (rows, title, fallback) => `<div class="wnq-panel wnq-table-wrap wnq-crm-table-panel"><div class="wnq-panel-head"><div><h2>${esc(title)}</h2><small>${esc(rows.length)} record${rows.length === 1 ? "" : "s"}</small></div></div><table class="wnq-crm-table"><thead><tr><th>Customer</th><th>Service / Source</th><th>Status</th><th>Schedule</th><th>Money</th><th>Job Info</th><th></th></tr></thead><tbody>${rows.length ? rows.map((row) => {
     const profit = Number(row.final_value || 0) - Number(row.job_cost || 0);
-    return `<tr><td><strong>${esc(row.name)}</strong><small>${esc([row.phone, row.email].filter(Boolean).join(" · ") || "No contact saved")}</small><small>${esc(row.address || "")}</small></td><td><strong>${esc(row.service || "Not set")}</strong><small>${esc(row.lead_source || "Source not set")}</small></td><td>${crmStatus(row.status)}</td><td><span>${date(row.job_date || row.follow_up_date || row.reminder_date)}</span><small>${row.completion_date ? `Completed ${date(row.completion_date)}` : "No completion date"}</small></td><td><strong>${money(row.final_value)}</strong><small>Cost ${money(row.job_cost)} · ${trend(profit)} profit</small></td><td><small>${esc(row.job_address || row.address || "Address not set")}</small><small>${esc(row.crew ? `Crew: ${row.crew}` : `${row.job_count || 0} job(s)`)}</small></td><td><button class="wnq-link" data-edit='${attr(row)}'>Edit</button></td></tr>`;
+    return `<tr><td><strong>${esc(row.name)}</strong><small>${esc([row.phone, row.email].filter(Boolean).join(" · ") || "No contact saved")}</small><small>${esc(row.address || "")}</small></td><td><strong>${esc(row.service || "Not set")}</strong><small>${esc(row.lead_source || "Source not set")}</small></td><td>${crmStatus(row.status)}</td><td><span>${date(row.job_date || row.follow_up_date || row.reminder_date)}</span><small>${row.completion_date ? `Completed ${date(row.completion_date)}` : "No completion date"}</small></td><td><strong>${money(row.final_value)}</strong><small>Cost ${money(row.job_cost)} · ${trend(profit)} profit</small></td><td><small>${esc(row.job_address || row.address || "Address not set")}</small><small>${esc(row.crew ? `Crew: ${row.crew}` : `Jobs completed: ${row.job_count || 0}`)}</small></td><td><button class="wnq-link" data-edit='${attr(row)}'>Edit</button></td></tr>`;
   }).join("") : `<tr><td colspan="7">${empty(fallback)}</td></tr>`}</tbody></table></div>`;
   const crmCalendar = (rows) => `<div class="wnq-panel"><div class="wnq-panel-head"><h2>Calendar & Scheduling</h2></div>${rows.length ? [...rows].sort((a, b) => String(a.job_date || "").localeCompare(String(b.job_date || ""))).map((row) => `<article class="wnq-schedule-item"><time>${date(row.job_date)}</time><div><strong>${esc(row.name)}</strong><span>${esc(row.service || "Job")} · ${esc(row.job_address || row.address || "Address not set")}</span></div>${crmStatus(row.status)}</article>`).join("") : empty("No upcoming jobs are scheduled.")}</div>`;
   const crmReports = ({ rows, totals, avgJob, closeRate, topServices, topCustomers, completed, lost }) => `<div class="wnq-grid-2"><section class="wnq-panel"><div class="wnq-panel-head"><h2>Top Services</h2></div>${topServices.length ? topServices.map((item) => `<div class="wnq-work-item"><strong>${esc(item.label)}</strong><span>${money(item.total)} · ${esc(item.count)} records</span></div>`).join("") : empty("No service data yet.")}</section><section class="wnq-panel"><div class="wnq-panel-head"><h2>Top Customers</h2></div>${topCustomers.length ? topCustomers.map((item) => `<div class="wnq-work-item"><strong>${esc(item.label)}</strong><span>${money(item.total)} · ${esc(item.count)} records</span></div>`).join("") : empty("No customer data yet.")}</section></div><div class="wnq-metrics">${metric("Records", rows.length, "Visible CRM entries")}${metric("Completed", completed.length, "Won or closed")}${metric("Lost / Canceled", lost.length, "Not moving forward")}${metric("Average Job", money(avgJob), "Average value")}${metric("Close Rate", `${closeRate}%`, "Won/completed")}${metric("Profit", money(totals.revenue - totals.cost), "Visible records", totals.revenue - totals.cost >= 0 ? "positive" : "negative")}</div>`;
@@ -298,7 +300,7 @@
         ${field("follow_up_date", "Follow-up Date", row.follow_up_date, false, "date")}${field("reminder_date", "Reminder Date", row.reminder_date, false, "date")}${field("job_date", "Job Date", row.job_date, false, "date")}${field("completion_date", "Completion Date", row.completion_date, false, "date")}
       </fieldset>
       <fieldset class="wnq-crm-form-section"><legend>Revenue & Profit</legend>
-        ${field("job_count", "Jobs Completed", row.job_count || 0, false, "number", "0 until the work is completed. Use 1 for one completed job.")}${moneyField("estimated_value", "Estimated Value", row.estimated_value || 0)}${moneyField("final_value", "Final Revenue", row.final_value || 0)}${moneyField("job_cost", "Job Cost", row.job_cost || 0)}
+        ${countField("job_count", "Completed Jobs Count", row.job_count || 0, "0 until work is finished. Use 1 for one completed job, or more for grouped jobs.")}${moneyField("estimated_value", "Estimated Value", row.estimated_value || 0)}${moneyField("final_value", "Final Revenue", row.final_value || 0)}${moneyField("job_cost", "Job Cost", row.job_cost || 0)}
       </fieldset>
       <fieldset class="wnq-crm-form-section"><legend>Notes & Files</legend>
         <label class="is-wide"><span>Customer Notes / Service History</span><textarea name="notes" rows="3">${esc(row.notes || "")}</textarea></label>
@@ -311,6 +313,7 @@
       <div class="wnq-form-actions"><button class="wnq-button" type="submit">Save Record</button><button type="button" class="wnq-button is-secondary" data-cancel>Cancel</button></div></form>`;
   };
   const field = (name, label, value = "", required = false, type = "text", hint = "") => `<label><span>${esc(label)}</span><input type="${type}" name="${name}" value="${esc(value)}" ${required ? "required" : ""} ${type === "number" ? 'min="0" step="0.01"' : ""}>${hint ? `<small>${esc(hint)}</small>` : ""}</label>`;
+  const countField = (name, label, value = "", hint = "") => `<label><span>${esc(label)}</span><input type="number" name="${esc(name)}" value="${esc(value)}" min="0" step="1" inputmode="numeric">${hint ? `<small>${esc(hint)}</small>` : ""}</label>`;
   const moneyField = (name, label, value = "") => `<label class="wnq-money-field"><span>${esc(label)}</span><div><b>$</b><input type="number" name="${esc(name)}" value="${esc(value)}" min="0" step="0.01" inputmode="decimal"></div></label>`;
 
   async function ads(view, refresh) {
