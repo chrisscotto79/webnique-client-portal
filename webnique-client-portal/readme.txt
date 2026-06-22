@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.29
+Stable tag: 2.4.30
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,13 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.30 - Premium CRM Dashboard UI
+
+- Reworked the client portal sidebar around CRM-first navigation for Overview, Leads, Jobs, Calendar, Follow-ups, Reports, Marketing Work, Ads, Billing, and Settings
+- Added a polished CRM dashboard with KPI cards, opportunity overview, pipeline snapshot, follow-ups, revenue trend, lead source report, recent activity, and marketing work history
+- Added a current account label for non-admin portal users and kept the admin view-as-client selector
+- Improved responsive CRM dashboard behavior while preserving existing lead/job forms, filters, records, reports, and marketing work logging
+
 2.4.29 - Leads & Jobs CRM Improvements
 
 - Renamed the client-facing CRM area to Leads & Jobs

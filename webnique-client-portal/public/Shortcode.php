@@ -112,6 +112,8 @@ final class Shortcode
     private static function enqueueAssets(string $clientId, array $viewAsClients = []): void
     {
         $version = defined('WNQ_PORTAL_VERSION') ? WNQ_PORTAL_VERSION : '2.0.0';
+        $client = $clientId !== '' ? (Client::getByClientId($clientId) ?: []) : [];
+        $clientLabel = sanitize_text_field((string)(($client['company'] ?? '') ?: ($client['name'] ?? '') ?: $clientId));
 
         // CSS
         wp_enqueue_style(
@@ -147,6 +149,7 @@ final class Shortcode
             'nonce'            => wp_create_nonce('wp_rest'),
             'version'          => $version,
             'clientId'         => $clientId,
+            'clientLabel'      => $clientLabel,
             'isAdmin'          => current_user_can('wnq_manage_portal') || current_user_can('manage_options'),
             'viewAsClients'    => $viewAsClients,
             'logoUrl'          => esc_url_raw(WNQ_PORTAL_URL . 'assets/images/golden-web-marketing-logo.png'),

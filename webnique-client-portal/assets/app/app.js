@@ -7,10 +7,11 @@
   const state = { active: "overview", cache: {}, clientId: cfg.clientId || "" };
   const canSeePrivate = !!cfg.isAdmin;
   const tabs = [
-    ["overview", "Overview"], ["reports", "Reports"], ["customers", "Leads & Jobs"],
-    ["ads", "Ads"], ["messages", "Support"], ["requests", "Requests"], ["billing", "Billing"],
-    ["learning", "Learning"], ["profile", "Business Profile"]
+    ["overview", "Overview"], ["leads", "Leads"], ["jobs", "Jobs"], ["calendar", "Calendar"],
+    ["followups", "Follow-ups"], ["crm-reports", "Reports"], ["marketing-work", "Marketing Work"],
+    ["ads", "Ads"], ["billing", "Billing"], ["settings", "Settings"]
   ];
+  const crmRoutes = { overview: "dashboard", leads: "leads", jobs: "jobs", calendar: "calendar", followups: "followups", "crm-reports": "reports", "marketing-work": "marketing-work" };
   const statusLabels = { new: "New Lead", contacted: "Contacted", quoted: "Quoted", scheduled: "Scheduled", in_progress: "In Progress", completed: "Completed", lost: "Lost / Canceled", canceled: "Lost / Canceled" };
   const statusOptions = [["new", "New Lead"], ["contacted", "Contacted"], ["quoted", "Quoted"], ["scheduled", "Scheduled"], ["in_progress", "In Progress"], ["completed", "Completed"], ["lost", "Lost / Canceled"], ["canceled", "Canceled"]];
   const leadSourceOptions = ["Google Ads", "Google Business Profile", "Organic Search", "Website Form", "Phone Call", "Referral", "Facebook", "Instagram", "Other"];
@@ -26,6 +27,7 @@
   };
   const attr = (value) => esc(JSON.stringify(value));
   const activeLabel = (key) => tabs.find(([tab]) => tab === key)?.[1] || "Dashboard";
+  const navIcon = (key) => ({ overview: "grid", leads: "users", jobs: "briefcase", calendar: "calendar", followups: "check", "crm-reports": "chart", "marketing-work": "megaphone", ads: "target", billing: "receipt", settings: "gear" }[key] || "dot");
   const api = async (path, options = {}) => {
     const requestUrl = new URL(`${cfg.restUrl.replace(/\/$/, "")}${path}`);
     if (cfg.isAdmin && state.clientId) requestUrl.searchParams.set("client_id", state.clientId);
@@ -77,15 +79,17 @@
     }).join("")}</div>`;
   };
   const viewAs = () => {
-    if (!cfg.isAdmin || !Array.isArray(cfg.viewAsClients) || !cfg.viewAsClients.length) return "";
-    return `<div class="wnq-view-as"><label for="wnq-view-as"><span>Admin Preview</span><strong>View as client/user</strong></label>
-      <select id="wnq-view-as">${cfg.viewAsClients.map((client) => `<option value="${esc(client.clientId)}" ${client.clientId === state.clientId ? "selected" : ""}>${esc(client.label)}</option>`).join("")}</select></div>`;
+    if (cfg.isAdmin && Array.isArray(cfg.viewAsClients) && cfg.viewAsClients.length) {
+      return `<div class="wnq-view-as"><label for="wnq-view-as"><span>Admin Preview</span><strong>View as client/user</strong></label>
+        <select id="wnq-view-as">${cfg.viewAsClients.map((client) => `<option value="${esc(client.clientId)}" ${client.clientId === state.clientId ? "selected" : ""}>${esc(client.label)}</option>`).join("")}</select></div>`;
+    }
+    return `<div class="wnq-view-as is-static"><span>Current Account</span><strong>${esc(cfg.clientLabel || state.clientId || "Client account")}</strong></div>`;
   };
   const shell = () => {
     root.innerHTML = `<div class="wnq-portal">
       <aside class="wnq-sidebar"><div class="wnq-brand"><img src="${esc(cfg.logoUrl || "")}" alt="Golden Web Marketing"><span>Client Portal</span></div>
       ${viewAs()}
-      <nav>${tabs.map(([key, label]) => `<button type="button" data-tab="${key}">${label}</button>`).join("")}</nav>
+      <nav>${tabs.map(([key, label]) => `<button type="button" data-tab="${key}"><i class="wnq-nav-icon is-${esc(navIcon(key))}" aria-hidden="true"></i><span>${esc(label)}</span></button>`).join("")}</nav>
       <div class="wnq-sidebar-foot"><span>Signed in as</span><strong>${esc(cfg.user?.name || "Client")}</strong><small>Portal v${esc(cfg.version || "unknown")}</small></div></aside>
       <main class="wnq-main"><div class="wnq-topbar"><div><span>Golden Web Marketing <em>v${esc(cfg.version || "unknown")}</em></span><strong id="wnq-top-title">Overview</strong></div><button type="button" class="wnq-button is-secondary" id="wnq-refresh-view">Refresh</button></div><div id="wnq-view">${empty("Loading dashboard...")}</div></main></div>`;
     root.querySelectorAll("[data-tab]").forEach((button) => button.addEventListener("click", () => show(button.dataset.tab)));
@@ -109,8 +113,12 @@
     if (topTitle) topTitle.textContent = activeLabel(key);
     view.innerHTML = empty(`Loading ${key}...`);
     try {
-      const renderers = { overview, reports, customers, ads, messages, requests, billing, learning, profile };
-      await (renderers[key] || renderers.overview)(view, refresh);
+      if (Object.prototype.hasOwnProperty.call(crmRoutes, key)) {
+        await customers(view, refresh, { forceTab: crmRoutes[key], hideSubnav: true });
+        return;
+      }
+      const renderers = { reports, customers, ads, messages, requests, billing, learning, profile, settings: profile, "seo-reports": reports };
+      await (renderers[key] || ((target, reload) => customers(target, reload, { forceTab: "dashboard", hideSubnav: true })))(view, refresh);
     } catch (error) {
       view.innerHTML = `<div class="wnq-error"><strong>Unable to load this section.</strong><p>${esc(error.message)}</p></div>`;
     }
@@ -143,6 +151,26 @@
     view.querySelectorAll("[data-go]").forEach((button) => button.addEventListener("click", () => show(button.dataset.go)));
   }
   const metric = (label, value, note, tone = "") => `<div class="wnq-metric"><span>${esc(label)}</span><strong class="${tone ? `wnq-${tone}` : ""}">${esc(value)}</strong><small>${esc(note)}</small></div>`;
+  const crmHeader = (range = "month") => `<header class="wnq-crm-head"><div><span class="wnq-eyebrow">Golden Web Marketing</span><h1>CRM Dashboard</h1><p>Track leads, jobs, revenue, follow-ups, and marketing work in one place.</p></div><div class="wnq-crm-head-actions"><label><span>Date range</span><select id="wnq-crm-range"><option value="month" ${range === "month" ? "selected" : ""}>This Month</option><option value="30" ${range === "30" ? "selected" : ""}>Last 30 Days</option><option value="90" ${range === "90" ? "selected" : ""}>Last 90 Days</option><option value="all" ${range === "all" ? "selected" : ""}>All Time</option></select></label><button type="button" class="wnq-button is-secondary" id="wnq-crm-header-refresh">Refresh</button></div></header>`;
+  const crmKpiCard = (icon, label, value, note, tone = "") => `<article class="wnq-kpi-card ${tone ? `is-${esc(tone)}` : ""}"><span class="wnq-kpi-icon is-${esc(icon)}" aria-hidden="true"></span><div><small>${esc(label)}</small><strong>${esc(value)}</strong><em>${esc(note)}</em></div></article>`;
+  const crmKpis = ({ leadBase, totals, completedRevenue, openOpportunities, closeRate, upcoming, overdue }) => `<section class="wnq-kpi-grid">
+    ${crmKpiCard("funnel", "Opportunity Status", leadBase || 0, "Total")}
+    ${crmKpiCard("dollar", "Total Revenue", money(totals.revenue), "This Month")}
+    ${crmKpiCard("trophy", "Won Revenue", money(completedRevenue), "This Month", "green")}
+    ${crmKpiCard("briefcase", "Open Opportunities", openOpportunities || 0, "Active")}
+    ${crmKpiCard("trend", "Close Rate", `${closeRate}%`, "This Month")}
+    ${crmKpiCard("calendar", "Upcoming Jobs", upcoming.length, "Next 30 Days", "green")}
+    ${crmKpiCard("clock", "Overdue Follow-ups", overdue.length, "Requires Action", overdue.length ? "red" : "")}
+  </section>`;
+  const crmRangeBounds = (range) => {
+    if (range === "all") return null;
+    const now = new Date();
+    const start = new Date(now);
+    if (range === "month") start.setDate(1);
+    if (range === "30") start.setDate(now.getDate() - 30);
+    if (range === "90") start.setDate(now.getDate() - 90);
+    return { from: start.toISOString().slice(0, 10), to: now.toISOString().slice(0, 10) };
+  };
 
   async function reports(view, refresh) {
     const rows = await load("reports", refresh);
@@ -151,7 +179,7 @@
       ${rows.length ? rows.map((row) => `<div class="wnq-list-row"><strong>${esc(row.report_type || "Monthly")} Report</strong><span>${date(row.period_start)} - ${date(row.period_end)}</span><span>${status(row.status === "ready" || row.status === "sent" ? "green" : "yellow", row.status || "Draft")} <a class="wnq-link" href="${esc(row.view_url)}" target="_blank" rel="noopener">View Full Report</a> <a class="wnq-link" href="${esc(row.pdf_url)}">Download PDF</a></span></div>`).join("") : empty("No SEO OS reports are available yet.")}</div>`;
   }
 
-  async function customers(view, refresh) {
+  async function customers(view, refresh, options = {}) {
     const [rows, workRows, performance] = await Promise.all([load("customers", refresh), load("work", refresh), load("performance", refresh)]);
     const today = new Date().toISOString().slice(0, 10);
     const wonStatuses = ["completed"];
@@ -167,6 +195,12 @@
       source: sessionStorage.getItem("wnqCrmSource") || "all",
       crew: sessionStorage.getItem("wnqCrmCrew") || "all",
     };
+    const crmRange = sessionStorage.getItem("wnqCrmRange") || "month";
+    const rangeBounds = crmRangeBounds(crmRange);
+    if (rangeBounds && !filters.from && !filters.to) {
+      filters.from = rangeBounds.from;
+      filters.to = rangeBounds.to;
+    }
     const visibleRows = filterCrmRows(rows, filters);
     const totals = crmTotals(visibleRows);
     const isFinished = (row) => [...wonStatuses, ...lostStatuses].includes(row.status);
@@ -185,26 +219,19 @@
     const topServices = topBy(visibleRows, "service", "final_value");
     const topCustomers = topBy(visibleRows, "name", "final_value");
     const topSources = countBy(visibleRows, "lead_source");
-    const activeCrmTab = sessionStorage.getItem("wnqCrmTab") || "dashboard";
+    const completedRevenue = completed.reduce((sum, row) => sum + Number(row.final_value || 0), 0);
+    const openOpportunities = leads.length + activeJobs.length;
+    const activeCrmTab = options.forceTab || sessionStorage.getItem("wnqCrmTab") || "dashboard";
     const crmNotice = sessionStorage.getItem("wnqCrmNotice") || "";
     if (crmNotice) sessionStorage.removeItem("wnqCrmNotice");
     const filterOptions = [["all", "All records"], ["lead", "Lead records"], ["customer", "Customer records"], ["job", "Job records"], ...statusOptions];
     const serviceOptions = optionsFrom(rows, "service");
     const sourceOptions = optionsFrom(rows, "lead_source");
     const crewOptions = optionsFrom(rows, "crew");
-    view.innerHTML = `${heading("Lead & Job History", "Leads & Jobs", "Track leads, scheduled work, revenue, follow-ups, and completed marketing work in one place.")}
+    view.innerHTML = `${crmHeader(crmRange)}
       ${crmNotice ? `<div class="wnq-success-inline">${esc(crmNotice)}</div>` : ""}
-      <div class="wnq-crm-overview">
-        <div class="wnq-metrics">${metric("Total Leads", leadBase || leads.length, "All tracked lead opportunities")}${metric("Open Leads", leads.length, "New, contacted, or quoted")}${metric("Scheduled Jobs", activeJobs.length, "Scheduled or in progress")}${metric("Completed Jobs", completed.length, "Closed as completed")}${metric("Revenue Tracked", money(totals.revenue), "Saved job revenue")}${canSeePrivate ? metric("Net Tracked Profit", money(totals.revenue - totals.cost), "Revenue minus logged costs", totals.revenue - totals.cost >= 0 ? "positive" : "negative") : ""}${metric("Average Job Value", money(avgJob), "Revenue divided by jobs")}${metric("Close Rate", `${closeRate}%`, "Completed vs lost jobs")}</div>
-        ${canSeePrivate && totals.revenue === 0 && totals.cost > 0 ? `<p class="wnq-crm-finance-note">Costs are logged, but no revenue has been tracked yet. Profit will update once completed job revenue is added.</p>` : ""}
-        <div class="wnq-crm-summary">
-          ${crmPill("Open Leads", leads.length, "Needs follow-up", "yellow")}
-          ${crmPill("Upcoming Jobs", upcoming.length, "Scheduled work", "green")}
-          ${crmPill("Overdue", overdue.length, "Follow-ups due", overdue.length ? "red" : "green")}
-          ${crmPill("Completed", completed.length, "Finished work", "green")}
-          ${crmPill("Lost / Canceled", lost.length, "Not moving forward", lost.length ? "red" : "yellow")}
-        </div>
-      </div>
+      ${crmKpis({ leadBase, totals, completedRevenue, openOpportunities, closeRate, upcoming, overdue })}
+      ${canSeePrivate && totals.revenue === 0 && totals.cost > 0 ? `<p class="wnq-crm-finance-note">Costs are logged, but no revenue has been tracked yet. Profit will update once completed job revenue is added.</p>` : ""}
       <div class="wnq-crm-controls">
         <label><span>Search</span><input type="search" id="wnq-crm-search" value="${esc(filters.search)}" placeholder="Name, service, source, address, notes"></label>
         <label><span>Status / Type</span><select id="wnq-crm-status">${filterOptions.map(([value, label]) => `<option value="${esc(value)}" ${filters.status === value ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label>
@@ -218,16 +245,16 @@
         <button type="button" class="wnq-button" id="wnq-add-customer">Add Lead / Job</button>
       </div>
       <p class="wnq-crm-filter-note">Showing ${esc(visibleRows.length)} of ${esc(rows.length)} CRM records.</p>
-      <div class="wnq-subnav">${["dashboard","leads","jobs","calendar","followups","reports","settings"].map((key) => `<button type="button" data-crm-tab="${key}" class="${key === activeCrmTab ? "is-active" : ""}">${esc(humanize(key))}</button>`).join("")}</div>
+      <div class="wnq-subnav ${options.hideSubnav ? "is-hidden" : ""}">${["dashboard","leads","jobs","calendar","followups","reports","marketing-work","settings"].map((key) => `<button type="button" data-crm-tab="${key}" class="${key === activeCrmTab ? "is-active" : ""}">${esc(humanize(key))}</button>`).join("")}</div>
       <div id="wnq-customer-form"></div>
-      <div class="wnq-crm-tab" data-crm-panel="dashboard">${crmDashboard({ performance, upcoming, overdue, totals, avgJob, closeRate, topServices, topCustomers, topSources, workRows })}</div>
+      <div class="wnq-crm-tab" data-crm-panel="dashboard">${crmDashboard({ rows: visibleRows, performance, leads, activeJobs, completed, lost, upcoming, overdue, totals, completedRevenue, avgJob, closeRate, topServices, topCustomers, topSources, workRows })}</div>
       <div class="wnq-crm-tab" data-crm-panel="leads">${crmTable(leads, "Lead Pipeline", "No new leads are recorded yet. New inquiries will appear here once added.", "leads")}</div>
       <div class="wnq-crm-tab" data-crm-panel="jobs">${crmJobsPanel(activeJobs, completed)}</div>
       <div class="wnq-crm-tab" data-crm-panel="calendar">${crmCalendar(scheduledJobs)}</div>
       <div class="wnq-crm-tab" data-crm-panel="followups">${crmFollowups(overdue)}</div>
       <div class="wnq-crm-tab" data-crm-panel="reports">${crmReports({ rows: visibleRows, totals, avgJob, closeRate, topServices, topCustomers, topSources, completed, lost, performance })}</div>
       <div class="wnq-crm-tab" data-crm-panel="settings">${crmSettings()}</div>
-      <div class="wnq-panel"><div class="wnq-panel-head"><h2>Marketing Work History</h2>${canSeePrivate ? `<button type="button" class="wnq-button is-secondary" id="wnq-add-work">Log Work</button>` : ""}</div><div id="wnq-work-form"></div>${marketingWorkList(workRows)}</div>`;
+      <div class="wnq-crm-tab" data-crm-panel="marketing-work"><section class="wnq-panel"><div class="wnq-panel-head"><h2>Marketing Work History</h2>${canSeePrivate ? `<button type="button" class="wnq-button is-secondary" id="wnq-add-work">Log Work</button>` : ""}</div><div id="wnq-work-form"></div>${marketingWorkList(workRows)}</section></div>`;
     const formRoot = view.querySelector("#wnq-customer-form");
     const applyFilters = () => {
       sessionStorage.setItem("wnqCrmSearch", view.querySelector("#wnq-crm-search")?.value || "");
@@ -237,7 +264,7 @@
       sessionStorage.setItem("wnqCrmService", view.querySelector("#wnq-crm-service")?.value || "all");
       sessionStorage.setItem("wnqCrmSource", view.querySelector("#wnq-crm-source")?.value || "all");
       sessionStorage.setItem("wnqCrmCrew", view.querySelector("#wnq-crm-crew")?.value || "all");
-      show("customers");
+      show(state.active);
     };
     const setCrmTab = (key) => {
       sessionStorage.setItem("wnqCrmTab", key);
@@ -250,9 +277,20 @@
     ["#wnq-crm-status", "#wnq-crm-from", "#wnq-crm-to", "#wnq-crm-service", "#wnq-crm-source", "#wnq-crm-crew"].forEach((selector) => view.querySelector(selector)?.addEventListener("change", applyFilters));
     view.querySelector("#wnq-crm-clear")?.addEventListener("click", () => {
       ["wnqCrmSearch", "wnqCrmStatus", "wnqCrmFrom", "wnqCrmTo", "wnqCrmService", "wnqCrmSource", "wnqCrmCrew"].forEach((key) => sessionStorage.removeItem(key));
-      show("customers");
+      show(state.active);
+    });
+    view.querySelector("#wnq-crm-header-refresh")?.addEventListener("click", () => show(state.active, true));
+    view.querySelector("#wnq-crm-range")?.addEventListener("change", (event) => {
+      sessionStorage.setItem("wnqCrmRange", event.currentTarget.value || "month");
+      sessionStorage.removeItem("wnqCrmFrom");
+      sessionStorage.removeItem("wnqCrmTo");
+      show(state.active);
     });
     view.querySelectorAll("[data-crm-tab]").forEach((button) => button.addEventListener("click", () => setCrmTab(button.dataset.crmTab)));
+    view.querySelectorAll("[data-crm-jump]").forEach((button) => button.addEventListener("click", () => {
+      const targetRoute = Object.entries(crmRoutes).find(([, panel]) => panel === button.dataset.crmJump)?.[0] || "overview";
+      show(targetRoute);
+    }));
     setCrmTab(activeCrmTab);
     const openForm = (row = {}) => {
       formRoot.innerHTML = customerForm(row);
@@ -274,7 +312,7 @@
         try {
           await api("/portal/customers", { method: "POST", body: formBody(form) });
           sessionStorage.setItem("wnqCrmNotice", "CRM record saved.");
-          delete state.cache.customers; delete state.cache.overview; delete state.cache.performance; show("customers", true);
+          delete state.cache.customers; delete state.cache.overview; delete state.cache.performance; show(state.active, true);
         } catch (error) {
           formStatus(form, "red", `Record was not saved. ${error.message}`);
           if (submit) { submit.disabled = false; submit.textContent = "Save Record"; }
@@ -290,7 +328,7 @@
       if (nextDate === null) return;
       await api("/portal/customers", { method: "POST", body: JSON.stringify({ ...recordPayload(row), follow_up_date: nextDate || "" }) });
       sessionStorage.setItem("wnqCrmNotice", nextDate ? "Follow-up updated." : "Follow-up completed.");
-      delete state.cache.customers; delete state.cache.overview; delete state.cache.performance; show("customers", true);
+      delete state.cache.customers; delete state.cache.overview; delete state.cache.performance; show(state.active, true);
     }));
     const workFormRoot = view.querySelector("#wnq-work-form");
     view.querySelector("#wnq-add-work")?.addEventListener("click", () => {
@@ -303,7 +341,7 @@
         try {
           await api("/portal/work", { method: "POST", body: JSON.stringify(formObject(form)) });
           sessionStorage.setItem("wnqCrmNotice", "Marketing work item saved.");
-          delete state.cache.work; delete state.cache.overview; show("customers", true);
+          delete state.cache.work; delete state.cache.overview; show(state.active, true);
         } catch (error) {
           formStatus(form, "red", `Marketing work was not saved. ${error.message}`);
         }
@@ -349,7 +387,68 @@
     job_count: row.job_count || 0, estimated_value: row.estimated_value || 0, final_value: row.final_value || 0,
     job_cost: row.job_cost || 0, notes: row.notes || "", internal_notes: row.internal_notes || "", lost_reason: row.lost_reason || ""
   });
-  const crmDashboard = ({ performance, upcoming, overdue, totals, avgJob, closeRate, topServices, topCustomers, topSources, workRows }) => `<section class="wnq-panel"><div class="wnq-panel-head"><h2>Monthly Business Summary</h2><span>${canSeePrivate ? `${trend(totals.revenue - totals.cost)} net profit` : `${money(totals.revenue)} revenue tracked`}</span></div>${performanceChart(performance)}</section><div class="wnq-grid-2"><section class="wnq-panel">${miniList("Upcoming Jobs", upcoming, "No upcoming jobs are scheduled yet. Scheduled jobs will appear here.")}</section><section class="wnq-panel">${miniList("Overdue Follow-ups", overdue, "No overdue follow-ups.")}</section></div><div class="wnq-metrics">${metric("Average Job Value", money(avgJob), "Revenue divided by jobs")}${metric("Close Rate", `${closeRate}%`, "Completed vs lost")}${metric("Top Service", topServices[0]?.label || "Not set", "Highest tracked revenue")}${metric("Top Customer", topCustomers[0]?.label || "Not set", "Highest tracked revenue")}${metric("Top Lead Source", topSources[0]?.label || "Not set", "Most leads recorded")}${metric("Follow-ups Due", overdue.length, "Needs attention")}</div><section class="wnq-panel"><div class="wnq-panel-head"><h2>Recent Marketing Work</h2></div>${marketingWorkList(workRows.slice(0, 5), true)}</section>`;
+  const crmDashboard = ({ rows, performance, leads, activeJobs, completed, lost, upcoming, overdue, totals, completedRevenue, avgJob, closeRate, topServices, topCustomers, topSources, workRows }) => {
+    const openCount = leads.length + activeJobs.length;
+    const totalOps = openCount + completed.length + lost.length;
+    const donutTotal = totalOps || rows.length || 0;
+    const openPct = donutTotal ? Math.round((openCount / donutTotal) * 100) : 0;
+    const wonPct = donutTotal ? Math.round((completed.length / donutTotal) * 100) : 0;
+    const lostPct = donutTotal ? Math.max(0, 100 - openPct - wonPct) : 0;
+    const pipeline = pipelineRows(rows, completedRevenue);
+    return `<div class="wnq-dashboard-grid">
+      <section class="wnq-panel wnq-dashboard-card is-opportunity"><div class="wnq-panel-head"><h2>Opportunity Overview</h2><button type="button" class="wnq-link" data-crm-jump="leads">View Pipeline</button></div><div class="wnq-donut-layout"><div class="wnq-donut ${donutTotal ? "" : "is-empty"}" style="--open:${openPct};--won:${wonPct};--lost:${lostPct}"><strong>${esc(donutTotal)}</strong><span>Total</span></div><div class="wnq-donut-legend">${donutLegend("Open", openCount, openPct, "green")}${donutLegend("Won", completed.length, wonPct, "gold")}${donutLegend("Lost", lost.length, lostPct, "red")}</div></div></section>
+      <section class="wnq-panel wnq-dashboard-card"><div class="wnq-panel-head"><h2>Pipeline Snapshot</h2><button type="button" class="wnq-link" data-crm-jump="leads">View Pipeline</button></div>${pipelineSnapshot(pipeline)}</section>
+      <section class="wnq-panel wnq-dashboard-card"><div class="wnq-panel-head"><h2>Tasks / Follow-ups</h2><button type="button" class="wnq-link" data-crm-jump="followups">View All Tasks</button></div>${taskList(overdue, upcoming)}</section>
+      <section class="wnq-panel wnq-dashboard-card"><div class="wnq-panel-head"><h2>Revenue Trend</h2><span>${canSeePrivate ? `${trend(totals.revenue - totals.cost)} net` : `${money(totals.revenue)} tracked`}</span></div>${performanceChart(performance)}</section>
+      <section class="wnq-panel wnq-dashboard-card"><div class="wnq-panel-head"><h2>Lead Source Report</h2><button type="button" class="wnq-link" data-crm-jump="reports">View Reports</button></div>${leadSourceTable(rows, topSources)}</section>
+      <section class="wnq-panel wnq-dashboard-card"><div class="wnq-panel-head"><h2>Recent Activity</h2><button type="button" class="wnq-link" data-crm-jump="reports">View All Activity</button></div>${recentActivity(rows, workRows)}</section>
+      <section class="wnq-panel wnq-dashboard-card is-wide"><div class="wnq-panel-head"><h2>Marketing Work History</h2><button type="button" class="wnq-link" data-crm-jump="marketing-work">View All Work</button></div>${marketingWorkCards(workRows)}</section>
+      <section class="wnq-panel wnq-dashboard-card is-wide"><div class="wnq-panel-head"><h2>Business Snapshot</h2></div><div class="wnq-metrics">${metric("Average Job Value", money(avgJob), "Revenue divided by jobs")}${metric("Close Rate", `${closeRate}%`, "Completed vs lost")}${metric("Top Service", topServices[0]?.label || "Not set", "Highest tracked revenue")}${metric("Top Customer", topCustomers[0]?.label || "Not set", "Highest tracked revenue")}</div></section>
+    </div>`;
+  };
+  const donutLegend = (label, count, percent, tone) => `<div class="wnq-donut-row"><i class="is-${esc(tone)}"></i><span>${esc(label)}</span><strong>${esc(count)} (${esc(percent)}%)</strong></div>`;
+  const pipelineRows = (rows, completedRevenue) => {
+    const stageMap = [
+      ["new", "New Lead"], ["contacted", "Contacted"], ["quoted", "Quote Sent"], ["scheduled", "Scheduled"], ["completed", "Won"]
+    ];
+    return stageMap.map(([statusKey, label]) => {
+      const stageRows = rows.filter((row) => row.status === statusKey);
+      const amountKey = statusKey === "completed" ? "final_value" : "estimated_value";
+      const value = statusKey === "completed" ? completedRevenue : stageRows.reduce((sum, row) => sum + Number(row[amountKey] || 0), 0);
+      return { label, count: stageRows.length, value };
+    });
+  };
+  const pipelineSnapshot = (items) => {
+    const max = Math.max(1, ...items.map((item) => item.count));
+    return `<div class="wnq-pipeline">${items.map((item) => `<div class="wnq-pipeline-row"><span>${esc(item.label)}</span><div><i style="width:${Math.max(8, Math.round((item.count / max) * 100))}%"></i></div><strong>${esc(item.count)}</strong><em>${money(item.value)}</em></div>`).join("")}</div>`;
+  };
+  const taskList = (overdue, upcoming) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowIso = tomorrow.toISOString().slice(0, 10);
+    const tasks = [
+      ...overdue.map((row) => ({ row, label: "Overdue", tone: "red", date: row.follow_up_date })),
+      ...upcoming.map((row) => ({ row, label: row.job_date === today ? "Due Today" : row.job_date === tomorrowIso ? "Due Tomorrow" : "Upcoming", tone: row.job_date === today ? "yellow" : "blue", date: row.job_date }))
+    ].slice(0, 4);
+    return tasks.length ? `<div class="wnq-task-list">${tasks.map((item) => `<article class="wnq-task-row"><span class="wnq-task-icon"></span><div><strong>${esc(item.row.name)}</strong><small>${esc(item.row.service || "Follow-up")}</small></div><em class="is-${esc(item.tone)}">${esc(item.label)}</em></article>`).join("")}</div>` : empty("No follow-ups need attention right now.");
+  };
+  const leadSourceTable = (rows, topSources) => {
+    const sourceRows = topSources.map((source) => {
+      const matches = rows.filter((row) => (row.lead_source || "Not set") === source.label);
+      const won = matches.filter((row) => row.status === "completed");
+      return { source: source.label, leads: source.count, won: won.length, revenue: won.reduce((sum, row) => sum + Number(row.final_value || 0), 0) };
+    });
+    return sourceRows.length ? `<table class="wnq-source-table"><thead><tr><th>Source</th><th>Leads</th><th>Won</th><th>Revenue</th></tr></thead><tbody>${sourceRows.map((row) => `<tr><td>${esc(row.source)}</td><td>${esc(row.leads)}</td><td>${esc(row.won)}</td><td>${money(row.revenue)}</td></tr>`).join("")}<tr><td><strong>Total</strong></td><td><strong>${esc(sourceRows.reduce((sum, row) => sum + row.leads, 0))}</strong></td><td><strong>${esc(sourceRows.reduce((sum, row) => sum + row.won, 0))}</strong></td><td><strong>${money(sourceRows.reduce((sum, row) => sum + row.revenue, 0))}</strong></td></tr></tbody></table>` : empty("Lead sources will appear here after records are added.");
+  };
+  const recentActivity = (rows, workRows) => {
+    const activities = [
+      ...rows.slice(0, 3).map((row) => ({ title: row.status === "completed" ? "Job completed" : row.record_type === "job" ? "Job scheduled" : "New lead added", detail: row.name, date: row.updated_at || row.created_at || row.job_date })),
+      ...workRows.slice(0, 2).map((row) => ({ title: row.status === "done" ? "Marketing work completed" : "Marketing work updated", detail: row.title, date: row.work_date || row.updated_at || row.created_at }))
+    ].filter((item) => item.detail).slice(0, 5);
+    return activities.length ? `<div class="wnq-activity-list">${activities.map((item) => `<article class="wnq-activity-row"><span></span><div><strong>${esc(item.title)}</strong><small>${esc(item.detail)}</small></div><time>${date(item.date)}</time></article>`).join("")}</div>` : empty("Recent CRM and marketing activity will appear here.");
+  };
+  const marketingWorkCards = (rows) => rows.length ? `<div class="wnq-work-card-grid">${rows.slice(0, 3).map((row) => `<article class="wnq-work-card"><span class="wnq-work-icon"></span><div><strong>${esc(row.title)}</strong><p>${esc(row.description || row.work_type_label || "Marketing work completed.")}</p><small>${date(row.work_date || row.due_date)} · ${esc(row.assigned_to || cfg.user?.name || "Golden Web Marketing")}</small></div><em>${esc(row.work_type_label || humanize(row.task_type || "Work"))}</em></article>`).join("")}</div>` : empty("Completed SEO, Ads, and website updates will appear here.");
   const miniList = (title, rows, fallback) => `<div class="wnq-panel-head"><h2>${esc(title)}</h2></div>${rows.length ? rows.slice(0, 5).map((row) => `<div class="wnq-work-item"><div>${crmStatus(row.status)}<strong>${esc(row.name)}</strong></div><span>${date(row.job_date || row.follow_up_date)} · ${esc(row.service || "Service not set")}</span></div>`).join("") : empty(fallback)}`;
   const crmTable = (rows, title, fallback, mode = "general") => `<div class="wnq-panel wnq-table-wrap wnq-crm-table-panel"><div class="wnq-panel-head"><div><h2>${esc(title)}</h2><small>${esc(rows.length)} record${rows.length === 1 ? "" : "s"}</small></div></div><table class="wnq-crm-table"><thead><tr><th>Customer</th><th>Service / Source</th><th>Status</th><th>Schedule</th><th>${mode === "leads" ? "Estimate" : "Revenue"}</th><th>Job Info</th><th></th></tr></thead><tbody>${rows.length ? rows.map((row) => {
     const profit = Number(row.final_value || 0) - Number(row.job_cost || 0);
