@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.28
+Stable tag: 2.4.29
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,13 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.29 - Leads & Jobs CRM Improvements
+
+- Renamed the client-facing CRM area to Leads & Jobs
+- Repaired stale CRM table saves and added safer private/admin field handling
+- Added cleaner lead/job statuses, follow-up actions, lead source reporting, and marketing work logging
+- Improved dashboard cards, reports, empty states, and mobile table behavior
+
 2.4.28 - CRM QA and UI Polish
 
 - Hardened CRM table repair for partial deployments and missing customer/job columns

@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 
 final class ClientPortal
 {
-    private const SCHEMA_VERSION = '9';
+    private const SCHEMA_VERSION = '10';
     private static bool $schema_ready = false;
     private static string $last_error = '';
 
@@ -238,9 +238,10 @@ final class ClientPortal
         ];
     }
 
-    public static function getCustomers(string $client_id, int $limit = 100): array
+    public static function getCustomers(string $client_id, int $limit = 100, bool $include_private = true): array
     {
         self::ensureSchema();
+        self::ensureCustomerColumns();
         global $wpdb;
         $limit = max(1, min(500, $limit));
         $rows = $wpdb->get_results($wpdb->prepare(
@@ -248,12 +249,14 @@ final class ClientPortal
             $client_id,
             $limit
         ), ARRAY_A) ?: [];
-        return array_map([self::class, 'hydrateCustomerRecord'], $rows);
+        $records = array_map([self::class, 'hydrateCustomerRecord'], $rows);
+        return $include_private ? $records : array_map([self::class, 'clientSafeCustomerRecord'], $records);
     }
 
     public static function getCustomer(int $id, string $client_id): ?array
     {
         self::ensureSchema();
+        self::ensureCustomerColumns();
         global $wpdb;
         $row = $wpdb->get_row($wpdb->prepare(
             "SELECT * FROM {$wpdb->prefix}wnq_portal_customers WHERE id=%d AND client_id=%s",
@@ -263,12 +266,23 @@ final class ClientPortal
         return $row ? self::hydrateCustomerRecord($row) : null;
     }
 
+    public static function publicCustomerRecord(array $row): array
+    {
+        return self::clientSafeCustomerRecord($row);
+    }
+
     public static function saveCustomer(string $client_id, array $data): int|false
     {
         self::ensureSchema();
+        self::ensureCustomerColumns();
+        self::ensureCustomerIndexes();
         global $wpdb;
         self::$last_error = '';
         $id = absint($data['id'] ?? 0);
+        $existing_record = $id > 0 ? self::getCustomer($id, $client_id) : null;
+        if ($existing_record) {
+            $data = array_merge($existing_record, $data);
+        }
         $name = (string)($data['name'] ?? $data['customer_name'] ?? $data['customerName'] ?? '');
         $record_type = sanitize_key($data['record_type'] ?? 'customer');
         if (!in_array($record_type, ['lead', 'customer', 'job'], true)) {
@@ -278,13 +292,14 @@ final class ClientPortal
         if (!in_array($status, self::customerStatuses(), true)) {
             $status = 'new';
         }
+        $status = self::normalizeCustomerStatus($status);
         $follow_up = self::dateField($data['follow_up_date'] ?? '');
         $reminder_date = self::dateField($data['reminder_date'] ?? '');
         $job_date = self::dateField($data['job_date'] ?? '');
         $completion_date = self::dateField($data['completion_date'] ?? '');
         $job_count = max(0, absint($data['job_count'] ?? 0));
         $final_value = self::moneyAmount($data['final_value'] ?? 0);
-        if ($job_count === 0 && ($final_value > 0 || in_array($status, ['completed', 'won', 'closed'], true))) {
+        if ($job_count === 0 && ($final_value > 0 || $status === 'completed')) {
             $job_count = 1;
         }
         $record = [
@@ -317,22 +332,29 @@ final class ClientPortal
         foreach (['files', 'before_photos', 'after_photos'] as $attachment_key) {
             if (!empty($data[$attachment_key]) && is_array($data[$attachment_key])) {
                 $existing = [];
-                if ($id > 0) {
-                    $existing_record = self::getCustomer($id, $client_id);
+                if ($existing_record) {
                     $existing = is_array($existing_record[$attachment_key] ?? null) ? $existing_record[$attachment_key] : [];
                 }
                 $record[$attachment_key] = wp_json_encode(array_values(array_merge($existing, $data[$attachment_key])));
             }
         }
-        if ($id > 0 && self::getCustomer($id, $client_id)) {
-            $result = $wpdb->update($wpdb->prefix . 'wnq_portal_customers', $record, ['id' => $id, 'client_id' => $client_id]);
+        $table = $wpdb->prefix . 'wnq_portal_customers';
+        $available_columns = array_flip(self::tableColumns($table));
+        if ($available_columns) {
+            $record = array_intersect_key($record, $available_columns);
+        }
+        if (!isset($record['name']) || $record['name'] === '') {
+            return false;
+        }
+        if ($id > 0 && $existing_record) {
+            $result = $wpdb->update($table, $record, ['id' => $id, 'client_id' => $client_id]);
             if ($result === false) {
                 self::$last_error = (string)$wpdb->last_error;
                 return false;
             }
             return $id;
         }
-        $result = $wpdb->insert($wpdb->prefix . 'wnq_portal_customers', $record);
+        $result = $wpdb->insert($table, $record);
         if ($result === false) {
             self::$last_error = (string)$wpdb->last_error;
             return false;
@@ -345,13 +367,14 @@ final class ClientPortal
         return self::$last_error;
     }
 
-    public static function getCustomerSummary(string $client_id): array
+    public static function getCustomerSummary(string $client_id, bool $include_private = true): array
     {
         self::ensureSchema();
+        self::ensureCustomerColumns();
         global $wpdb;
         $row = $wpdb->get_row($wpdb->prepare(
             "SELECT COUNT(*) total,
-                SUM(status IN ('new','contacted','estimate_sent')) new_count,
+                SUM(status IN ('new','contacted','quoted','estimate_sent')) new_count,
                 SUM(status IN ('scheduled','in_progress')) scheduled_count,
                 SUM(status IN ('completed','won','closed')) completed_count,
                 SUM(status IN ('lost','canceled')) lost_count,
@@ -369,23 +392,39 @@ final class ClientPortal
             'lost_count'      => absint($row['lost_count'] ?? 0),
             'job_count'       => absint($row['job_count'] ?? 0),
             'revenue'         => (float)($row['revenue'] ?? 0),
-            'cost'            => (float)($row['cost'] ?? 0),
-            'profit'          => (float)($row['revenue'] ?? 0) - (float)($row['cost'] ?? 0),
+            'cost'            => $include_private ? (float)($row['cost'] ?? 0) : null,
+            'profit'          => $include_private ? (float)($row['revenue'] ?? 0) - (float)($row['cost'] ?? 0) : null,
         ];
     }
 
     public static function customerStatuses(): array
     {
-        return ['new', 'contacted', 'estimate_sent', 'scheduled', 'in_progress', 'completed', 'won', 'lost', 'closed', 'canceled'];
+        return ['new', 'contacted', 'quoted', 'scheduled', 'in_progress', 'completed', 'lost', 'canceled', 'estimate_sent', 'won', 'closed'];
     }
 
     private static function hydrateCustomerRecord(array $row): array
     {
+        $row['status'] = self::normalizeCustomerStatus((string)($row['status'] ?? 'new'));
         foreach (['files', 'before_photos', 'after_photos'] as $key) {
             $row[$key] = self::hydrateAttachments(self::jsonArray($row[$key] ?? ''), (string)($row['client_id'] ?? ''));
         }
         $row['profit'] = (float)($row['final_value'] ?? 0) - (float)($row['job_cost'] ?? 0);
         return $row;
+    }
+
+    private static function clientSafeCustomerRecord(array $row): array
+    {
+        unset($row['internal_notes'], $row['job_cost'], $row['profit']);
+        return $row;
+    }
+
+    private static function normalizeCustomerStatus(string $status): string
+    {
+        return match ($status) {
+            'estimate_sent' => 'quoted',
+            'won', 'closed' => 'completed',
+            default => in_array($status, ['new', 'contacted', 'quoted', 'scheduled', 'in_progress', 'completed', 'lost', 'canceled'], true) ? $status : 'new',
+        };
     }
 
     public static function getAdsResource(string $client_id): array
@@ -562,9 +601,10 @@ final class ClientPortal
         return 'wnq_google_ads_settings_' . md5($client_id);
     }
 
-    public static function getMonthlyPerformance(string $client_id, int $months = 6): array
+    public static function getMonthlyPerformance(string $client_id, int $months = 6, bool $include_private = true): array
     {
         self::ensureSchema();
+        self::ensureCustomerColumns();
         global $wpdb;
         $months = max(3, min(12, $months));
         $start = date('Y-m-01', strtotime('-' . ($months - 1) . ' months'));
@@ -592,8 +632,8 @@ final class ClientPortal
                 'label'   => date('M', $timestamp),
                 'jobs'    => absint($row['jobs'] ?? 0),
                 'revenue' => $revenue,
-                'cost'    => $cost,
-                'profit'  => $revenue - $cost,
+                'cost'    => $include_private ? $cost : null,
+                'profit'  => $include_private ? $revenue - $cost : null,
             ];
         }
         return $result;
@@ -973,19 +1013,82 @@ final class ClientPortal
         );
     }
 
-    public static function getTasks(string $client_id, int $limit = 20): array
+    public static function getTasks(string $client_id, int $limit = 20, bool $include_private = true): array
     {
         global $wpdb;
         $table = $wpdb->prefix . 'wnq_tasks';
         if (!self::tableExists($table)) {
+            if (class_exists(Task::class)) {
+                Task::createTable();
+            }
+        }
+        if (!self::tableExists($table)) {
             return [];
         }
-        return $wpdb->get_results($wpdb->prepare(
-            "SELECT id,title,status,priority,due_date,completed_at,created_at FROM $table
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT id,title,description,status,task_type,priority,assigned_to,due_date,notes,completed_at,created_at FROM $table
              WHERE client_id=%s AND archived_at IS NULL ORDER BY status='done' ASC, due_date IS NULL, due_date ASC, created_at DESC LIMIT %d",
             $client_id,
             max(1, min(100, $limit))
         ), ARRAY_A) ?: [];
+        return array_map(static function (array $row) use ($include_private): array {
+            if (!$include_private) {
+                unset($row['notes'], $row['assigned_to']);
+            }
+            $row['work_type_label'] = self::workTypeLabel((string)($row['task_type'] ?? 'other'));
+            return $row;
+        }, $rows);
+    }
+
+    public static function createMarketingWork(string $client_id, array $data): int|false
+    {
+        if (!class_exists(Task::class)) {
+            return false;
+        }
+        Task::createTable();
+        $title = sanitize_text_field((string)($data['title'] ?? ''));
+        if ($client_id === '' || $title === '') {
+            return false;
+        }
+        $type = sanitize_key((string)($data['work_type'] ?? $data['task_type'] ?? 'other'));
+        $allowed_types = ['seo', 'google_ads', 'website_update', 'gbp', 'content', 'tracking_analytics', 'technical_fix', 'other'];
+        if (!in_array($type, $allowed_types, true)) {
+            $type = 'other';
+        }
+        $status = sanitize_key((string)($data['status'] ?? 'done'));
+        if (!in_array($status, ['todo', 'in_progress', 'done'], true)) {
+            $status = 'done';
+        }
+        $work_date = self::dateField($data['work_date'] ?? $data['due_date'] ?? '') ?: current_time('Y-m-d');
+        $id = Task::create([
+            'client_id'    => $client_id,
+            'title'        => $title,
+            'description'  => sanitize_textarea_field((string)($data['description'] ?? '')),
+            'task_type'    => $type,
+            'priority'     => 'medium',
+            'status'       => $status,
+            'due_date'     => $work_date,
+            'assigned_to'  => sanitize_text_field((string)($data['assigned_to'] ?? '')),
+            'notes'        => sanitize_textarea_field((string)($data['notes'] ?? '')),
+        ]);
+        if ($id && $status === 'done') {
+            Task::update((int)$id, ['status' => 'done']);
+        }
+        return $id ? (int)$id : false;
+    }
+
+    private static function workTypeLabel(string $type): string
+    {
+        return [
+            'seo' => 'SEO',
+            'google_ads' => 'Google Ads',
+            'website_update' => 'Website Update',
+            'gbp' => 'Google Business Profile',
+            'content' => 'Content',
+            'tracking_analytics' => 'Tracking / Analytics',
+            'technical_fix' => 'Technical Fix',
+            'other' => 'Other',
+        ][$type] ?? 'Other';
     }
 
     public static function getReports(string $client_id, int $limit = 12): array
@@ -1028,11 +1131,11 @@ final class ClientPortal
         return $row;
     }
 
-    public static function overview(string $client_id): array
+    public static function overview(string $client_id, bool $include_private = true): array
     {
         $client = Client::getByClientId($client_id) ?: [];
-        $customers = self::getCustomerSummary($client_id);
-        $tasks = self::getTasks($client_id, 50);
+        $customers = self::getCustomerSummary($client_id, $include_private);
+        $tasks = self::getTasks($client_id, 50, $include_private);
         $messages = self::getMessages($client_id, 50);
         $reports = self::getReports($client_id, 12);
         $open_tasks = count(array_filter($tasks, static fn($task) => ($task['status'] ?? '') !== 'done'));
@@ -1066,7 +1169,7 @@ final class ClientPortal
             'open_requests'   => $open_requests,
             'unread_messages' => $unread_messages,
             'latest_report'   => $reports[0] ?? null,
-            'performance'     => self::getMonthlyPerformance($client_id),
+            'performance'     => self::getMonthlyPerformance($client_id, 6, $include_private),
         ];
     }
 
