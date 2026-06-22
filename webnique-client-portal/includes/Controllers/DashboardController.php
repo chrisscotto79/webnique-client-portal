@@ -65,6 +65,12 @@ final class DashboardController
       'permission_callback' => [self::class, 'canUsePortal'],
     ]);
 
+    register_rest_route('wnq/v1', '/portal/work', [
+      'methods'  => 'POST',
+      'callback' => [self::class, 'saveWork'],
+      'permission_callback' => [self::class, 'canUsePortal'],
+    ]);
+
     register_rest_route('wnq/v1', '/portal/messages', [
       'methods'  => 'POST',
       'callback' => [self::class, 'sendMessage'],
@@ -165,16 +171,17 @@ final class DashboardController
     }
     $route = $request->get_route();
     $resource = basename($route);
+    $include_private = Permissions::currentUserCanManagePortal();
     $data = match ($resource) {
-      'overview'  => ClientPortal::overview($client_id),
-      'customers' => ClientPortal::getCustomers($client_id),
+      'overview'  => ClientPortal::overview($client_id, $include_private),
+      'customers' => ClientPortal::getCustomers($client_id, 100, $include_private),
       'messages'  => ClientPortal::getMessages($client_id),
       'tickets'   => ClientPortal::getTickets($client_id),
       'requests'  => ['types' => ClientPortal::requestTypes(), 'items' => ClientPortal::getRequests($client_id)],
-      'work'      => ClientPortal::getTasks($client_id),
+      'work'      => ClientPortal::getTasks($client_id, 100, $include_private),
       'reports'   => ClientPortal::getReports($client_id),
       'profile'   => ClientPortal::publicClient(Client::getByClientId($client_id) ?: []),
-      'performance' => ClientPortal::getMonthlyPerformance($client_id),
+      'performance' => ClientPortal::getMonthlyPerformance($client_id, 6, $include_private),
       'learning'  => ['courses' => ClientPortal::courses(), 'requests' => ClientPortal::getLearningRequests($client_id)],
       'ads'       => ClientPortal::getAdsResource($client_id),
       default     => [],
@@ -212,6 +219,9 @@ final class DashboardController
       ClientPortal::deletePrivateAttachments($body['after_photos']);
       return new \WP_REST_Response(['ok' => false, 'error' => 'No client is linked to this portal user.'], 403);
     }
+    if (!Permissions::currentUserCanManagePortal()) {
+      unset($body['job_cost'], $body['internal_notes']);
+    }
     $submitted_name = trim((string)($body['name'] ?? $body['customer_name'] ?? $body['customerName'] ?? ''));
     $id = ClientPortal::saveCustomer($client_id, $body);
     if (!$id) {
@@ -226,7 +236,24 @@ final class DashboardController
           : ($db_error !== '' ? 'The CRM record could not be saved. Database error: ' . $db_error : 'The CRM record could not be saved. Please refresh and try again.'),
       ], 400);
     }
-    return new \WP_REST_Response(['ok' => true, 'id' => $id, 'data' => ClientPortal::getCustomer((int)$id, $client_id)], 200);
+    $saved_record = ClientPortal::getCustomer((int)$id, $client_id);
+    if ($saved_record && !Permissions::currentUserCanManagePortal()) {
+      $saved_record = ClientPortal::publicCustomerRecord($saved_record);
+    }
+    return new \WP_REST_Response(['ok' => true, 'id' => $id, 'data' => $saved_record], 200);
+  }
+
+  public static function saveWork(\WP_REST_Request $request): \WP_REST_Response
+  {
+    if (!Permissions::currentUserCanManagePortal()) {
+      return new \WP_REST_Response(['ok' => false, 'error' => 'Only admins can add marketing work history.'], 403);
+    }
+    $client_id = self::requestClientId($request);
+    $body = self::requestBody($request);
+    $id = $client_id !== '' ? ClientPortal::createMarketingWork($client_id, $body) : false;
+    return $id
+      ? new \WP_REST_Response(['ok' => true, 'id' => $id, 'data' => ClientPortal::getTasks($client_id, 100, true)], 200)
+      : new \WP_REST_Response(['ok' => false, 'error' => 'Add a title for the marketing work item.'], 400);
   }
 
   public static function sendMessage(\WP_REST_Request $request): \WP_REST_Response
@@ -355,7 +382,8 @@ final class DashboardController
       'lost_reason', 'subject', 'message', 'category', 'priority', 'ticket_status',
       'request_type', 'title', 'details', 'request_data', 'customer_id',
       'manager_customer_id', 'service_account_email', 'api_key', 'developer_token',
-      'oauth_client_id', 'oauth_client_secret', 'refresh_token',
+      'oauth_client_id', 'oauth_client_secret', 'refresh_token', 'work_type',
+      'work_date', 'task_type', 'assigned_to',
     ];
   }
 
