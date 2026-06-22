@@ -9,9 +9,9 @@
   const tabs = [
     ["overview", "Overview"], ["leads", "Leads"], ["jobs", "Jobs"], ["calendar", "Calendar"],
     ["followups", "Follow-ups"], ["crm-reports", "Reports"], ["marketing-work", "Marketing Work"],
-    ["ads", "Ads"], ["billing", "Billing"], ["settings", "Settings"]
+    ["ads", "Ads"], ["billing", "Billing"], ["learning", "Learning Center"], ["settings", "Settings"]
   ];
-  const crmRoutes = { overview: "dashboard", leads: "leads", jobs: "jobs", calendar: "calendar", followups: "followups", "crm-reports": "reports", "marketing-work": "marketing-work", settings: "settings" };
+  const crmRoutes = { overview: "dashboard", leads: "leads", jobs: "jobs", calendar: "calendar", followups: "followups", "marketing-work": "marketing-work", settings: "settings" };
   const statusLabels = { new: "New Lead", contacted: "Contacted", quoted: "Quoted", scheduled: "Scheduled", in_progress: "In Progress", completed: "Completed", lost: "Lost / Canceled", canceled: "Lost / Canceled" };
   const statusOptions = [["new", "New Lead"], ["contacted", "Contacted"], ["quoted", "Quoted"], ["scheduled", "Scheduled"], ["in_progress", "In Progress"], ["completed", "Completed"], ["lost", "Lost / Canceled"], ["canceled", "Canceled"]];
   const leadSourceOptions = ["Google Ads", "Google Business Profile", "Organic Search", "Website Form", "Phone Call", "Referral", "Facebook", "Instagram", "Other"];
@@ -27,7 +27,7 @@
   };
   const attr = (value) => esc(JSON.stringify(value));
   const activeLabel = (key) => tabs.find(([tab]) => tab === key)?.[1] || "Dashboard";
-  const navIcon = (key) => ({ overview: "grid", leads: "users", jobs: "briefcase", calendar: "calendar", followups: "check", "crm-reports": "chart", "marketing-work": "megaphone", ads: "target", billing: "receipt", settings: "gear" }[key] || "dot");
+  const navIcon = (key) => ({ overview: "grid", leads: "users", jobs: "briefcase", calendar: "calendar", followups: "check", "crm-reports": "chart", "marketing-work": "megaphone", ads: "target", billing: "receipt", learning: "book", settings: "gear" }[key] || "dot");
   const api = async (path, options = {}) => {
     const requestUrl = new URL(`${cfg.restUrl.replace(/\/$/, "")}${path}`);
     if (cfg.isAdmin && state.clientId) requestUrl.searchParams.set("client_id", state.clientId);
@@ -117,7 +117,7 @@
         await customers(view, refresh, { forceTab: crmRoutes[key], hideSubnav: true });
         return;
       }
-      const renderers = { reports, customers, ads, messages, requests, billing, learning, profile, settings: profile, "seo-reports": reports };
+      const renderers = { reports, "crm-reports": reports, customers, ads, messages, requests, billing, learning, profile, settings: profile, "seo-reports": reports };
       await (renderers[key] || ((target, reload) => customers(target, reload, { forceTab: "dashboard", hideSubnav: true })))(view, refresh);
     } catch (error) {
       view.innerHTML = `<div class="wnq-error"><strong>Unable to load this section.</strong><p>${esc(error.message)}</p></div>`;
@@ -146,7 +146,7 @@
       <section class="wnq-panel"><div class="wnq-panel-head"><h2>${canSeePrivate ? "Jobs & Profit by Month" : "Revenue & Jobs by Month"}</h2><span class="${Number(canSeePrivate ? current.profit : current.revenue) >= 0 ? "wnq-positive" : "wnq-negative"}">${canSeePrivate ? `${money(current.profit || 0)} net this month` : `${money(current.revenue || 0)} tracked this month`}</span></div>${performanceChart(data.performance)}</section>
       <section class="wnq-grid-2">
         <div class="wnq-panel"><div class="wnq-panel-head"><h2>Action Items</h2></div>${actions.length ? actions.map((item) => `<button class="wnq-action" data-go="${esc(item.type)}"><strong>${esc(item.label)}</strong><span>Review</span></button>`).join("") : empty("Nothing needs your attention.")}</div>
-        <div class="wnq-panel"><div class="wnq-panel-head"><h2>Latest Report</h2></div>${data.latest_report ? `<strong>${esc(data.latest_report.report_type || "Monthly")} report</strong><p>${date(data.latest_report.period_start)} through ${date(data.latest_report.period_end)}</p><button class="wnq-button" data-go="reports">View reports</button>` : empty("Your first report will appear here.")}</div>
+        <div class="wnq-panel"><div class="wnq-panel-head"><h2>Latest Report</h2></div>${data.latest_report ? `<strong>${esc(data.latest_report.report_type || "Monthly")} report</strong><p>${date(data.latest_report.period_start)} through ${date(data.latest_report.period_end)}</p><button class="wnq-button" data-go="crm-reports">View reports</button>` : empty("Your first report will appear here.")}</div>
       </section>`;
     view.querySelectorAll("[data-go]").forEach((button) => button.addEventListener("click", () => show(button.dataset.go)));
   }
@@ -174,9 +174,9 @@
 
   async function reports(view, refresh) {
     const rows = await load("reports", refresh);
-    view.innerHTML = `${heading("Results", "Reports", "A simple archive of your marketing reports.")}
+    view.innerHTML = `${heading("Results", "Reports", "Review your SEO OS report archive, open the full report, or download the PDF.")}
       <div class="wnq-panel"><div class="wnq-list-head"><span>Report</span><span>Period</span><span>Status</span></div>
-      ${rows.length ? rows.map((row) => `<div class="wnq-list-row"><strong>${esc(row.report_type || "Monthly")} Report</strong><span>${date(row.period_start)} - ${date(row.period_end)}</span><span>${status(row.status === "ready" || row.status === "sent" ? "green" : "yellow", row.status || "Draft")} <a class="wnq-link" href="${esc(row.view_url)}" target="_blank" rel="noopener">View Full Report</a> <a class="wnq-link" href="${esc(row.pdf_url)}">Download PDF</a></span></div>`).join("") : empty("No SEO OS reports are available yet.")}</div>`;
+      ${rows.length ? rows.map((row) => `<div class="wnq-list-row"><strong>${esc(row.report_type || "Monthly")} Report</strong><span>${date(row.period_start)} - ${date(row.period_end)}</span><span>${status(row.status === "ready" || row.status === "sent" ? "green" : "yellow", row.status || "Draft")} ${row.view_url ? `<a class="wnq-link" href="${esc(row.view_url)}" target="_blank" rel="noopener">View Full Report</a>` : ""} ${row.pdf_url ? `<a class="wnq-link" href="${esc(row.pdf_url)}">Download PDF</a>` : ""}</span></div>`).join("") : empty("No SEO OS reports are available yet.")}</div>`;
   }
 
   async function customers(view, refresh, options = {}) {
@@ -280,6 +280,10 @@
       show(state.active);
     });
     view.querySelectorAll("[data-crm-jump]").forEach((button) => button.addEventListener("click", () => {
+      if (button.dataset.crmJump === "reports") {
+        show("crm-reports");
+        return;
+      }
       const targetRoute = Object.entries(crmRoutes).find(([, panel]) => panel === button.dataset.crmJump)?.[0] || "overview";
       show(targetRoute);
     }));
@@ -569,34 +573,8 @@
   const moneyField = (name, label, value = "") => `<label class="wnq-money-field"><span>${esc(label)}</span><div><b>$</b><input type="number" name="${esc(name)}" value="${esc(value)}" min="0" step="0.01" inputmode="decimal"></div></label>`;
 
   async function ads(view, refresh) {
-    const data = await load("ads", refresh);
-    view.innerHTML = `${heading("Google Ads", "Ads", "Read-only campaign visibility for spend, clicks, conversions, and lead quality.")}
-      <div class="wnq-health">
-        <div><span>API Status</span>${status(data.configured ? "green" : "yellow", data.configured ? "Connected" : "Setup needed")}</div>
-        <div><span>Access Mode</span><strong>${esc(humanize(data.mode || "read_only"))}</strong></div>
-        <div><span>Access Level</span><strong>${esc(humanize(data.access_level || "test"))}</strong></div>
-      </div>
-      <div class="wnq-metrics">${metric("Spend", money(data.summary?.spend || 0), "Selected period")}${metric("Clicks", data.summary?.clicks || 0, "Ad clicks")}${metric("Conversions", data.summary?.conversions || 0, "Tracked leads")}${metric("Cost / Conversion", money(data.summary?.cost_per_conversion || 0), "Spend per lead")}</div>
-      <section class="wnq-panel"><div class="wnq-panel-head"><h2>Account Match</h2>${status(data.customer_id ? "green" : "yellow", data.customer_id ? "Matched" : "Waiting")}</div><p><strong>${esc(data.matched_account_name || "No Ads account matched yet")}</strong>${data.customer_id ? ` · ${esc(data.customer_id)}` : ""}${data.match_score ? ` · ${esc(data.match_score)}% match` : ""}</p>${adsDiagnostics(data)}</section>
-      ${cfg.isAdmin ? adsSettingsForm(data) : adsClientNotice(data)}
-      <section class="wnq-panel wnq-table-wrap"><div class="wnq-panel-head"><h2>Campaigns</h2></div><table><thead><tr><th>Campaign</th><th>Status</th><th>Spend</th><th>Clicks</th><th>Impr.</th><th>CTR</th><th>Conversions</th></tr></thead><tbody>${data.campaigns?.length ? data.campaigns.map((row) => `<tr><td><strong>${esc(row.name)}</strong></td><td>${status(row.status === "enabled" ? "green" : "yellow", row.status)}</td><td>${money(row.spend)}</td><td>${esc(row.clicks)}</td><td>${esc(row.impressions)}</td><td>${esc(Math.round(Number(row.ctr || 0) * 10000) / 100)}%</td><td>${esc(row.conversions)}</td></tr>`).join("") : `<tr><td colspan="7">${empty("Google Ads reporting is ready for setup. No campaign data is being pulled yet.")}</td></tr>`}</tbody></table></section>`;
-    const form = view.querySelector("#wnq-ads-settings");
-    if (form) {
-      form.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const submit = form.querySelector('[type="submit"]');
-        if (submit) { submit.disabled = true; submit.textContent = "Saving..."; }
-        try {
-          const result = await api("/portal/ads-settings", { method: "POST", body: JSON.stringify(formObject(form)) });
-          state.cache.ads = result;
-          sessionStorage.setItem("wnqAdsNotice", "Ads settings saved. Refreshing account match...");
-          show("ads", true);
-        } catch (error) {
-          formStatus(form, "red", `Ads settings were not saved. ${error.message}`);
-          if (submit) { submit.disabled = false; submit.textContent = "Save Ads Setup"; }
-        }
-      });
-    }
+    view.innerHTML = `${heading("Google Ads", "Ads", "Google Ads reporting is coming soon.")}
+      <section class="wnq-panel wnq-coming-soon"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">Coming Soon</span><h2>Ads reporting is temporarily paused</h2></div>${status("yellow", "Coming soon")}</div><p class="wnq-note">We’ll bring this tab back when the Google Ads connection is ready. For now, campaign reporting will stay out of the client portal so the dashboard stays clean.</p></section>`;
   }
 
   const adsDiagnostics = (data) => {
