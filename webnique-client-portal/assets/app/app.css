@@ -54,3 +54,16 @@
 .wnq-coming-soon{max-width:760px}.wnq-coming-soon p{font-size:15px;line-height:1.6}
 @media(max-width:980px){.wnq-crm-controls.is-focused,.wnq-settings-grid{grid-template-columns:1fr 1fr}.wnq-crm-head.is-simple{align-items:start}.wnq-job-sections{grid-template-columns:1fr}}
 @media(max-width:620px){.wnq-crm-controls.is-focused,.wnq-crm-controls.is-compact,.wnq-settings-grid{grid-template-columns:1fr}.wnq-crm-head.is-simple h1{font-size:31px}.wnq-crm-table.is-fit{min-width:0!important}}
+
+.wnq-main .wnq-kpi-card{position:relative;grid-template-columns:1fr;gap:8px;overflow:hidden;padding:20px 18px 18px}
+.wnq-main .wnq-kpi-card:before{content:"";position:absolute;top:14px;left:18px;width:34px;height:3px;border-radius:999px;background:linear-gradient(90deg,#d7b846,#8c700b)}
+.wnq-main .wnq-kpi-icon{display:none!important}
+.wnq-main .wnq-kpi-card small{min-height:30px;margin-top:12px}
+.wnq-main .wnq-kpi-card strong{margin:10px 0 6px;font-size:31px}
+.wnq-main .wnq-kpi-card em{line-height:1.35}
+.wnq-main .wnq-donut{display:flex;flex-direction:column;align-items:center;justify-content:center}
+.wnq-main .wnq-donut strong{margin:0;font-size:32px;line-height:1;transform:none}
+.wnq-main .wnq-donut span{margin-top:5px;line-height:1.2}
+.wnq-main .wnq-button:hover,.wnq-main .wnq-link:hover,.wnq-main a.wnq-link:hover{color:var(--ink)!important}
+.wnq-main .wnq-button:hover{background:#e2c658;border-color:#8c700b;filter:none}
+.wnq-main .wnq-button.is-secondary:hover{background:#fff8db}
