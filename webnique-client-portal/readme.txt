@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.33
+Stable tag: 2.4.34
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,12 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.34 - SEO and CRM Report Split
+
+- Added a dedicated CRM Reports sidebar section with Leads, Jobs, Calendar, and Follow-ups report panels
+- Kept the client Monthly SEO Reports archive separate from CRM reports
+- Normalized SEO report titles to "Monthly Report" and simplified period display to month-only labels
+
 2.4.33 - CRM Visual Polish
 
 - Simplified the CRM KPI cards by removing the abbreviation circles and tightening the spacing

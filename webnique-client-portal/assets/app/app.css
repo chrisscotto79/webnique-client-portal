@@ -67,3 +67,10 @@
 .wnq-main .wnq-button:hover,.wnq-main .wnq-link:hover,.wnq-main a.wnq-link:hover{color:var(--ink)!important}
 .wnq-main .wnq-button:hover{background:#e2c658;border-color:#8c700b;filter:none}
 .wnq-main .wnq-button.is-secondary:hover{background:#fff8db}
+.wnq-report-nav{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 18px;padding:10px;border:1px solid rgba(187,180,160,.72);border-radius:999px;background:rgba(255,255,255,.62);box-shadow:var(--shadow-soft);width:max-content;max-width:100%}
+.wnq-report-nav a{display:inline-flex;align-items:center;min-height:34px;padding:8px 13px;border-radius:999px;color:#725b08;text-decoration:none;font-weight:900}
+.wnq-report-nav a:hover{background:#e2c658;color:var(--ink)}
+.wnq-crm-report-section{margin:0 0 18px}
+.wnq-crm-report-section>.wnq-metrics{margin:0 0 16px}
+.wnq-crm-report-table{margin-top:16px}
+.wnq-crm-report-table .wnq-panel-head{padding:0 0 10px}
