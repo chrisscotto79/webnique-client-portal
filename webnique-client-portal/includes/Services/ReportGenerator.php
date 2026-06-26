@@ -2033,7 +2033,7 @@ final class ReportGenerator
         }
 
         // Fallback non-AI summary
-        return '<p>This monthly report summarizes GA4 traffic and Google Search Console performance for ' .
+        return '<p>This Monthly Report summarizes GA4 traffic and Google Search Console performance for ' .
                esc_html($client['company'] ?? $client['name'] ?? '') . ' during ' .
                esc_html($period['label'] ?? '') . '.</p>';
     }

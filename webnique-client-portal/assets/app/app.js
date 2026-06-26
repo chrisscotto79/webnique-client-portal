@@ -8,26 +8,36 @@
   const canSeePrivate = !!cfg.isAdmin;
   const tabs = [
     ["overview", "Overview"], ["leads", "Leads"], ["jobs", "Jobs"], ["calendar", "Calendar"],
-    ["followups", "Follow-ups"], ["crm-reports", "Reports"], ["marketing-work", "Marketing Work"],
+    ["followups", "Follow-ups"], ["reports", "Reports"], ["crm-reports", "CRM Reports"], ["marketing-work", "Marketing Work"],
     ["ads", "Ads"], ["billing", "Billing"], ["learning", "Learning Center"], ["settings", "Settings"]
   ];
-  const crmRoutes = { overview: "dashboard", leads: "leads", jobs: "jobs", calendar: "calendar", followups: "followups", "marketing-work": "marketing-work", settings: "settings" };
+  const crmRoutes = { overview: "dashboard", leads: "leads", jobs: "jobs", calendar: "calendar", followups: "followups", "crm-reports": "reports", "marketing-work": "marketing-work", settings: "settings" };
   const statusLabels = { new: "New Lead", contacted: "Contacted", quoted: "Quoted", scheduled: "Scheduled", in_progress: "In Progress", completed: "Completed", lost: "Lost / Canceled", canceled: "Lost / Canceled" };
   const statusOptions = [["new", "New Lead"], ["contacted", "Contacted"], ["quoted", "Quoted"], ["scheduled", "Scheduled"], ["in_progress", "In Progress"], ["completed", "Completed"], ["lost", "Lost / Canceled"], ["canceled", "Canceled"]];
   const leadSourceOptions = ["Google Ads", "Google Business Profile", "Organic Search", "Website Form", "Phone Call", "Referral", "Facebook", "Instagram", "Other"];
   const workTypeOptions = [["seo", "SEO"], ["google_ads", "Google Ads"], ["website_update", "Website Update"], ["gbp", "Google Business Profile"], ["content", "Content"], ["tracking_analytics", "Tracking / Analytics"], ["technical_fix", "Technical Fix"], ["other", "Other"]];
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
   const money = (value) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(value || 0));
-  const date = (value) => {
-    if (!value) return "Not set";
+  const parseDateValue = (value) => {
+    if (!value) return null;
     const raw = String(value);
     const normalized = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00:00` : raw.replace(" ", "T");
     const parsed = new Date(normalized);
-    return Number.isNaN(parsed.getTime()) ? "Not set" : parsed.toLocaleDateString();
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
   };
+  const date = (value) => parseDateValue(value)?.toLocaleDateString() || "Not set";
+  const reportMonth = (start, end = "") => parseDateValue(start || end)?.toLocaleString(undefined, { month: "long" }) || "Not set";
+  const titleCase = (value) => humanize(value).toLowerCase().replace(/\b[a-z]/g, (char) => char.toUpperCase());
+  const reportTypeLabel = (value) => {
+    const key = String(value || "monthly").toLowerCase().replaceAll("_", " ").trim();
+    if (!key || ["monthly", "current month", "previous month"].includes(key)) return "Monthly";
+    if (key === "last 30 days") return "Last 30 Days";
+    return titleCase(key);
+  };
+  const reportTitle = (row = {}) => `${reportTypeLabel(row.report_type)} Report`;
   const attr = (value) => esc(JSON.stringify(value));
   const activeLabel = (key) => tabs.find(([tab]) => tab === key)?.[1] || "Dashboard";
-  const navIcon = (key) => ({ overview: "grid", leads: "users", jobs: "briefcase", calendar: "calendar", followups: "check", "crm-reports": "chart", "marketing-work": "megaphone", ads: "target", billing: "receipt", learning: "book", settings: "gear" }[key] || "dot");
+  const navIcon = (key) => ({ overview: "grid", leads: "users", jobs: "briefcase", calendar: "calendar", followups: "check", reports: "chart", "crm-reports": "chart", "marketing-work": "megaphone", ads: "target", billing: "receipt", learning: "book", settings: "gear" }[key] || "dot");
   const api = async (path, options = {}) => {
     const requestUrl = new URL(`${cfg.restUrl.replace(/\/$/, "")}${path}`);
     if (cfg.isAdmin && state.clientId) requestUrl.searchParams.set("client_id", state.clientId);
@@ -117,7 +127,7 @@
         await customers(view, refresh, { forceTab: crmRoutes[key], hideSubnav: true });
         return;
       }
-      const renderers = { reports, "crm-reports": reports, customers, ads, messages, requests, billing, learning, profile, settings: profile, "seo-reports": reports };
+      const renderers = { reports, customers, ads, messages, requests, billing, learning, profile, settings: profile, "seo-reports": reports };
       await (renderers[key] || ((target, reload) => customers(target, reload, { forceTab: "dashboard", hideSubnav: true })))(view, refresh);
     } catch (error) {
       view.innerHTML = `<div class="wnq-error"><strong>Unable to load this section.</strong><p>${esc(error.message)}</p></div>`;
@@ -146,7 +156,7 @@
       <section class="wnq-panel"><div class="wnq-panel-head"><h2>${canSeePrivate ? "Jobs & Profit by Month" : "Revenue & Jobs by Month"}</h2><span class="${Number(canSeePrivate ? current.profit : current.revenue) >= 0 ? "wnq-positive" : "wnq-negative"}">${canSeePrivate ? `${money(current.profit || 0)} net this month` : `${money(current.revenue || 0)} tracked this month`}</span></div>${performanceChart(data.performance)}</section>
       <section class="wnq-grid-2">
         <div class="wnq-panel"><div class="wnq-panel-head"><h2>Action Items</h2></div>${actions.length ? actions.map((item) => `<button class="wnq-action" data-go="${esc(item.type)}"><strong>${esc(item.label)}</strong><span>Review</span></button>`).join("") : empty("Nothing needs your attention.")}</div>
-        <div class="wnq-panel"><div class="wnq-panel-head"><h2>Latest Report</h2></div>${data.latest_report ? `<strong>${esc(data.latest_report.report_type || "Monthly")} report</strong><p>${date(data.latest_report.period_start)} through ${date(data.latest_report.period_end)}</p><button class="wnq-button" data-go="crm-reports">View reports</button>` : empty("Your first report will appear here.")}</div>
+        <div class="wnq-panel"><div class="wnq-panel-head"><h2>Latest Report</h2></div>${data.latest_report ? `<strong>${esc(reportTitle(data.latest_report))}</strong><p>${reportMonth(data.latest_report.period_start, data.latest_report.period_end)}</p><button class="wnq-button" data-go="reports">View reports</button>` : empty("Your first report will appear here.")}</div>
       </section>`;
     view.querySelectorAll("[data-go]").forEach((button) => button.addEventListener("click", () => show(button.dataset.go)));
   }
@@ -174,9 +184,9 @@
 
   async function reports(view, refresh) {
     const rows = await load("reports", refresh);
-    view.innerHTML = `${heading("Results", "Reports", "Review your SEO OS report archive, open the full report, or download the PDF.")}
+    view.innerHTML = `${heading("Results", "Monthly SEO Reports", "Review the SEO OS report archive, open the full report, or download the PDF. CRM reports live in the separate CRM Reports section.")}
       <div class="wnq-panel"><div class="wnq-list-head"><span>Report</span><span>Period</span><span>Status</span></div>
-      ${rows.length ? rows.map((row) => `<div class="wnq-list-row"><strong>${esc(row.report_type || "Monthly")} Report</strong><span>${date(row.period_start)} - ${date(row.period_end)}</span><span>${status(row.status === "ready" || row.status === "sent" ? "green" : "yellow", row.status || "Draft")} ${row.view_url ? `<a class="wnq-link" href="${esc(row.view_url)}" target="_blank" rel="noopener">View Full Report</a>` : ""} ${row.pdf_url ? `<a class="wnq-link" href="${esc(row.pdf_url)}">Download PDF</a>` : ""}</span></div>`).join("") : empty("No SEO OS reports are available yet.")}</div>`;
+      ${rows.length ? rows.map((row) => `<div class="wnq-list-row"><strong>${esc(reportTitle(row))}</strong><span>${reportMonth(row.period_start, row.period_end)}</span><span>${status(row.status === "ready" || row.status === "sent" ? "green" : "yellow", row.status || "Draft")} ${row.view_url ? `<a class="wnq-link" href="${esc(row.view_url)}" target="_blank" rel="noopener">View Full Report</a>` : ""} ${row.pdf_url ? `<a class="wnq-link" href="${esc(row.pdf_url)}">Download PDF</a>` : ""}</span></div>`).join("") : empty("No SEO OS reports are available yet.")}</div>`;
   }
 
   async function customers(view, refresh, options = {}) {
@@ -516,7 +526,49 @@
     }, {});
     return `<div class="wnq-panel"><div class="wnq-panel-head"><h2>Calendar & Scheduling</h2></div>${Object.keys(grouped).length ? Object.entries(grouped).map(([day, dayItems]) => `<section class="wnq-calendar-day"><h3>${date(day)}</h3>${dayItems.map((row) => `<article class="wnq-schedule-item"><time>${esc(row.calendar_type === "job" ? (row.job_time || "Time TBD") : "Follow-up")}</time><div><strong>${esc(row.name)}</strong><span>${esc(row.service || (row.calendar_type === "job" ? "Job" : "Customer touchpoint"))} · ${esc(row.job_address || row.address || "Address not set")}</span></div>${crmStatus(row.status)}</article>`).join("")}</section>`).join("") : empty("No upcoming jobs are scheduled yet. Scheduled jobs will appear here.")}</div>`;
   };
-  const crmReports = ({ rows, totals, avgJob, closeRate, topServices, topCustomers, topSources, completed, lost, performance }) => `<div class="wnq-grid-2"><section class="wnq-panel"><div class="wnq-panel-head"><h2>Top Services</h2></div>${topServices.length ? topServices.map((item) => `<div class="wnq-work-item"><strong>${esc(item.label)}</strong><span>${money(item.total)} · ${esc(item.count)} records</span></div>`).join("") : empty("No service data yet.")}</section><section class="wnq-panel"><div class="wnq-panel-head"><h2>Lead Sources</h2></div>${topSources.length ? sourceBars(topSources) : empty("No lead source data yet.")}</section></div><div class="wnq-grid-2"><section class="wnq-panel"><div class="wnq-panel-head"><h2>Revenue by Month</h2></div>${performanceChart(performance)}</section><section class="wnq-panel"><div class="wnq-panel-head"><h2>Top Customers</h2></div>${topCustomers.length ? topCustomers.map((item) => `<div class="wnq-work-item"><strong>${esc(item.label)}</strong><span>${money(item.total)} · ${esc(item.count)} records</span></div>`).join("") : empty("No customer data yet.")}</section></div><div class="wnq-metrics">${metric("Records", rows.length, "Visible entries")}${metric("Completed Jobs", completed.length, "Closed as completed")}${metric("Lost / Canceled", lost.length, "Not moving forward")}${metric("Average Job Value", money(avgJob), "Average value")}${metric("Close Rate", `${closeRate}%`, "Completed vs lost")}${canSeePrivate ? metric("Net Tracked Profit", money(totals.revenue - totals.cost), "Visible records", totals.revenue - totals.cost >= 0 ? "positive" : "negative") : ""}</div>`;
+  const crmReports = (ctx) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const openLeads = ctx.leadRows.filter((row) => ["new", "contacted", "quoted"].includes(row.status));
+    const upcomingFollowups = ctx.visibleRows.filter((row) => row.follow_up_date && row.follow_up_date >= today && !["completed", "lost", "canceled"].includes(row.status));
+    const calendarRows = [
+      ...ctx.scheduledJobs.map((row) => ({ ...row, report_type: "Job", report_date: row.job_date })),
+      ...upcomingFollowups.map((row) => ({ ...row, report_type: "Follow-up", report_date: row.follow_up_date })),
+      ...ctx.overdue.map((row) => ({ ...row, report_type: "Overdue Follow-up", report_date: row.follow_up_date })),
+    ].filter((row) => row.report_date).sort((a, b) => String(a.report_date).localeCompare(String(b.report_date)));
+    const reportProfit = ctx.totals.revenue - ctx.totals.cost;
+    return `<nav class="wnq-report-nav" aria-label="CRM report sections"><a href="#wnq-crm-report-leads">Leads</a><a href="#wnq-crm-report-jobs">Jobs</a><a href="#wnq-crm-report-calendar">Calendar</a><a href="#wnq-crm-report-followups">Follow-ups</a></nav>
+      <section class="wnq-panel wnq-crm-report-section" id="wnq-crm-report-leads"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">CRM Report</span><h2>Leads</h2><small>Lead records, sources, estimates, and pipeline movement.</small></div></div><div class="wnq-metrics">${metric("Lead Records", ctx.leadRows.length, "Visible leads")}${metric("Open Leads", openLeads.length, "Need follow-up")}${metric("Lost Leads", ctx.lost.length, "Not moving forward")}${metric("Close Rate", `${ctx.closeRate}%`, "Completed vs lost")}</div>${leadSourceTable(ctx.rows, ctx.topSources)}${crmReportTable("Lead Detail", [
+        ["Customer", (row) => `<strong>${esc(row.name)}</strong>${crmContact(row)}`],
+        ["Source", (row) => esc(row.lead_source || "Not set")],
+        ["Status", (row) => crmStatus(row.status)],
+        ["Estimate", (row) => money(row.estimated_value)],
+        ["Next Follow-up", (row) => date(row.follow_up_date || row.reminder_date)],
+      ], ctx.leadRows, "No lead records are available for this report.")}</section>
+      <section class="wnq-panel wnq-crm-report-section" id="wnq-crm-report-jobs"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">CRM Report</span><h2>Jobs</h2><small>Scheduled, active, completed, canceled, revenue, and profit tracking.</small></div></div><div class="wnq-metrics">${metric("Job Records", ctx.jobs.length, "Visible jobs")}${metric("Upcoming Jobs", ctx.upcoming.length, "Scheduled ahead")}${metric("Completed Jobs", ctx.completed.length, "Won or closed")}${metric("Revenue", money(ctx.totals.revenue), "Visible records")}${canSeePrivate ? metric("Profit", money(reportProfit), "Revenue minus costs", reportProfit >= 0 ? "positive" : "negative") : ""}${metric("Average Job Value", money(ctx.avgJob), "Revenue per job")}</div>${crmReportTable("Job Detail", [
+        ["Customer", (row) => `<strong>${esc(row.name)}</strong>${crmContact(row)}`],
+        ["Service", (row) => esc(row.service || "Not set")],
+        ["Status", (row) => crmStatus(row.status)],
+        ["Scheduled", (row) => date(row.job_date)],
+        ["Revenue", (row) => `<strong>${money(row.final_value || row.estimated_value)}</strong>`],
+        ["Profit", (row) => canSeePrivate ? trend(Number(row.final_value || 0) - Number(row.job_cost || 0)) : "Private"],
+      ], ctx.jobs, "No job records are available for this report.")}</section>
+      <section class="wnq-panel wnq-crm-report-section" id="wnq-crm-report-calendar"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">CRM Report</span><h2>Calendar</h2><small>Scheduled jobs and follow-up dates from CRM records.</small></div></div><div class="wnq-metrics">${metric("Calendar Items", calendarRows.length, "Jobs and follow-ups")}${metric("Scheduled Jobs", ctx.scheduledJobs.length, "With job dates")}${metric("Upcoming Jobs", ctx.upcoming.length, "Next scheduled work")}${metric("Overdue Follow-ups", ctx.overdue.length, "Require action", ctx.overdue.length ? "negative" : "")}</div>${crmReportTable("Calendar Detail", [
+        ["Date", (row) => date(row.report_date)],
+        ["Type", (row) => esc(row.report_type)],
+        ["Customer", (row) => `<strong>${esc(row.name)}</strong>`],
+        ["Service", (row) => esc(row.service || "Not set")],
+        ["Address", (row) => esc(row.job_address || row.address || "Not set")],
+        ["Status", (row) => crmStatus(row.status)],
+      ], calendarRows, "No scheduled jobs or follow-ups are available for this report.")}</section>
+      <section class="wnq-panel wnq-crm-report-section" id="wnq-crm-report-followups"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">CRM Report</span><h2>Follow-ups</h2><small>Overdue and upcoming customer touchpoints.</small></div></div><div class="wnq-metrics">${metric("Overdue", ctx.overdue.length, "Past due", ctx.overdue.length ? "negative" : "")}${metric("Upcoming", upcomingFollowups.length, "Scheduled follow-ups")}${metric("Open Leads", openLeads.length, "Need nurturing")}${metric("Completed Jobs", ctx.completed.length, "Closed records")}</div>${crmReportTable("Follow-up Detail", [
+        ["Customer", (row) => `<strong>${esc(row.name)}</strong>${crmContact(row)}`],
+        ["Service", (row) => esc(row.service || "Not set")],
+        ["Status", (row) => crmStatus(row.status)],
+        ["Follow-up Date", (row) => date(row.follow_up_date)],
+        ["Notes", (row) => esc(row.notes || "No notes saved")],
+      ], [...ctx.overdue, ...upcomingFollowups], "No follow-ups are available for this report.")}</section>`;
+  };
+  const crmReportTable = (title, columns, rows, fallback) => `<div class="wnq-table-wrap wnq-crm-table-panel wnq-crm-report-table"><div class="wnq-panel-head"><div><h2>${esc(title)}</h2><small>${esc(rows.length)} record${rows.length === 1 ? "" : "s"}</small></div></div><table class="wnq-crm-table is-fit"><thead><tr>${columns.map(([label]) => `<th>${esc(label)}</th>`).join("")}</tr></thead><tbody>${rows.length ? rows.slice(0, 25).map((row) => `<tr>${columns.map(([label, render]) => `<td data-label="${esc(label)}">${render(row)}</td>`).join("")}</tr>`).join("") : `<tr><td colspan="${esc(columns.length)}">${empty(fallback)}</td></tr>`}</tbody></table></div>`;
   const sourceBars = (items) => {
     const max = Math.max(1, ...items.map((item) => Number(item.count || 0)));
     return `<div class="wnq-source-list">${items.map((item) => `<div class="wnq-source-row"><span>${esc(item.label)}</span><strong>${esc(item.count)}</strong><i style="width:${Math.max(8, Math.round((Number(item.count || 0) / max) * 100))}%"></i></div>`).join("")}</div>`;
