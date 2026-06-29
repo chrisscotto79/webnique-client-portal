@@ -151,6 +151,55 @@ final class BlogScheduler
         );
     }
 
+    /**
+     * Atomically claim a pending/failed post before generation or publishing.
+     * This prevents a manual request and WP-Cron from processing the same row.
+     */
+    public static function claimPost(int $id, string $next_status): bool
+    {
+        global $wpdb;
+
+        if (!in_array($next_status, ['generating', 'publishing'], true)) {
+            return false;
+        }
+
+        $updated = $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$wpdb->prefix}wnq_blog_schedule
+                 SET status = %s, error_message = NULL, updated_at = %s
+                 WHERE id = %d AND status IN ('pending', 'failed')",
+                $next_status,
+                current_time('mysql'),
+                $id
+            )
+        );
+
+        return $updated === 1;
+    }
+
+    /**
+     * Return interrupted jobs to the queue after their processing lease expires.
+     */
+    public static function recoverStalePosts(int $stale_after_minutes = 30): int
+    {
+        global $wpdb;
+
+        $minutes = max(10, $stale_after_minutes);
+        $cutoff = date('Y-m-d H:i:s', current_time('timestamp') - ($minutes * MINUTE_IN_SECONDS));
+
+        return (int)$wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$wpdb->prefix}wnq_blog_schedule
+                 SET status = 'pending',
+                     error_message = 'Previous publishing attempt timed out and was safely returned to the queue.',
+                     updated_at = %s
+                 WHERE status IN ('generating', 'publishing') AND updated_at < %s",
+                current_time('mysql'),
+                $cutoff
+            )
+        );
+    }
+
     public static function deletePost(int $id): void
     {
         global $wpdb;
@@ -231,16 +280,18 @@ final class BlogScheduler
     /**
      * Get posts that are due today or overdue and still pending.
      */
-    public static function getDuePosts(): array
+    public static function getDuePosts(int $limit = 10): array
     {
         global $wpdb;
+        $limit = max(1, min(25, $limit));
         return $wpdb->get_results(
             $wpdb->prepare(
                 "SELECT * FROM {$wpdb->prefix}wnq_blog_schedule
                  WHERE status = 'pending' AND scheduled_date <= %s
                  ORDER BY scheduled_date ASC
-                 LIMIT 10",
-                date('Y-m-d')
+                 LIMIT %d",
+                current_time('Y-m-d'),
+                $limit
             ),
             ARRAY_A
         ) ?: [];

@@ -36,6 +36,7 @@ final class CronScheduler
         add_action('wnq_seo_nightly_audit',       [self::class, 'runNightlyAudit']);
         add_action('wnq_seo_monthly_reports',     [self::class, 'generateMonthlyReports']);
         add_action('wnq_blog_publisher',          [self::class, 'runBlogPublisher']);
+        add_action('wnq_blog_publisher_worker',   [self::class, 'runBlogPublisher']);
         add_action('wnq_gbp_scheduler',           [self::class, 'runGbpScheduler']);
         add_action('wnq_spider_auto_crawl',       [self::class, 'runSpiderCrawls']);
         add_action('wnq_spider_run_batch',        [self::class, 'runCronBatch'], 10, 1);
@@ -105,13 +106,14 @@ final class CronScheduler
 
     public static function unscheduleAll(): void
     {
-        $hooks = ['wnq_seo_nightly_audit', 'wnq_seo_nightly_automation', 'wnq_seo_process_queue', 'wnq_seo_monthly_reports', 'wnq_blog_publisher', 'wnq_gbp_scheduler', 'wnq_spider_auto_crawl', 'wnq_backlink_verify', 'wnq_tasks_weekly_archive'];
+        $hooks = ['wnq_seo_nightly_audit', 'wnq_seo_nightly_automation', 'wnq_seo_process_queue', 'wnq_seo_monthly_reports', 'wnq_blog_publisher', 'wnq_blog_publisher_worker', 'wnq_gbp_scheduler', 'wnq_spider_auto_crawl', 'wnq_backlink_verify', 'wnq_tasks_weekly_archive'];
         foreach ($hooks as $hook) {
             $timestamp = wp_next_scheduled($hook);
             if ($timestamp) {
                 wp_unschedule_event($timestamp, $hook);
             }
         }
+        delete_option('wnq_blog_publisher_run_lock');
     }
 
     private static function unscheduleDeprecatedAutomationJobs(): void

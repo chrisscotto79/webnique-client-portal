@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.34
+Stable tag: 2.4.35
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,14 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.35 - Auto-Blogger Queue Reliability
+
+- Changed automatic publishing to process one due post per worker request and chain remaining posts
+- Added a run lock and atomic per-post claims to prevent overlapping cron/manual publishing
+- Added recovery for posts left in generating or publishing after an interrupted request
+- Increased the client-site publishing timeout and added expandable full error details in the queue
+- Updated due-date checks to use the WordPress site timezone
+
 2.4.34 - SEO and CRM Report Split
 
 - Added a dedicated CRM Reports sidebar section with Leads, Jobs, Calendar, and Follow-ups report panels

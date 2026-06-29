@@ -229,7 +229,8 @@ final class BlogSchedulerAdmin
                     echo ' <a href="' . esc_url($p['wp_post_url']) . '" target="_blank" style="font-size:11px;">[view]</a>';
                 }
                 if (!empty($p['error_message'])) {
-                    echo '<br><small style="color:#dc2626;">' . esc_html(substr($p['error_message'], 0, 120)) . '</small>';
+                    $error_message = (string)$p['error_message'];
+                    echo '<br><details class="wnq-blog-error"><summary>' . esc_html(wp_trim_words($error_message, 16, '...')) . '</summary><code>' . esc_html($error_message) . '</code></details>';
                 }
                 echo '</td>';
                 echo '<td>Informational</td>';
@@ -1035,7 +1036,14 @@ jQuery(function($) {
             wp_send_json_error(['message' => 'Invalid schedule_id']);
         }
 
-        $result = \WNQ\Services\BlogPublisher::processPost($schedule_id);
+        try {
+            $result = \WNQ\Services\BlogPublisher::processPost($schedule_id);
+        } catch (\Throwable $e) {
+            $message = 'Unexpected publisher error: ' . $e->getMessage();
+            BlogScheduler::updatePost($schedule_id, ['status' => 'failed', 'error_message' => $message]);
+            SEOHub::log('blog_publish_failed', ['schedule_id' => $schedule_id, 'error' => $message], 'failed', 'manual');
+            wp_send_json_error(['message' => $message]);
+        }
         if ($result['success']) {
             wp_send_json_success($result);
         } else {
@@ -1053,7 +1061,14 @@ jQuery(function($) {
             wp_send_json_error(['message' => 'Invalid schedule_id']);
         }
 
-        $result = \WNQ\Services\BlogPublisher::generateContentOnly($schedule_id);
+        try {
+            $result = \WNQ\Services\BlogPublisher::generateContentOnly($schedule_id);
+        } catch (\Throwable $e) {
+            $message = 'Unexpected content generation error: ' . $e->getMessage();
+            BlogScheduler::updatePost($schedule_id, ['status' => 'failed', 'error_message' => $message]);
+            SEOHub::log('blog_generation_failed', ['schedule_id' => $schedule_id, 'error' => $message], 'failed', 'manual');
+            wp_send_json_error(['message' => $message]);
+        }
         if ($result['success']) {
             wp_send_json_success($result);
         } else {
@@ -1213,6 +1228,9 @@ jQuery(function($) {
         .wnq-notice { padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; }
         .wnq-notice.success { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
         .wnq-notice.error   { background: #fef2f2; color: #991b1b; border: 1px solid #fca5a5; }
+        .wnq-blog-error { margin-top: 6px; max-width: 420px; color: #991b1b; }
+        .wnq-blog-error summary { cursor: pointer; font-size: 12px; font-weight: 600; line-height: 1.4; }
+        .wnq-blog-error code { display: block; margin-top: 6px; padding: 8px; border: 1px solid #fecaca; border-radius: 5px; background: #fff7f7; color: #7f1d1d; white-space: normal; overflow-wrap: anywhere; }
         .wnq-gen-title-row { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 6px; }
         .wnq-gen-title-row label { flex: 1; cursor: pointer; }
         .wnq-gen-title-row input[type=date] { min-width: 140px; padding: 4px 8px; border: 1px solid #d1d5db; border-radius: 4px; }
