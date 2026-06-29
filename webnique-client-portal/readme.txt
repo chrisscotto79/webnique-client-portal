@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.35
+Stable tag: 2.4.36
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,14 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.36 - Auto-Blogger Rate Limit Recovery
+
+- Added a conservative Groq tokens-per-minute budget and provider cooldown handling
+- Changed AI 429 responses from permanent failures into automatic deferred retries
+- Automatically requeues existing failed blog posts whose errors were caused by rate limits
+- Reduced Groq blog output reservations so complete posts fit within the account token limit
+- Updated manual publish and generation actions to recognize scheduled retries as successful queue operations
+
 2.4.35 - Auto-Blogger Queue Reliability
 
 - Changed automatic publishing to process one due post per worker request and chain remaining posts

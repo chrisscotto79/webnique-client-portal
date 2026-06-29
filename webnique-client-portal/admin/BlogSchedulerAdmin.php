@@ -1044,7 +1044,7 @@ jQuery(function($) {
             SEOHub::log('blog_publish_failed', ['schedule_id' => $schedule_id, 'error' => $message], 'failed', 'manual');
             wp_send_json_error(['message' => $message]);
         }
-        if ($result['success']) {
+        if ($result['success'] || !empty($result['retry_scheduled'])) {
             wp_send_json_success($result);
         } else {
             wp_send_json_error(['message' => $result['message']]);
@@ -1069,7 +1069,7 @@ jQuery(function($) {
             SEOHub::log('blog_generation_failed', ['schedule_id' => $schedule_id, 'error' => $message], 'failed', 'manual');
             wp_send_json_error(['message' => $message]);
         }
-        if ($result['success']) {
+        if ($result['success'] || !empty($result['retry_scheduled'])) {
             wp_send_json_success($result);
         } else {
             wp_send_json_error(['message' => $result['message'] ?? 'Content generation failed']);

@@ -27,7 +27,10 @@ final class AIEngine
 
     const CACHE_GROUP   = 'wnq_ai_cache';
     const RATE_KEY      = 'wnq_ai_rate_';
+    const TOKEN_RATE_KEY = 'wnq_ai_tokens_';
+    const COOLDOWN_KEY  = 'wnq_ai_cooldown_';
     const MAX_RPM       = 30;  // requests per minute per provider (conservative)
+    const GROQ_TPM_BUDGET = 5200; // Keep a buffer below the 6,000 TPM account limit.
 
     // ── Prompt Templates ───────────────────────────────────────────────────
 
@@ -534,9 +537,20 @@ PROMPT,
             }
         }
 
-        // Rate limiting
+        $cooldown = self::providerCooldownRemaining($provider);
+        if ($cooldown > 0) {
+            return self::rateLimitResult($provider, $cooldown, 'AI provider cooldown is active.');
+        }
+
+        // Reserve a conservative estimate before calling providers with TPM limits.
+        $token_wait = self::reserveEstimatedTokens($provider, $prompt, (int)($settings['max_tokens'] ?? 2000));
+        if ($token_wait > 0) {
+            return self::rateLimitResult($provider, $token_wait, 'Local token budget reached.');
+        }
+
+        // Request-per-minute limiting.
         if (!self::checkRateLimit($provider)) {
-            return ['success' => false, 'error' => 'Rate limit reached. Try again in 1 minute.', 'content' => ''];
+            return self::rateLimitResult($provider, 60, 'Local request limit reached.');
         }
 
         // Call provider
@@ -547,6 +561,10 @@ PROMPT,
             'xai'        => self::callXAI($api_key, $prompt, $settings),
             default      => ['success' => false, 'error' => "Unknown provider: $provider", 'content' => ''],
         };
+
+        if (!empty($result['rate_limited'])) {
+            self::setProviderCooldown($provider, (int)($result['retry_after'] ?? 60));
+        }
 
         // Cache successful results
         if (!$no_cache && $result['success'] && !empty($result['content'])) {
@@ -641,7 +659,7 @@ PROMPT,
         $provider = $settings['provider'] ?? 'openai';
 
         if ($provider === 'groq') {
-            return 4200;
+            return 2800;
         }
 
         return 7000;
@@ -683,7 +701,7 @@ PROMPT,
             ]),
         ]);
 
-        return self::parseOpenAIResponse($response, $model);
+        return self::parseOpenAIResponse($response, $model, 'groq');
     }
 
     private static function callOpenAI(string $api_key, string $prompt, array $settings): array
@@ -706,7 +724,7 @@ PROMPT,
             ]),
         ]);
 
-        return self::parseOpenAIResponse($response, $model);
+        return self::parseOpenAIResponse($response, $model, 'openai');
     }
 
     private static function callTogetherAI(string $api_key, string $prompt, array $settings): array
@@ -729,7 +747,7 @@ PROMPT,
             ]),
         ]);
 
-        return self::parseOpenAIResponse($response, $model);
+        return self::parseOpenAIResponse($response, $model, 'together');
     }
 
     private static function callXAI(string $api_key, string $prompt, array $settings): array
@@ -752,10 +770,10 @@ PROMPT,
             ]),
         ]);
 
-        return self::parseOpenAIResponse($response, $model);
+        return self::parseOpenAIResponse($response, $model, 'xai');
     }
 
-    private static function parseOpenAIResponse($response, string $model): array
+    private static function parseOpenAIResponse($response, string $model, string $provider): array
     {
         if (is_wp_error($response)) {
             return ['success' => false, 'error' => $response->get_error_message(), 'content' => ''];
@@ -766,6 +784,10 @@ PROMPT,
 
         if ($code !== 200) {
             $msg = $body['error']['message'] ?? "HTTP $code";
+            if ($code === 429 || stripos($msg, 'rate limit') !== false) {
+                $retry_after = self::retryAfterSeconds($response, $msg);
+                return self::rateLimitResult($provider, $retry_after, $msg);
+            }
             return ['success' => false, 'error' => $msg, 'content' => ''];
         }
 
@@ -777,6 +799,7 @@ PROMPT,
             'content'     => trim($content),
             'tokens_used' => $tokens,
             'model'       => $model,
+            'provider'    => $provider,
             'cached'      => false,
         ];
     }
@@ -790,6 +813,73 @@ PROMPT,
             $template = str_replace('{' . $key . '}', (string)$value, $template);
         }
         return $template;
+    }
+
+    private static function reserveEstimatedTokens(string $provider, string $prompt, int $max_tokens): int
+    {
+        if ($provider !== 'groq') {
+            return 0;
+        }
+
+        $key = self::TOKEN_RATE_KEY . $provider;
+        $now = time();
+        $bucket = get_transient($key);
+        if (!is_array($bucket) || (int)($bucket['expires'] ?? 0) <= $now) {
+            $bucket = ['used' => 0, 'expires' => $now + 60];
+        }
+
+        $estimated_prompt_tokens = max(1, (int)ceil(strlen($prompt) / 4));
+        $estimated_total = $estimated_prompt_tokens + max(1, $max_tokens);
+        if ((int)$bucket['used'] + $estimated_total > self::GROQ_TPM_BUDGET) {
+            return max(5, (int)$bucket['expires'] - $now);
+        }
+
+        $bucket['used'] = (int)$bucket['used'] + $estimated_total;
+        set_transient($key, $bucket, max(1, (int)$bucket['expires'] - $now));
+        return 0;
+    }
+
+    private static function providerCooldownRemaining(string $provider): int
+    {
+        $expires = (int)get_transient(self::COOLDOWN_KEY . $provider);
+        return $expires > time() ? $expires - time() : 0;
+    }
+
+    private static function setProviderCooldown(string $provider, int $seconds): void
+    {
+        $seconds = max(5, min(10 * MINUTE_IN_SECONDS, $seconds));
+        set_transient(self::COOLDOWN_KEY . $provider, time() + $seconds, $seconds);
+    }
+
+    private static function rateLimitResult(string $provider, int $retry_after, string $message): array
+    {
+        $retry_after = max(5, min(10 * MINUTE_IN_SECONDS, $retry_after));
+        return [
+            'success'       => false,
+            'error'         => rtrim($message) . ' Automatic retry available in about ' . $retry_after . ' seconds.',
+            'content'       => '',
+            'provider'      => $provider,
+            'rate_limited'  => true,
+            'retry_after'   => $retry_after,
+        ];
+    }
+
+    private static function retryAfterSeconds($response, string $message): int
+    {
+        $header = wp_remote_retrieve_header($response, 'retry-after');
+        if (is_numeric($header)) {
+            return max(5, (int)ceil((float)$header));
+        }
+        if (is_string($header) && $header !== '') {
+            $timestamp = strtotime($header);
+            if ($timestamp !== false && $timestamp > time()) {
+                return max(5, $timestamp - time());
+            }
+        }
+        if (preg_match('/try again in\s+([0-9]+(?:\.[0-9]+)?)s/i', $message, $match)) {
+            return max(5, (int)ceil((float)$match[1]));
+        }
+        return 60;
     }
 
     private static function checkRateLimit(string $provider): bool
