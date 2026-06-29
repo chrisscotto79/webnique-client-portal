@@ -19,9 +19,9 @@ if (!defined('ABSPATH')) {
 use WNQ\Services\AuditEngine;
 use WNQ\Services\BacklinkVerifier;
 use WNQ\Services\BlogPublisher;
+use WNQ\Services\GbpPublisher;
 use WNQ\Services\CrawlEngine;
 use WNQ\Services\ReportGenerator;
-use WNQ\Models\BlogScheduler;
 use WNQ\Models\SEOHub;
 use WNQ\Models\Task;
 
@@ -82,7 +82,7 @@ final class CronScheduler
             wp_schedule_event($next_8am, 'daily', 'wnq_blog_publisher');
         }
 
-        // GBP scheduler hourly check — marks due GBP posts as ready until live API publishing is connected
+        // GBP scheduler hourly check publishes due posts through the connected agency account.
         if (!wp_next_scheduled('wnq_gbp_scheduler')) {
             wp_schedule_event(time() + 600, 'hourly', 'wnq_gbp_scheduler');
         }
@@ -183,10 +183,8 @@ final class CronScheduler
     {
         if (!self::canRun()) return;
 
-        $ready = BlogScheduler::markDueGbpPostsReady();
-        if ($ready > 0) {
-            SEOHub::log('gbp_posts_ready', ['count' => $ready], 'success', 'cron');
-        }
+        $result = GbpPublisher::processDuePosts();
+        SEOHub::log('gbp_scheduler_complete', $result, !empty($result['success']) ? 'success' : 'failed', 'cron');
     }
 
     public static function runBacklinkVerify(): void

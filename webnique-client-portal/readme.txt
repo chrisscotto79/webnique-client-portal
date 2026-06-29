@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.36
+Stable tag: 2.4.37
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,15 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.37 - Google Business Profile Connection and Publishing
+
+- Added agency-level Google OAuth with offline access for the GBP Scheduler
+- Added account and location sync for every Business Profile the connected Google user can manage
+- Added automatic client-to-location matching with a manual mapping override
+- Added live scheduled and manual GBP publishing with duplicate-post protection
+- Added complete Event and Offer post fields, API diagnostics, and connection status
+- Kept OAuth secrets and refresh tokens server-side with nonce, capability, and state validation
+
 2.4.36 - Auto-Blogger Rate Limit Recovery
 
 - Added a conservative Groq tokens-per-minute budget and provider cooldown handling
