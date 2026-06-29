@@ -200,6 +200,32 @@ final class BlogScheduler
         );
     }
 
+    /**
+     * Requeue older failures caused only by an AI provider rate limit.
+     */
+    public static function requeueRateLimitedPosts(int $limit = 50): int
+    {
+        global $wpdb;
+
+        $limit = max(1, min(100, $limit));
+        return (int)$wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$wpdb->prefix}wnq_blog_schedule
+                 SET status = 'pending',
+                     error_message = 'AI rate limit cleared. Automatic retry queued.',
+                     updated_at = %s
+                 WHERE status = 'failed'
+                   AND scheduled_date <= %s
+                   AND error_message LIKE %s
+                 LIMIT %d",
+                current_time('mysql'),
+                current_time('Y-m-d'),
+                '%Rate limit%',
+                $limit
+            )
+        );
+    }
+
     public static function deletePost(int $id): void
     {
         global $wpdb;

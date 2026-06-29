@@ -44,14 +44,18 @@ final class BlogPublisher
 
         try {
             $recovered = BlogScheduler::recoverStalePosts(30);
+            $requeued = BlogScheduler::requeueRateLimitedPosts(50);
             $due = BlogScheduler::getDuePosts(2);
             if (count($due) > 1) {
                 self::scheduleNextWorker(2 * MINUTE_IN_SECONDS);
             }
 
             if (empty($due)) {
-                if ($recovered > 0) {
-                    SEOHub::log('blog_publisher_stale_recovered', ['count' => $recovered], 'success', 'cron');
+                if ($recovered > 0 || $requeued > 0) {
+                    SEOHub::log('blog_publisher_queue_recovered', [
+                        'stale'       => $recovered,
+                        'rate_limit'  => $requeued,
+                    ], 'success', 'cron');
                 }
                 return;
             }
@@ -62,12 +66,14 @@ final class BlogPublisher
             } catch (\Throwable $e) {
                 $result = self::fail($schedule_id, 'Unexpected publisher error: ' . $e->getMessage());
             }
+            $run_succeeded = !empty($result['success']) || !empty($result['retry_scheduled']);
             SEOHub::log('blog_publisher_run_complete', [
                 'schedule_id' => $schedule_id,
-                'success'     => !empty($result['success']),
+                'success'     => $run_succeeded,
                 'message'     => $result['message'] ?? '',
                 'recovered'   => $recovered,
-            ], !empty($result['success']) ? 'success' : 'failed', 'cron');
+                'requeued'    => $requeued,
+            ], $run_succeeded ? 'success' : 'failed', 'cron');
         } finally {
             self::releaseRunLock($lock_token);
         }
@@ -199,6 +205,9 @@ final class BlogPublisher
         );
 
         if (!$ai_result['success']) {
+            if (!empty($ai_result['rate_limited'])) {
+                return self::deferForRateLimit($schedule_id, $ai_result);
+            }
             return self::fail($schedule_id, 'AI generation failed: ' . ($ai_result['error'] ?? 'unknown error'));
         }
 
@@ -321,6 +330,9 @@ final class BlogPublisher
         );
 
         if (!$ai_result['success']) {
+            if (!empty($ai_result['rate_limited'])) {
+                return self::deferForRateLimit($schedule_id, $ai_result);
+            }
             return self::fail($schedule_id, 'AI generation failed: ' . ($ai_result['error'] ?? 'unknown error'));
         }
 
@@ -1161,6 +1173,32 @@ final class BlogPublisher
         if (!wp_next_scheduled(self::WORKER_HOOK)) {
             wp_schedule_single_event(time() + max(60, $delay), self::WORKER_HOOK);
         }
+    }
+
+    private static function deferForRateLimit(int $schedule_id, array $ai_result): array
+    {
+        $provider = sanitize_key((string)($ai_result['provider'] ?? 'ai'));
+        $retry_after = max(30, min(10 * MINUTE_IN_SECONDS, (int)($ai_result['retry_after'] ?? 60) + 10));
+        $message = ucfirst($provider) . ' rate limit reached. Automatic retry scheduled in about ' . $retry_after . ' seconds.';
+
+        BlogScheduler::updatePost($schedule_id, [
+            'status'        => 'pending',
+            'error_message' => $message,
+        ]);
+        self::scheduleNextWorker($retry_after);
+        SEOHub::log('blog_publish_deferred_rate_limit', [
+            'schedule_id' => $schedule_id,
+            'provider'    => $provider,
+            'retry_after' => $retry_after,
+            'error'       => $ai_result['error'] ?? '',
+        ], 'success', 'cron');
+
+        return [
+            'success'         => false,
+            'retry_scheduled' => true,
+            'retry_after'     => $retry_after,
+            'message'         => $message,
+        ];
     }
 
     /**
