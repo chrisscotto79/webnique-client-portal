@@ -779,6 +779,12 @@ jQuery(function($) {
         if (!empty($status['last_error'])) {
             echo '<div class="wnq-gbp-api-error"><strong>Latest Google response</strong><p>' . nl2br(esc_html($status['last_error'])) . '</p></div>';
         }
+        if (!$configured && !empty($status['has_legacy_ads_credentials'])) {
+            echo '<div class="wnq-gbp-setup-note"><strong>Dedicated GBP credentials required</strong><p>Google Ads OAuth credentials are no longer reused here. Save a current Google Web application Client ID and Client Secret below.</p></div>';
+        }
+        if (!empty($status['has_partial_credentials'])) {
+            echo '<div class="wnq-gbp-api-error"><strong>Incomplete OAuth setup</strong><p>Only one GBP credential is saved. Enter both the Client ID and Client Secret, or clear the saved credentials and start again.</p></div>';
+        }
 
         echo '<div class="wnq-gbp-actions">';
         if ($configured && !$connected) {
@@ -812,8 +818,9 @@ jQuery(function($) {
         echo '</div>';
         echo '<label>Authorized Redirect URI<input type="text" readonly value="' . esc_attr(GoogleBusinessProfileClient::redirectUri()) . '"></label>';
         echo '<p class="description">Add this exact redirect URI to the Web application OAuth client in Google Cloud. The Cloud project must also be approved for Business Profile API access.</p>';
+        echo '<div class="wnq-gbp-setup-note"><strong>Seeing Error 401: deleted_client?</strong><p>The saved OAuth app no longer exists in Google Cloud. Restore it from Deleted credentials within 30 days, or create a new Web application OAuth client and replace both values here.</p></div>';
         echo '<div class="wnq-gbp-actions"><button type="submit" class="button button-primary">Save OAuth Settings</button>';
-        if ((string)get_option('wnq_gbp_oauth_client_id', '') !== '') {
+        if ((string)get_option('wnq_gbp_oauth_client_id', '') !== '' || (string)get_option('wnq_gbp_oauth_client_secret', '') !== '') {
             echo '<button type="submit" class="button" name="clear_credentials" value="1" onclick="return confirm(\'Clear GBP-specific OAuth credentials and mappings?\')">Clear GBP Credentials</button>';
         }
         echo '</div></form></details>';
@@ -1418,6 +1425,8 @@ jQuery(function($) {
         .wnq-gbp-actions form { margin: 0; }
         .wnq-gbp-api-error { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; color: #9a3412; margin-bottom: 14px; padding: 10px 12px; }
         .wnq-gbp-api-error p { margin: 5px 0 0; }
+        .wnq-gbp-setup-note { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; color: #713f12; margin: 14px 0; padding: 10px 12px; }
+        .wnq-gbp-setup-note p { margin: 5px 0 0; }
         .wnq-gbp-oauth-settings { border-top: 1px solid #e2e8f0; margin-top: 18px; padding-top: 14px; }
         .wnq-gbp-oauth-settings summary { cursor: pointer; color: #334155; font-weight: 700; }
         .wnq-gbp-oauth-form { display: grid; gap: 12px; margin-top: 14px; }
