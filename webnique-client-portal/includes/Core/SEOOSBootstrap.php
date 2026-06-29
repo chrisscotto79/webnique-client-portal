@@ -1124,10 +1124,16 @@ final class SEOOSBootstrap
             self::redirectGbp(['notice' => 'gbp_credentials_cleared']);
         }
 
-        \WNQ\Services\GoogleBusinessProfileClient::saveCredentials(
+        $result = \WNQ\Services\GoogleBusinessProfileClient::saveCredentials(
             sanitize_text_field(wp_unslash($_POST['oauth_client_id'] ?? '')),
             sanitize_text_field(wp_unslash($_POST['oauth_client_secret'] ?? ''))
         );
+        if (empty($result['success'])) {
+            self::redirectGbp([
+                'notice'  => 'gbp_error',
+                'message' => $result['error'] ?? 'The GBP OAuth credentials could not be saved.',
+            ]);
+        }
         self::redirectGbp(['notice' => 'gbp_credentials_saved']);
     }
 

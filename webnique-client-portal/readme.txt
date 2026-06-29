@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.37
+Stable tag: 2.4.38
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,13 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.38 - Dedicated GBP OAuth Validation
+
+- Stopped silently reusing Google Ads OAuth credentials for Business Profile access
+- Added complete credential-pair validation before GBP OAuth settings can be saved
+- Added setup guidance for deleted OAuth clients and incomplete credentials
+- Clear stale connection data when the GBP OAuth application changes
+
 2.4.37 - Google Business Profile Connection and Publishing
 
 - Added agency-level Google OAuth with offline access for the GBP Scheduler

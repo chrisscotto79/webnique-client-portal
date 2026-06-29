@@ -29,7 +29,7 @@ final class GoogleBusinessProfileClient
 
     public static function credentialsConfigured(): bool
     {
-        return self::clientId() !== '' && self::clientSecret() !== '';
+        return self::hasGbpCredentialPair();
     }
 
     public static function connected(): bool
@@ -56,28 +56,34 @@ final class GoogleBusinessProfileClient
             'last_error'             => sanitize_textarea_field((string)get_option('wnq_gbp_last_error', '')),
             'account_count'          => count($accounts),
             'location_count'         => count($locations),
-            'credential_source'      => self::hasGbpCredentialPair() ? 'GBP settings' : 'Google Ads OAuth app',
+            'credential_source'      => self::hasGbpCredentialPair() ? 'Dedicated GBP OAuth app' : '',
+            'has_partial_credentials' => self::hasAnyGbpCredential() && !self::hasGbpCredentialPair(),
+            'has_legacy_ads_credentials' => self::hasGoogleAdsCredentialPair(),
         ];
     }
 
-    public static function saveCredentials(string $client_id, string $client_secret): void
+    public static function saveCredentials(string $client_id, string $client_secret): array
     {
-        $old_id = self::clientId();
-        $old_secret = self::clientSecret();
-        $changed = false;
+        $old_id = trim((string)get_option('wnq_gbp_oauth_client_id', ''));
+        $old_secret = trim((string)get_option('wnq_gbp_oauth_client_secret', ''));
+        $new_id = $client_id !== '' ? sanitize_text_field($client_id) : $old_id;
+        $new_secret = $client_secret !== '' ? sanitize_text_field($client_secret) : $old_secret;
 
-        if ($client_id !== '') {
-            update_option('wnq_gbp_oauth_client_id', sanitize_text_field($client_id), false);
-            $changed = $changed || !hash_equals($old_id, $client_id);
-        }
-        if ($client_secret !== '') {
-            update_option('wnq_gbp_oauth_client_secret', sanitize_text_field($client_secret), false);
-            $changed = $changed || !hash_equals($old_secret, $client_secret);
+        if ($new_id === '' || $new_secret === '') {
+            return [
+                'success' => false,
+                'error'   => 'Enter both the Google OAuth Client ID and Client Secret. GBP requires a dedicated Web application OAuth client.',
+            ];
         }
 
-        if ($changed && self::connected()) {
-            self::clearConnection(false);
+        $changed = !hash_equals($old_id, $new_id) || !hash_equals($old_secret, $new_secret);
+        if ($changed) {
+            update_option('wnq_gbp_oauth_client_id', $new_id, false);
+            update_option('wnq_gbp_oauth_client_secret', $new_secret, false);
+            self::clearConnection(true);
         }
+
+        return ['success' => true, 'changed' => $changed];
     }
 
     public static function clearSavedCredentials(): void
@@ -694,24 +700,30 @@ final class GoogleBusinessProfileClient
 
     private static function clientId(): string
     {
-        if (self::hasGbpCredentialPair()) {
-            return trim((string)get_option('wnq_gbp_oauth_client_id', ''));
-        }
-        return trim((string)get_option('wnq_google_ads_oauth_client_id', ''));
+        return trim((string)get_option('wnq_gbp_oauth_client_id', ''));
     }
 
     private static function clientSecret(): string
     {
-        if (self::hasGbpCredentialPair()) {
-            return trim((string)get_option('wnq_gbp_oauth_client_secret', ''));
-        }
-        return trim((string)get_option('wnq_google_ads_oauth_client_secret', ''));
+        return trim((string)get_option('wnq_gbp_oauth_client_secret', ''));
     }
 
     private static function hasGbpCredentialPair(): bool
     {
         return trim((string)get_option('wnq_gbp_oauth_client_id', '')) !== ''
             && trim((string)get_option('wnq_gbp_oauth_client_secret', '')) !== '';
+    }
+
+    private static function hasAnyGbpCredential(): bool
+    {
+        return trim((string)get_option('wnq_gbp_oauth_client_id', '')) !== ''
+            || trim((string)get_option('wnq_gbp_oauth_client_secret', '')) !== '';
+    }
+
+    private static function hasGoogleAdsCredentialPair(): bool
+    {
+        return trim((string)get_option('wnq_google_ads_oauth_client_id', '')) !== ''
+            && trim((string)get_option('wnq_google_ads_oauth_client_secret', '')) !== '';
     }
 
     private static function refreshToken(): string
