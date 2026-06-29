@@ -86,10 +86,16 @@ final class BlogScheduler
             image_url       varchar(1000) DEFAULT NULL,
             image_alt       varchar(255) DEFAULT NULL,
             scheduled_at    datetime DEFAULT NULL,
-            status          varchar(30) DEFAULT 'scheduled' COMMENT 'scheduled|ready|published|failed',
+            status          varchar(30) DEFAULT 'scheduled' COMMENT 'scheduled|ready|publishing|published|failed',
             gbp_account_id  varchar(255) DEFAULT NULL,
             gbp_location_id varchar(255) DEFAULT NULL,
             gbp_post_name   varchar(500) DEFAULT NULL,
+            event_title     varchar(255) DEFAULT NULL,
+            event_start     datetime DEFAULT NULL,
+            event_end       datetime DEFAULT NULL,
+            offer_coupon_code varchar(255) DEFAULT NULL,
+            offer_redeem_url varchar(1000) DEFAULT NULL,
+            offer_terms     text DEFAULT NULL,
             error_message   text DEFAULT NULL,
             created_at      datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at      datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -337,7 +343,7 @@ final class BlogScheduler
                 'client_id'       => $client_id,
                 'post_type'       => self::cleanGbpPostType((string)($data['post_type'] ?? 'update')),
                 'summary'         => wp_kses_post($data['summary'] ?? ''),
-                'cta_type'        => self::cleanGbpCtaType((string)($data['cta_type'] ?? 'LEARN_MORE')),
+                'cta_type'        => self::cleanGbpCtaType((string)($data['cta_type'] ?? 'NONE')),
                 'cta_url'         => esc_url_raw($data['cta_url'] ?? ''),
                 'image_url'       => esc_url_raw($data['image_url'] ?? ''),
                 'image_alt'       => sanitize_text_field($data['image_alt'] ?? ''),
@@ -345,6 +351,12 @@ final class BlogScheduler
                 'status'          => self::cleanGbpStatus((string)($data['status'] ?? 'scheduled')),
                 'gbp_account_id'  => sanitize_text_field($data['gbp_account_id'] ?? ''),
                 'gbp_location_id' => sanitize_text_field($data['gbp_location_id'] ?? ''),
+                'event_title'      => sanitize_text_field($data['event_title'] ?? ''),
+                'event_start'      => !empty($data['event_start']) ? sanitize_text_field($data['event_start']) : null,
+                'event_end'        => !empty($data['event_end']) ? sanitize_text_field($data['event_end']) : null,
+                'offer_coupon_code'=> sanitize_text_field($data['offer_coupon_code'] ?? ''),
+                'offer_redeem_url' => esc_url_raw($data['offer_redeem_url'] ?? ''),
+                'offer_terms'      => sanitize_textarea_field($data['offer_terms'] ?? ''),
                 'error_message'   => sanitize_textarea_field($data['error_message'] ?? ''),
             ]
         );
@@ -368,6 +380,12 @@ final class BlogScheduler
             'gbp_account_id',
             'gbp_location_id',
             'gbp_post_name',
+            'event_title',
+            'event_start',
+            'event_end',
+            'offer_coupon_code',
+            'offer_redeem_url',
+            'offer_terms',
             'error_message',
         ];
 
@@ -377,7 +395,7 @@ final class BlogScheduler
                 continue;
             }
 
-            if ($key === 'scheduled_at' && empty($data[$key])) {
+            if (in_array($key, ['scheduled_at', 'event_start', 'event_end'], true) && empty($data[$key])) {
                 $updates[$key] = null;
                 continue;
             }
@@ -387,12 +405,18 @@ final class BlogScheduler
                 'summary'         => wp_kses_post($data[$key]),
                 'cta_type'        => self::cleanGbpCtaType((string)$data[$key]),
                 'cta_url',
-                'image_url'       => esc_url_raw($data[$key]),
+                'image_url',
+                'offer_redeem_url'=> esc_url_raw($data[$key]),
                 'image_alt',
                 'gbp_account_id',
                 'gbp_location_id',
                 'gbp_post_name',
+                'event_title',
+                'event_start',
+                'event_end',
+                'offer_coupon_code',
                 'scheduled_at'    => sanitize_text_field((string)$data[$key]),
+                'offer_terms'     => sanitize_textarea_field($data[$key]),
                 'status'          => self::cleanGbpStatus((string)$data[$key]),
                 'error_message'   => sanitize_textarea_field($data[$key]),
                 default           => sanitize_text_field((string)$data[$key]),
@@ -457,7 +481,7 @@ final class BlogScheduler
         return $wpdb->get_results(
             $wpdb->prepare(
                 "SELECT * FROM {$wpdb->prefix}wnq_gbp_schedule
-                 WHERE status = 'scheduled'
+                 WHERE status IN ('scheduled', 'ready')
                  AND scheduled_at IS NOT NULL
                  AND scheduled_at <= %s
                  ORDER BY scheduled_at ASC
@@ -478,14 +502,35 @@ final class BlogScheduler
 
         $count = 0;
         foreach ($due as $post) {
+            if (($post['status'] ?? '') === 'ready') {
+                continue;
+            }
             self::updateGbpPost((int)$post['id'], [
                 'status'        => 'ready',
-                'error_message' => 'Google Business Profile API publishing is not connected yet. This post is due and ready for the live GBP publishing integration.',
+                'error_message' => 'Connect Google Business Profile and map this client to a synced location to publish this due post.',
             ]);
             $count++;
         }
 
         return $count;
+    }
+
+    public static function claimGbpPost(int $id, bool $manual = false): bool
+    {
+        global $wpdb;
+        $allowed = $manual
+            ? "'scheduled','ready','failed'"
+            : "'scheduled','ready'";
+
+        return (int)$wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$wpdb->prefix}wnq_gbp_schedule
+                 SET status = 'publishing', error_message = '', updated_at = %s
+                 WHERE id = %d AND status IN ($allowed)",
+                current_time('mysql'),
+                $id
+            )
+        ) === 1;
     }
 
     private static function cleanGbpPostType(string $type): string
@@ -497,14 +542,14 @@ final class BlogScheduler
     private static function cleanGbpStatus(string $status): string
     {
         $status = sanitize_key($status);
-        return in_array($status, ['scheduled', 'ready', 'published', 'failed'], true) ? $status : 'scheduled';
+        return in_array($status, ['scheduled', 'ready', 'publishing', 'published', 'failed'], true) ? $status : 'scheduled';
     }
 
     private static function cleanGbpCtaType(string $type): string
     {
         $type = strtoupper(sanitize_key($type));
-        $allowed = ['BOOK', 'ORDER', 'SHOP', 'LEARN_MORE', 'SIGN_UP', 'CALL'];
-        return in_array($type, $allowed, true) ? $type : 'LEARN_MORE';
+        $allowed = ['NONE', 'BOOK', 'ORDER', 'SHOP', 'LEARN_MORE', 'SIGN_UP', 'CALL'];
+        return in_array($type, $allowed, true) ? $type : 'NONE';
     }
 
     /* ═══════════════════════════════════════════

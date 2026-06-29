@@ -16,6 +16,7 @@ use WNQ\Models\BlogScheduler;
 use WNQ\Models\SEOHub;
 use WNQ\Models\Client;
 use WNQ\Services\BlogPublisher;
+use WNQ\Services\GoogleBusinessProfileClient;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -485,6 +486,9 @@ jQuery(function($) {
         $clients   = Client::getByStatus('active');
         $client_id = sanitize_text_field($_GET['client_id'] ?? ($clients[0]['client_id'] ?? ''));
         $posts     = $client_id ? BlogScheduler::getGbpPostsByClient($client_id, 100) : [];
+        $connection = GoogleBusinessProfileClient::connectionStatus();
+        $locations = GoogleBusinessProfileClient::syncedLocations();
+        $mapping = $client_id ? GoogleBusinessProfileClient::mappingForClient($client_id) : [];
 
         $notice = sanitize_text_field($_GET['notice'] ?? '');
         if ($notice === 'gbp_added') {
@@ -499,6 +503,35 @@ jQuery(function($) {
         if ($notice === 'gbp_bulk_deleted') {
             echo '<div class="wnq-notice success">✅ ' . (int)($_GET['deleted'] ?? 0) . ' GBP post(s) deleted.</div>';
         }
+        if ($notice === 'gbp_credentials_saved') {
+            echo '<div class="wnq-notice success">OAuth app credentials saved. Connect your Google account next.</div>';
+        }
+        if ($notice === 'gbp_credentials_cleared') {
+            echo '<div class="wnq-notice success">GBP OAuth credentials and connection data cleared.</div>';
+        }
+        if ($notice === 'gbp_connected') {
+            echo '<div class="wnq-notice success">Google account connected. Synced ' . (int)($_GET['accounts'] ?? 0) . ' account(s) and ' . (int)($_GET['locations'] ?? 0) . ' location(s).</div>';
+        }
+        if ($notice === 'gbp_connected_sync_error') {
+            echo '<div class="wnq-notice error">Google connected, but locations could not be synced: ' . esc_html(sanitize_text_field(wp_unslash($_GET['message'] ?? 'Unknown sync error.'))) . '</div>';
+        }
+        if ($notice === 'gbp_synced') {
+            echo '<div class="wnq-notice success">GBP sync complete: ' . (int)($_GET['accounts'] ?? 0) . ' account(s), ' . (int)($_GET['locations'] ?? 0) . ' location(s).</div>';
+        }
+        if ($notice === 'gbp_disconnected') {
+            echo '<div class="wnq-notice success">Google Business Profile account disconnected.</div>';
+        }
+        if ($notice === 'gbp_mapping_saved') {
+            echo '<div class="wnq-notice success">Client location mapping saved.</div>';
+        }
+        if ($notice === 'gbp_published') {
+            echo '<div class="wnq-notice success">GBP post published successfully.</div>';
+        }
+        if ($notice === 'gbp_publish_failed' || $notice === 'gbp_error') {
+            echo '<div class="wnq-notice error">' . esc_html(sanitize_text_field(wp_unslash($_GET['message'] ?? 'Google Business Profile request failed.'))) . '</div>';
+        }
+
+        self::renderGbpConnectionPanel($connection);
 
         echo '<div class="wnq-blog-client-bar">';
         echo '<form method="get" style="display:inline-flex;gap:8px;align-items:center;">';
@@ -518,10 +551,36 @@ jQuery(function($) {
             return;
         }
 
+        echo '<div class="wnq-blog-card wnq-gbp-mapping-card">';
+        echo '<div><span class="wnq-gbp-eyebrow">Client location</span><h3>Choose where this client publishes</h3>';
+        echo '<p class="wnq-muted">Synced locations are automatically matched by website and business name. Confirm the match before scheduling.</p></div>';
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" class="wnq-gbp-mapping-form">';
+        echo '<input type="hidden" name="action" value="wnq_gbp_save_mapping">';
+        echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+        wp_nonce_field('wnq_gbp_save_mapping');
+        echo '<select name="gbp_location_mapping"' . (empty($locations) ? ' disabled' : '') . '>';
+        echo '<option value="">' . (empty($locations) ? 'Connect and sync Google first' : 'Not mapped') . '</option>';
+        foreach ($locations as $location) {
+            $value = ($location['account_name'] ?? '') . '|' . ($location['location_name'] ?? '');
+            $current = ($mapping['account_name'] ?? '') . '|' . ($mapping['location_name'] ?? '');
+            $label = (string)($location['title'] ?? $location['location_name'] ?? 'Location');
+            if (!empty($location['address'])) {
+                $label .= ' — ' . $location['address'];
+            }
+            echo '<option value="' . esc_attr($value) . '"' . selected($current, $value, false) . '>' . esc_html($label) . '</option>';
+        }
+        echo '</select>';
+        echo '<button type="submit" class="button button-primary"' . (empty($locations) ? ' disabled' : '') . '>Save Location</button>';
+        echo '</form>';
+        if (!empty($mapping)) {
+            echo '<div class="wnq-gbp-current-map"><strong>' . esc_html($mapping['location_title'] ?? 'Mapped location') . '</strong><span>' . esc_html($mapping['address'] ?? '') . '</span></div>';
+        }
+        echo '</div>';
+
         echo '<div class="wnq-gbp-grid">';
         echo '<div class="wnq-blog-card">';
         echo '<h3>📍 Schedule GBP Post</h3>';
-        echo '<p class="wnq-muted">Create a Google Business Profile post draft in the queue. Posts are saved here first; live GBP publishing can be connected in a later Google API/OAuth phase.</p>';
+        echo '<p class="wnq-muted">Queue an update, event, or offer. Due posts publish hourly through the connected Google account.</p>';
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" class="wnq-gbp-form">';
         echo '<input type="hidden" name="action" value="wnq_gbp_add_post">';
         echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
@@ -532,15 +591,27 @@ jQuery(function($) {
         echo '<label>Schedule Date/Time<input type="datetime-local" name="scheduled_at"></label>';
         echo '</div>';
         echo '<div class="wnq-gbp-two">';
-        echo '<label>CTA Type<select name="cta_type"><option value="LEARN_MORE">Learn More</option><option value="CALL">Call</option><option value="BOOK">Book</option><option value="ORDER">Order</option><option value="SHOP">Shop</option><option value="SIGN_UP">Sign Up</option></select></label>';
+        echo '<label>CTA Type<select name="cta_type"><option value="NONE">No CTA</option><option value="LEARN_MORE">Learn More</option><option value="CALL">Call</option><option value="BOOK">Book</option><option value="ORDER">Order</option><option value="SHOP">Shop</option><option value="SIGN_UP">Sign Up</option></select></label>';
         echo '<label>CTA URL<input type="url" name="cta_url" placeholder="https://example.com/service-page/"></label>';
         echo '</div>';
         echo '<label>Image URL<input type="url" name="image_url" placeholder="https://example.com/wp-content/uploads/image.webp"></label>';
         echo '<label>Image ALT Text<input type="text" name="image_alt" placeholder="Describe the image for SEO and accessibility"></label>';
+        echo '<details class="wnq-gbp-advanced"><summary>Event and offer details</summary>';
+        echo '<div class="wnq-gbp-type-fields">';
+        echo '<h4>Event posts</h4><div class="wnq-gbp-two">';
+        echo '<label>Event Title<input type="text" name="event_title" placeholder="Summer Service Special"></label>';
+        echo '<label>Event Start<input type="datetime-local" name="event_start"></label>';
+        echo '<label>Event End<input type="datetime-local" name="event_end"></label>';
+        echo '</div>';
+        echo '<h4>Offer posts</h4><div class="wnq-gbp-two">';
+        echo '<label>Coupon Code<input type="text" name="offer_coupon_code" placeholder="SAVE20"></label>';
+        echo '<label>Redemption URL<input type="url" name="offer_redeem_url" placeholder="https://example.com/offer/"></label>';
+        echo '</div><label>Offer Terms<textarea name="offer_terms" rows="2" placeholder="Terms and expiration details"></textarea></label>';
+        echo '</div></details>';
         echo '<details class="wnq-gbp-advanced"><summary>Optional GBP location IDs</summary>';
         echo '<div class="wnq-gbp-two">';
-        echo '<label>GBP Account ID<input type="text" name="gbp_account_id" placeholder="accounts/123456789"></label>';
-        echo '<label>GBP Location ID<input type="text" name="gbp_location_id" placeholder="locations/987654321"></label>';
+        echo '<label>GBP Account ID<input type="text" name="gbp_account_id" placeholder="Leave blank to use the client mapping"></label>';
+        echo '<label>GBP Location ID<input type="text" name="gbp_location_id" placeholder="Leave blank to use the client mapping"></label>';
         echo '</div>';
         echo '</details>';
         echo '<button type="submit" class="button button-primary">Schedule GBP Post</button>';
@@ -555,7 +626,11 @@ jQuery(function($) {
         echo '<li>Keep files lightweight, ideally under 1 MB.</li>';
         echo '<li>Add descriptive ALT text for local SEO and accessibility.</li>';
         echo '</ul>';
-        echo '<div class="wnq-gbp-api-note"><strong>Status:</strong> Scheduler queue is active. Google Business Profile live publishing is not connected yet, so due posts will become <code>ready</code> until API publishing is added.</div>';
+        if (!empty($connection['connected']) && !empty($mapping)) {
+            echo '<div class="wnq-gbp-api-note is-connected"><strong>Ready:</strong> Due posts will publish to ' . esc_html($mapping['location_title'] ?? 'the mapped location') . '.</div>';
+        } else {
+            echo '<div class="wnq-gbp-api-note"><strong>Setup needed:</strong> Connect Google and map this client before due posts can publish.</div>';
+        }
         echo '</div>';
         echo '</div>';
 
@@ -582,13 +657,15 @@ jQuery(function($) {
                 $status_class = match ($p['status']) {
                     'published' => 'status-ok',
                     'failed'    => 'status-err',
+                    'publishing',
                     'ready'     => 'status-wait',
                     default     => 'status-pend',
                 };
                 echo '<tr>';
                 echo '<td style="max-width:360px;">' . nl2br(esc_html(wp_trim_words((string)$p['summary'], 38))) . (!empty($p['error_message']) ? '<br><small style="color:#92400e;">' . esc_html($p['error_message']) . '</small>' : '') . '</td>';
                 echo '<td>' . esc_html(ucfirst((string)$p['post_type'])) . '</td>';
-                echo '<td><strong>' . esc_html(str_replace('_', ' ', (string)$p['cta_type'])) . '</strong><br>' . (!empty($p['cta_url']) ? '<a href="' . esc_url($p['cta_url']) . '" target="_blank" rel="noopener">Open URL</a>' : '<span class="wnq-muted">No URL</span>') . '</td>';
+                $cta_label = ($p['cta_type'] ?? '') === 'NONE' ? 'No CTA' : str_replace('_', ' ', (string)$p['cta_type']);
+                echo '<td><strong>' . esc_html($cta_label) . '</strong><br>' . (!empty($p['cta_url']) ? '<a href="' . esc_url($p['cta_url']) . '" target="_blank" rel="noopener">Open URL</a>' : '<span class="wnq-muted">No URL</span>') . '</td>';
                 echo '<td>';
                 if (!empty($p['image_url'])) {
                     echo '<a href="' . esc_url($p['image_url']) . '" target="_blank" rel="noopener">Image</a>';
@@ -603,6 +680,15 @@ jQuery(function($) {
                 echo '<td><span class="wnq-status-badge ' . esc_attr($status_class) . '">' . esc_html($p['status']) . '</span></td>';
                 echo '<td>';
                 echo '<button type="button" class="button button-small wnq-gbp-edit" data-id="' . (int)$p['id'] . '">Edit</button> ';
+                if (!in_array($p['status'], ['published', 'publishing'], true)) {
+                    echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:inline;">';
+                    echo '<input type="hidden" name="action" value="wnq_gbp_publish_now">';
+                    echo '<input type="hidden" name="post_id" value="' . (int)$p['id'] . '">';
+                    echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+                    wp_nonce_field('wnq_gbp_publish_' . $p['id']);
+                    echo '<button type="submit" class="button button-small button-primary">Publish Now</button>';
+                    echo '</form> ';
+                }
                 echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:inline;">';
                 echo '<input type="hidden" name="action" value="wnq_gbp_delete_post">';
                 echo '<input type="hidden" name="post_id" value="' . (int)$p['id'] . '">';
@@ -634,7 +720,7 @@ jQuery(function($) {
                 echo '</select></label>';
                 echo '<label>Scheduled<input type="datetime-local" name="scheduled_at" value="' . esc_attr(self::toDateTimeLocal($p['scheduled_at'] ?? '')) . '"></label>';
                 echo '<label>CTA<select name="cta_type">';
-                foreach (['LEARN_MORE' => 'Learn More', 'CALL' => 'Call', 'BOOK' => 'Book', 'ORDER' => 'Order', 'SHOP' => 'Shop', 'SIGN_UP' => 'Sign Up'] as $value => $label) {
+                foreach (['NONE' => 'No CTA', 'LEARN_MORE' => 'Learn More', 'CALL' => 'Call', 'BOOK' => 'Book', 'ORDER' => 'Order', 'SHOP' => 'Shop', 'SIGN_UP' => 'Sign Up'] as $value => $label) {
                     echo '<option value="' . esc_attr($value) . '"' . selected($p['cta_type'] ?? '', $value, false) . '>' . esc_html($label) . '</option>';
                 }
                 echo '</select></label>';
@@ -643,6 +729,12 @@ jQuery(function($) {
                 echo '<label>Image ALT<input type="text" name="image_alt" value="' . esc_attr($p['image_alt'] ?? '') . '"></label>';
                 echo '<label>GBP Account ID<input type="text" name="gbp_account_id" value="' . esc_attr($p['gbp_account_id'] ?? '') . '"></label>';
                 echo '<label>GBP Location ID<input type="text" name="gbp_location_id" value="' . esc_attr($p['gbp_location_id'] ?? '') . '"></label>';
+                echo '<label>Event Title<input type="text" name="event_title" value="' . esc_attr($p['event_title'] ?? '') . '"></label>';
+                echo '<label>Event Start<input type="datetime-local" name="event_start" value="' . esc_attr(self::toDateTimeLocal($p['event_start'] ?? '')) . '"></label>';
+                echo '<label>Event End<input type="datetime-local" name="event_end" value="' . esc_attr(self::toDateTimeLocal($p['event_end'] ?? '')) . '"></label>';
+                echo '<label>Coupon Code<input type="text" name="offer_coupon_code" value="' . esc_attr($p['offer_coupon_code'] ?? '') . '"></label>';
+                echo '<label>Redemption URL<input type="url" name="offer_redeem_url" value="' . esc_attr($p['offer_redeem_url'] ?? '') . '"></label>';
+                echo '<label>Offer Terms<textarea name="offer_terms" rows="2">' . esc_textarea($p['offer_terms'] ?? '') . '</textarea></label>';
                 echo '</div>';
                 echo '<button type="submit" class="button button-primary button-small">Save GBP Post</button>';
                 echo '</form>';
@@ -662,6 +754,70 @@ jQuery(function($) {
 });
 </script>
         <?php
+    }
+
+    private static function renderGbpConnectionPanel(array $status): void
+    {
+        $connected = !empty($status['connected']);
+        $configured = !empty($status['credentials_configured']);
+
+        echo '<section class="wnq-blog-card wnq-gbp-connection">';
+        echo '<div class="wnq-gbp-connection-head">';
+        echo '<div><span class="wnq-gbp-eyebrow">Agency connection</span><h2>Google Business Profile</h2>';
+        echo '<p>Connect the Google account that manages your client profiles. One connection can sync every account and location that Google user can access.</p></div>';
+        echo '<span class="wnq-gbp-connection-status ' . ($connected ? 'is-connected' : ($configured ? 'is-ready' : 'is-missing')) . '">';
+        echo $connected ? 'Connected' : ($configured ? 'Ready to connect' : 'Credentials needed');
+        echo '</span></div>';
+
+        echo '<div class="wnq-gbp-status-grid">';
+        echo '<div><span>Google account</span><strong>' . esc_html($status['email'] ?: ($connected ? 'Connected account' : 'Not connected')) . '</strong></div>';
+        echo '<div><span>GBP accounts</span><strong>' . (int)$status['account_count'] . '</strong></div>';
+        echo '<div><span>Locations</span><strong>' . (int)$status['location_count'] . '</strong></div>';
+        echo '<div><span>Last sync</span><strong>' . esc_html($status['last_sync'] ?: 'Never') . '</strong></div>';
+        echo '</div>';
+
+        if (!empty($status['last_error'])) {
+            echo '<div class="wnq-gbp-api-error"><strong>Latest Google response</strong><p>' . nl2br(esc_html($status['last_error'])) . '</p></div>';
+        }
+
+        echo '<div class="wnq-gbp-actions">';
+        if ($configured && !$connected) {
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+            echo '<input type="hidden" name="action" value="wnq_gbp_oauth_start">';
+            wp_nonce_field('wnq_gbp_oauth_start');
+            echo '<button type="submit" class="button button-primary button-large">Connect Google Account</button>';
+            echo '</form>';
+        }
+        if ($connected) {
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+            echo '<input type="hidden" name="action" value="wnq_gbp_sync">';
+            wp_nonce_field('wnq_gbp_sync');
+            echo '<button type="submit" class="button button-primary">Sync Accounts &amp; Locations</button>';
+            echo '</form>';
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(\'Disconnect the Google Business Profile account?\')">';
+            echo '<input type="hidden" name="action" value="wnq_gbp_disconnect">';
+            wp_nonce_field('wnq_gbp_disconnect');
+            echo '<button type="submit" class="button">Disconnect</button>';
+            echo '</form>';
+        }
+        echo '</div>';
+
+        echo '<details class="wnq-gbp-oauth-settings"' . (!$configured ? ' open' : '') . '><summary>OAuth app settings</summary>';
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" class="wnq-gbp-oauth-form">';
+        echo '<input type="hidden" name="action" value="wnq_gbp_save_oauth">';
+        wp_nonce_field('wnq_gbp_save_oauth');
+        echo '<div class="wnq-gbp-two">';
+        echo '<label>OAuth Client ID<input type="password" name="oauth_client_id" value="" autocomplete="off" placeholder="' . esc_attr($configured ? 'Saved - leave blank to keep' : 'Google OAuth web client ID') . '"></label>';
+        echo '<label>OAuth Client Secret<input type="password" name="oauth_client_secret" value="" autocomplete="off" placeholder="' . esc_attr($configured ? 'Saved - leave blank to keep' : 'Google OAuth client secret') . '"></label>';
+        echo '</div>';
+        echo '<label>Authorized Redirect URI<input type="text" readonly value="' . esc_attr(GoogleBusinessProfileClient::redirectUri()) . '"></label>';
+        echo '<p class="description">Add this exact redirect URI to the Web application OAuth client in Google Cloud. The Cloud project must also be approved for Business Profile API access.</p>';
+        echo '<div class="wnq-gbp-actions"><button type="submit" class="button button-primary">Save OAuth Settings</button>';
+        if ((string)get_option('wnq_gbp_oauth_client_id', '') !== '') {
+            echo '<button type="submit" class="button" name="clear_credentials" value="1" onclick="return confirm(\'Clear GBP-specific OAuth credentials and mappings?\')">Clear GBP Credentials</button>';
+        }
+        echo '</div></form></details>';
+        echo '</section>';
     }
 
     // ── Title Generator Tab ─────────────────────────────────────────────────
@@ -1245,6 +1401,35 @@ jQuery(function($) {
         .wnq-content-body h3 { margin-top: 18px; color: #1f2937; }
         .wnq-muted { color: #6b7280; }
         .wnq-gbp-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(260px, .8fr); gap: 16px; align-items: start; }
+        .wnq-gbp-connection { border-top: 4px solid #d4af37; padding: 22px; }
+        .wnq-gbp-connection-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+        .wnq-gbp-connection-head h2 { margin: 3px 0 6px; font-size: 22px; }
+        .wnq-gbp-connection-head p { margin: 0; color: #64748b; max-width: 700px; }
+        .wnq-gbp-eyebrow { color: #8a6d0a; font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+        .wnq-gbp-connection-status { border-radius: 999px; padding: 6px 11px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+        .wnq-gbp-connection-status.is-connected { background: #dcfce7; color: #166534; }
+        .wnq-gbp-connection-status.is-ready { background: #fef3c7; color: #92400e; }
+        .wnq-gbp-connection-status.is-missing { background: #f1f5f9; color: #475569; }
+        .wnq-gbp-status-grid { display: grid; grid-template-columns: minmax(220px, 1.6fr) repeat(3, minmax(120px, 1fr)); gap: 10px; margin: 18px 0; }
+        .wnq-gbp-status-grid > div { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px; }
+        .wnq-gbp-status-grid span { display: block; color: #64748b; font-size: 11px; font-weight: 700; margin-bottom: 5px; text-transform: uppercase; }
+        .wnq-gbp-status-grid strong { display: block; color: #0f172a; overflow-wrap: anywhere; }
+        .wnq-gbp-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .wnq-gbp-actions form { margin: 0; }
+        .wnq-gbp-api-error { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; color: #9a3412; margin-bottom: 14px; padding: 10px 12px; }
+        .wnq-gbp-api-error p { margin: 5px 0 0; }
+        .wnq-gbp-oauth-settings { border-top: 1px solid #e2e8f0; margin-top: 18px; padding-top: 14px; }
+        .wnq-gbp-oauth-settings summary { cursor: pointer; color: #334155; font-weight: 700; }
+        .wnq-gbp-oauth-form { display: grid; gap: 12px; margin-top: 14px; }
+        .wnq-gbp-oauth-form label { display: grid; gap: 5px; color: #374151; font-size: 12px; font-weight: 600; }
+        .wnq-gbp-oauth-form input { width: 100%; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px 10px; font-weight: 400; }
+        .wnq-gbp-mapping-card { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(300px, 1.35fr); gap: 18px; align-items: end; }
+        .wnq-gbp-mapping-card h3 { margin: 3px 0 5px; }
+        .wnq-gbp-mapping-card p { margin: 0; }
+        .wnq-gbp-mapping-form { display: flex; gap: 8px; }
+        .wnq-gbp-mapping-form select { flex: 1; min-width: 0; border: 1px solid #d1d5db; border-radius: 6px; padding: 7px 10px; }
+        .wnq-gbp-current-map { grid-column: 1 / -1; display: flex; gap: 10px; align-items: baseline; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 7px; color: #166534; padding: 9px 11px; }
+        .wnq-gbp-current-map span { color: #4b5563; }
         .wnq-gbp-form, .wnq-gbp-edit-form { display: grid; gap: 12px; }
         .wnq-gbp-form label, .wnq-gbp-edit-form label { display: grid; gap: 5px; color: #374151; font-weight: 600; font-size: 12px; }
         .wnq-gbp-form input, .wnq-gbp-form select, .wnq-gbp-form textarea,
@@ -1256,10 +1441,15 @@ jQuery(function($) {
         .wnq-gbp-advanced summary { cursor: pointer; font-weight: 600; color: #374151; }
         .wnq-gbp-side ul { margin-left: 18px; color: #374151; }
         .wnq-gbp-api-note { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; color: #92400e; padding: 10px 12px; margin-top: 12px; }
+        .wnq-gbp-api-note.is-connected { background: #f0fdf4; border-color: #86efac; color: #166534; }
+        .wnq-gbp-type-fields h4 { color: #6b7280; font-size: 11px; letter-spacing: .06em; margin: 14px 0 7px; text-transform: uppercase; }
         .wnq-gbp-table small { color: #6b7280; }
         .wnq-gbp-edit-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 10px; }
         @media (max-width: 900px) {
-            .wnq-gbp-grid, .wnq-gbp-two, .wnq-gbp-edit-grid { grid-template-columns: 1fr; }
+            .wnq-gbp-grid, .wnq-gbp-two, .wnq-gbp-edit-grid, .wnq-gbp-status-grid, .wnq-gbp-mapping-card { grid-template-columns: 1fr; }
+            .wnq-gbp-connection-head { align-items: stretch; flex-direction: column; }
+            .wnq-gbp-connection-status { align-self: flex-start; }
+            .wnq-gbp-mapping-form { align-items: stretch; flex-direction: column; }
         }
         </style>';
     }

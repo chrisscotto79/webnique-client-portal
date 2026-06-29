@@ -81,6 +81,8 @@ final class SEOOSBootstrap
             'includes/Services/AuditEngine.php',
             'includes/Services/ReportGenerator.php',
             'includes/Services/BlogPublisher.php',
+            'includes/Services/GoogleBusinessProfileClient.php',
+            'includes/Services/GbpPublisher.php',
             'includes/Services/BacklinkVerifier.php',
             'includes/Services/ServiceCityPageGenerator.php',
             'includes/Services/ElementorTemplateLibrary.php',
@@ -144,6 +146,8 @@ final class SEOOSBootstrap
             'includes/Services/AuditEngine.php'       => 'WNQ\\Services\\AuditEngine',
             'includes/Services/ReportGenerator.php'   => 'WNQ\\Services\\ReportGenerator',
             'includes/Services/BlogPublisher.php'     => 'WNQ\\Services\\BlogPublisher',
+            'includes/Services/GoogleBusinessProfileClient.php' => 'WNQ\\Services\\GoogleBusinessProfileClient',
+            'includes/Services/GbpPublisher.php'      => 'WNQ\\Services\\GbpPublisher',
             'includes/Services/BacklinkVerifier.php'  => 'WNQ\\Services\\BacklinkVerifier',
             'includes/Services/ServiceCityPageGenerator.php' => 'WNQ\\Services\\ServiceCityPageGenerator',
             'includes/Services/ElementorTemplateLibrary.php' => 'WNQ\\Services\\ElementorTemplateLibrary',
@@ -264,6 +268,13 @@ final class SEOOSBootstrap
         add_action('admin_post_wnq_gbp_update_post',       [self::class, 'handleGbpUpdatePost']);
         add_action('admin_post_wnq_gbp_delete_post',       [self::class, 'handleGbpDeletePost']);
         add_action('admin_post_wnq_gbp_delete_all',        [self::class, 'handleGbpDeleteAll']);
+        add_action('admin_post_wnq_gbp_save_oauth',        [self::class, 'handleGbpSaveOAuth']);
+        add_action('admin_post_wnq_gbp_oauth_start',       [self::class, 'handleGbpOAuthStart']);
+        add_action('admin_post_wnq_gbp_oauth_callback',    [self::class, 'handleGbpOAuthCallback']);
+        add_action('admin_post_wnq_gbp_disconnect',        [self::class, 'handleGbpDisconnect']);
+        add_action('admin_post_wnq_gbp_sync',              [self::class, 'handleGbpSync']);
+        add_action('admin_post_wnq_gbp_save_mapping',      [self::class, 'handleGbpSaveMapping']);
+        add_action('admin_post_wnq_gbp_publish_now',       [self::class, 'handleGbpPublishNow']);
     }
 
     // ── Form Handlers ───────────────────────────────────────────────────────
@@ -1015,13 +1026,19 @@ final class SEOOSBootstrap
         \WNQ\Models\BlogScheduler::addGbpPost($client_id, [
             'post_type'       => sanitize_key($_POST['post_type'] ?? 'update'),
             'summary'         => $summary,
-            'cta_type'        => sanitize_text_field($_POST['cta_type'] ?? 'LEARN_MORE'),
+            'cta_type'        => sanitize_text_field($_POST['cta_type'] ?? 'NONE'),
             'cta_url'         => esc_url_raw($_POST['cta_url'] ?? ''),
             'image_url'       => esc_url_raw($_POST['image_url'] ?? ''),
             'image_alt'       => sanitize_text_field($_POST['image_alt'] ?? ''),
             'scheduled_at'    => self::normalizeDateTimeLocal($_POST['scheduled_at'] ?? ''),
             'gbp_account_id'  => sanitize_text_field($_POST['gbp_account_id'] ?? ''),
             'gbp_location_id' => sanitize_text_field($_POST['gbp_location_id'] ?? ''),
+            'event_title'      => sanitize_text_field($_POST['event_title'] ?? ''),
+            'event_start'      => self::normalizeDateTimeLocal($_POST['event_start'] ?? ''),
+            'event_end'        => self::normalizeDateTimeLocal($_POST['event_end'] ?? ''),
+            'offer_coupon_code'=> sanitize_text_field($_POST['offer_coupon_code'] ?? ''),
+            'offer_redeem_url' => esc_url_raw($_POST['offer_redeem_url'] ?? ''),
+            'offer_terms'      => sanitize_textarea_field($_POST['offer_terms'] ?? ''),
             'status'          => 'scheduled',
         ]);
 
@@ -1049,13 +1066,19 @@ final class SEOOSBootstrap
         \WNQ\Models\BlogScheduler::updateGbpPost($post_id, [
             'post_type'       => sanitize_key($_POST['post_type'] ?? 'update'),
             'summary'         => $summary,
-            'cta_type'        => sanitize_text_field($_POST['cta_type'] ?? 'LEARN_MORE'),
+            'cta_type'        => sanitize_text_field($_POST['cta_type'] ?? 'NONE'),
             'cta_url'         => esc_url_raw($_POST['cta_url'] ?? ''),
             'image_url'       => esc_url_raw($_POST['image_url'] ?? ''),
             'image_alt'       => sanitize_text_field($_POST['image_alt'] ?? ''),
             'scheduled_at'    => self::normalizeDateTimeLocal($_POST['scheduled_at'] ?? ''),
             'gbp_account_id'  => sanitize_text_field($_POST['gbp_account_id'] ?? ''),
             'gbp_location_id' => sanitize_text_field($_POST['gbp_location_id'] ?? ''),
+            'event_title'      => sanitize_text_field($_POST['event_title'] ?? ''),
+            'event_start'      => self::normalizeDateTimeLocal($_POST['event_start'] ?? ''),
+            'event_end'        => self::normalizeDateTimeLocal($_POST['event_end'] ?? ''),
+            'offer_coupon_code'=> sanitize_text_field($_POST['offer_coupon_code'] ?? ''),
+            'offer_redeem_url' => esc_url_raw($_POST['offer_redeem_url'] ?? ''),
+            'offer_terms'      => sanitize_textarea_field($_POST['offer_terms'] ?? ''),
             'status'          => sanitize_key($_POST['status'] ?? 'scheduled'),
         ]);
 
@@ -1088,6 +1111,129 @@ final class SEOOSBootstrap
         $deleted = \WNQ\Models\BlogScheduler::deleteGbpPostsByClient($client_id);
 
         wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=gbp&client_id=' . urlencode($client_id) . '&notice=gbp_bulk_deleted&deleted=' . $deleted));
+        exit;
+    }
+
+    public static function handleGbpSaveOAuth(): void
+    {
+        check_admin_referer('wnq_gbp_save_oauth');
+        self::requireCap();
+
+        if (!empty($_POST['clear_credentials'])) {
+            \WNQ\Services\GoogleBusinessProfileClient::clearSavedCredentials();
+            self::redirectGbp(['notice' => 'gbp_credentials_cleared']);
+        }
+
+        \WNQ\Services\GoogleBusinessProfileClient::saveCredentials(
+            sanitize_text_field(wp_unslash($_POST['oauth_client_id'] ?? '')),
+            sanitize_text_field(wp_unslash($_POST['oauth_client_secret'] ?? ''))
+        );
+        self::redirectGbp(['notice' => 'gbp_credentials_saved']);
+    }
+
+    public static function handleGbpOAuthStart(): void
+    {
+        check_admin_referer('wnq_gbp_oauth_start');
+        self::requireCap();
+
+        $url = \WNQ\Services\GoogleBusinessProfileClient::authorizationUrl();
+        if ($url === '') {
+            self::redirectGbp(['notice' => 'gbp_error', 'message' => 'Save the OAuth client ID and secret first.']);
+        }
+        wp_redirect($url);
+        exit;
+    }
+
+    public static function handleGbpOAuthCallback(): void
+    {
+        self::requireCap();
+
+        $state = sanitize_text_field(wp_unslash($_GET['state'] ?? ''));
+        if (!\WNQ\Services\GoogleBusinessProfileClient::consumeAuthorizationState($state)) {
+            self::redirectGbp(['notice' => 'gbp_error', 'message' => 'Google connection state expired or did not match. Please try connecting again.']);
+        }
+        if (!empty($_GET['error'])) {
+            self::redirectGbp(['notice' => 'gbp_error', 'message' => sanitize_text_field(wp_unslash($_GET['error_description'] ?? $_GET['error']))]);
+        }
+
+        $client = new \WNQ\Services\GoogleBusinessProfileClient();
+        $result = $client->exchangeAuthorizationCode(sanitize_text_field(wp_unslash($_GET['code'] ?? '')));
+        if (empty($result['success'])) {
+            self::redirectGbp(['notice' => 'gbp_error', 'message' => $result['error'] ?? 'Google connection failed.']);
+        }
+
+        $sync = $client->syncAccountsAndLocations();
+        if (empty($sync['success'])) {
+            self::redirectGbp(['notice' => 'gbp_connected_sync_error', 'message' => $sync['error'] ?? 'Connected, but account sync failed.']);
+        }
+        self::redirectGbp([
+            'notice'    => 'gbp_connected',
+            'accounts'  => (int)($sync['accounts'] ?? 0),
+            'locations' => (int)($sync['locations'] ?? 0),
+        ]);
+    }
+
+    public static function handleGbpDisconnect(): void
+    {
+        check_admin_referer('wnq_gbp_disconnect');
+        self::requireCap();
+        \WNQ\Services\GoogleBusinessProfileClient::disconnect();
+        self::redirectGbp(['notice' => 'gbp_disconnected']);
+    }
+
+    public static function handleGbpSync(): void
+    {
+        check_admin_referer('wnq_gbp_sync');
+        self::requireCap();
+        $client = new \WNQ\Services\GoogleBusinessProfileClient();
+        $result = $client->syncAccountsAndLocations();
+        if (empty($result['success'])) {
+            self::redirectGbp(['notice' => 'gbp_error', 'message' => $result['error'] ?? 'Google Business Profile sync failed.']);
+        }
+        self::redirectGbp([
+            'notice'    => 'gbp_synced',
+            'accounts'  => (int)($result['accounts'] ?? 0),
+            'locations' => (int)($result['locations'] ?? 0),
+        ]);
+    }
+
+    public static function handleGbpSaveMapping(): void
+    {
+        check_admin_referer('wnq_gbp_save_mapping');
+        self::requireCap();
+
+        $client_id = sanitize_text_field(wp_unslash($_POST['client_id'] ?? ''));
+        $selection = sanitize_text_field(wp_unslash($_POST['gbp_location_mapping'] ?? ''));
+        [$account_name, $location_name] = array_pad(explode('|', $selection, 2), 2, '');
+        if (!\WNQ\Services\GoogleBusinessProfileClient::saveClientMapping($client_id, $account_name, $location_name)) {
+            self::redirectGbp(['notice' => 'gbp_error', 'message' => 'The selected location is not in the latest Google sync.', 'client_id' => $client_id]);
+        }
+        self::redirectGbp(['notice' => 'gbp_mapping_saved', 'client_id' => $client_id]);
+    }
+
+    public static function handleGbpPublishNow(): void
+    {
+        $post_id = (int)($_POST['post_id'] ?? 0);
+        $client_id = sanitize_text_field(wp_unslash($_POST['client_id'] ?? ''));
+        check_admin_referer('wnq_gbp_publish_' . $post_id);
+        self::requireCap();
+
+        $post = $post_id ? \WNQ\Models\BlogScheduler::getGbpPost($post_id) : null;
+        if (!$post || !hash_equals((string)$post['client_id'], $client_id)) {
+            wp_die('Invalid GBP post.');
+        }
+        $result = \WNQ\Services\GbpPublisher::publishById($post_id, true);
+        self::redirectGbp([
+            'notice'    => !empty($result['success']) ? 'gbp_published' : 'gbp_publish_failed',
+            'message'   => $result['message'] ?? '',
+            'client_id' => $client_id,
+        ]);
+    }
+
+    private static function redirectGbp(array $args = []): void
+    {
+        $args = array_merge(['page' => 'wnq-seo-hub-blog', 'tab' => 'gbp'], $args);
+        wp_safe_redirect(add_query_arg($args, admin_url('admin.php')));
         exit;
     }
 
@@ -1296,7 +1442,7 @@ final class SEOOSBootstrap
     {
         $current = get_option('wnq_blog_schema_ver', '0');
 
-        if ($current === '4') {
+        if ($current === '5') {
             return; // already up to date
         }
 
@@ -1323,8 +1469,9 @@ final class SEOOSBootstrap
             }
 
             // v3 → v4: BlogScheduler::createTables() creates the GBP schedule table.
+            // v4 → v5: dbDelta adds complete Event and Offer post fields.
 
-            update_option('wnq_blog_schema_ver', '4');
+            update_option('wnq_blog_schema_ver', '5');
         }
     }
 
