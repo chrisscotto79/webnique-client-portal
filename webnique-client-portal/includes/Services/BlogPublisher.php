@@ -26,15 +26,50 @@ use WNQ\Models\Client;
 
 final class BlogPublisher
 {
+    private const RUN_LOCK_OPTION = 'wnq_blog_publisher_run_lock';
+    private const RUN_LOCK_TTL = 15 * MINUTE_IN_SECONDS;
+    private const WORKER_HOOK = 'wnq_blog_publisher_worker';
+
     /**
-     * Process all posts that are due today.
-     * Called by the daily cron job.
+     * Process one due post per request, then chain the next queue worker.
+     * Keeping each request small avoids PHP/HTTP timeouts during AI generation.
      */
     public static function processDuePosts(): void
     {
-        $due = BlogScheduler::getDuePosts();
-        foreach ($due as $post) {
-            self::processPost((int)$post['id']);
+        $lock_token = self::acquireRunLock();
+        if ($lock_token === '') {
+            self::scheduleNextWorker(5 * MINUTE_IN_SECONDS);
+            return;
+        }
+
+        try {
+            $recovered = BlogScheduler::recoverStalePosts(30);
+            $due = BlogScheduler::getDuePosts(2);
+            if (count($due) > 1) {
+                self::scheduleNextWorker(2 * MINUTE_IN_SECONDS);
+            }
+
+            if (empty($due)) {
+                if ($recovered > 0) {
+                    SEOHub::log('blog_publisher_stale_recovered', ['count' => $recovered], 'success', 'cron');
+                }
+                return;
+            }
+
+            $schedule_id = (int)$due[0]['id'];
+            try {
+                $result = self::processPost($schedule_id);
+            } catch (\Throwable $e) {
+                $result = self::fail($schedule_id, 'Unexpected publisher error: ' . $e->getMessage());
+            }
+            SEOHub::log('blog_publisher_run_complete', [
+                'schedule_id' => $schedule_id,
+                'success'     => !empty($result['success']),
+                'message'     => $result['message'] ?? '',
+                'recovered'   => $recovered,
+            ], !empty($result['success']) ? 'success' : 'failed', 'cron');
+        } finally {
+            self::releaseRunLock($lock_token);
         }
     }
 
@@ -67,6 +102,24 @@ final class BlogPublisher
             return ['success' => false, 'message' => 'Post cannot be processed from status: ' . ($scheduled['status'] ?? 'unknown')];
         }
 
+        $claimed_status = !empty($scheduled['generated_body']) ? 'publishing' : 'generating';
+        if (!BlogScheduler::claimPost($schedule_id, $claimed_status)) {
+            $current = BlogScheduler::getPost($schedule_id);
+            if (($current['status'] ?? '') === 'published') {
+                return [
+                    'success'  => true,
+                    'message'  => 'Post is already published',
+                    'post_url' => $current['wp_post_url'] ?? '',
+                ];
+            }
+            if (in_array($current['status'] ?? '', ['generating', 'publishing'], true)) {
+                return ['success' => true, 'message' => 'Post is already being processed'];
+            }
+            return ['success' => false, 'message' => 'Post could not be claimed for processing. Refresh the queue and try again.'];
+        }
+        $scheduled['status'] = $claimed_status;
+        $scheduled['error_message'] = null;
+
         if (!empty($scheduled['generated_body'])) {
             $agent = self::getActiveAgent($scheduled['client_id'], (int)($scheduled['agent_key_id'] ?? 0));
             if (!$agent) {
@@ -79,17 +132,8 @@ final class BlogPublisher
                 'toc'  => $scheduled['generated_toc'] ?? '',
                 'body' => self::normalizeGeneratedBody($scheduled['generated_body'] ?? ''),
             ];
-            BlogScheduler::updatePost($schedule_id, ['status' => 'publishing']);
             return self::publishGeneratedPost($schedule_id, $scheduled, $agent, $parsed);
         }
-
-        // Reset failed posts before retrying
-        if ($scheduled['status'] === 'failed') {
-            BlogScheduler::updatePost($schedule_id, ['status' => 'pending', 'error_message' => null]);
-        }
-
-        // Mark as generating
-        BlogScheduler::updatePost($schedule_id, ['status' => 'generating']);
 
         $client_id = $scheduled['client_id'];
 
@@ -210,7 +254,15 @@ final class BlogPublisher
             return ['success' => false, 'message' => 'Post must be pending or failed to generate content'];
         }
 
-        BlogScheduler::updatePost($schedule_id, ['status' => 'generating', 'error_message' => null]);
+        if (!BlogScheduler::claimPost($schedule_id, 'generating')) {
+            $current = BlogScheduler::getPost($schedule_id);
+            if (in_array($current['status'] ?? '', ['generating', 'publishing'], true)) {
+                return ['success' => false, 'message' => 'Post is already being processed'];
+            }
+            return ['success' => false, 'message' => 'Post could not be claimed for content generation. Refresh the queue and try again.'];
+        }
+        $scheduled['status'] = 'generating';
+        $scheduled['error_message'] = null;
 
         $client_id = $scheduled['client_id'];
         $profile = SEOHub::getProfile($client_id);
@@ -951,7 +1003,7 @@ final class BlogPublisher
         $url = $site_url . '/wp-json/wnq-agent/v1/publish-post';
 
         $response = wp_remote_post($url, [
-            'timeout' => 60,
+            'timeout' => 120,
             'headers' => [
                 'X-WNQ-Api-Key' => $api_key,
                 'Content-Type'  => 'application/json',
@@ -1074,6 +1126,41 @@ final class BlogPublisher
         // Remove trailing separators that Yoast inserts between title parts
         $title = preg_replace('/\s*[\|\-\–\—]+\s*$/', '', $title);
         return trim($title);
+    }
+
+    private static function acquireRunLock(): string
+    {
+        $existing = get_option(self::RUN_LOCK_OPTION, []);
+        if (is_array($existing) && (int)($existing['expires'] ?? 0) > time()) {
+            return '';
+        }
+
+        if ($existing !== false) {
+            delete_option(self::RUN_LOCK_OPTION);
+        }
+
+        $token = wp_generate_uuid4();
+        $added = add_option(self::RUN_LOCK_OPTION, [
+            'token'   => $token,
+            'expires' => time() + self::RUN_LOCK_TTL,
+        ], '', false);
+
+        return $added ? $token : '';
+    }
+
+    private static function releaseRunLock(string $token): void
+    {
+        $existing = get_option(self::RUN_LOCK_OPTION, []);
+        if (is_array($existing) && hash_equals((string)($existing['token'] ?? ''), $token)) {
+            delete_option(self::RUN_LOCK_OPTION);
+        }
+    }
+
+    private static function scheduleNextWorker(int $delay): void
+    {
+        if (!wp_next_scheduled(self::WORKER_HOOK)) {
+            wp_schedule_single_event(time() + max(60, $delay), self::WORKER_HOOK);
+        }
     }
 
     /**
