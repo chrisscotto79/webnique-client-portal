@@ -201,7 +201,7 @@ final class DashboardController
       'profile'   => ClientPortal::publicClient(Client::getByClientId($client_id) ?: []),
       'performance' => ClientPortal::getMonthlyPerformance($client_id, 6, $include_private),
       'learning'  => ['courses' => ClientPortal::courses(), 'requests' => ClientPortal::getLearningRequests($client_id)],
-      'ads'       => ClientPortal::getAdsResource($client_id),
+      'ads'       => ClientPortal::getAdsResource($client_id, $include_private),
       'notifications' => ClientPortal::getPortalNotifications($client_id),
       'settings'  => ClientPortal::getPortalSettings($client_id),
       default     => [],

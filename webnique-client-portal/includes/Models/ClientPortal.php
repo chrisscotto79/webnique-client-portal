@@ -520,7 +520,7 @@ final class ClientPortal
         };
     }
 
-    public static function getAdsResource(string $client_id): array
+    public static function getAdsResource(string $client_id, bool $include_financial = true): array
     {
         $settings = self::adsSettings($client_id);
         $raw_settings = self::adsSettings($client_id, false);
@@ -591,6 +591,14 @@ final class ClientPortal
         }
 
         $ready = $has_developer_token && $has_manager_customer_id && !empty($raw_settings['customer_id']) && $has_oauth && $access_level !== 'test';
+        if (!$include_financial) {
+            unset($summary['spend'], $summary['cost_per_conversion'], $summary['average_cpc'], $summary['cost'], $summary['cost_micros'], $summary['budget']);
+            $campaigns = array_map(static function (array $campaign): array {
+                unset($campaign['spend'], $campaign['cost_per_conversion'], $campaign['average_cpc'], $campaign['cost'], $campaign['cost_micros'], $campaign['budget']);
+                return $campaign;
+            }, $campaigns);
+        }
+
         return [
             'configured' => $ready,
             'mode' => 'read_only',

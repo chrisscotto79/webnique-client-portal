@@ -8,7 +8,7 @@
   const canSeePrivate = !!cfg.isAdmin;
   const tabs = [
     ["overview", "Overview"], ["opportunities", "Opportunities"], ["leads", "Leads"], ["jobs", "Jobs"], ["calendar", "Calendar"],
-    ["followups", "Follow-ups"], ["notifications", "Notifications"], ["reports", "Reports"], ["crm-reports", "CRM Reports"],
+    ["followups", "Follow-ups"], ["notifications", "Notifications"], ["reports", "SEO Reports"], ["crm-reports", "CRM Reports"],
     ["messages", "Support"], ["requests", "Requests"], ["ads", "Ads"], ["billing", "Billing"], ["learning", "Learning Center"], ["settings", "Settings"]
   ];
   const navGroups = [
@@ -409,21 +409,69 @@
     view.querySelector("#wnq-add-lead")?.addEventListener("click", () => openForm({ record_type: "lead", status: "new" }));
     view.querySelector("#wnq-add-job")?.addEventListener("click", () => openForm({ record_type: "job", status: "scheduled" }));
     view.querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => openForm(JSON.parse(button.dataset.edit))));
+    const moveOpportunity = async (id, pipelineStage) => {
+      const saved = await api(`/portal/opportunities/${Number(id || 0)}/stage`, { method: "POST", body: JSON.stringify({ pipeline_stage: pipelineStage }) });
+      if (!saved?.id) throw new Error("The updated opportunity was not returned by the server.");
+      delete state.cache.customers; delete state.cache.overview;
+      sessionStorage.setItem("wnqCrmNotice", "Opportunity moved successfully.");
+      show("opportunities", true);
+    };
     view.querySelectorAll("[data-opportunity-stage]").forEach((select) => select.addEventListener("change", async () => {
       const previous = select.dataset.currentStage || pipelineStages[0]?.key || "new";
       select.disabled = true;
       try {
-        const saved = await api(`/portal/opportunities/${Number(select.dataset.opportunityStage || 0)}/stage`, { method: "POST", body: JSON.stringify({ pipeline_stage: select.value }) });
-        if (!saved?.id) throw new Error("The updated opportunity was not returned by the server.");
-        delete state.cache.customers; delete state.cache.overview;
-        sessionStorage.setItem("wnqCrmNotice", "Opportunity moved successfully.");
-        show("opportunities", true);
+        await moveOpportunity(select.dataset.opportunityStage, select.value);
       } catch (error) {
         select.value = previous;
         select.disabled = false;
         window.alert(error.message);
       }
     }));
+    const opportunityBoard = view.querySelector(".wnq-opportunity-board");
+    if (opportunityBoard) {
+      const clearDragState = () => {
+        opportunityBoard.querySelectorAll(".is-dragging, .is-drag-over, .is-drop-pending").forEach((element) => element.classList.remove("is-dragging", "is-drag-over", "is-drop-pending"));
+      };
+      opportunityBoard.querySelectorAll("[data-opportunity-card]").forEach((card) => {
+        card.addEventListener("dragstart", (event) => {
+          if (event.target.closest("button, select, input, textarea, a") || !event.dataTransfer) {
+            event.preventDefault();
+            return;
+          }
+          card.classList.add("is-dragging");
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", card.dataset.opportunityCard || "");
+        });
+        card.addEventListener("dragend", clearDragState);
+      });
+      opportunityBoard.querySelectorAll("[data-pipeline-stage]").forEach((column) => {
+        column.addEventListener("dragover", (event) => {
+          event.preventDefault();
+          if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+          opportunityBoard.querySelectorAll(".is-drag-over").forEach((element) => element.classList.remove("is-drag-over"));
+          column.classList.add("is-drag-over");
+        });
+        column.addEventListener("dragleave", (event) => {
+          if (!column.contains(event.relatedTarget)) column.classList.remove("is-drag-over");
+        });
+        column.addEventListener("drop", async (event) => {
+          event.preventDefault();
+          const id = Number(event.dataTransfer?.getData("text/plain") || 0);
+          const card = opportunityBoard.querySelector(`[data-opportunity-card="${id}"]`);
+          const nextStage = column.dataset.pipelineStage || "";
+          const currentStage = card?.dataset.currentStage || "";
+          clearDragState();
+          if (!id || !nextStage || nextStage === currentStage) return;
+          column.classList.add("is-drop-pending");
+          try {
+            await moveOpportunity(id, nextStage);
+          } catch (error) {
+            clearDragState();
+            window.alert(error.message);
+          }
+        });
+      });
+    }
     view.querySelectorAll("[data-convert-lead]").forEach((button) => button.addEventListener("click", async () => {
       const id = Number(button.dataset.convertLead || 0);
       if (!id || !window.confirm("Convert this lead into a scheduled job? You can complete the job details next.")) return;
@@ -541,7 +589,7 @@
   const opportunityBoard = (rows, stages) => `<div class="wnq-opportunity-board">${stages.map((stage) => {
     const stageRows = rows.filter((row) => row.pipeline_stage === stage.key);
     const value = stageRows.reduce((sum, row) => sum + Number(row.estimated_value || 0), 0);
-    return `<section class="wnq-opportunity-column" style="--stage-color:${esc(stage.color)}"><header><div><span></span><strong>${esc(stage.label)}</strong><small>${esc(stageRows.length)} opportunit${stageRows.length === 1 ? "y" : "ies"}</small></div><em>${money(value)}</em></header><div class="wnq-opportunity-list">${stageRows.length ? stageRows.map((row) => `<article class="wnq-opportunity-card"><div class="wnq-opportunity-card-head"><strong>${esc(row.name)}</strong><button type="button" class="wnq-icon-button" data-edit='${attr(row)}' title="Edit opportunity" aria-label="Edit ${esc(row.name)}">&#9998;</button></div><p>${esc(row.service || "Service not set")}</p><div class="wnq-opportunity-meta"><span>${money(row.estimated_value)}</span><small>${row.follow_up_date ? `Follow up ${date(row.follow_up_date)}` : "No follow-up set"}</small></div>${pipelineSelect(row, stages)}<button type="button" class="wnq-button is-compact" data-convert-lead="${esc(row.id)}">Convert to Job</button></article>`).join("") : `<div class="wnq-opportunity-empty">No opportunities in this stage.</div>`}</div></section>`;
+    return `<section class="wnq-opportunity-column" data-pipeline-stage="${esc(stage.key)}" style="--stage-color:${esc(stage.color)}"><header><div><span></span><strong>${esc(stage.label)}</strong><small>${esc(stageRows.length)} opportunit${stageRows.length === 1 ? "y" : "ies"}</small></div><em>${money(value)}</em></header><div class="wnq-opportunity-list">${stageRows.length ? stageRows.map((row) => `<article class="wnq-opportunity-card" draggable="true" data-opportunity-card="${esc(row.id)}" data-current-stage="${esc(row.pipeline_stage)}"><div class="wnq-opportunity-card-head"><strong>${esc(row.name)}</strong><button type="button" class="wnq-icon-button" data-edit='${attr(row)}' title="Edit opportunity" aria-label="Edit ${esc(row.name)}">&#9998;</button></div><p>${esc(row.service || "Service not set")}</p><div class="wnq-opportunity-meta"><span>${money(row.estimated_value)}</span><small>${row.follow_up_date ? `Follow up ${date(row.follow_up_date)}` : "No follow-up set"}</small></div>${pipelineSelect(row, stages)}<button type="button" class="wnq-button is-compact" data-convert-lead="${esc(row.id)}">Convert to Job</button></article>`).join("") : `<div class="wnq-opportunity-empty">Drop an opportunity here.</div>`}</div></section>`;
   }).join("")}</div>`;
   const pipelineEditor = () => `<section class="wnq-panel wnq-pipeline-editor-panel"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">Pipeline Builder</span><h2>Opportunity Stages</h2><small>Shared across this client account</small></div><button type="button" class="wnq-icon-button" id="wnq-close-pipeline" aria-label="Close pipeline builder">&#10005;</button></div><div id="wnq-pipeline-stage-rows"></div><div class="wnq-form-actions"><button type="button" class="wnq-button is-secondary" id="wnq-add-pipeline-stage">Add Stage</button><button type="button" class="wnq-button" id="wnq-save-pipeline">Save Pipeline</button><span id="wnq-pipeline-status"></span></div></section>`;
   const bindPipelineEditor = (view, initialStages) => {
@@ -607,7 +655,6 @@
       <section class="wnq-panel wnq-dashboard-card"><div class="wnq-panel-head"><h2>Revenue Trend</h2><span>${canSeePrivate ? `${trend(totals.revenue - totals.cost)} net` : `${money(totals.revenue)} tracked`}</span></div>${performanceChart(performance)}</section>
       <section class="wnq-panel wnq-dashboard-card"><div class="wnq-panel-head"><h2>Lead Source Report</h2><button type="button" class="wnq-link" data-crm-jump="reports">View Reports</button></div>${leadSourceTable(rows, topSources)}</section>
       <section class="wnq-panel wnq-dashboard-card"><div class="wnq-panel-head"><h2>Recent Activity</h2><button type="button" class="wnq-link" data-crm-jump="reports">View All Activity</button></div>${recentActivity(rows, workRows)}</section>
-      <section class="wnq-panel wnq-dashboard-card is-wide"><div class="wnq-panel-head"><h2>Marketing Work History</h2><span>Latest completed work</span></div>${marketingWorkCards(workRows)}</section>
       <section class="wnq-panel wnq-dashboard-card is-wide"><div class="wnq-panel-head"><h2>Business Snapshot</h2></div><div class="wnq-metrics">${metric("Average Job Value", money(avgJob), "Revenue divided by jobs")}${metric("Close Rate", `${closeRate}%`, "Converted vs lost leads")}${metric("Top Service", topServices[0]?.label || "Not set", "Highest tracked revenue")}${metric("Top Customer", topCustomers[0]?.label || "Not set", "Highest tracked revenue")}</div></section>
     </div>`;
   };
@@ -646,7 +693,6 @@
     ].filter((item) => item.detail).slice(0, 5);
     return activities.length ? `<div class="wnq-activity-list">${activities.map((item) => `<article class="wnq-activity-row"><span></span><div><strong>${esc(item.title)}</strong><small>${esc(item.detail)}</small></div><time>${date(item.date)}</time></article>`).join("")}</div>` : empty("Recent CRM and marketing activity will appear here.");
   };
-  const marketingWorkCards = (rows) => rows.length ? `<div class="wnq-work-card-grid">${rows.slice(0, 3).map((row) => `<article class="wnq-work-card"><span class="wnq-work-icon"></span><div><strong>${esc(row.title)}</strong><p>${esc(row.description || row.work_type_label || "Marketing work completed.")}</p><small>${date(row.work_date || row.due_date)} · ${esc(row.assigned_to || cfg.user?.name || "Golden Web Marketing")}</small></div><em>${esc(row.work_type_label || humanize(row.task_type || "Work"))}</em></article>`).join("")}</div>` : empty("Completed SEO, Ads, and website updates will appear here.");
   const miniList = (title, rows, fallback) => `<div class="wnq-panel-head"><h2>${esc(title)}</h2></div>${rows.length ? rows.slice(0, 5).map((row) => `<div class="wnq-work-item"><div>${crmStatus(row.status)}<strong>${esc(row.name)}</strong></div><span>${date(row.job_date || row.follow_up_date)} · ${esc(row.service || "Service not set")}</span></div>`).join("") : empty(fallback)}`;
   const crmTable = (rows, title, fallback, mode = "general") => `<div class="wnq-panel wnq-table-wrap wnq-crm-table-panel"><div class="wnq-panel-head"><div><h2>${esc(title)}</h2><small>${esc(rows.length)} record${rows.length === 1 ? "" : "s"}</small></div></div><table class="wnq-crm-table"><thead><tr><th>Customer</th><th>Service / Source</th><th>Status</th><th>Schedule</th><th>${mode === "leads" ? "Estimate" : "Revenue"}</th><th>Job Info</th><th></th></tr></thead><tbody>${rows.length ? rows.map((row) => {
     const profit = Number(row.final_value || 0) - Number(row.job_cost || 0);
