@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 
 final class ClientPortal
 {
-    private const SCHEMA_VERSION = '10';
+    private const SCHEMA_VERSION = '11';
     private static bool $schema_ready = false;
     private static string $last_error = '';
 
@@ -42,7 +42,7 @@ final class ClientPortal
         dbDelta("CREATE TABLE {$wpdb->prefix}wnq_portal_customers (
             id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
             client_id varchar(100) NOT NULL,
-            record_type varchar(30) NOT NULL DEFAULT 'customer',
+            record_type varchar(30) NOT NULL DEFAULT 'lead',
             name varchar(255) NOT NULL,
             phone varchar(50) DEFAULT NULL,
             email varchar(255) DEFAULT NULL,
@@ -134,6 +134,7 @@ final class ClientPortal
 
         self::ensureCustomerColumns();
         self::ensureCustomerIndexes();
+        self::migrateCustomerRecordTypes();
         self::migrateLegacyAttachments();
         update_option('wnq_client_portal_schema_version', self::SCHEMA_VERSION, false);
     }
@@ -180,6 +181,21 @@ final class ClientPortal
         }
     }
 
+    private static function migrateCustomerRecordTypes(): void
+    {
+        global $wpdb;
+        $table = self::sqlIdentifier($wpdb->prefix . 'wnq_portal_customers');
+        $wpdb->query(
+            "UPDATE {$table} SET record_type='job', job_count=1
+             WHERE record_type IN ('customer','lead')
+             AND (status IN ('scheduled','in_progress','completed','canceled','won','closed')
+                  OR job_date IS NOT NULL OR final_value > 0)"
+        );
+        $wpdb->query("UPDATE {$table} SET record_type='lead', job_count=0 WHERE record_type='customer'");
+        $wpdb->query("UPDATE {$table} SET job_count=1 WHERE record_type='job'");
+        $wpdb->query("UPDATE {$table} SET job_count=0 WHERE record_type='lead'");
+    }
+
     private static function customerColumnsMissing(string $table): bool
     {
         $existing = self::tableColumns($table);
@@ -209,7 +225,7 @@ final class ClientPortal
     {
         return [
             'client_id'       => "`client_id` varchar(100) NOT NULL DEFAULT ''",
-            'record_type'     => "`record_type` varchar(30) NOT NULL DEFAULT 'customer'",
+            'record_type'     => "`record_type` varchar(30) NOT NULL DEFAULT 'lead'",
             'name'            => "`name` varchar(255) NOT NULL DEFAULT ''",
             'phone'           => "`phone` varchar(50) DEFAULT NULL",
             'email'           => "`email` varchar(255) DEFAULT NULL",
@@ -284,24 +300,24 @@ final class ClientPortal
             $data = array_merge($existing_record, $data);
         }
         $name = (string)($data['name'] ?? $data['customer_name'] ?? $data['customerName'] ?? '');
-        $record_type = sanitize_key($data['record_type'] ?? 'customer');
-        if (!in_array($record_type, ['lead', 'customer', 'job'], true)) {
-            $record_type = 'customer';
+        $record_type = sanitize_key($data['record_type'] ?? 'lead');
+        if (!in_array($record_type, ['lead', 'job'], true)) {
+            $record_type = 'lead';
         }
         $status = sanitize_key($data['status'] ?? 'new');
         if (!in_array($status, self::customerStatuses(), true)) {
             $status = 'new';
         }
         $status = self::normalizeCustomerStatus($status);
+        if (in_array($status, ['scheduled', 'in_progress', 'completed', 'canceled'], true)) {
+            $record_type = 'job';
+        }
         $follow_up = self::dateField($data['follow_up_date'] ?? '');
         $reminder_date = self::dateField($data['reminder_date'] ?? '');
         $job_date = self::dateField($data['job_date'] ?? '');
         $completion_date = self::dateField($data['completion_date'] ?? '');
-        $job_count = max(0, absint($data['job_count'] ?? 0));
+        $job_count = $record_type === 'job' ? 1 : 0;
         $final_value = self::moneyAmount($data['final_value'] ?? 0);
-        if ($job_count === 0 && ($final_value > 0 || $status === 'completed')) {
-            $job_count = 1;
-        }
         $record = [
             'client_id'       => sanitize_text_field($client_id),
             'record_type'     => $record_type,
@@ -360,6 +376,38 @@ final class ClientPortal
             return false;
         }
         return (int)$wpdb->insert_id;
+    }
+
+    public static function convertLeadToJob(string $client_id, int $id): int|false
+    {
+        self::ensureSchema();
+        self::ensureCustomerColumns();
+        global $wpdb;
+        self::$last_error = '';
+        $record = self::getCustomer($id, $client_id);
+        if (!$record || ($record['record_type'] ?? '') === 'job') {
+            return $record ? $id : false;
+        }
+
+        $result = $wpdb->update(
+            $wpdb->prefix . 'wnq_portal_customers',
+            [
+                'record_type' => 'job',
+                'status'      => 'scheduled',
+                'job_count'   => 1,
+                'follow_up_date' => null,
+                'reminder_date'  => null,
+                'updated_at'  => current_time('mysql'),
+            ],
+            ['id' => $id, 'client_id' => $client_id],
+            ['%s', '%s', '%d', '%s', '%s', '%s'],
+            ['%d', '%s']
+        );
+        if ($result === false) {
+            self::$last_error = (string)$wpdb->last_error;
+            return false;
+        }
+        return $id;
     }
 
     public static function lastError(): string
@@ -986,6 +1034,137 @@ final class ClientPortal
         ]);
     }
 
+    public static function getPortalSettings(string $client_id): array
+    {
+        $client = Client::getByClientId($client_id) ?: [];
+        $stored = get_option(self::portalSettingsOptionKey($client_id), []);
+        $stored = is_array($stored) ? $stored : [];
+        $default_sources = [
+            'Google Ads', 'Google Business Profile', 'Organic Search', 'Website Form',
+            'Phone Call', 'Referral', 'Facebook', 'Instagram', 'Other',
+        ];
+        $services = self::services($client['active_services'] ?? '');
+
+        return [
+            'profile' => self::publicClient($client),
+            'crm' => [
+                'lead_sources' => self::sanitizeTextList($stored['lead_sources'] ?? $default_sources, $default_sources),
+                'services' => self::sanitizeTextList($stored['services'] ?? $services, $services),
+                'default_follow_up_days' => max(0, min(90, absint($stored['default_follow_up_days'] ?? 2))),
+            ],
+            'notifications' => [
+                'support_replies' => !array_key_exists('support_replies', $stored) || !empty($stored['support_replies']),
+                'overdue_followups' => !array_key_exists('overdue_followups', $stored) || !empty($stored['overdue_followups']),
+                'upcoming_jobs' => !array_key_exists('upcoming_jobs', $stored) || !empty($stored['upcoming_jobs']),
+                'new_reports' => !array_key_exists('new_reports', $stored) || !empty($stored['new_reports']),
+            ],
+        ];
+    }
+
+    public static function savePortalSettings(string $client_id, array $data): bool
+    {
+        $client = Client::getByClientId($client_id);
+        if (!$client) {
+            return false;
+        }
+        $current = self::getPortalSettings($client_id);
+        $crm = is_array($data['crm'] ?? null) ? $data['crm'] : [];
+        $notifications = is_array($data['notifications'] ?? null) ? $data['notifications'] : [];
+        $lead_sources = self::sanitizeTextList($crm['lead_sources'] ?? $current['crm']['lead_sources'], $current['crm']['lead_sources']);
+        $services = self::sanitizeTextList($crm['services'] ?? $current['crm']['services'], $current['crm']['services']);
+        $preference = static function (string $key) use ($notifications, $current): bool {
+            return array_key_exists($key, $notifications)
+                ? !empty($notifications[$key])
+                : !empty($current['notifications'][$key]);
+        };
+        $settings = [
+            'lead_sources' => $lead_sources,
+            'services' => $services,
+            'default_follow_up_days' => max(0, min(90, absint($crm['default_follow_up_days'] ?? $current['crm']['default_follow_up_days']))),
+            'support_replies' => $preference('support_replies'),
+            'overdue_followups' => $preference('overdue_followups'),
+            'upcoming_jobs' => $preference('upcoming_jobs'),
+            'new_reports' => $preference('new_reports'),
+        ];
+        update_option(self::portalSettingsOptionKey($client_id), $settings, false);
+
+        if ($services !== self::services($client['active_services'] ?? '')) {
+            Client::update((int)$client['id'], ['active_services' => $services]);
+        }
+        return true;
+    }
+
+    public static function getPortalNotifications(string $client_id): array
+    {
+        $settings = self::getPortalSettings($client_id);
+        $preferences = $settings['notifications'];
+        $records = self::getCustomers($client_id, 200, false);
+        $today = current_time('Y-m-d');
+        $week_end = wp_date('Y-m-d', current_time('timestamp') + (7 * DAY_IN_SECONDS));
+        $items = [];
+
+        if (!empty($preferences['support_replies'])) {
+            foreach (self::getTickets($client_id, 25) as $ticket) {
+                if (empty($ticket['unread'])) {
+                    continue;
+                }
+                $items[] = [
+                    'type' => 'support', 'tone' => 'gold', 'attention' => true,
+                    'title' => 'New support reply',
+                    'message' => (string)($ticket['subject'] ?? 'Support ticket updated'),
+                    'date' => (string)($ticket['updated_at'] ?? ''),
+                    'route' => 'messages', 'action' => 'View ticket',
+                ];
+            }
+        }
+        foreach ($records as $record) {
+            $status = (string)($record['status'] ?? 'new');
+            if (in_array($status, ['completed', 'lost', 'canceled'], true)) {
+                continue;
+            }
+            if (!empty($preferences['overdue_followups']) && !empty($record['follow_up_date']) && $record['follow_up_date'] < $today) {
+                $items[] = [
+                    'type' => 'followup', 'tone' => 'red', 'attention' => true,
+                    'title' => 'Follow-up overdue',
+                    'message' => (string)($record['name'] ?? 'Lead') . ' - ' . (string)($record['service'] ?: 'Follow-up'),
+                    'date' => (string)$record['follow_up_date'],
+                    'route' => 'followups', 'action' => 'Review follow-up',
+                ];
+            }
+            if (!empty($preferences['upcoming_jobs']) && ($record['record_type'] ?? '') === 'job' && !empty($record['job_date']) && $record['job_date'] >= $today && $record['job_date'] <= $week_end) {
+                $items[] = [
+                    'type' => 'job', 'tone' => 'green', 'attention' => $record['job_date'] === $today,
+                    'title' => $record['job_date'] === $today ? 'Job scheduled today' : 'Upcoming job',
+                    'message' => (string)($record['name'] ?? 'Job') . ' - ' . (string)($record['service'] ?: 'Service'),
+                    'date' => (string)$record['job_date'],
+                    'route' => 'calendar', 'action' => 'Open calendar',
+                ];
+            }
+        }
+        if (!empty($preferences['new_reports'])) {
+            $reports = self::getReports($client_id, 1);
+            if (!empty($reports[0])) {
+                $items[] = [
+                    'type' => 'report', 'tone' => 'blue', 'attention' => false,
+                    'title' => 'Latest SEO report available',
+                    'message' => (string)($reports[0]['title'] ?? 'Monthly Report'),
+                    'date' => (string)($reports[0]['generated_at'] ?? $reports[0]['period_end'] ?? ''),
+                    'route' => 'reports', 'action' => 'View report',
+                ];
+            }
+        }
+
+        usort($items, static function (array $left, array $right): int {
+            $attention = (int)!empty($right['attention']) <=> (int)!empty($left['attention']);
+            return $attention !== 0 ? $attention : strcmp((string)($right['date'] ?? ''), (string)($left['date'] ?? ''));
+        });
+        return [
+            'attention_count' => count(array_filter($items, static fn(array $item): bool => !empty($item['attention']))),
+            'items' => array_slice($items, 0, 50),
+            'settings' => $preferences,
+        ];
+    }
+
     public static function markMessagesRead(string $client_id, string $sender_role): void
     {
         self::ensureSchema();
@@ -1201,6 +1380,21 @@ final class ClientPortal
         }
         $decoded = json_decode((string)$services, true);
         return is_array($decoded) ? array_values(array_filter(array_map('sanitize_text_field', $decoded))) : [];
+    }
+
+    private static function portalSettingsOptionKey(string $client_id): string
+    {
+        return 'wnq_portal_settings_' . md5($client_id);
+    }
+
+    private static function sanitizeTextList($value, array $fallback = []): array
+    {
+        $items = is_array($value) ? $value : (preg_split('/[\r\n,]+/', (string)$value) ?: []);
+        $items = array_values(array_unique(array_filter(array_map(
+            static fn($item): string => sanitize_text_field((string)$item),
+            $items
+        ))));
+        return $items ?: array_values(array_filter(array_map('sanitize_text_field', $fallback)));
     }
 
     private static function responseTime(string $priority): string

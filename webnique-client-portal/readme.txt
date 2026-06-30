@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.38
+Stable tag: 2.4.39
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,15 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.39 - Connected CRM Workflow and Portal UX
+
+- Added a full-screen portal mode and removed Marketing Work from sidebar navigation
+- Simplified CRM records to Leads and Jobs with a dedicated Convert to Job action
+- Added connected CRM, business profile, and notification settings
+- Added a notification center for support replies, follow-ups, jobs, and reports
+- Rebuilt the calendar as a responsive monthly schedule grid
+- Fixed saved records being hidden by stale filters and normalized legacy customer records
+
 2.4.38 - Dedicated GBP OAuth Validation
 
 - Stopped silently reusing Google Ads OAuth credentials for Business Profile access
