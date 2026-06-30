@@ -967,9 +967,10 @@ final class ClientPortal
         foreach ((array)($data['request_data'] ?? []) as $key => $value) {
             $request_data[sanitize_key((string)$key)] = sanitize_textarea_field((string)$value);
         }
+        $request_key = 'req-' . strtolower(wp_generate_password(8, false, false));
         $result = $wpdb->insert($wpdb->prefix . 'wnq_portal_requests', [
             'client_id'    => sanitize_text_field($client_id),
-            'request_key'  => 'req-' . strtolower(wp_generate_password(8, false, false)),
+            'request_key'  => $request_key,
             'request_type' => $type,
             'title'        => $title,
             'details'      => sanitize_textarea_field((string)($data['details'] ?? '')),
@@ -982,8 +983,19 @@ final class ClientPortal
         $client = Client::getByClientId($client_id) ?: [];
         $recipient = sanitize_email((string)get_option('wnq_support_email', get_option('admin_email')));
         if ($recipient !== '') {
-            wp_mail($recipient, 'New portal request from ' . sanitize_text_field((string)($client['company'] ?: $client['name'] ?: $client_id)), $title . "\n\n" . sanitize_textarea_field((string)($data['details'] ?? '')));
+            $client_name = sanitize_text_field((string)($client['company'] ?: $client['name'] ?: $client_id));
+            $admin_url = admin_url('admin.php?page=wnq-client-portal-dashboard&client_id=' . rawurlencode($client_id));
+            $message = "A new client request was submitted.\n\n"
+                . "Client: {$client_name}\n"
+                . "Request: {$title}\n"
+                . "Type: " . str_replace('_', ' ', $type) . "\n"
+                . "Priority: {$priority}\n"
+                . "Reference: {$request_key}\n\n"
+                . sanitize_textarea_field((string)($data['details'] ?? '')) . "\n\n"
+                . "Review in WordPress: {$admin_url}";
+            wp_mail($recipient, 'New portal request from ' . $client_name, $message);
         }
+        do_action('wnq_portal_request_created', (int)$wpdb->insert_id, $client_id, $request_key);
         return (int)$wpdb->insert_id;
     }
 
@@ -1111,6 +1123,7 @@ final class ClientPortal
                 'overdue_followups' => !array_key_exists('overdue_followups', $stored) || !empty($stored['overdue_followups']),
                 'upcoming_jobs' => !array_key_exists('upcoming_jobs', $stored) || !empty($stored['upcoming_jobs']),
                 'new_reports' => !array_key_exists('new_reports', $stored) || !empty($stored['new_reports']),
+                'sound_enabled' => !array_key_exists('sound_enabled', $stored) || !empty($stored['sound_enabled']),
             ],
         ];
     }
@@ -1141,6 +1154,7 @@ final class ClientPortal
             'overdue_followups' => $preference('overdue_followups'),
             'upcoming_jobs' => $preference('upcoming_jobs'),
             'new_reports' => $preference('new_reports'),
+            'sound_enabled' => $preference('sound_enabled'),
         ];
         update_option(self::portalSettingsOptionKey($client_id), $settings, false);
 
@@ -1604,14 +1618,18 @@ final class ClientPortal
         return null;
     }
 
-    public static function attachmentDownloadUrl(string $client_id, string $token): string
+    public static function attachmentDownloadUrl(string $client_id, string $token, bool $preview = false): string
     {
-        return add_query_arg([
+        $args = [
             'action'    => 'wnq_portal_download_attachment',
             'client_id' => $client_id,
             'token'     => $token,
             '_wpnonce'  => wp_create_nonce('wnq_portal_attachment_' . $client_id . '_' . $token),
-        ], admin_url('admin-post.php'));
+        ];
+        if ($preview) {
+            $args['preview'] = '1';
+        }
+        return add_query_arg($args, admin_url('admin-post.php'));
     }
 
     public static function privateAttachmentPath(array $attachment): string
@@ -1651,6 +1669,9 @@ final class ClientPortal
         return array_map(static function (array $attachment) use ($client_id): array {
             if (!empty($attachment['token'])) {
                 $attachment['url'] = self::attachmentDownloadUrl($client_id, (string)$attachment['token']);
+                if (str_starts_with((string)($attachment['type'] ?? ''), 'image/')) {
+                    $attachment['preview_url'] = self::attachmentDownloadUrl($client_id, (string)$attachment['token'], true);
+                }
                 unset($attachment['path'], $attachment['token']);
             }
             return $attachment;

@@ -29,8 +29,8 @@ final class ClientPortalAdmin
 
     public static function addPage(): void
     {
-        $unread = ClientPortal::getUnreadMessageCount();
-        $label = 'Client Portal Dashboard' . ($unread > 0 ? ' <span class="awaiting-mod count-' . $unread . '"><span class="pending-count">' . $unread . '</span></span>' : '');
+        $pending = ClientPortal::getUnreadMessageCount() + ClientPortal::getOpenRequestCount();
+        $label = 'Client Portal Dashboard' . ($pending > 0 ? ' <span class="awaiting-mod count-' . $pending . '"><span class="pending-count">' . $pending . '</span></span>' : '');
         add_submenu_page(
             'wnq-portal',
             'Client Portal Dashboard',
@@ -46,11 +46,15 @@ final class ClientPortalAdmin
         if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
             return;
         }
-        $count = ClientPortal::getUnreadMessageCount();
-        if ($count < 1 || sanitize_key((string)($_GET['page'] ?? '')) === 'wnq-client-portal-dashboard') {
+        $messages = ClientPortal::getUnreadMessageCount();
+        $requests = ClientPortal::getOpenRequestCount();
+        if (($messages + $requests) < 1 || sanitize_key((string)($_GET['page'] ?? '')) === 'wnq-client-portal-dashboard') {
             return;
         }
-        echo '<div class="notice notice-info"><p><strong>' . esc_html($count . ' unread client portal message' . ($count === 1 ? '' : 's')) . '.</strong> <a href="' . esc_url(admin_url('admin.php?page=wnq-client-portal-dashboard')) . '">Review messages</a></p></div>';
+        $parts = [];
+        if ($messages > 0) $parts[] = $messages . ' unread message' . ($messages === 1 ? '' : 's');
+        if ($requests > 0) $parts[] = $requests . ' open request' . ($requests === 1 ? '' : 's');
+        echo '<div class="notice notice-info"><p><strong>' . esc_html(implode(' and ', $parts)) . ' in the client portal.</strong> <a href="' . esc_url(admin_url('admin.php?page=wnq-client-portal-dashboard')) . '">Review client activity</a></p></div>';
     }
 
     public static function render(): void
@@ -341,8 +345,10 @@ final class ClientPortalAdmin
             wp_die('Attachment not found.', 'Not Found', ['response' => 404]);
         }
         nocache_headers();
-        header('Content-Type: ' . ($attachment['type'] ?: 'application/octet-stream'));
-        header('Content-Disposition: attachment; filename="' . sanitize_file_name((string)$attachment['name']) . '"');
+        $type = (string)($attachment['type'] ?: 'application/octet-stream');
+        $preview = !empty($_GET['preview']) && str_starts_with($type, 'image/');
+        header('Content-Type: ' . $type);
+        header('Content-Disposition: ' . ($preview ? 'inline' : 'attachment') . '; filename="' . sanitize_file_name((string)$attachment['name']) . '"');
         header('Content-Length: ' . (string)filesize($path));
         readfile($path);
         exit;
