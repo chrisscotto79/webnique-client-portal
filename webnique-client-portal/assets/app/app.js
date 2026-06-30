@@ -7,17 +7,25 @@
   const state = { active: "overview", cache: {}, clientId: cfg.clientId || "" };
   const canSeePrivate = !!cfg.isAdmin;
   const tabs = [
-    ["overview", "Overview"], ["leads", "Leads"], ["jobs", "Jobs"], ["calendar", "Calendar"],
-    ["followups", "Follow-ups"], ["reports", "Reports"], ["crm-reports", "CRM Reports"], ["marketing-work", "Marketing Work"],
-    ["ads", "Ads"], ["billing", "Billing"], ["learning", "Learning Center"], ["settings", "Settings"]
+    ["overview", "Overview"], ["opportunities", "Opportunities"], ["leads", "Leads"], ["jobs", "Jobs"], ["calendar", "Calendar"],
+    ["followups", "Follow-ups"], ["notifications", "Notifications"], ["reports", "Reports"], ["crm-reports", "CRM Reports"],
+    ["messages", "Support"], ["requests", "Requests"], ["ads", "Ads"], ["billing", "Billing"], ["learning", "Learning Center"], ["settings", "Settings"]
   ];
-  const crmRoutes = { overview: "dashboard", leads: "leads", jobs: "jobs", calendar: "calendar", followups: "followups", "crm-reports": "reports", "marketing-work": "marketing-work", settings: "settings" };
+  const navGroups = [
+    ["Workspace", ["overview", "opportunities", "leads", "jobs", "calendar", "followups"]],
+    ["Insights", ["reports", "crm-reports", "ads"]],
+    ["Account", ["notifications", "messages", "requests", "billing", "learning", "settings"]],
+  ];
+  const crmRoutes = { overview: "dashboard", opportunities: "opportunities", leads: "leads", jobs: "jobs", calendar: "calendar", followups: "followups", "crm-reports": "reports" };
   const statusLabels = { new: "New Lead", contacted: "Contacted", quoted: "Quoted", scheduled: "Scheduled", in_progress: "In Progress", completed: "Completed", lost: "Lost / Canceled", canceled: "Lost / Canceled" };
-  const statusOptions = [["new", "New Lead"], ["contacted", "Contacted"], ["quoted", "Quoted"], ["scheduled", "Scheduled"], ["in_progress", "In Progress"], ["completed", "Completed"], ["lost", "Lost / Canceled"], ["canceled", "Canceled"]];
   const leadSourceOptions = ["Google Ads", "Google Business Profile", "Organic Search", "Website Form", "Phone Call", "Referral", "Facebook", "Instagram", "Other"];
-  const workTypeOptions = [["seo", "SEO"], ["google_ads", "Google Ads"], ["website_update", "Website Update"], ["gbp", "Google Business Profile"], ["content", "Content"], ["tracking_analytics", "Tracking / Analytics"], ["technical_fix", "Technical Fix"], ["other", "Other"]];
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char]));
   const money = (value) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(value || 0));
+  const isoDate = (value = new Date()) => {
+    const parsed = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(parsed.getTime())) return "";
+    return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+  };
   const parseDateValue = (value) => {
     if (!value) return null;
     const raw = String(value);
@@ -37,7 +45,7 @@
   const reportTitle = (row = {}) => `${reportTypeLabel(row.report_type)} Report`;
   const attr = (value) => esc(JSON.stringify(value));
   const activeLabel = (key) => tabs.find(([tab]) => tab === key)?.[1] || "Dashboard";
-  const navIcon = (key) => ({ overview: "grid", leads: "users", jobs: "briefcase", calendar: "calendar", followups: "check", reports: "chart", "crm-reports": "chart", "marketing-work": "megaphone", ads: "target", billing: "receipt", learning: "book", settings: "gear" }[key] || "dot");
+  const navIcon = (key) => ({ overview: "grid", opportunities: "pipeline", leads: "users", jobs: "briefcase", calendar: "calendar", followups: "check", notifications: "bell", reports: "chart", "crm-reports": "chart", messages: "support", requests: "request", ads: "target", billing: "receipt", learning: "book", settings: "gear" }[key] || "dot");
   const api = async (path, options = {}) => {
     const requestUrl = new URL(`${cfg.restUrl.replace(/\/$/, "")}${path}`);
     if (cfg.isAdmin && state.clientId) requestUrl.searchParams.set("client_id", state.clientId);
@@ -99,16 +107,36 @@
     root.innerHTML = `<div class="wnq-portal">
       <aside class="wnq-sidebar"><div class="wnq-brand"><img src="${esc(cfg.logoUrl || "")}" alt="Golden Web Marketing"><span>Client Portal</span></div>
       ${viewAs()}
-      <nav>${tabs.map(([key, label]) => `<button type="button" data-tab="${key}"><i class="wnq-nav-icon is-${esc(navIcon(key))}" aria-hidden="true"></i><span>${esc(label)}</span></button>`).join("")}</nav>
+      <nav>${navGroups.map(([group, keys]) => `<section class="wnq-nav-group"><small>${esc(group)}</small>${keys.map((key) => { const label = activeLabel(key); return `<button type="button" data-tab="${key}"><i class="wnq-nav-icon is-${esc(navIcon(key))}" aria-hidden="true"></i><span>${esc(label)}</span></button>`; }).join("")}</section>`).join("")}</nav>
       <div class="wnq-sidebar-foot"><span>Signed in as</span><strong>${esc(cfg.user?.name || "Client")}</strong><small>Portal v${esc(cfg.version || "unknown")}</small></div></aside>
-      <main class="wnq-main"><div class="wnq-topbar"><div><span>Golden Web Marketing <em>v${esc(cfg.version || "unknown")}</em></span><strong id="wnq-top-title">Overview</strong></div><button type="button" class="wnq-button is-secondary" id="wnq-refresh-view">Refresh</button></div><div id="wnq-view">${empty("Loading dashboard...")}</div></main></div>`;
+      <main class="wnq-main"><div class="wnq-topbar"><div><span>Golden Web Marketing <em>v${esc(cfg.version || "unknown")}</em></span><strong id="wnq-top-title">Overview</strong></div><div class="wnq-topbar-actions"><button type="button" class="wnq-button is-secondary" id="wnq-fullscreen-toggle" title="Open the portal in full screen">Full Screen</button><button type="button" class="wnq-button is-secondary" id="wnq-refresh-view">Refresh</button></div></div><div id="wnq-view">${empty("Loading dashboard...")}</div></main></div>`;
     root.querySelectorAll("[data-tab]").forEach((button) => button.addEventListener("click", () => show(button.dataset.tab)));
     root.querySelector("#wnq-refresh-view")?.addEventListener("click", () => show(state.active, true));
+    root.querySelector("#wnq-fullscreen-toggle")?.addEventListener("click", toggleFullscreen);
     root.querySelector("#wnq-view-as")?.addEventListener("change", (event) => {
       state.clientId = event.currentTarget.value;
       state.cache = {};
       show("overview", true);
     });
+    document.addEventListener("fullscreenchange", syncFullscreenButton);
+    refreshNotificationBadge();
+  };
+  const syncFullscreenButton = () => {
+    const button = root.querySelector("#wnq-fullscreen-toggle");
+    const active = document.fullscreenElement === root || root.classList.contains("is-fullscreen-fallback");
+    root.classList.toggle("is-fullscreen", active);
+    if (button) button.textContent = active ? "Exit Full Screen" : "Full Screen";
+  };
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement === root) await document.exitFullscreen();
+      else if (root.requestFullscreen) await root.requestFullscreen();
+      else root.classList.toggle("is-fullscreen-fallback");
+      syncFullscreenButton();
+    } catch (error) {
+      root.classList.toggle("is-fullscreen-fallback");
+      syncFullscreenButton();
+    }
   };
   const setActive = (key) => root.querySelectorAll("[data-tab]").forEach((button) => button.classList.toggle("is-active", button.dataset.tab === key));
   const load = async (resource, refresh = false) => {
@@ -125,12 +153,26 @@
     try {
       if (Object.prototype.hasOwnProperty.call(crmRoutes, key)) {
         await customers(view, refresh, { forceTab: crmRoutes[key], hideSubnav: true });
+        refreshNotificationBadge(refresh);
         return;
       }
-      const renderers = { reports, customers, ads, messages, requests, billing, learning, profile, settings: profile, "seo-reports": reports };
+      const renderers = { reports, customers, ads, messages, requests, billing, learning, profile, settings, notifications, "seo-reports": reports };
       await (renderers[key] || ((target, reload) => customers(target, reload, { forceTab: "dashboard", hideSubnav: true })))(view, refresh);
+      refreshNotificationBadge(refresh);
     } catch (error) {
       view.innerHTML = `<div class="wnq-error"><strong>Unable to load this section.</strong><p>${esc(error.message)}</p></div>`;
+    }
+  };
+
+  const refreshNotificationBadge = async (refresh = false) => {
+    try {
+      const data = await load("notifications", refresh);
+      const button = root.querySelector('[data-tab="notifications"]');
+      if (!button) return;
+      button.querySelector("b")?.remove();
+      if (Number(data.attention_count || 0) > 0) button.insertAdjacentHTML("beforeend", `<b>${esc(data.attention_count)}</b>`);
+    } catch (error) {
+      // Notification availability should never block the rest of the portal.
     }
   };
 
@@ -140,7 +182,12 @@
     const actions = data.actions || [];
     const current = data.performance?.[data.performance.length - 1] || {};
     const messagesTab = root.querySelector('[data-tab="messages"]');
-    if (messagesTab) messagesTab.innerHTML = `Messages${data.unread_messages ? `<b>${esc(data.unread_messages)}</b>` : ""}`;
+    if (messagesTab) {
+      const label = messagesTab.querySelector("span");
+      if (label) label.textContent = "Support";
+      messagesTab.querySelector("b")?.remove();
+      if (data.unread_messages) messagesTab.insertAdjacentHTML("beforeend", `<b>${esc(data.unread_messages)}</b>`);
+    }
     view.innerHTML = `${heading("Dashboard", `Welcome back, ${data.client?.company || data.client?.name || "there"}`, "Here is what is happening and what needs attention.")}
       <div class="wnq-health">
         <div><span>Account</span>${status(data.health.overall, data.health.overall === "green" ? "On track" : "Action needed")}</div>
@@ -179,7 +226,7 @@
     if (range === "month") start.setDate(1);
     if (range === "30") start.setDate(now.getDate() - 30);
     if (range === "90") start.setDate(now.getDate() - 90);
-    return { from: start.toISOString().slice(0, 10), to: now.toISOString().slice(0, 10) };
+    return { from: isoDate(start), to: isoDate(now) };
   };
 
   async function reports(view, refresh) {
@@ -190,12 +237,27 @@
   }
 
   async function customers(view, refresh, options = {}) {
-    const [rows, workRows, performance] = await Promise.all([load("customers", refresh), load("work", refresh), load("performance", refresh)]);
-    const today = new Date().toISOString().slice(0, 10);
+    const [savedRows, workRows, performance, portalSettings] = await Promise.all([load("customers", refresh), load("work", refresh), load("performance", refresh), load("settings", refresh)]);
+    state.portalSettings = portalSettings;
+    const today = isoDate();
+    const upcomingLimit = new Date();
+    upcomingLimit.setDate(upcomingLimit.getDate() + 30);
+    const upcomingLimitIso = isoDate(upcomingLimit);
     const wonStatuses = ["completed"];
     const lostStatuses = ["lost", "canceled"];
     const leadStatuses = ["new", "contacted", "quoted"];
     const jobStatuses = ["scheduled", "in_progress", "completed", "canceled"];
+    const pipelineStages = portalSettings.crm?.pipeline_stages?.length ? portalSettings.crm.pipeline_stages : [
+      { key: "new", label: "New Lead", color: "#D7B846" }, { key: "contacted", label: "Contacted", color: "#4B7BEC" },
+      { key: "quote-sent", label: "Quote Sent", color: "#8E63CE" }, { key: "follow-up", label: "Follow-Up", color: "#E58A2B" },
+    ];
+    const pipelineKeys = pipelineStages.map((stage) => stage.key);
+    const rows = savedRows.map((row) => {
+      const legacyJob = row.record_type === "job" || jobStatuses.includes(row.status) || Boolean(row.job_date) || Number(row.job_count || 0) > 0 || Number(row.final_value || 0) > 0;
+      const mappedStage = row.status === "contacted" ? "contacted" : row.status === "quoted" ? "quote-sent" : pipelineKeys[0];
+      const pipelineStage = pipelineKeys.includes(row.pipeline_stage) ? row.pipeline_stage : (pipelineKeys.includes(mappedStage) ? mappedStage : pipelineKeys[0]);
+      return { ...row, record_type: legacyJob ? "job" : "lead", job_count: legacyJob ? 1 : 0, pipeline_stage: pipelineStage };
+    });
     const filters = {
       search: sessionStorage.getItem("wnqCrmSearch") || "",
       status: sessionStorage.getItem("wnqCrmStatus") || "all",
@@ -214,46 +276,49 @@
     if (routeStatusOptions[activeCrmTab] && !routeStatusOptions[activeCrmTab].includes(filters.status)) {
       filters.status = "all";
     }
+    if (activeCrmTab === "opportunities") filters.status = "all";
+    if (["jobs", "calendar", "followups"].includes(activeCrmTab)) filters.source = "all";
+    if (["opportunities", "leads", "jobs", "calendar"].includes(activeCrmTab)) filters.crew = "all";
     const crmRange = sessionStorage.getItem("wnqCrmRange") || "month";
-    const calendarMonth = sessionStorage.getItem("wnqCrmMonth") || new Date().toISOString().slice(0, 7);
+    const calendarMonth = sessionStorage.getItem("wnqCrmMonth") || isoDate().slice(0, 7);
     const rangeBounds = crmRangeBounds(crmRange);
-    if (rangeBounds && !filters.from && !filters.to) {
+    if (rangeBounds && ["dashboard", "reports"].includes(activeCrmTab) && !filters.from && !filters.to) {
       filters.from = rangeBounds.from;
       filters.to = rangeBounds.to;
     }
     const visibleRows = filterCrmRows(rows, filters);
+    const calendarRows = filterCrmRows(rows, { ...filters, search: "", status: "all", source: "all", from: "", to: "" });
     const totals = crmTotals(visibleRows);
     const isFinished = (row) => [...wonStatuses, ...lostStatuses].includes(row.status);
-    const isJob = (row) => row.record_type === "job" || jobStatuses.includes(row.status) || Boolean(row.job_date) || Number(row.job_count || 0) > 0 || Number(row.final_value || 0) > 0;
-    const leads = visibleRows.filter((row) => leadStatuses.includes(row.status) && !isFinished(row));
-    const leadRows = visibleRows.filter((row) => row.record_type === "lead" || leadStatuses.includes(row.status) || row.status === "lost");
-    const activeJobs = visibleRows.filter((row) => ["scheduled", "in_progress"].includes(row.status));
-    const jobs = visibleRows.filter(isJob);
-    const scheduledJobs = visibleRows.filter((row) => ["scheduled", "in_progress"].includes(row.status) && row.job_date);
-    const upcoming = scheduledJobs.filter((row) => row.job_date >= today);
-    const overdue = visibleRows.filter((row) => row.follow_up_date && row.follow_up_date < today && ![...wonStatuses, ...lostStatuses].includes(row.status));
-    const completed = visibleRows.filter((row) => wonStatuses.includes(row.status));
-    const lost = visibleRows.filter((row) => lostStatuses.includes(row.status));
+    const leadRows = visibleRows.filter((row) => row.record_type === "lead");
+    const leads = leadRows.filter((row) => leadStatuses.includes(row.status) && !isFinished(row));
+    const jobs = visibleRows.filter((row) => row.record_type === "job");
+    const activeJobs = jobs.filter((row) => ["scheduled", "in_progress"].includes(row.status));
+    const scheduledJobs = calendarRows.filter((row) => row.record_type === "job" && row.job_date);
+    const upcoming = scheduledJobs.filter((row) => row.job_date >= today && row.job_date <= upcomingLimitIso && !lostStatuses.includes(row.status));
+    const followupRows = calendarRows.filter((row) => row.follow_up_date && ![...wonStatuses, ...lostStatuses].includes(row.status));
+    const overdue = followupRows.filter((row) => row.follow_up_date < today);
+    const completed = jobs.filter((row) => wonStatuses.includes(row.status));
+    const canceledJobs = jobs.filter((row) => lostStatuses.includes(row.status));
+    const convertedJobs = jobs.filter((row) => !lostStatuses.includes(row.status));
+    const lost = leadRows.filter((row) => lostStatuses.includes(row.status));
     const avgJob = totals.jobs ? totals.revenue / totals.jobs : 0;
-    const leadBase = completed.length + lost.length + activeJobs.length + leads.length;
-    const closeRate = completed.length + lost.length ? Math.round((completed.length / (completed.length + lost.length)) * 100) : 0;
+    const leadBase = leads.length + convertedJobs.length + lost.length;
+    const closeRate = convertedJobs.length + lost.length ? Math.round((convertedJobs.length / (convertedJobs.length + lost.length)) * 100) : 0;
     const topServices = topBy(visibleRows, "service", "final_value");
     const topCustomers = topBy(visibleRows, "name", "final_value");
     const topSources = countBy(visibleRows, "lead_source");
     const completedRevenue = completed.reduce((sum, row) => sum + Number(row.final_value || 0), 0);
-    const openOpportunities = leads.length + activeJobs.length;
+    const openOpportunities = leads.length;
     const crmNotice = sessionStorage.getItem("wnqCrmNotice") || "";
     if (crmNotice) sessionStorage.removeItem("wnqCrmNotice");
-    const filterOptions = [["all", "All records"], ["lead", "Lead records"], ["customer", "Customer records"], ["job", "Job records"], ...statusOptions];
-    const serviceOptions = optionsFrom(rows, "service");
-    const sourceOptions = optionsFrom(rows, "lead_source");
+    const serviceOptions = [...new Set([...(portalSettings.crm?.services || []), ...optionsFrom(rows, "service")])].filter(Boolean).sort();
+    const sourceOptions = [...new Set([...(portalSettings.crm?.lead_sources || []), ...optionsFrom(rows, "lead_source")])].filter(Boolean).sort();
     const crewOptions = optionsFrom(rows, "crew");
-    const workTypeFilter = sessionStorage.getItem("wnqWorkType") || "all";
-    const filteredWorkRows = workRows.filter((row) => workTypeFilter === "all" || row.work_type === workTypeFilter || row.task_type === workTypeFilter || row.work_type_label === workTypeFilter);
     const context = {
-      activeCrmTab, rows, visibleRows, performance, leads, leadRows, activeJobs, jobs, scheduledJobs, upcoming, overdue, completed, lost,
+      activeCrmTab, rows, visibleRows, calendarRows, followupRows, performance, leads, leadRows, activeJobs, jobs, convertedJobs, scheduledJobs, upcoming, overdue, completed, canceledJobs, lost,
       totals, completedRevenue, avgJob, closeRate, leadBase, openOpportunities, topServices, topCustomers, topSources,
-      workRows: filteredWorkRows, filters, filterOptions, serviceOptions, sourceOptions, crewOptions, crmRange, calendarMonth, workTypeFilter
+      workRows, filters, serviceOptions, sourceOptions, crewOptions, crmRange, calendarMonth, portalSettings, pipelineStages
     };
     view.innerHTML = `
       ${crmNotice ? `<div class="wnq-success-inline">${esc(crmNotice)}</div>` : ""}
@@ -285,9 +350,17 @@
       sessionStorage.removeItem("wnqCrmTo");
       show(state.active);
     });
-    view.querySelector("#wnq-work-type")?.addEventListener("change", (event) => {
-      sessionStorage.setItem("wnqWorkType", event.currentTarget.value || "all");
-      show(state.active);
+    const shiftCalendarMonth = (amount) => {
+      const [year, month] = (sessionStorage.getItem("wnqCrmMonth") || calendarMonth).split("-").map(Number);
+      const next = new Date(year, month - 1 + amount, 1);
+      sessionStorage.setItem("wnqCrmMonth", `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`);
+      show("calendar");
+    };
+    view.querySelector("#wnq-calendar-prev")?.addEventListener("click", () => shiftCalendarMonth(-1));
+    view.querySelector("#wnq-calendar-next")?.addEventListener("click", () => shiftCalendarMonth(1));
+    view.querySelector("#wnq-calendar-today")?.addEventListener("click", () => {
+      sessionStorage.setItem("wnqCrmMonth", isoDate().slice(0, 7));
+      show("calendar");
     });
     view.querySelectorAll("[data-crm-jump]").forEach((button) => button.addEventListener("click", () => {
       if (button.dataset.crmJump === "reports") {
@@ -297,61 +370,87 @@
       const targetRoute = Object.entries(crmRoutes).find(([, panel]) => panel === button.dataset.crmJump)?.[0] || "overview";
       show(targetRoute);
     }));
+    const clearVisibilityFilters = () => {
+      ["wnqCrmSearch", "wnqCrmStatus", "wnqCrmFrom", "wnqCrmTo", "wnqCrmService", "wnqCrmSource", "wnqCrmCrew"].forEach((key) => sessionStorage.removeItem(key));
+    };
     const openForm = (row = {}) => {
-      formRoot.innerHTML = customerForm(row);
+      if (!formRoot) return;
+      formRoot.innerHTML = customerForm(row, portalSettings);
       formRoot.scrollIntoView({ behavior: "smooth", block: "start" });
       formRoot.querySelector("form").addEventListener("submit", async (event) => {
         event.preventDefault();
         const form = event.currentTarget;
         const submit = form.querySelector('[type="submit"]');
+        const submitLabel = submit?.textContent || "Save";
         const name = form.elements.namedItem("name");
         if (!String(name?.value || "").trim()) {
-          formStatus(form, "red", "Customer name is required before this can be saved.");
+          formStatus(form, "red", "Contact name is required before this can be saved.");
           name?.focus();
           return;
         }
         formStatus(form, "yellow", "Saving CRM record...");
         if (submit) { submit.disabled = true; submit.textContent = "Saving..."; }
         try {
-          await api("/portal/customers", { method: "POST", body: formBody(form) });
-          sessionStorage.setItem("wnqCrmNotice", "CRM record saved.");
-          delete state.cache.customers; delete state.cache.overview; delete state.cache.performance; show(state.active, true);
+          const saved = await api("/portal/customers", { method: "POST", body: formBody(form) });
+          if (!saved?.id) throw new Error("The server did not return the saved CRM record.");
+          const destination = saved.record_type === "job" ? "jobs" : (state.active === "opportunities" ? "opportunities" : "leads");
+          clearVisibilityFilters();
+          sessionStorage.setItem("wnqCrmNotice", `${saved.record_type === "job" ? "Job" : "Lead"} saved successfully.`);
+          delete state.cache.customers; delete state.cache.overview; delete state.cache.performance; delete state.cache.notifications;
+          show(destination, true);
         } catch (error) {
           formStatus(form, "red", `Record was not saved. ${error.message}`);
-          if (submit) { submit.disabled = false; submit.textContent = "Save Record"; }
+          if (submit) { submit.disabled = false; submit.textContent = submitLabel; }
         }
       });
       formRoot.querySelector("[data-cancel]").addEventListener("click", () => { formRoot.innerHTML = ""; });
     };
     view.querySelector("#wnq-add-customer")?.addEventListener("click", () => openForm());
     view.querySelector("#wnq-add-lead")?.addEventListener("click", () => openForm({ record_type: "lead", status: "new" }));
-    view.querySelector("#wnq-add-job")?.addEventListener("click", () => openForm({ record_type: "job", status: "scheduled", job_count: 1 }));
+    view.querySelector("#wnq-add-job")?.addEventListener("click", () => openForm({ record_type: "job", status: "scheduled" }));
     view.querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => openForm(JSON.parse(button.dataset.edit))));
+    view.querySelectorAll("[data-opportunity-stage]").forEach((select) => select.addEventListener("change", async () => {
+      const previous = select.dataset.currentStage || pipelineStages[0]?.key || "new";
+      select.disabled = true;
+      try {
+        const saved = await api(`/portal/opportunities/${Number(select.dataset.opportunityStage || 0)}/stage`, { method: "POST", body: JSON.stringify({ pipeline_stage: select.value }) });
+        if (!saved?.id) throw new Error("The updated opportunity was not returned by the server.");
+        delete state.cache.customers; delete state.cache.overview;
+        sessionStorage.setItem("wnqCrmNotice", "Opportunity moved successfully.");
+        show("opportunities", true);
+      } catch (error) {
+        select.value = previous;
+        select.disabled = false;
+        window.alert(error.message);
+      }
+    }));
+    view.querySelectorAll("[data-convert-lead]").forEach((button) => button.addEventListener("click", async () => {
+      const id = Number(button.dataset.convertLead || 0);
+      if (!id || !window.confirm("Convert this lead into a scheduled job? You can complete the job details next.")) return;
+      button.disabled = true;
+      button.textContent = "Converting...";
+      try {
+        const saved = await api(`/portal/leads/${id}/convert`, { method: "POST", body: JSON.stringify({}) });
+        if (!saved?.id) throw new Error("The converted job was not returned by the server.");
+        clearVisibilityFilters();
+        sessionStorage.setItem("wnqCrmNotice", "Lead converted to a job. Add the schedule and job details when ready.");
+        delete state.cache.customers; delete state.cache.overview; delete state.cache.performance; delete state.cache.notifications;
+        show("jobs", true);
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = "Convert to Job";
+        window.alert(error.message);
+      }
+    }));
     view.querySelectorAll("[data-followup]").forEach((button) => button.addEventListener("click", async () => {
       const row = JSON.parse(button.dataset.followup);
       const nextDate = window.prompt("Next follow-up date (YYYY-MM-DD). Leave blank to clear this follow-up.", "");
       if (nextDate === null) return;
       await api("/portal/customers", { method: "POST", body: JSON.stringify({ ...recordPayload(row), follow_up_date: nextDate || "" }) });
       sessionStorage.setItem("wnqCrmNotice", nextDate ? "Follow-up updated." : "Follow-up completed.");
-      delete state.cache.customers; delete state.cache.overview; delete state.cache.performance; show(state.active, true);
+      delete state.cache.customers; delete state.cache.overview; delete state.cache.performance; delete state.cache.notifications; show(state.active, true);
     }));
-    const workFormRoot = view.querySelector("#wnq-work-form");
-    view.querySelector("#wnq-add-work")?.addEventListener("click", () => {
-      workFormRoot.innerHTML = marketingWorkForm();
-      workFormRoot.querySelector("[data-cancel-work]")?.addEventListener("click", () => workFormRoot.innerHTML = "");
-      workFormRoot.querySelector("form")?.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const form = event.currentTarget;
-        formStatus(form, "yellow", "Saving marketing work...");
-        try {
-          await api("/portal/work", { method: "POST", body: JSON.stringify(formObject(form)) });
-          sessionStorage.setItem("wnqCrmNotice", "Marketing work item saved.");
-          delete state.cache.work; delete state.cache.overview; show(state.active, true);
-        } catch (error) {
-          formStatus(form, "red", `Marketing work was not saved. ${error.message}`);
-        }
-      });
-    });
+    bindPipelineEditor(view, pipelineStages);
   }
   const crmTotals = (rows) => rows.reduce((sum, row) => ({ jobs: sum.jobs + Number(row.job_count || 0), revenue: sum.revenue + Number(row.final_value || 0), cost: sum.cost + Number(row.job_cost || 0) }), { jobs: 0, revenue: 0, cost: 0 });
   const filterCrmRows = (rows, filters = {}) => {
@@ -385,7 +484,7 @@
     return map;
   }, {})).sort((a, b) => b.count - a.count).slice(0, 6);
   const recordPayload = (row) => ({
-    id: row.id || "", record_type: row.record_type || "lead", name: row.name || "", phone: row.phone || "", email: row.email || "",
+    id: row.id || "", record_type: row.record_type || "lead", pipeline_stage: row.pipeline_stage || "new", name: row.name || "", phone: row.phone || "", email: row.email || "",
     address: row.address || "", job_address: row.job_address || "", service: row.service || "", crew: row.crew || "",
     lead_source: row.lead_source || "", status: row.status || "new", follow_up_date: row.follow_up_date || "",
     reminder_date: row.reminder_date || "", job_date: row.job_date || "", completion_date: row.completion_date || "",
@@ -396,17 +495,22 @@
     if (ctx.activeCrmTab === "dashboard") {
       return `${crmHeader(ctx.crmRange)}${crmKpis(ctx)}${crmDashboard(ctx)}`;
     }
+    if (ctx.activeCrmTab === "opportunities") {
+      const activeOpportunities = ctx.leadRows.filter((row) => row.status !== "lost");
+      return `${crmPageHeader("Opportunities", "Track each open opportunity from first contact to booked work.", `<button type="button" class="wnq-button is-secondary" id="wnq-customize-pipeline">Customize Pipeline</button><button type="button" class="wnq-button" id="wnq-add-lead">Add Opportunity</button>`)}
+        ${crmOpportunityControls(ctx)}<p class="wnq-crm-filter-note">${esc(activeOpportunities.length)} active opportunit${activeOpportunities.length === 1 ? "y" : "ies"} across ${esc(ctx.pipelineStages.length)} stages.</p><div id="wnq-pipeline-editor" hidden>${pipelineEditor()}</div><div id="wnq-customer-form"></div>${opportunityBoard(activeOpportunities, ctx.pipelineStages)}`;
+    }
     if (ctx.activeCrmTab === "leads") {
       return `${crmPageHeader("Leads", "Track new inquiries, contacted leads, quoted leads, and lost leads.", `<button type="button" class="wnq-button" id="wnq-add-lead">Add Lead</button>`)}
-        ${crmLeadControls(ctx)}<p class="wnq-crm-filter-note">Showing ${esc(ctx.leadRows.length)} lead record${ctx.leadRows.length === 1 ? "" : "s"}.</p><div id="wnq-customer-form"></div>${leadPipelineTable(ctx.leadRows)}`;
+        ${crmLeadControls(ctx)}<p class="wnq-crm-filter-note">Showing ${esc(ctx.leadRows.length)} lead record${ctx.leadRows.length === 1 ? "" : "s"}.</p><div id="wnq-customer-form"></div>${leadPipelineTable(ctx.leadRows, ctx.pipelineStages)}`;
     }
     if (ctx.activeCrmTab === "jobs") {
       return `${crmPageHeader("Jobs", "Track scheduled, active, completed, and canceled jobs.", `<button type="button" class="wnq-button" id="wnq-add-job">Add Job</button>`)}
-        ${crmJobControls(ctx)}<p class="wnq-crm-filter-note">Showing ${esc(ctx.jobs.length)} job record${ctx.jobs.length === 1 ? "" : "s"}.</p><div id="wnq-customer-form"></div>${crmJobsPanel(ctx.activeJobs, ctx.completed)}`;
+        ${crmJobControls(ctx)}<p class="wnq-crm-filter-note">Showing ${esc(ctx.jobs.length)} job record${ctx.jobs.length === 1 ? "" : "s"}.</p><div id="wnq-customer-form"></div>${crmJobsPanel(ctx.activeJobs, ctx.completed, ctx.canceledJobs)}`;
     }
     if (ctx.activeCrmTab === "calendar") {
       return `${crmPageHeader("Calendar", "View upcoming scheduled jobs and follow-ups.", `<button type="button" class="wnq-button" id="wnq-add-job">Add Job</button>`)}
-        ${crmCalendarControls(ctx)}<div id="wnq-customer-form"></div>${crmCalendar(ctx.scheduledJobs, ctx.overdue, ctx.calendarMonth)}`;
+        ${crmCalendarControls(ctx)}<div id="wnq-customer-form"></div>${crmCalendar(ctx.scheduledJobs, ctx.followupRows, ctx.calendarMonth)}`;
     }
     if (ctx.activeCrmTab === "followups") {
       return `${crmPageHeader("Follow-ups", "Track overdue follow-ups and upcoming customer touchpoints.")}${crmFollowupControls(ctx)}<div id="wnq-customer-form"></div>${crmFollowups(ctx.overdue)}`;
@@ -414,13 +518,6 @@
     if (ctx.activeCrmTab === "reports") {
       return `${crmPageHeader("Reports", "Review lead sources, services, revenue, close rate, and customer performance.", `<button type="button" class="wnq-button is-secondary" id="wnq-crm-header-refresh">Refresh</button>`)}
         ${crmReportControls(ctx)}${crmReports(ctx)}`;
-    }
-    if (ctx.activeCrmTab === "marketing-work") {
-      return `${crmPageHeader("Marketing Work", "See completed SEO, Google Ads, website, and tracking work.", canSeePrivate ? `<button type="button" class="wnq-button" id="wnq-add-work">Log Work</button>` : "")}
-        ${crmMarketingControls(ctx)}<section class="wnq-panel"><div class="wnq-panel-head"><h2>Marketing Work History</h2></div><div id="wnq-work-form"></div>${marketingWorkHistoryTable(ctx.workRows)}</section>`;
-    }
-    if (ctx.activeCrmTab === "settings") {
-      return `${crmPageHeader("Settings", "Manage CRM preferences, business details, users, and visibility settings.")}${crmSettings()}`;
     }
     return `${crmPageHeader("CRM", "Track leads, jobs, and client activity.")}${empty("Choose a CRM section from the sidebar.")}`;
   };
@@ -431,53 +528,103 @@
   const crmDateControls = (ctx) => `${fieldControl("wnq-crm-from", "From", ctx.filters.from, "date")}${fieldControl("wnq-crm-to", "To", ctx.filters.to, "date")}`;
   const fieldControl = (id, label, value = "", type = "text") => `<label><span>${esc(label)}</span><input type="${esc(type)}" id="${esc(id)}" value="${esc(value)}"></label>`;
   const crmApplyButtons = (primary = "") => `<button type="button" class="wnq-button is-secondary" id="wnq-crm-apply">Apply Filters</button><button type="button" class="wnq-link" id="wnq-crm-clear">Clear</button>${primary}`;
+  const crmOpportunityControls = (ctx) => `<div class="wnq-crm-controls is-focused">${fieldControl("wnq-crm-search", "Search opportunities", ctx.filters.search, "search")}${crmSourceSelect(ctx)}${crmServiceSelect(ctx)}${crmDateControls(ctx)}${crmApplyButtons()}</div>`;
   const crmLeadControls = (ctx) => `<div class="wnq-crm-controls is-focused">${fieldControl("wnq-crm-search", "Search", ctx.filters.search, "search")}<label><span>Status</span><select id="wnq-crm-status">${crmOptions([["all", "All leads"], ["new", "New Lead"], ["contacted", "Contacted"], ["quoted", "Quoted"], ["lost", "Lost"]], ctx.filters.status)}</select></label>${crmSourceSelect(ctx)}${crmServiceSelect(ctx)}${crmDateControls(ctx)}${crmApplyButtons()}</div>`;
   const crmJobControls = (ctx) => `<div class="wnq-crm-controls is-focused">${fieldControl("wnq-crm-search", "Search", ctx.filters.search, "search")}<label><span>Job Status</span><select id="wnq-crm-status">${crmOptions([["all", "All jobs"], ["scheduled", "Scheduled"], ["in_progress", "In Progress"], ["completed", "Completed"], ["canceled", "Canceled"]], ctx.filters.status)}</select></label>${crmServiceSelect(ctx)}${crmDateControls(ctx)}${crmApplyButtons()}</div>`;
   const crmFollowupControls = (ctx) => `<div class="wnq-crm-controls is-focused"><label><span>Status</span><select id="wnq-crm-status">${crmOptions([["all", "All follow-ups"], ["new", "New"], ["contacted", "Contacted"], ["quoted", "Quoted"], ["scheduled", "Scheduled"]], ctx.filters.status)}</select></label>${crmDateControls(ctx)}<label><span>Assigned User</span><select id="wnq-crm-crew"><option value="all">Any user</option>${crmOptions(ctx.crewOptions, ctx.filters.crew)}</select></label>${crmApplyButtons()}</div>`;
-  const crmCalendarControls = (ctx) => `<div class="wnq-crm-controls is-compact"><label><span>Month</span><input type="month" id="wnq-crm-month" value="${esc(ctx.calendarMonth)}"></label><label><span>View</span><select id="wnq-crm-calendar-view"><option>List</option><option>Calendar</option></select></label>${crmServiceSelect(ctx)}${crmApplyButtons()}</div>`;
+  const crmCalendarControls = (ctx) => `<div class="wnq-calendar-toolbar"><div class="wnq-calendar-navigation"><button type="button" class="wnq-button is-secondary" id="wnq-calendar-prev" aria-label="Previous month">&#8249;</button><button type="button" class="wnq-button is-secondary" id="wnq-calendar-today">Today</button><button type="button" class="wnq-button is-secondary" id="wnq-calendar-next" aria-label="Next month">&#8250;</button></div><div class="wnq-crm-controls is-compact"><label><span>Month</span><input type="month" id="wnq-crm-month" value="${esc(ctx.calendarMonth)}"></label>${crmServiceSelect(ctx)}${crmApplyButtons()}</div></div>`;
   const crmReportControls = (ctx) => `<div class="wnq-crm-controls is-compact"><label><span>Date Range</span><select id="wnq-crm-range"><option value="month" ${ctx.crmRange === "month" ? "selected" : ""}>This Month</option><option value="30" ${ctx.crmRange === "30" ? "selected" : ""}>Last 30 Days</option><option value="90" ${ctx.crmRange === "90" ? "selected" : ""}>Last 90 Days</option><option value="all" ${ctx.crmRange === "all" ? "selected" : ""}>All Time</option></select></label>${crmServiceSelect(ctx)}${crmSourceSelect(ctx)}${crmApplyButtons()}</div>`;
-  const crmMarketingControls = (ctx) => `<div class="wnq-crm-controls is-compact"><label><span>Work Type</span><select id="wnq-work-type"><option value="all">All work</option>${crmOptions(workTypeOptions, ctx.workTypeFilter)}</select></label>${crmDateControls(ctx)}${crmApplyButtons()}</div>`;
-  const leadPipelineTable = (rows) => `<div class="wnq-panel wnq-table-wrap wnq-crm-table-panel"><div class="wnq-panel-head"><div><h2>Lead Pipeline</h2><small>${esc(rows.length)} lead${rows.length === 1 ? "" : "s"}</small></div></div><table class="wnq-crm-table is-fit"><thead><tr><th>Customer</th><th>Service / Source</th><th>Status</th><th>Created Date</th><th>Estimate</th><th>Next Follow-up</th><th>Action</th></tr></thead><tbody>${rows.length ? rows.map((row) => `<tr><td data-label="Customer"><strong>${esc(row.name)}</strong>${crmContact(row)}</td><td data-label="Service / Source"><strong>${esc(row.service || "Not set")}</strong><small>${esc(row.lead_source || "Source not set")}</small></td><td data-label="Status">${crmStatus(row.status)}</td><td data-label="Created Date">${date(row.created_at)}</td><td data-label="Estimate"><strong>${money(row.estimated_value)}</strong></td><td data-label="Next Follow-up">${date(row.follow_up_date || row.reminder_date)}</td><td data-label="Action"><button class="wnq-link" data-edit='${attr(row)}'>Edit</button></td></tr>`).join("") : `<tr><td colspan="7">${empty("No new leads are recorded yet. New inquiries will appear here once added.")}</td></tr>`}</tbody></table></div>`;
-  const crmDashboard = ({ rows, performance, leads, activeJobs, completed, lost, upcoming, overdue, totals, completedRevenue, avgJob, closeRate, topServices, topCustomers, topSources, workRows }) => {
-    const openCount = leads.length + activeJobs.length;
-    const totalOps = openCount + completed.length + lost.length;
-    const donutTotal = totalOps || rows.length || 0;
+  const pipelineStage = (row, stages) => stages.find((stage) => stage.key === row.pipeline_stage) || stages[0] || { key: "new", label: "New Lead", color: "#D7B846" };
+  const pipelineBadge = (row, stages) => { const stage = pipelineStage(row, stages); return `<span class="wnq-pipeline-badge" style="--stage-color:${esc(stage.color)}">${esc(stage.label)}</span>`; };
+  const pipelineSelect = (row, stages) => `<select class="wnq-stage-select" data-opportunity-stage="${esc(row.id)}" data-current-stage="${esc(row.pipeline_stage)}" aria-label="Move ${esc(row.name)} to another pipeline stage">${stages.map((stage) => `<option value="${esc(stage.key)}" ${stage.key === row.pipeline_stage ? "selected" : ""}>${esc(stage.label)}</option>`).join("")}</select>`;
+  const leadPipelineTable = (rows, stages) => `<div class="wnq-panel wnq-table-wrap wnq-crm-table-panel"><div class="wnq-panel-head"><div><h2>Lead Directory</h2><small>${esc(rows.length)} lead${rows.length === 1 ? "" : "s"}</small></div></div><table class="wnq-crm-table is-fit"><thead><tr><th>Contact</th><th>Service / Source</th><th>Pipeline Stage</th><th>Lead Status</th><th>Estimate</th><th>Next Follow-up</th><th>Action</th></tr></thead><tbody>${rows.length ? rows.map((row) => `<tr><td data-label="Contact"><strong>${esc(row.name)}</strong>${crmContact(row)}</td><td data-label="Service / Source"><strong>${esc(row.service || "Not set")}</strong><small>${esc(row.lead_source || "Source not set")}</small></td><td data-label="Pipeline Stage">${pipelineBadge(row, stages)}</td><td data-label="Lead Status">${crmStatus(row.status)}</td><td data-label="Estimate"><strong>${money(row.estimated_value)}</strong></td><td data-label="Next Follow-up">${date(row.follow_up_date || row.reminder_date)}</td><td data-label="Action"><div class="wnq-row-actions"><button type="button" class="wnq-button is-compact" data-convert-lead="${esc(row.id)}">Convert to Job</button><button type="button" class="wnq-link" data-edit='${attr(row)}'>Edit</button></div></td></tr>`).join("") : `<tr><td colspan="7">${empty("No leads are recorded yet. Add a lead to begin your pipeline.")}</td></tr>`}</tbody></table></div>`;
+  const opportunityBoard = (rows, stages) => `<div class="wnq-opportunity-board">${stages.map((stage) => {
+    const stageRows = rows.filter((row) => row.pipeline_stage === stage.key);
+    const value = stageRows.reduce((sum, row) => sum + Number(row.estimated_value || 0), 0);
+    return `<section class="wnq-opportunity-column" style="--stage-color:${esc(stage.color)}"><header><div><span></span><strong>${esc(stage.label)}</strong><small>${esc(stageRows.length)} opportunit${stageRows.length === 1 ? "y" : "ies"}</small></div><em>${money(value)}</em></header><div class="wnq-opportunity-list">${stageRows.length ? stageRows.map((row) => `<article class="wnq-opportunity-card"><div class="wnq-opportunity-card-head"><strong>${esc(row.name)}</strong><button type="button" class="wnq-icon-button" data-edit='${attr(row)}' title="Edit opportunity" aria-label="Edit ${esc(row.name)}">&#9998;</button></div><p>${esc(row.service || "Service not set")}</p><div class="wnq-opportunity-meta"><span>${money(row.estimated_value)}</span><small>${row.follow_up_date ? `Follow up ${date(row.follow_up_date)}` : "No follow-up set"}</small></div>${pipelineSelect(row, stages)}<button type="button" class="wnq-button is-compact" data-convert-lead="${esc(row.id)}">Convert to Job</button></article>`).join("") : `<div class="wnq-opportunity-empty">No opportunities in this stage.</div>`}</div></section>`;
+  }).join("")}</div>`;
+  const pipelineEditor = () => `<section class="wnq-panel wnq-pipeline-editor-panel"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">Pipeline Builder</span><h2>Opportunity Stages</h2><small>Shared across this client account</small></div><button type="button" class="wnq-icon-button" id="wnq-close-pipeline" aria-label="Close pipeline builder">&#10005;</button></div><div id="wnq-pipeline-stage-rows"></div><div class="wnq-form-actions"><button type="button" class="wnq-button is-secondary" id="wnq-add-pipeline-stage">Add Stage</button><button type="button" class="wnq-button" id="wnq-save-pipeline">Save Pipeline</button><span id="wnq-pipeline-status"></span></div></section>`;
+  const bindPipelineEditor = (view, initialStages) => {
+    const editor = view.querySelector("#wnq-pipeline-editor");
+    const toggle = view.querySelector("#wnq-customize-pipeline");
+    if (!editor || !toggle) return;
+    let draft = initialStages.map((stage) => ({ ...stage }));
+    const rowsRoot = editor.querySelector("#wnq-pipeline-stage-rows");
+    const render = () => {
+      rowsRoot.innerHTML = draft.map((stage, index) => `<div class="wnq-pipeline-stage-row" data-stage-index="${index}"><span class="wnq-stage-handle" aria-hidden="true">&#8942;&#8942;</span><input type="color" value="${esc(stage.color || "#D7B846")}" aria-label="Stage color"><input type="text" value="${esc(stage.label)}" maxlength="50" aria-label="Stage name"><div><button type="button" class="wnq-icon-button" data-stage-up="${index}" ${index === 0 ? "disabled" : ""} aria-label="Move stage up">&#8593;</button><button type="button" class="wnq-icon-button" data-stage-down="${index}" ${index === draft.length - 1 ? "disabled" : ""} aria-label="Move stage down">&#8595;</button><button type="button" class="wnq-icon-button is-danger" data-stage-remove="${index}" ${draft.length === 1 ? "disabled" : ""} aria-label="Remove stage">&#10005;</button></div></div>`).join("");
+    };
+    const readInputs = () => rowsRoot.querySelectorAll("[data-stage-index]").forEach((row) => {
+      const index = Number(row.dataset.stageIndex);
+      draft[index].color = row.querySelector('input[type="color"]').value;
+      draft[index].label = row.querySelector('input[type="text"]').value.trim();
+    });
+    toggle.addEventListener("click", () => { editor.hidden = false; toggle.disabled = true; render(); editor.scrollIntoView({ behavior: "smooth", block: "start" }); });
+    editor.querySelector("#wnq-close-pipeline")?.addEventListener("click", () => { editor.hidden = true; toggle.disabled = false; });
+    editor.querySelector("#wnq-add-pipeline-stage")?.addEventListener("click", () => {
+      readInputs();
+      if (draft.length >= 12) return;
+      draft.push({ key: `stage-${Date.now()}`, label: `Stage ${draft.length + 1}`, color: "#6E7F80" });
+      render();
+    });
+    rowsRoot.addEventListener("click", (event) => {
+      const button = event.target.closest("button");
+      if (!button) return;
+      readInputs();
+      if (button.dataset.stageRemove !== undefined && draft.length > 1) draft.splice(Number(button.dataset.stageRemove), 1);
+      if (button.dataset.stageUp !== undefined) { const index = Number(button.dataset.stageUp); if (index > 0) [draft[index - 1], draft[index]] = [draft[index], draft[index - 1]]; }
+      if (button.dataset.stageDown !== undefined) { const index = Number(button.dataset.stageDown); if (index < draft.length - 1) [draft[index + 1], draft[index]] = [draft[index], draft[index + 1]]; }
+      render();
+    });
+    editor.querySelector("#wnq-save-pipeline")?.addEventListener("click", async () => {
+      readInputs();
+      const statusTarget = editor.querySelector("#wnq-pipeline-status");
+      const save = editor.querySelector("#wnq-save-pipeline");
+      if (draft.some((stage) => !stage.label)) { statusTarget.textContent = "Every stage needs a name."; return; }
+      if (new Set(draft.map((stage) => stage.label.toLowerCase())).size !== draft.length) { statusTarget.textContent = "Stage names must be unique."; return; }
+      save.disabled = true; save.textContent = "Saving..."; statusTarget.textContent = "";
+      try {
+        const saved = await api("/portal/settings", { method: "POST", body: JSON.stringify({ crm: { pipeline_stages: draft } }) });
+        state.cache.settings = saved; state.portalSettings = saved; delete state.cache.customers; delete state.cache.overview;
+        sessionStorage.setItem("wnqCrmNotice", "Opportunity pipeline saved.");
+        show("opportunities", true);
+      } catch (error) {
+        statusTarget.textContent = error.message; save.disabled = false; save.textContent = "Save Pipeline";
+      }
+    });
+  };
+  const crmDashboard = ({ rows, performance, leads, convertedJobs, completed, lost, upcoming, overdue, totals, completedRevenue, avgJob, closeRate, topServices, topCustomers, topSources, workRows, pipelineStages }) => {
+    const openCount = leads.length;
+    const totalOps = openCount + convertedJobs.length + lost.length;
+    const donutTotal = totalOps;
     const openPct = donutTotal ? Math.round((openCount / donutTotal) * 100) : 0;
-    const wonPct = donutTotal ? Math.round((completed.length / donutTotal) * 100) : 0;
+    const wonPct = donutTotal ? Math.round((convertedJobs.length / donutTotal) * 100) : 0;
     const lostPct = donutTotal ? Math.max(0, 100 - openPct - wonPct) : 0;
-    const pipeline = pipelineRows(rows, completedRevenue);
+    const pipeline = pipelineRows(rows.filter((row) => row.record_type === "lead" && row.status !== "lost"), pipelineStages);
     return `<div class="wnq-dashboard-grid">
-      <section class="wnq-panel wnq-dashboard-card is-opportunity"><div class="wnq-panel-head"><h2>Opportunity Overview</h2><button type="button" class="wnq-link" data-crm-jump="leads">View Pipeline</button></div><div class="wnq-donut-layout"><div class="wnq-donut ${donutTotal ? "" : "is-empty"}" style="--open:${openPct};--won:${wonPct};--lost:${lostPct}"><strong>${esc(donutTotal)}</strong><span>Total</span></div><div class="wnq-donut-legend">${donutLegend("Open", openCount, openPct, "green")}${donutLegend("Won", completed.length, wonPct, "gold")}${donutLegend("Lost", lost.length, lostPct, "red")}</div></div></section>
-      <section class="wnq-panel wnq-dashboard-card"><div class="wnq-panel-head"><h2>Pipeline Snapshot</h2><button type="button" class="wnq-link" data-crm-jump="leads">View Pipeline</button></div>${pipelineSnapshot(pipeline)}</section>
+      <section class="wnq-panel wnq-dashboard-card is-opportunity"><div class="wnq-panel-head"><h2>Opportunity Overview</h2><button type="button" class="wnq-link" data-crm-jump="opportunities">View Pipeline</button></div><div class="wnq-donut-layout"><div class="wnq-donut ${donutTotal ? "" : "is-empty"}" style="--open:${openPct};--won:${wonPct};--lost:${lostPct}"><strong>${esc(donutTotal)}</strong><span>Total</span></div><div class="wnq-donut-legend">${donutLegend("Open", openCount, openPct, "green")}${donutLegend("Won", convertedJobs.length, wonPct, "gold")}${donutLegend("Lost", lost.length, lostPct, "red")}</div></div></section>
+      <section class="wnq-panel wnq-dashboard-card"><div class="wnq-panel-head"><h2>Pipeline Snapshot</h2><button type="button" class="wnq-link" data-crm-jump="opportunities">View Pipeline</button></div>${pipelineSnapshot(pipeline)}</section>
       <section class="wnq-panel wnq-dashboard-card"><div class="wnq-panel-head"><h2>Tasks / Follow-ups</h2><button type="button" class="wnq-link" data-crm-jump="followups">View All Tasks</button></div>${taskList(overdue, upcoming)}</section>
       <section class="wnq-panel wnq-dashboard-card"><div class="wnq-panel-head"><h2>Revenue Trend</h2><span>${canSeePrivate ? `${trend(totals.revenue - totals.cost)} net` : `${money(totals.revenue)} tracked`}</span></div>${performanceChart(performance)}</section>
       <section class="wnq-panel wnq-dashboard-card"><div class="wnq-panel-head"><h2>Lead Source Report</h2><button type="button" class="wnq-link" data-crm-jump="reports">View Reports</button></div>${leadSourceTable(rows, topSources)}</section>
       <section class="wnq-panel wnq-dashboard-card"><div class="wnq-panel-head"><h2>Recent Activity</h2><button type="button" class="wnq-link" data-crm-jump="reports">View All Activity</button></div>${recentActivity(rows, workRows)}</section>
-      <section class="wnq-panel wnq-dashboard-card is-wide"><div class="wnq-panel-head"><h2>Marketing Work History</h2><button type="button" class="wnq-link" data-crm-jump="marketing-work">View All Work</button></div>${marketingWorkCards(workRows)}</section>
-      <section class="wnq-panel wnq-dashboard-card is-wide"><div class="wnq-panel-head"><h2>Business Snapshot</h2></div><div class="wnq-metrics">${metric("Average Job Value", money(avgJob), "Revenue divided by jobs")}${metric("Close Rate", `${closeRate}%`, "Completed vs lost")}${metric("Top Service", topServices[0]?.label || "Not set", "Highest tracked revenue")}${metric("Top Customer", topCustomers[0]?.label || "Not set", "Highest tracked revenue")}</div></section>
+      <section class="wnq-panel wnq-dashboard-card is-wide"><div class="wnq-panel-head"><h2>Marketing Work History</h2><span>Latest completed work</span></div>${marketingWorkCards(workRows)}</section>
+      <section class="wnq-panel wnq-dashboard-card is-wide"><div class="wnq-panel-head"><h2>Business Snapshot</h2></div><div class="wnq-metrics">${metric("Average Job Value", money(avgJob), "Revenue divided by jobs")}${metric("Close Rate", `${closeRate}%`, "Converted vs lost leads")}${metric("Top Service", topServices[0]?.label || "Not set", "Highest tracked revenue")}${metric("Top Customer", topCustomers[0]?.label || "Not set", "Highest tracked revenue")}</div></section>
     </div>`;
   };
   const donutLegend = (label, count, percent, tone) => `<div class="wnq-donut-row"><i class="is-${esc(tone)}"></i><span>${esc(label)}</span><strong>${esc(count)} (${esc(percent)}%)</strong></div>`;
-  const pipelineRows = (rows, completedRevenue) => {
-    const stageMap = [
-      ["new", "New Lead"], ["contacted", "Contacted"], ["quoted", "Quote Sent"], ["scheduled", "Scheduled"], ["completed", "Won"]
-    ];
-    return stageMap.map(([statusKey, label]) => {
-      const stageRows = rows.filter((row) => row.status === statusKey);
-      const amountKey = statusKey === "completed" ? "final_value" : "estimated_value";
-      const value = statusKey === "completed" ? completedRevenue : stageRows.reduce((sum, row) => sum + Number(row[amountKey] || 0), 0);
-      return { label, count: stageRows.length, value };
-    });
-  };
+  const pipelineRows = (rows, stages) => stages.map((stage) => {
+    const stageRows = rows.filter((row) => row.pipeline_stage === stage.key);
+    return { label: stage.label, color: stage.color, count: stageRows.length, value: stageRows.reduce((sum, row) => sum + Number(row.estimated_value || 0), 0) };
+  });
   const pipelineSnapshot = (items) => {
     const max = Math.max(1, ...items.map((item) => item.count));
-    return `<div class="wnq-pipeline">${items.map((item) => `<div class="wnq-pipeline-row"><span>${esc(item.label)}</span><div><i style="width:${Math.max(8, Math.round((item.count / max) * 100))}%"></i></div><strong>${esc(item.count)}</strong><em>${money(item.value)}</em></div>`).join("")}</div>`;
+    return `<div class="wnq-pipeline">${items.map((item) => `<div class="wnq-pipeline-row"><span>${esc(item.label)}</span><div><i style="width:${Math.max(8, Math.round((item.count / max) * 100))}%;--stage-color:${esc(item.color || "#D7B846")}"></i></div><strong>${esc(item.count)}</strong><em>${money(item.value)}</em></div>`).join("")}</div>`;
   };
   const taskList = (overdue, upcoming) => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = isoDate();
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowIso = tomorrow.toISOString().slice(0, 10);
+    const tomorrowIso = isoDate(tomorrow);
     const tasks = [
       ...overdue.map((row) => ({ row, label: "Overdue", tone: "red", date: row.follow_up_date })),
       ...upcoming.map((row) => ({ row, label: row.job_date === today ? "Due Today" : row.job_date === tomorrowIso ? "Due Tomorrow" : "Upcoming", tone: row.job_date === today ? "yellow" : "blue", date: row.job_date }))
@@ -506,28 +653,44 @@
     const moneyNote = canSeePrivate && row.job_cost !== undefined ? `<small>Cost ${money(row.job_cost)} · ${trend(profit)} net</small>` : `<small>${row.final_value ? "Revenue saved" : "No revenue saved"}</small>`;
     return `<tr><td><strong>${esc(row.name)}</strong>${crmContact(row)}<small>${esc(row.address || "")}</small></td><td><strong>${esc(row.service || "Not set")}</strong><small>${esc(row.lead_source || "Source not set")}</small></td><td>${crmStatus(row.status)}</td><td><span>${date(row.job_date || row.follow_up_date || row.reminder_date)}</span><small>${row.completion_date ? `Completed ${date(row.completion_date)}` : row.follow_up_date ? `Next follow-up ${date(row.follow_up_date)}` : "No date set"}</small></td><td><strong>${money(mode === "leads" ? row.estimated_value : row.final_value)}</strong>${moneyNote}</td><td><small>${esc(row.job_address || row.address || "Address not set")}</small><small>${esc(row.crew ? `Assigned: ${row.crew}` : `Service: ${row.service || "Not set"}`)}</small></td><td><button class="wnq-link" data-edit='${attr(row)}'>Edit</button></td></tr>`;
   }).join("") : `<tr><td colspan="7">${empty(fallback)}</td></tr>`}</tbody></table></div>`;
-  const crmJobsPanel = (active, completed) => `<div class="wnq-grid-2 wnq-job-sections"><section>${activeJobsTable(active)}</section><section>${completedJobsTable(completed)}</section></div>`;
+  const crmJobsPanel = (active, completed, canceled = []) => `<div class="wnq-grid-2 wnq-job-sections"><section>${activeJobsTable(active)}</section><section>${completedJobsTable(completed)}</section>${canceled.length ? `<section>${canceledJobsTable(canceled)}</section>` : ""}</div>`;
   const activeJobsTable = (rows) => `<div class="wnq-panel wnq-table-wrap wnq-crm-table-panel"><div class="wnq-panel-head"><div><h2>Active Jobs</h2><small>${esc(rows.length)} active job${rows.length === 1 ? "" : "s"}</small></div></div><table class="wnq-crm-table is-fit"><thead><tr><th>Customer</th><th>Service</th><th>Status</th><th>Scheduled Date</th><th>Address</th><th>Revenue</th><th>Action</th></tr></thead><tbody>${rows.length ? rows.map((row) => `<tr><td data-label="Customer"><strong>${esc(row.name)}</strong>${crmContact(row)}</td><td data-label="Service">${esc(row.service || "Not set")}</td><td data-label="Status">${crmStatus(row.status)}</td><td data-label="Scheduled Date">${date(row.job_date || row.reminder_date)}</td><td data-label="Address"><small>${esc(row.job_address || row.address || "Address not set")}</small></td><td data-label="Revenue"><strong>${money(row.final_value || row.estimated_value)}</strong><small>${Number(row.final_value || 0) ? "Final revenue" : "Estimated"}</small></td><td data-label="Action"><button class="wnq-link" data-edit='${attr(row)}'>Edit</button></td></tr>`).join("") : `<tr><td colspan="7">${empty("No upcoming jobs are scheduled yet. Scheduled jobs will appear here.")}</td></tr>`}</tbody></table></div>`;
   const completedJobsTable = (rows) => `<div class="wnq-panel wnq-table-wrap wnq-crm-table-panel"><div class="wnq-panel-head"><div><h2>Completed Jobs</h2><small>${esc(rows.length)} completed job${rows.length === 1 ? "" : "s"}</small></div></div><table class="wnq-crm-table is-fit"><thead><tr><th>Customer</th><th>Service</th><th>Completed Date</th><th>Revenue</th><th>Profit</th><th>Action</th></tr></thead><tbody>${rows.length ? rows.map((row) => {
     const profit = Number(row.final_value || 0) - Number(row.job_cost || 0);
     return `<tr><td data-label="Customer"><strong>${esc(row.name)}</strong>${crmContact(row)}</td><td data-label="Service">${esc(row.service || "Not set")}</td><td data-label="Completed Date">${date(row.completion_date || row.job_date)}</td><td data-label="Revenue"><strong>${money(row.final_value)}</strong></td><td data-label="Profit">${canSeePrivate ? trend(profit) : "<span>Private</span>"}</td><td data-label="Action"><button class="wnq-link" data-edit='${attr(row)}'>Edit</button></td></tr>`;
   }).join("") : `<tr><td colspan="6">${empty("No completed jobs yet.")}</td></tr>`}</tbody></table></div>`;
+  const canceledJobsTable = (rows) => `<div class="wnq-panel wnq-table-wrap wnq-crm-table-panel"><div class="wnq-panel-head"><div><h2>Canceled Jobs</h2><small>${esc(rows.length)} canceled job${rows.length === 1 ? "" : "s"}</small></div></div><table class="wnq-crm-table is-fit"><thead><tr><th>Contact</th><th>Service</th><th>Status</th><th>Reason</th><th>Action</th></tr></thead><tbody>${rows.map((row) => `<tr><td data-label="Contact"><strong>${esc(row.name)}</strong>${crmContact(row)}</td><td data-label="Service">${esc(row.service || "Not set")}</td><td data-label="Status">${crmStatus(row.status)}</td><td data-label="Reason"><small>${esc(row.lost_reason || "No reason saved")}</small></td><td data-label="Action"><button type="button" class="wnq-link" data-edit='${attr(row)}'>Edit</button></td></tr>`).join("")}</tbody></table></div>`;
   const crmFollowups = (rows) => `<div class="wnq-panel wnq-table-wrap wnq-crm-table-panel"><div class="wnq-panel-head"><div><h2>Follow-ups Due</h2><small>${esc(rows.length)} follow-up${rows.length === 1 ? "" : "s"} need attention</small></div></div><table class="wnq-crm-table is-fit wnq-followup-table"><thead><tr><th>Customer</th><th>Service</th><th>Status</th><th>Follow-up Date</th><th>Notes</th><th>Action</th></tr></thead><tbody>${rows.length ? rows.map((row) => `<tr><td data-label="Customer"><strong>${esc(row.name)}</strong>${crmContact(row)}</td><td data-label="Service">${esc(row.service || "Not set")}</td><td data-label="Status">${crmStatus(row.status)}</td><td data-label="Follow-up Date">${date(row.follow_up_date)}</td><td data-label="Notes"><small>${esc(row.notes || "No notes saved")}</small></td><td data-label="Action"><button class="wnq-link" data-followup='${attr(row)}'>Mark Complete</button><button class="wnq-link" data-followup='${attr(row)}'>Reschedule</button><button class="wnq-link" data-edit='${attr(row)}'>Edit</button></td></tr>`).join("") : `<tr><td colspan="6">${empty("No overdue follow-ups. When a next follow-up date passes, it will appear here.")}</td></tr>`}</tbody></table></div>`;
   const crmCalendar = (jobs, followups = [], month = "") => {
+    const selectedMonth = /^\d{4}-\d{2}$/.test(month) ? month : isoDate().slice(0, 7);
+    const [year, monthNumber] = selectedMonth.split("-").map(Number);
+    const firstWeekday = new Date(year, monthNumber - 1, 1).getDay();
+    const daysInMonth = new Date(year, monthNumber, 0).getDate();
+    const cellCount = Math.ceil((firstWeekday + daysInMonth) / 7) * 7;
+    const today = isoDate();
     const items = [
       ...jobs.map((row) => ({ ...row, calendar_type: "job", calendar_date: row.job_date })),
       ...followups.map((row) => ({ ...row, calendar_type: "follow-up", calendar_date: row.follow_up_date })),
-    ].filter((row) => row.calendar_date && (!month || String(row.calendar_date).slice(0, 7) === month));
+    ].filter((row) => row.calendar_date && String(row.calendar_date).slice(0, 7) === selectedMonth);
     const grouped = items.sort((a, b) => String(a.calendar_date || "").localeCompare(String(b.calendar_date || ""))).reduce((map, row) => {
       const key = row.calendar_date || "unscheduled";
       map[key] = map[key] || [];
       map[key].push(row);
       return map;
     }, {});
-    return `<div class="wnq-panel"><div class="wnq-panel-head"><h2>Calendar & Scheduling</h2></div>${Object.keys(grouped).length ? Object.entries(grouped).map(([day, dayItems]) => `<section class="wnq-calendar-day"><h3>${date(day)}</h3>${dayItems.map((row) => `<article class="wnq-schedule-item"><time>${esc(row.calendar_type === "job" ? (row.job_time || "Time TBD") : "Follow-up")}</time><div><strong>${esc(row.name)}</strong><span>${esc(row.service || (row.calendar_type === "job" ? "Job" : "Customer touchpoint"))} · ${esc(row.job_address || row.address || "Address not set")}</span></div>${crmStatus(row.status)}</article>`).join("")}</section>`).join("") : empty("No upcoming jobs are scheduled yet. Scheduled jobs will appear here.")}</div>`;
+    const monthLabel = new Date(year, monthNumber - 1, 1).toLocaleString(undefined, { month: "long", year: "numeric" });
+    const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const cells = Array.from({ length: cellCount }, (_, index) => {
+      const dayNumber = index - firstWeekday + 1;
+      if (dayNumber < 1 || dayNumber > daysInMonth) return `<div class="wnq-calendar-cell is-outside" aria-hidden="true"></div>`;
+      const dayKey = `${selectedMonth}-${String(dayNumber).padStart(2, "0")}`;
+      const dayItems = grouped[dayKey] || [];
+      return `<div class="wnq-calendar-cell ${dayKey === today ? "is-today" : ""}"><header><span>${dayNumber}</span>${dayItems.length ? `<small>${esc(dayItems.length)} item${dayItems.length === 1 ? "" : "s"}</small>` : ""}</header><div class="wnq-calendar-events">${dayItems.slice(0, 3).map((row) => `<button type="button" class="wnq-calendar-event is-${esc(row.calendar_type)}" data-edit='${attr(row)}'><strong>${esc(row.name)}</strong><span>${esc(row.calendar_type === "job" ? row.service || "Scheduled job" : "Follow-up")}</span></button>`).join("")}${dayItems.length > 3 ? `<small class="wnq-calendar-more">+${esc(dayItems.length - 3)} more</small>` : ""}</div></div>`;
+    }).join("");
+    return `<section class="wnq-panel wnq-calendar-panel"><div class="wnq-panel-head"><div><h2>${esc(monthLabel)}</h2><small>${esc(items.length)} scheduled item${items.length === 1 ? "" : "s"}</small></div><div class="wnq-calendar-legend"><span class="is-job">Job</span><span class="is-follow-up">Follow-up</span></div></div><div class="wnq-calendar-grid">${weekdays.map((day) => `<div class="wnq-calendar-weekday">${esc(day)}</div>`).join("")}${cells}</div>${!items.length ? `<p class="wnq-calendar-empty">Nothing is scheduled this month. Add a job date or follow-up date to place it on the calendar.</p>` : ""}</section>`;
   };
   const crmReports = (ctx) => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = isoDate();
     const openLeads = ctx.leadRows.filter((row) => ["new", "contacted", "quoted"].includes(row.status));
     const upcomingFollowups = ctx.visibleRows.filter((row) => row.follow_up_date && row.follow_up_date >= today && !["completed", "lost", "canceled"].includes(row.status));
     const calendarRows = [
@@ -537,9 +700,10 @@
     ].filter((row) => row.report_date).sort((a, b) => String(a.report_date).localeCompare(String(b.report_date)));
     const reportProfit = ctx.totals.revenue - ctx.totals.cost;
     return `<nav class="wnq-report-nav" aria-label="CRM report sections"><a href="#wnq-crm-report-leads">Leads</a><a href="#wnq-crm-report-jobs">Jobs</a><a href="#wnq-crm-report-calendar">Calendar</a><a href="#wnq-crm-report-followups">Follow-ups</a></nav>
-      <section class="wnq-panel wnq-crm-report-section" id="wnq-crm-report-leads"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">CRM Report</span><h2>Leads</h2><small>Lead records, sources, estimates, and pipeline movement.</small></div></div><div class="wnq-metrics">${metric("Lead Records", ctx.leadRows.length, "Visible leads")}${metric("Open Leads", openLeads.length, "Need follow-up")}${metric("Lost Leads", ctx.lost.length, "Not moving forward")}${metric("Close Rate", `${ctx.closeRate}%`, "Completed vs lost")}</div>${leadSourceTable(ctx.rows, ctx.topSources)}${crmReportTable("Lead Detail", [
+      <section class="wnq-panel wnq-crm-report-section" id="wnq-crm-report-leads"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">CRM Report</span><h2>Leads</h2><small>Lead records, sources, estimates, and pipeline movement.</small></div></div><div class="wnq-metrics">${metric("Lead Records", ctx.leadRows.length, "Visible leads")}${metric("Open Leads", openLeads.length, "Need follow-up")}${metric("Lost Leads", ctx.lost.length, "Not moving forward")}${metric("Close Rate", `${ctx.closeRate}%`, "Converted vs lost leads")}</div>${leadSourceTable(ctx.rows, ctx.topSources)}${crmReportTable("Lead Detail", [
         ["Customer", (row) => `<strong>${esc(row.name)}</strong>${crmContact(row)}`],
         ["Source", (row) => esc(row.lead_source || "Not set")],
+        ["Pipeline", (row) => pipelineBadge(row, ctx.pipelineStages)],
         ["Status", (row) => crmStatus(row.status)],
         ["Estimate", (row) => money(row.estimated_value)],
         ["Next Follow-up", (row) => date(row.follow_up_date || row.reminder_date)],
@@ -573,55 +737,55 @@
     const max = Math.max(1, ...items.map((item) => Number(item.count || 0)));
     return `<div class="wnq-source-list">${items.map((item) => `<div class="wnq-source-row"><span>${esc(item.label)}</span><strong>${esc(item.count)}</strong><i style="width:${Math.max(8, Math.round((Number(item.count || 0) / max) * 100))}%"></i></div>`).join("")}</div>`;
   };
-  const marketingWorkHistoryTable = (rows) => `<table class="wnq-crm-table is-fit wnq-work-history-table"><thead><tr><th>Date</th><th>Work Type</th><th>Title</th><th>Description</th><th>Status</th><th>Completed By</th></tr></thead><tbody>${rows.length ? rows.map((row) => `<tr><td data-label="Date">${date(row.work_date || row.due_date || row.created_at)}</td><td data-label="Work Type">${esc(row.work_type_label || humanize(row.work_type || row.task_type || "Other"))}</td><td data-label="Title"><strong>${esc(row.title)}</strong></td><td data-label="Description"><small>${esc(row.description || "No description saved")}</small></td><td data-label="Status">${status(row.status === "done" ? "green" : "yellow", row.status === "done" ? "Completed" : humanize(row.status))}</td><td data-label="Completed By">${esc(row.assigned_to || cfg.user?.name || "Golden Web Marketing")}</td></tr>`).join("") : `<tr><td colspan="6">${empty("No marketing work items yet. Completed SEO, Ads, and website updates will appear here.")}</td></tr>`}</tbody></table>`;
-  const crmSettings = () => `<section class="wnq-settings-grid">
-    ${settingsCard("Business Profile", "Client-facing company details used across CRM records and reports.")}
-    ${settingsCard("User Permissions", "Control who can view, add, and edit CRM information.")}
-    ${settingsCard("Client Visibility", "Choose which revenue, profit, and internal notes appear to clients.")}
-    ${settingsCard("Lead Sources", "Maintain the source list used by lead and reporting filters.")}
-    ${settingsCard("Services", "Manage service labels used across leads, jobs, and reports.")}
-    ${settingsCard("Notification Settings", "Set reminders for overdue follow-ups and new support tickets.")}
-  </section>`;
-  const settingsCard = (title, copy) => `<article class="wnq-panel wnq-settings-card"><div class="wnq-panel-head"><h2>${esc(title)}</h2></div><p class="wnq-note">${esc(copy)}</p><button type="button" class="wnq-link" disabled>Coming soon</button></article>`;
   const crmStatus = (value) => {
     const key = value || "new";
     return status(["completed"].includes(key) ? "green" : ["lost","canceled"].includes(key) ? "red" : "yellow", statusLabels[key] || humanize(key));
   };
-  const marketingWorkList = (rows, compact = false) => rows.length ? rows.map((row) => `<div class="wnq-work-item"><div>${status(row.status === "done" ? "green" : "yellow", row.status === "done" ? "Completed" : humanize(row.status))}<div><strong>${esc(row.title)}</strong>${!compact && row.description ? `<small>${esc(row.description)}</small>` : ""}</div></div><span>${esc(row.work_type_label || humanize(row.task_type || "Other"))} · ${row.due_date ? date(row.due_date) : "No date"}</span></div>`).join("") : empty("No marketing work items yet. Completed SEO, Ads, and website updates will appear here.");
-  const marketingWorkForm = () => `<form class="wnq-work-form wnq-form"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">Admin Work Log</span><h2>Add Marketing Work</h2></div></div>${field("work_date", "Date", new Date().toISOString().slice(0, 10), false, "date")}<label><span>Work Type</span><select name="work_type">${workTypeOptions.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("")}</select></label><label><span>Status</span><select name="status"><option value="done">Completed</option><option value="in_progress">In Progress</option><option value="todo">Planned</option></select></label>${field("title", "Title", "", true)}${field("assigned_to", "Assigned To", cfg.user?.name || "")}<label class="is-wide"><span>Description</span><textarea name="description" rows="3" placeholder="Updated homepage SEO title and meta description"></textarea></label><label class="is-wide"><span>Internal Notes</span><textarea name="notes" rows="2"></textarea></label><div class="wnq-form-actions"><button class="wnq-button" type="submit">Save Work Item</button><button type="button" class="wnq-button is-secondary" data-cancel-work>Cancel</button></div></form>`;
   const fileList = (label, items = []) => Array.isArray(items) && items.length ? `<div class="wnq-existing-files is-wide"><span>${esc(label)}</span>${items.map((item) => `<a href="${esc(item.url)}" target="_blank" rel="noopener">${esc(item.name)}</a>`).join("")}</div>` : "";
-  const customerForm = (row = {}) => {
-    const currentType = row.record_type || "lead";
-    const currentStatus = row.status || "new";
+  const customerForm = (row = {}, settings = {}) => {
+    const currentType = row.record_type === "job" ? "job" : "lead";
+    const isJob = currentType === "job";
+    const currentStatus = row.status || (isJob ? "scheduled" : "new");
+    const configuredSources = settings.crm?.lead_sources?.length ? settings.crm.lead_sources : leadSourceOptions;
+    const configuredStages = settings.crm?.pipeline_stages?.length ? settings.crm.pipeline_stages : [{ key: "new", label: "New Lead", color: "#D7B846" }];
+    const currentPipelineStage = configuredStages.some((stage) => stage.key === row.pipeline_stage) ? row.pipeline_stage : configuredStages[0].key;
     const sourceValue = row.lead_source || "";
-    const sourceChoices = sourceValue && !leadSourceOptions.includes(sourceValue) ? [...leadSourceOptions, sourceValue] : leadSourceOptions;
-    return `<form class="wnq-panel wnq-form wnq-crm-form" enctype="multipart/form-data"><input type="hidden" name="id" value="${esc(row.id || "")}">
-      <div class="wnq-panel-head"><div><span class="wnq-eyebrow">${row.id ? "Edit record" : "New record"}</span><h2>${row.id ? "Update Lead / Job" : "Add Lead / Job"}</h2></div></div>
+    const sourceChoices = sourceValue && !configuredSources.includes(sourceValue) ? [...configuredSources, sourceValue] : configuredSources;
+    const serviceChoices = [...new Set([...(settings.crm?.services || []), row.service || ""])].filter(Boolean);
+    const defaultFollowup = (() => {
+      if (row.follow_up_date || row.id || isJob) return row.follow_up_date || "";
+      const next = new Date();
+      next.setDate(next.getDate() + Number(settings.crm?.default_follow_up_days || 2));
+      return isoDate(next);
+    })();
+    const allowedStatuses = isJob
+      ? [["scheduled", "Scheduled"], ["in_progress", "In Progress"], ["completed", "Completed"], ["canceled", "Canceled"]]
+      : [["new", "New Lead"], ["contacted", "Contacted"], ["quoted", "Quote Sent"], ["lost", "Lost"]];
+    return `<form class="wnq-panel wnq-form wnq-crm-form" enctype="multipart/form-data"><input type="hidden" name="id" value="${esc(row.id || "")}"><input type="hidden" name="record_type" value="${esc(currentType)}">
+      <div class="wnq-panel-head"><div><span class="wnq-eyebrow">${row.id ? `Edit ${currentType}` : `New ${currentType}`}</span><h2>${row.id ? `Update ${isJob ? "Job" : "Lead"}` : `Add ${isJob ? "Job" : "Lead"}`}</h2></div><span class="wnq-form-type is-${esc(currentType)}">${isJob ? "Job record" : "Lead record"}</span></div>
       <fieldset class="wnq-crm-form-section"><legend>Contact</legend>
-        <label><span>Record Type</span><select name="record_type">${["lead","customer","job"].map((v) => `<option value="${v}" ${currentType === v ? "selected" : ""}>${esc(v === "lead" ? "Lead" : v === "job" ? "Job" : "Customer")}</option>`).join("")}</select></label>
-        ${field("name", "Customer Name", row.name, true)}${field("phone", "Phone", row.phone)}${field("email", "Email", row.email, false, "email")}${field("address", "Customer Address", row.address)}
+        ${field("name", "Contact Name", row.name, true)}${field("phone", "Phone", row.phone)}${field("email", "Email", row.email, false, "email")}${field("address", "Contact Address", row.address)}
         <label><span>Lead Source</span><select name="lead_source"><option value="">Select source</option>${sourceChoices.map((value) => `<option value="${esc(value)}" ${sourceValue === value ? "selected" : ""}>${esc(value)}</option>`).join("")}</select></label>
       </fieldset>
-      <fieldset class="wnq-crm-form-section"><legend>Job & Schedule</legend>
-        ${field("service", "Service / Job Type", row.service)}${field("job_address", "Job Address", row.job_address)}${field("crew", "Crew / Employee Assignment", row.crew)}
-        <label><span>Status</span><select name="status">${statusOptions.map(([value, label]) => `<option value="${esc(value)}" ${currentStatus === value ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label>
-        ${field("follow_up_date", "Next Follow-Up Date", row.follow_up_date, false, "date")}${field("reminder_date", "Reminder Date", row.reminder_date, false, "date")}${field("job_date", "Scheduled Date", row.job_date, false, "date")}${field("completion_date", "Completion Date", row.completion_date, false, "date")}
+      <fieldset class="wnq-crm-form-section"><legend>${isJob ? "Job & Schedule" : "Opportunity"}</legend>
+        <label><span>Service ${isJob ? "/ Job Type" : "Needed"}</span><input type="text" name="service" value="${esc(row.service || "")}" list="wnq-service-list"><datalist id="wnq-service-list">${serviceChoices.map((value) => `<option value="${esc(value)}"></option>`).join("")}</datalist></label>
+        <label><span>Status</span><select name="status">${allowedStatuses.map(([value, label]) => `<option value="${esc(value)}" ${currentStatus === value ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label>
+        ${isJob ? `${field("job_address", "Job Address", row.job_address || row.address)}${field("crew", "Crew / Employee Assignment", row.crew)}${field("job_date", "Scheduled Date", row.job_date, false, "date")}${field("completion_date", "Completion Date", row.completion_date, false, "date")}` : `<label><span>Pipeline Stage</span><select name="pipeline_stage">${configuredStages.map((stage) => `<option value="${esc(stage.key)}" ${stage.key === currentPipelineStage ? "selected" : ""}>${esc(stage.label)}</option>`).join("")}</select></label>${field("follow_up_date", "Next Follow-Up Date", defaultFollowup, false, "date")}${field("reminder_date", "Reminder Date", row.reminder_date, false, "date")}`}
       </fieldset>
-      <fieldset class="wnq-crm-form-section"><legend>Revenue & Profit</legend>
-        ${countField("job_count", "Completed Job Quantity", row.job_count || 0, "Usually 0 until completed, then 1 for one finished job. Use more only when one record represents multiple completed jobs.")}${moneyField("estimated_value", "Estimated Revenue", row.estimated_value || 0)}${moneyField("final_value", "Final Revenue", row.final_value || 0)}${canSeePrivate ? moneyField("job_cost", "Job Costs / Marketing Costs", row.job_cost || 0) : ""}
+      <fieldset class="wnq-crm-form-section"><legend>${isJob ? "Revenue & Profit" : "Estimated Value"}</legend>
+        ${moneyField("estimated_value", "Estimated Revenue", row.estimated_value || 0)}${isJob ? `${moneyField("final_value", "Final Revenue", row.final_value || 0)}${canSeePrivate ? moneyField("job_cost", "Job Costs", row.job_cost || 0) : ""}` : ""}
       </fieldset>
       <fieldset class="wnq-crm-form-section"><legend>Notes & Files</legend>
-        <label class="is-wide"><span>Customer Notes / Service History</span><textarea name="notes" rows="3">${esc(row.notes || "")}</textarea></label>
+        <label class="is-wide"><span>${isJob ? "Job Notes / Service History" : "Lead Notes"}</span><textarea name="notes" rows="3">${esc(row.notes || "")}</textarea></label>
         ${canSeePrivate ? `<label class="is-wide"><span>Internal Notes</span><textarea name="internal_notes" rows="3">${esc(row.internal_notes || "")}</textarea></label>` : ""}
-        <label class="is-wide"><span>Lost Lead / Cancellation Reason</span><textarea name="lost_reason" rows="2">${esc(row.lost_reason || "")}</textarea></label>
+        <label class="is-wide"><span>${isJob ? "Cancellation Reason" : "Lost Lead Reason"}</span><textarea name="lost_reason" rows="2">${esc(row.lost_reason || "")}</textarea></label>
         ${fileList("Saved files", row.files)}${fileList("Before photos", row.before_photos)}${fileList("After photos", row.after_photos)}
         <label class="is-wide wnq-upload"><span>Files & Photos</span><input type="file" name="attachments[]" multiple accept="image/*,.pdf,.doc,.docx,.txt"><small>Upload estimates, invoices, signed docs, or job photos.</small></label>
         <label class="wnq-upload"><span>Before Photos</span><input type="file" name="before_photos[]" multiple accept="image/*"></label><label class="wnq-upload"><span>After Photos</span><input type="file" name="after_photos[]" multiple accept="image/*"></label>
       </fieldset>
-      <div class="wnq-form-actions"><button class="wnq-button" type="submit">Save Record</button><button type="button" class="wnq-button is-secondary" data-cancel>Cancel</button></div></form>`;
+      <div class="wnq-form-actions"><button class="wnq-button" type="submit">Save ${isJob ? "Job" : "Lead"}</button><button type="button" class="wnq-button is-secondary" data-cancel>Cancel</button></div></form>`;
   };
   const field = (name, label, value = "", required = false, type = "text", hint = "") => `<label><span>${esc(label)}</span><input type="${type}" name="${name}" value="${esc(value)}" ${required ? "required" : ""} ${type === "number" ? 'min="0" step="0.01"' : ""}>${hint ? `<small>${esc(hint)}</small>` : ""}</label>`;
-  const countField = (name, label, value = "", hint = "") => `<label><span>${esc(label)}</span><input type="number" name="${esc(name)}" value="${esc(value)}" min="0" step="1" inputmode="numeric">${hint ? `<small>${esc(hint)}</small>` : ""}</label>`;
   const moneyField = (name, label, value = "") => `<label class="wnq-money-field"><span>${esc(label)}</span><div><b>$</b><input type="number" name="${esc(name)}" value="${esc(value)}" min="0" step="0.01" inputmode="decimal"></div></label>`;
 
   async function ads(view, refresh) {
@@ -650,7 +814,7 @@
   async function messages(view, refresh) {
     const tickets = await load("tickets", refresh);
     const messagesTab = root.querySelector('[data-tab="messages"]');
-    if (messagesTab) messagesTab.textContent = "Support";
+    if (messagesTab?.querySelector("span")) messagesTab.querySelector("span").textContent = "Support";
     view.innerHTML = `${heading("Support", "Support Tickets", "Create a request, track its status, and keep every reply together.")}
       <div class="wnq-toolbar wnq-ticket-toolbar"><input type="search" id="wnq-ticket-search" placeholder="Search tickets"><select id="wnq-ticket-filter"><option value="all">All tickets</option><option value="open">Open</option><option value="in_progress">In progress</option><option value="waiting">Waiting</option><option value="resolved">Resolved</option><option value="closed">Closed</option></select><button class="wnq-button" id="wnq-new-ticket">New Support Ticket</button></div><div id="wnq-ticket-compose"></div>
       <div class="wnq-ticket-layout"><div class="wnq-ticket-list"></div><div id="wnq-ticket-thread">${empty("Select a ticket to view the conversation.")}</div></div>`;
@@ -685,6 +849,8 @@
     if (!summary) return;
     const ticket = await api(`/portal/tickets/${encodeURIComponent(key)}`);
     if (!ticket) return;
+    delete state.cache.notifications;
+    refreshNotificationBadge(true);
     const index = tickets.findIndex((item) => item.ticket_key === key);
     if (index >= 0) tickets[index] = ticket;
     view.querySelector(`[data-ticket="${key}"]`)?.classList.remove("is-unread");
@@ -716,6 +882,67 @@
     report_question: [["report_period", "Report Month", "month"], ["question", "What would you like explained?", "textarea"]],
     strategy_call: [["preferred_date", "Preferred Date", "date"], ["preferred_time", "Preferred Time", "time"], ["goals", "What should we discuss?", "textarea"]],
   };
+
+  async function notifications(view, refresh) {
+    const data = await load("notifications", refresh);
+    const items = data.items || [];
+    view.innerHTML = `${heading("Activity", "Notifications", "See support replies, overdue follow-ups, upcoming jobs, and newly available reports in one place.")}
+      <div class="wnq-notification-summary"><div><span>Needs attention</span><strong>${esc(data.attention_count || 0)}</strong><small>Items requiring action</small></div><button type="button" class="wnq-button is-secondary" data-notification-route="settings">Notification Settings</button></div>
+      <section class="wnq-panel wnq-notification-panel"><div class="wnq-panel-head"><div><h2>Latest Updates</h2><small>${esc(items.length)} notification${items.length === 1 ? "" : "s"}</small></div></div><div class="wnq-notification-list">${items.length ? items.map((item) => `<article class="wnq-notification-item is-${esc(item.tone || "gold")}"><span class="wnq-notification-icon is-${esc(item.type || "notice")}" aria-hidden="true"></span><div><strong>${esc(item.title)}</strong><p>${esc(item.message)}</p><small>${date(item.date)}</small></div><button type="button" class="wnq-link" data-notification-route="${esc(item.route || "overview")}">${esc(item.action || "View")}</button></article>`).join("") : empty("You are all caught up. New portal activity will appear here.")}</div></section>`;
+    view.querySelectorAll("[data-notification-route]").forEach((button) => button.addEventListener("click", () => show(button.dataset.notificationRoute)));
+  }
+
+  const settingsToggle = (name, label, copy, checked) => `<label class="wnq-settings-toggle"><input type="checkbox" name="${esc(name)}" value="1" ${checked ? "checked" : ""}><span><strong>${esc(label)}</strong><small>${esc(copy)}</small></span></label>`;
+  async function settings(view, refresh) {
+    const [data, client] = await Promise.all([load("settings", refresh), load("profile", refresh)]);
+    const notice = sessionStorage.getItem("wnqSettingsNotice") || "";
+    if (notice) sessionStorage.removeItem("wnqSettingsNotice");
+    const crm = data.crm || {};
+    const notificationSettings = data.notifications || {};
+    view.innerHTML = `${heading("Portal", "Settings", "Update your business details and the lists, reminders, and notifications used throughout the portal.")}
+      ${notice ? `<div class="wnq-success-inline">${esc(notice)}</div>` : ""}
+      <form class="wnq-settings-form" id="wnq-connected-settings">
+        <section class="wnq-panel"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">Business Profile</span><h2>Business Information</h2></div><small>Used across the client portal</small></div><div class="wnq-form wnq-settings-fields">${field("company", "Business Name", client.company || client.name, true)}${field("phone", "Phone", client.phone)}${field("email", "Email", client.email, true, "email")}${field("website", "Website", client.website, false, "url")}${field("business_address", "Business Address", client.business_address)}${field("city", "City", client.city)}${field("state", "State", client.state)}</div></section>
+        <section class="wnq-panel"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">CRM Defaults</span><h2>Lead and Job Settings</h2></div><small>Connected to CRM forms and filters</small></div><div class="wnq-form wnq-settings-fields"><label class="is-wide"><span>Services</span><textarea name="services" rows="5" placeholder="One service per line">${esc((crm.services || []).join("\n"))}</textarea><small>These choices appear in lead and job forms.</small></label><label class="is-wide"><span>Lead Sources</span><textarea name="lead_sources" rows="5" placeholder="One source per line">${esc((crm.lead_sources || []).join("\n"))}</textarea><small>These choices appear in lead forms and CRM reports.</small></label>${field("default_follow_up_days", "Default Follow-Up Delay (days)", crm.default_follow_up_days ?? 2, false, "number", "New leads receive this follow-up date automatically.")}</div></section>
+        <section class="wnq-panel"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">Notifications</span><h2>What should appear in Notifications?</h2></div></div><div class="wnq-settings-toggles">${settingsToggle("support_replies", "Support replies", "Notify me when Golden Web Marketing replies to a ticket.", notificationSettings.support_replies)}${settingsToggle("overdue_followups", "Overdue follow-ups", "Flag open leads and jobs whose follow-up date has passed.", notificationSettings.overdue_followups)}${settingsToggle("upcoming_jobs", "Upcoming jobs", "Show jobs scheduled during the next seven days.", notificationSettings.upcoming_jobs)}${settingsToggle("new_reports", "New reports", "Show the latest available Monthly SEO Report.", notificationSettings.new_reports)}</div></section>
+        <div class="wnq-settings-save"><button type="submit" class="wnq-button">Save Portal Settings</button><span id="wnq-settings-status"></span></div>
+      </form>`;
+    const form = view.querySelector("#wnq-connected-settings");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const submit = form.querySelector('[type="submit"]');
+      const statusTarget = view.querySelector("#wnq-settings-status");
+      const values = new FormData(form);
+      submit.disabled = true;
+      submit.textContent = "Saving...";
+      statusTarget.textContent = "Connecting settings across the portal...";
+      const list = (name) => String(values.get(name) || "").split(/[\n,]+/).map((value) => value.trim()).filter(Boolean);
+      const profileBody = {
+        company: values.get("company") || "", phone: values.get("phone") || "", email: values.get("email") || "", website: values.get("website") || "",
+        business_address: values.get("business_address") || "", city: values.get("city") || "", state: values.get("state") || "", active_services: list("services").join("\n"),
+      };
+      const settingsBody = {
+        crm: { services: list("services"), lead_sources: list("lead_sources"), default_follow_up_days: Number(values.get("default_follow_up_days") || 0) },
+        notifications: { support_replies: values.has("support_replies"), overdue_followups: values.has("overdue_followups"), upcoming_jobs: values.has("upcoming_jobs"), new_reports: values.has("new_reports") },
+      };
+      try {
+        const [savedProfile, savedSettings] = await Promise.all([
+          api("/portal/profile", { method: "POST", body: JSON.stringify(profileBody) }),
+          api("/portal/settings", { method: "POST", body: JSON.stringify(settingsBody) }),
+        ]);
+        state.cache.profile = savedProfile;
+        state.cache.settings = savedSettings;
+        state.portalSettings = savedSettings;
+        delete state.cache.customers; delete state.cache.overview; delete state.cache.notifications;
+        sessionStorage.setItem("wnqSettingsNotice", "Portal settings saved and connected successfully.");
+        show("settings", true);
+      } catch (error) {
+        statusTarget.textContent = error.message;
+        submit.disabled = false;
+        submit.textContent = "Save Portal Settings";
+      }
+    });
+  }
   const openRequestForm = (type, types, view) => {
     const rootForm = view.querySelector("#wnq-service-request-form");
     const dynamic = (requestFields[type] || []).map(([name, label, inputType]) => inputType === "textarea" ? `<label class="is-wide"><span>${esc(label)}</span><textarea name="${esc(name)}" rows="4"></textarea></label>` : field(name, label, "", false, inputType)).join("");

@@ -51,7 +51,7 @@ final class DashboardController
       },
     ]);
 
-    foreach (['overview', 'customers', 'messages', 'tickets', 'requests', 'work', 'reports', 'profile', 'performance', 'learning', 'ads'] as $resource) {
+    foreach (['overview', 'customers', 'messages', 'tickets', 'requests', 'work', 'reports', 'profile', 'performance', 'learning', 'ads', 'notifications', 'settings'] as $resource) {
       register_rest_route('wnq/v1', '/portal/' . $resource, [
         'methods'  => 'GET',
         'callback' => [self::class, 'getPortalResource'],
@@ -62,6 +62,18 @@ final class DashboardController
     register_rest_route('wnq/v1', '/portal/customers', [
       'methods'  => 'POST',
       'callback' => [self::class, 'saveCustomer'],
+      'permission_callback' => [self::class, 'canUsePortal'],
+    ]);
+
+    register_rest_route('wnq/v1', '/portal/leads/(?P<id>\d+)/convert', [
+      'methods'  => 'POST',
+      'callback' => [self::class, 'convertLeadToJob'],
+      'permission_callback' => [self::class, 'canUsePortal'],
+    ]);
+
+    register_rest_route('wnq/v1', '/portal/opportunities/(?P<id>\d+)/stage', [
+      'methods'  => 'POST',
+      'callback' => [self::class, 'updateOpportunityStage'],
       'permission_callback' => [self::class, 'canUsePortal'],
     ]);
 
@@ -98,6 +110,12 @@ final class DashboardController
     register_rest_route('wnq/v1', '/portal/profile', [
       'methods'  => 'POST',
       'callback' => [self::class, 'saveProfile'],
+      'permission_callback' => [self::class, 'canUsePortal'],
+    ]);
+
+    register_rest_route('wnq/v1', '/portal/settings', [
+      'methods'  => 'POST',
+      'callback' => [self::class, 'savePortalSettings'],
       'permission_callback' => [self::class, 'canUsePortal'],
     ]);
 
@@ -184,6 +202,8 @@ final class DashboardController
       'performance' => ClientPortal::getMonthlyPerformance($client_id, 6, $include_private),
       'learning'  => ['courses' => ClientPortal::courses(), 'requests' => ClientPortal::getLearningRequests($client_id)],
       'ads'       => ClientPortal::getAdsResource($client_id),
+      'notifications' => ClientPortal::getPortalNotifications($client_id),
+      'settings'  => ClientPortal::getPortalSettings($client_id),
       default     => [],
     };
     return new \WP_REST_Response(['ok' => true, 'data' => $data], 200);
@@ -232,7 +252,7 @@ final class DashboardController
       return new \WP_REST_Response([
         'ok' => false,
         'error' => $submitted_name === ''
-          ? 'Customer name is required.'
+          ? 'Contact name is required.'
           : ($db_error !== '' ? 'The CRM record could not be saved. Database error: ' . $db_error : 'The CRM record could not be saved. Please refresh and try again.'),
       ], 400);
     }
@@ -241,6 +261,46 @@ final class DashboardController
       $saved_record = ClientPortal::publicCustomerRecord($saved_record);
     }
     return new \WP_REST_Response(['ok' => true, 'id' => $id, 'data' => $saved_record], 200);
+  }
+
+  public static function convertLeadToJob(\WP_REST_Request $request): \WP_REST_Response
+  {
+    $client_id = self::requestClientId($request);
+    $id = absint($request['id'] ?? 0);
+    $converted = $client_id !== '' && $id > 0 ? ClientPortal::convertLeadToJob($client_id, $id) : false;
+    if (!$converted) {
+      $db_error = Permissions::currentUserCanManagePortal() ? ClientPortal::lastError() : '';
+      return new \WP_REST_Response([
+        'ok' => false,
+        'error' => $db_error !== '' ? 'The lead could not be converted. Database error: ' . $db_error : 'The lead could not be converted to a job.',
+      ], 400);
+    }
+    $record = ClientPortal::getCustomer($id, $client_id);
+    if ($record && !Permissions::currentUserCanManagePortal()) {
+      $record = ClientPortal::publicCustomerRecord($record);
+    }
+    return new \WP_REST_Response(['ok' => true, 'id' => $id, 'data' => $record], 200);
+  }
+
+  public static function updateOpportunityStage(\WP_REST_Request $request): \WP_REST_Response
+  {
+    $client_id = self::requestClientId($request);
+    $id = absint($request['id'] ?? 0);
+    $body = self::requestBody($request);
+    $stage = sanitize_key((string)($body['pipeline_stage'] ?? ''));
+    $updated = $client_id !== '' && $id > 0 ? ClientPortal::updateOpportunityStage($client_id, $id, $stage) : false;
+    if (!$updated) {
+      $db_error = Permissions::currentUserCanManagePortal() ? ClientPortal::lastError() : '';
+      return new \WP_REST_Response([
+        'ok' => false,
+        'error' => $db_error !== '' ? 'The opportunity stage could not be updated. Database error: ' . $db_error : 'Choose a valid opportunity stage and try again.',
+      ], 400);
+    }
+    $record = ClientPortal::getCustomer($id, $client_id);
+    if ($record && !Permissions::currentUserCanManagePortal()) {
+      $record = ClientPortal::publicCustomerRecord($record);
+    }
+    return new \WP_REST_Response(['ok' => true, 'id' => $id, 'data' => $record], 200);
   }
 
   public static function saveWork(\WP_REST_Request $request): \WP_REST_Response
@@ -293,6 +353,16 @@ final class DashboardController
     return $saved
       ? new \WP_REST_Response(['ok' => true, 'data' => ClientPortal::publicClient(Client::getByClientId($client_id) ?: [])], 200)
       : new \WP_REST_Response(['ok' => false, 'error' => 'Business profile could not be saved.'], 400);
+  }
+
+  public static function savePortalSettings(\WP_REST_Request $request): \WP_REST_Response
+  {
+    $client_id = self::requestClientId($request);
+    $body = self::requestBody($request);
+    $saved = $client_id !== '' && ClientPortal::savePortalSettings($client_id, $body);
+    return $saved
+      ? new \WP_REST_Response(['ok' => true, 'data' => ClientPortal::getPortalSettings($client_id)], 200)
+      : new \WP_REST_Response(['ok' => false, 'error' => 'Portal settings could not be saved.'], 400);
   }
 
   public static function saveAdsSettings(\WP_REST_Request $request): \WP_REST_Response
@@ -375,7 +445,7 @@ final class DashboardController
   private static function knownRequestBodyFields(): array
   {
     return [
-      'id', 'record_type', 'name', 'customer_name', 'customerName', 'phone', 'email',
+      'id', 'record_type', 'pipeline_stage', 'name', 'customer_name', 'customerName', 'phone', 'email',
       'address', 'job_address', 'service', 'crew', 'lead_source', 'status',
       'follow_up_date', 'reminder_date', 'job_date', 'completion_date', 'job_count',
       'estimated_value', 'final_value', 'job_cost', 'notes', 'internal_notes',
