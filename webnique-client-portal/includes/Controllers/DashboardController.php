@@ -71,6 +71,12 @@ final class DashboardController
       'permission_callback' => [self::class, 'canUsePortal'],
     ]);
 
+    register_rest_route('wnq/v1', '/portal/opportunities/(?P<id>\d+)/stage', [
+      'methods'  => 'POST',
+      'callback' => [self::class, 'updateOpportunityStage'],
+      'permission_callback' => [self::class, 'canUsePortal'],
+    ]);
+
     register_rest_route('wnq/v1', '/portal/work', [
       'methods'  => 'POST',
       'callback' => [self::class, 'saveWork'],
@@ -276,6 +282,27 @@ final class DashboardController
     return new \WP_REST_Response(['ok' => true, 'id' => $id, 'data' => $record], 200);
   }
 
+  public static function updateOpportunityStage(\WP_REST_Request $request): \WP_REST_Response
+  {
+    $client_id = self::requestClientId($request);
+    $id = absint($request['id'] ?? 0);
+    $body = self::requestBody($request);
+    $stage = sanitize_key((string)($body['pipeline_stage'] ?? ''));
+    $updated = $client_id !== '' && $id > 0 ? ClientPortal::updateOpportunityStage($client_id, $id, $stage) : false;
+    if (!$updated) {
+      $db_error = Permissions::currentUserCanManagePortal() ? ClientPortal::lastError() : '';
+      return new \WP_REST_Response([
+        'ok' => false,
+        'error' => $db_error !== '' ? 'The opportunity stage could not be updated. Database error: ' . $db_error : 'Choose a valid opportunity stage and try again.',
+      ], 400);
+    }
+    $record = ClientPortal::getCustomer($id, $client_id);
+    if ($record && !Permissions::currentUserCanManagePortal()) {
+      $record = ClientPortal::publicCustomerRecord($record);
+    }
+    return new \WP_REST_Response(['ok' => true, 'id' => $id, 'data' => $record], 200);
+  }
+
   public static function saveWork(\WP_REST_Request $request): \WP_REST_Response
   {
     if (!Permissions::currentUserCanManagePortal()) {
@@ -418,7 +445,7 @@ final class DashboardController
   private static function knownRequestBodyFields(): array
   {
     return [
-      'id', 'record_type', 'name', 'customer_name', 'customerName', 'phone', 'email',
+      'id', 'record_type', 'pipeline_stage', 'name', 'customer_name', 'customerName', 'phone', 'email',
       'address', 'job_address', 'service', 'crew', 'lead_source', 'status',
       'follow_up_date', 'reminder_date', 'job_date', 'completion_date', 'job_count',
       'estimated_value', 'final_value', 'job_cost', 'notes', 'internal_notes',

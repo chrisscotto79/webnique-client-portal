@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 
 final class ClientPortal
 {
-    private const SCHEMA_VERSION = '11';
+    private const SCHEMA_VERSION = '12';
     private static bool $schema_ready = false;
     private static string $last_error = '';
 
@@ -43,6 +43,7 @@ final class ClientPortal
             id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
             client_id varchar(100) NOT NULL,
             record_type varchar(30) NOT NULL DEFAULT 'lead',
+            pipeline_stage varchar(100) NOT NULL DEFAULT 'new',
             name varchar(255) NOT NULL,
             phone varchar(50) DEFAULT NULL,
             email varchar(255) DEFAULT NULL,
@@ -71,6 +72,7 @@ final class ClientPortal
             PRIMARY KEY (id),
             KEY client_id (client_id),
             KEY record_type (record_type),
+            KEY pipeline_stage (pipeline_stage),
             KEY status (status),
             KEY follow_up_date (follow_up_date),
             KEY reminder_date (reminder_date),
@@ -169,7 +171,7 @@ final class ClientPortal
         $safe_table = self::sqlIdentifier($table);
         $indexes = $wpdb->get_col("SHOW INDEX FROM {$safe_table}", 2) ?: [];
         $columns = self::tableColumns($table);
-        foreach (['record_type', 'status', 'follow_up_date', 'reminder_date', 'job_date'] as $index) {
+        foreach (['record_type', 'pipeline_stage', 'status', 'follow_up_date', 'reminder_date', 'job_date'] as $index) {
             if (!in_array($index, $columns, true) || in_array($index, $indexes, true)) {
                 continue;
             }
@@ -194,6 +196,11 @@ final class ClientPortal
         $wpdb->query("UPDATE {$table} SET record_type='lead', job_count=0 WHERE record_type='customer'");
         $wpdb->query("UPDATE {$table} SET job_count=1 WHERE record_type='job'");
         $wpdb->query("UPDATE {$table} SET job_count=0 WHERE record_type='lead'");
+        if ((string)get_option('wnq_pipeline_stage_migrated', '') !== '1') {
+            $wpdb->query("UPDATE {$table} SET pipeline_stage='contacted' WHERE record_type='lead' AND status='contacted' AND pipeline_stage IN ('','new')");
+            $wpdb->query("UPDATE {$table} SET pipeline_stage='quote-sent' WHERE record_type='lead' AND status IN ('quoted','estimate_sent') AND pipeline_stage IN ('','new')");
+            update_option('wnq_pipeline_stage_migrated', '1', false);
+        }
     }
 
     private static function customerColumnsMissing(string $table): bool
@@ -226,6 +233,7 @@ final class ClientPortal
         return [
             'client_id'       => "`client_id` varchar(100) NOT NULL DEFAULT ''",
             'record_type'     => "`record_type` varchar(30) NOT NULL DEFAULT 'lead'",
+            'pipeline_stage'  => "`pipeline_stage` varchar(100) NOT NULL DEFAULT 'new'",
             'name'            => "`name` varchar(255) NOT NULL DEFAULT ''",
             'phone'           => "`phone` varchar(50) DEFAULT NULL",
             'email'           => "`email` varchar(255) DEFAULT NULL",
@@ -318,9 +326,16 @@ final class ClientPortal
         $completion_date = self::dateField($data['completion_date'] ?? '');
         $job_count = $record_type === 'job' ? 1 : 0;
         $final_value = self::moneyAmount($data['final_value'] ?? 0);
+        $pipeline_stages = self::getPortalSettings($client_id)['crm']['pipeline_stages'] ?? self::defaultPipelineStages();
+        $pipeline_keys = array_column($pipeline_stages, 'key');
+        $pipeline_stage = sanitize_key((string)($data['pipeline_stage'] ?? $existing_record['pipeline_stage'] ?? $pipeline_keys[0] ?? 'new'));
+        if (!in_array($pipeline_stage, $pipeline_keys, true)) {
+            $pipeline_stage = (string)($pipeline_keys[0] ?? 'new');
+        }
         $record = [
             'client_id'       => sanitize_text_field($client_id),
             'record_type'     => $record_type,
+            'pipeline_stage'  => $pipeline_stage,
             'name'            => sanitize_text_field($name),
             'phone'           => sanitize_text_field((string)($data['phone'] ?? '')),
             'email'           => sanitize_email((string)($data['email'] ?? '')),
@@ -401,6 +416,36 @@ final class ClientPortal
             ],
             ['id' => $id, 'client_id' => $client_id],
             ['%s', '%s', '%d', '%s', '%s', '%s'],
+            ['%d', '%s']
+        );
+        if ($result === false) {
+            self::$last_error = (string)$wpdb->last_error;
+            return false;
+        }
+        return $id;
+    }
+
+    public static function updateOpportunityStage(string $client_id, int $id, string $stage): int|false
+    {
+        self::ensureSchema();
+        self::ensureCustomerColumns();
+        global $wpdb;
+        self::$last_error = '';
+        $record = self::getCustomer($id, $client_id);
+        if (!$record || ($record['record_type'] ?? '') !== 'lead') {
+            return false;
+        }
+        $stages = self::getPortalSettings($client_id)['crm']['pipeline_stages'] ?? self::defaultPipelineStages();
+        $keys = array_column($stages, 'key');
+        $stage = sanitize_key($stage);
+        if ($stage === '' || !in_array($stage, $keys, true)) {
+            return false;
+        }
+        $result = $wpdb->update(
+            $wpdb->prefix . 'wnq_portal_customers',
+            ['pipeline_stage' => $stage, 'updated_at' => current_time('mysql')],
+            ['id' => $id, 'client_id' => $client_id],
+            ['%s', '%s'],
             ['%d', '%s']
         );
         if ($result === false) {
@@ -1051,6 +1096,7 @@ final class ClientPortal
                 'lead_sources' => self::sanitizeTextList($stored['lead_sources'] ?? $default_sources, $default_sources),
                 'services' => self::sanitizeTextList($stored['services'] ?? $services, $services),
                 'default_follow_up_days' => max(0, min(90, absint($stored['default_follow_up_days'] ?? 2))),
+                'pipeline_stages' => self::sanitizePipelineStages($stored['pipeline_stages'] ?? self::defaultPipelineStages()),
             ],
             'notifications' => [
                 'support_replies' => !array_key_exists('support_replies', $stored) || !empty($stored['support_replies']),
@@ -1072,6 +1118,7 @@ final class ClientPortal
         $notifications = is_array($data['notifications'] ?? null) ? $data['notifications'] : [];
         $lead_sources = self::sanitizeTextList($crm['lead_sources'] ?? $current['crm']['lead_sources'], $current['crm']['lead_sources']);
         $services = self::sanitizeTextList($crm['services'] ?? $current['crm']['services'], $current['crm']['services']);
+        $pipeline_stages = self::sanitizePipelineStages($crm['pipeline_stages'] ?? $current['crm']['pipeline_stages'], $current['crm']['pipeline_stages']);
         $preference = static function (string $key) use ($notifications, $current): bool {
             return array_key_exists($key, $notifications)
                 ? !empty($notifications[$key])
@@ -1081,6 +1128,7 @@ final class ClientPortal
             'lead_sources' => $lead_sources,
             'services' => $services,
             'default_follow_up_days' => max(0, min(90, absint($crm['default_follow_up_days'] ?? $current['crm']['default_follow_up_days']))),
+            'pipeline_stages' => $pipeline_stages,
             'support_replies' => $preference('support_replies'),
             'overdue_followups' => $preference('overdue_followups'),
             'upcoming_jobs' => $preference('upcoming_jobs'),
@@ -1091,6 +1139,7 @@ final class ClientPortal
         if ($services !== self::services($client['active_services'] ?? '')) {
             Client::update((int)$client['id'], ['active_services' => $services]);
         }
+        self::reassignRemovedPipelineStages($client_id, $pipeline_stages);
         return true;
     }
 
@@ -1395,6 +1444,64 @@ final class ClientPortal
             $items
         ))));
         return $items ?: array_values(array_filter(array_map('sanitize_text_field', $fallback)));
+    }
+
+    private static function defaultPipelineStages(): array
+    {
+        return [
+            ['key' => 'new', 'label' => 'New Lead', 'color' => '#D7B846'],
+            ['key' => 'contacted', 'label' => 'Contacted', 'color' => '#4B7BEC'],
+            ['key' => 'quote-sent', 'label' => 'Quote Sent', 'color' => '#8E63CE'],
+            ['key' => 'follow-up', 'label' => 'Follow-Up', 'color' => '#E58A2B'],
+        ];
+    }
+
+    private static function sanitizePipelineStages($value, array $fallback = []): array
+    {
+        $rows = is_array($value) ? $value : [];
+        $stages = [];
+        $used = [];
+        foreach (array_slice($rows, 0, 12) as $index => $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $label = sanitize_text_field((string)($row['label'] ?? ''));
+            if ($label === '') {
+                continue;
+            }
+            $base_key = sanitize_key((string)($row['key'] ?? '')) ?: sanitize_title($label);
+            $key = $base_key !== '' ? $base_key : 'stage-' . ($index + 1);
+            $suffix = 2;
+            while (isset($used[$key])) {
+                $key = $base_key . '-' . $suffix++;
+            }
+            $used[$key] = true;
+            $stages[] = [
+                'key' => $key,
+                'label' => $label,
+                'color' => sanitize_hex_color((string)($row['color'] ?? '')) ?: '#D7B846',
+            ];
+        }
+        if (!$stages && $fallback) {
+            return self::sanitizePipelineStages($fallback);
+        }
+        return $stages ?: self::defaultPipelineStages();
+    }
+
+    private static function reassignRemovedPipelineStages(string $client_id, array $stages): void
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $keys = array_values(array_filter(array_column($stages, 'key')));
+        if (!$keys) {
+            return;
+        }
+        $placeholders = implode(',', array_fill(0, count($keys), '%s'));
+        $args = array_merge([$keys[0], $client_id], $keys);
+        $wpdb->query($wpdb->prepare(
+            "UPDATE {$wpdb->prefix}wnq_portal_customers SET pipeline_stage=%s WHERE client_id=%s AND record_type='lead' AND pipeline_stage NOT IN ({$placeholders})",
+            ...$args
+        ));
     }
 
     private static function responseTime(string $priority): string
