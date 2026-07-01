@@ -190,6 +190,7 @@ final class DashboardController
     $route = $request->get_route();
     $resource = basename($route);
     $include_private = Permissions::currentUserCanManagePortal();
+    $refresh = $include_private && rest_sanitize_boolean($request->get_param('refresh'));
     $data = match ($resource) {
       'overview'  => ClientPortal::overview($client_id, $include_private),
       'customers' => ClientPortal::getCustomers($client_id, 100, $include_private),
@@ -201,7 +202,13 @@ final class DashboardController
       'profile'   => ClientPortal::publicClient(Client::getByClientId($client_id) ?: []),
       'performance' => ClientPortal::getMonthlyPerformance($client_id, 6, $include_private),
       'learning'  => ['courses' => ClientPortal::courses(), 'requests' => ClientPortal::getLearningRequests($client_id)],
-      'ads'       => ClientPortal::getAdsResource($client_id, $include_private),
+      'ads'       => $include_private
+        ? ClientPortal::getAdsResource($client_id, true, $refresh)
+        : [
+          'configured' => false,
+          'mode' => 'internal_reporting_only',
+          'message' => 'Google Ads reporting is currently available to the Golden Web Marketing reporting team only.',
+        ],
       'notifications' => ClientPortal::getPortalNotifications($client_id),
       'settings'  => ClientPortal::getPortalSettings($client_id),
       default     => [],
@@ -374,7 +381,7 @@ final class DashboardController
     $body = self::requestBody($request);
     $saved = $client_id !== '' && is_array($body) && ClientPortal::saveAdsSettings($client_id, $body);
     return $saved
-      ? new \WP_REST_Response(['ok' => true, 'data' => ClientPortal::getAdsResource($client_id)], 200)
+      ? new \WP_REST_Response(['ok' => true, 'data' => ClientPortal::getAdsResource($client_id, true, true)], 200)
       : new \WP_REST_Response(['ok' => false, 'error' => 'Google Ads settings could not be saved.'], 400);
   }
 

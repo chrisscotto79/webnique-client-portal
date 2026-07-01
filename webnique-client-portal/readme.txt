@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.42
+Stable tag: 2.4.43
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,15 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.43 - Google Ads Internal Reporting
+
+- Added a complete server-side Google Ads OAuth settings checklist and connection test
+- Removed misleading API-key and service-account requirements from the Ads connection
+- Added MCC child-account discovery and automatic client account matching
+- Added internal campaign, search term, keyword, landing page, device, and conversion reporting
+- Added 15-minute report caching and manual refresh support to control API usage
+- Kept live Google Ads data restricted to administrators under the approved internal-reporting access
+
 2.4.42 - Client Reports, Photos, and Notifications
 
 - Added secure inline previews for saved job photos and image attachments

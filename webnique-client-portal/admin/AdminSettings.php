@@ -32,11 +32,14 @@ final class AdminSettings
         $stripe_secret_key = get_option('wnq_stripe_test_secret_key', '');
         $google_ads_has_developer_token = (string)get_option('wnq_google_ads_developer_token', '') !== '';
         $google_ads_access_level = get_option('wnq_google_ads_access_level', 'test');
-        $google_ads_service_account_email = get_option('wnq_google_ads_service_account_email', 'webnique-portal@webnique-client-portal-486204.iam.gserviceaccount.com');
         $google_ads_manager_customer_id = get_option('wnq_google_ads_manager_customer_id', '');
         $google_ads_has_oauth_client_id = (string)get_option('wnq_google_ads_oauth_client_id', '') !== '';
         $google_ads_has_oauth_client_secret = (string)get_option('wnq_google_ads_oauth_client_secret', '') !== '';
         $google_ads_has_refresh_token = (string)get_option('wnq_google_ads_refresh_token', '') !== '';
+        $google_ads_test = get_transient('wnq_google_ads_test_' . get_current_user_id());
+        if (is_array($google_ads_test)) {
+            delete_transient('wnq_google_ads_test_' . get_current_user_id());
+        }
         $seo_enabled = function_exists('wnq_seo_features_enabled') && wnq_seo_features_enabled();
 
         ?>
@@ -45,6 +48,11 @@ final class AdminSettings
 
             <?php if ($saved): ?>
                 <div class="notice notice-success is-dismissible"><p>Golden Web Marketing Portal settings saved.</p></div>
+            <?php endif; ?>
+            <?php if (is_array($google_ads_test)): ?>
+                <div class="notice <?php echo !empty($google_ads_test['ok']) ? 'notice-success' : 'notice-error'; ?> is-dismissible">
+                    <p><strong>Google Ads connection:</strong> <?php echo esc_html((string)($google_ads_test['message'] ?? 'Connection test completed.')); ?></p>
+                </div>
             <?php endif; ?>
 
             <div class="wnq-settings-layout">
@@ -99,7 +107,7 @@ final class AdminSettings
 
                     <div class="settings-panel">
                         <h2>Google Ads API</h2>
-                        <p class="description">Stored server-side for read-only Ads reporting. The developer token is never printed back into the page after it is saved.</p>
+                        <p class="description">Internal, read-only reporting connection. Credentials stay server-side and are never sent to the client portal JavaScript.</p>
                         <table class="form-table" role="presentation">
                             <tr>
                                 <th><label for="wnq_google_ads_developer_token">Developer Token</label></th>
@@ -132,22 +140,17 @@ final class AdminSettings
                                 </td>
                             </tr>
                             <tr>
-                                <th><label for="wnq_google_ads_service_account_email">Service Account Email</label></th>
-                                <td>
-                                    <input type="email" name="wnq_google_ads_service_account_email" id="wnq_google_ads_service_account_email" value="<?php echo esc_attr($google_ads_service_account_email); ?>" class="large-text">
-                                    <p class="description">Invite this account to each Google Ads account with read-only access.</p>
-                                </td>
-                            </tr>
-                            <tr>
                                 <th><label for="wnq_google_ads_oauth_client_id">OAuth Client ID</label></th>
                                 <td>
                                     <input type="password" name="wnq_google_ads_oauth_client_id" id="wnq_google_ads_oauth_client_id" value="" class="large-text" placeholder="<?php echo esc_attr($google_ads_has_oauth_client_id ? 'Saved - leave blank to keep current client ID' : 'OAuth client ID'); ?>" autocomplete="off">
+                                    <?php if ($google_ads_has_oauth_client_id): ?><label class="wnq-inline-check"><input type="checkbox" name="wnq_google_ads_clear_oauth_client_id" value="1"> Clear saved client ID</label><?php endif; ?>
                                 </td>
                             </tr>
                             <tr>
                                 <th><label for="wnq_google_ads_oauth_client_secret">OAuth Client Secret</label></th>
                                 <td>
                                     <input type="password" name="wnq_google_ads_oauth_client_secret" id="wnq_google_ads_oauth_client_secret" value="" class="large-text" placeholder="<?php echo esc_attr($google_ads_has_oauth_client_secret ? 'Saved - leave blank to keep current secret' : 'OAuth client secret'); ?>" autocomplete="off">
+                                    <?php if ($google_ads_has_oauth_client_secret): ?><label class="wnq-inline-check"><input type="checkbox" name="wnq_google_ads_clear_oauth_client_secret" value="1"> Clear saved client secret</label><?php endif; ?>
                                 </td>
                             </tr>
                             <tr>
@@ -155,9 +158,15 @@ final class AdminSettings
                                 <td>
                                     <input type="password" name="wnq_google_ads_refresh_token" id="wnq_google_ads_refresh_token" value="" class="large-text" placeholder="<?php echo esc_attr($google_ads_has_refresh_token ? 'Saved - leave blank to keep current refresh token' : 'OAuth refresh token'); ?>" autocomplete="off">
                                     <p class="description">Required by Google Ads API for read-only reports. The developer token alone cannot fetch account data.</p>
+                                    <?php if ($google_ads_has_refresh_token): ?><label class="wnq-inline-check"><input type="checkbox" name="wnq_google_ads_clear_refresh_token" value="1"> Clear saved refresh token</label><?php endif; ?>
                                 </td>
                             </tr>
                         </table>
+                        <div class="wnq-ads-help">
+                            <strong>Required connection</strong>
+                            <span>Developer token</span><span>Manager customer ID</span><span>OAuth client ID</span><span>OAuth client secret</span><span>OAuth refresh token</span>
+                            <p>An API key and service account are not used by this OAuth reporting connection.</p>
+                        </div>
                     </div>
 
                     <div class="settings-panel">
@@ -191,6 +200,7 @@ final class AdminSettings
 
                     <p class="submit">
                         <button type="submit" class="button button-primary button-large">Save Settings</button>
+                        <button type="submit" name="wnq_test_google_ads" value="1" class="button button-secondary button-large">Save &amp; Test Google Ads</button>
                     </p>
                 </form>
 
@@ -268,6 +278,17 @@ final class AdminSettings
             background: #fee2e2;
             color: #991b1b;
         }
+        .wnq-ads-help {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 14px;
+            margin-top: 12px;
+            border-left: 4px solid #d7b846;
+            background: #fffaf0;
+        }
+        .wnq-ads-help strong, .wnq-ads-help p { flex-basis: 100%; margin: 0; }
+        .wnq-ads-help span { padding: 4px 8px; border-radius: 4px; background: #fff; border: 1px solid #e5d9ae; }
         @media (max-width: 960px) {
             .wnq-settings-layout {
                 grid-template-columns: 1fr;
@@ -314,7 +335,6 @@ final class AdminSettings
             $google_ads_access_level = 'test';
         }
         update_option('wnq_google_ads_access_level', $google_ads_access_level, false);
-        update_option('wnq_google_ads_service_account_email', sanitize_email($_POST['wnq_google_ads_service_account_email'] ?? ''), false);
         $google_ads_manager_customer_id = preg_replace('/[^0-9-]/', '', sanitize_text_field($_POST['wnq_google_ads_manager_customer_id'] ?? ''));
         update_option('wnq_google_ads_manager_customer_id', $google_ads_manager_customer_id, false);
         delete_transient('wnq_google_ads_accounts_' . md5($google_ads_manager_customer_id));
@@ -323,6 +343,11 @@ final class AdminSettings
             'wnq_google_ads_oauth_client_secret',
             'wnq_google_ads_refresh_token',
         ] as $secret_option) {
+            $clear_key = 'wnq_google_ads_clear_' . str_replace('wnq_google_ads_', '', $secret_option);
+            if (!empty($_POST[$clear_key])) {
+                update_option($secret_option, '', false);
+                continue;
+            }
             $secret_value = sanitize_text_field(wp_unslash($_POST[$secret_option] ?? ''));
             if ($secret_value !== '') {
                 update_option($secret_option, $secret_value, false);
@@ -334,9 +359,26 @@ final class AdminSettings
         update_option('wnq_support_phone', sanitize_text_field($_POST['wnq_support_phone'] ?? ''));
         update_option('wnq_support_phone_display', sanitize_text_field($_POST['wnq_support_phone_display'] ?? ''));
 
+        $tested = false;
+        if (!empty($_POST['wnq_test_google_ads'])) {
+            $tested = true;
+            if (!class_exists('WNQ\\Services\\GoogleAdsClient')) {
+                require_once WNQ_PORTAL_PATH . 'includes/Services/GoogleAdsClient.php';
+            }
+            $ads = new \WNQ\Services\GoogleAdsClient([
+                'developer_token' => (string)get_option('wnq_google_ads_developer_token', ''),
+                'manager_customer_id' => (string)get_option('wnq_google_ads_manager_customer_id', ''),
+                'oauth_client_id' => (string)get_option('wnq_google_ads_oauth_client_id', ''),
+                'oauth_client_secret' => (string)get_option('wnq_google_ads_oauth_client_secret', ''),
+                'refresh_token' => (string)get_option('wnq_google_ads_refresh_token', ''),
+            ]);
+            set_transient('wnq_google_ads_test_' . get_current_user_id(), $ads->connectionTest(), 5 * MINUTE_IN_SECONDS);
+        }
+
         wp_redirect(add_query_arg([
             'page' => 'wnq-portal',
             'settings-updated' => 'true',
+            'ads-tested' => $tested ? 'true' : 'false',
         ], admin_url('admin.php')));
         exit;
     }
