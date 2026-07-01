@@ -610,6 +610,24 @@ final class ClientPortal
         }
 
         $ready = $has_developer_token && $has_manager_customer_id && !empty($raw_settings['customer_id']) && $has_oauth && $access_level !== 'test';
+        $has_report_data = !empty($campaigns)
+            || !empty($search_terms)
+            || !empty($keywords)
+            || !empty($landing_pages)
+            || !empty($devices)
+            || (int)($summary['clicks'] ?? 0) > 0
+            || (int)($summary['impressions'] ?? 0) > 0
+            || (float)($summary['conversions'] ?? 0) > 0;
+        $data_status = 'setup_needed';
+        if ($ready && !empty($ads_errors)) {
+            $data_status = 'api_attention';
+        } elseif ($ready && $has_report_data) {
+            $data_status = 'report_ready';
+        } elseif ($ready) {
+            $data_status = 'connected_empty';
+        } elseif ($has_developer_token && $has_manager_customer_id && $has_oauth && !empty($available_accounts)) {
+            $data_status = 'account_link_needed';
+        }
         if (!$include_financial) {
             unset($summary['spend'], $summary['cost_per_conversion'], $summary['average_cpc'], $summary['cost'], $summary['cost_micros'], $summary['budget']);
             $campaigns = array_map(static function (array $campaign): array {
@@ -620,7 +638,10 @@ final class ClientPortal
 
         return [
             'configured' => $ready,
+            'data_status' => $data_status,
             'mode' => 'read_only',
+            'reporting_window' => 'Last 30 days',
+            'last_checked' => current_time('mysql'),
             'access_level' => $access_level,
             'customer_id' => (string)($settings['customer_id'] ?? ''),
             'manager_customer_id' => (string)($settings['manager_customer_id'] ?? ''),
@@ -641,6 +662,8 @@ final class ClientPortal
             'landing_pages' => $landing_pages,
             'devices' => $devices,
             'available_accounts' => $available_accounts,
+            'available_accounts_count' => count($available_accounts),
+            'has_report_data' => $has_report_data,
             'errors' => $ads_errors,
             'diagnostics' => $diagnostics,
             'setup_checks' => [
@@ -682,6 +705,9 @@ final class ClientPortal
             }
             if ($key === 'customer_id') {
                 $settings[$key] = preg_replace('/[^0-9-]/', '', $value);
+                if ($settings[$key] === '') {
+                    unset($settings['matched_account_name']);
+                }
             } else {
                 $settings[$key] = sanitize_text_field($value);
             }

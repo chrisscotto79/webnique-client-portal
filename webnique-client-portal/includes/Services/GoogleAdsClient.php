@@ -36,7 +36,7 @@ final class GoogleAdsClient
 
     public function errors(): array
     {
-        return $this->errors;
+        return array_values(array_unique(array_filter($this->errors)));
     }
 
     public function listManagerAccounts(bool $refresh = false): array
@@ -55,6 +55,7 @@ final class GoogleAdsClient
             return [];
         }
 
+        $error_count = count($this->errors);
         $rows = $this->search($manager_id, "SELECT customer_client.client_customer, customer_client.descriptive_name, customer_client.id, customer_client.manager, customer_client.status, customer_client.currency_code, customer_client.time_zone FROM customer_client WHERE customer_client.status != 'CANCELED'");
         $accounts = [];
         foreach ($rows as $row) {
@@ -72,7 +73,9 @@ final class GoogleAdsClient
             ];
         }
 
-        set_transient($cache_key, $accounts, 30 * MINUTE_IN_SECONDS);
+        if (count($this->errors) === $error_count) {
+            set_transient($cache_key, $accounts, 30 * MINUTE_IN_SECONDS);
+        }
         return $accounts;
     }
 
@@ -136,6 +139,7 @@ final class GoogleAdsClient
         }
 
         $query = "SELECT campaign.id, campaign.name, campaign.status, metrics.clicks, metrics.impressions, metrics.ctr, metrics.average_cpc, metrics.cost_micros, metrics.conversions FROM campaign WHERE segments.date DURING LAST_30_DAYS ORDER BY metrics.cost_micros DESC LIMIT 100";
+        $error_count = count($this->errors);
         $rows = $this->search($customer_id, $query);
         $summary = [
             'spend' => 0.0,
@@ -175,15 +179,25 @@ final class GoogleAdsClient
         $summary['conversion_rate'] = $summary['clicks'] > 0 ? $summary['conversions'] / $summary['clicks'] : 0;
         $summary['cost_per_conversion'] = $summary['conversions'] > 0 ? $summary['spend'] / $summary['conversions'] : 0;
 
+        $detail_reports = count($this->errors) === $error_count
+            ? [
+                'search_terms' => $this->searchTerms($customer_id),
+                'keywords' => $this->keywords($customer_id),
+                'landing_pages' => $this->landingPages($customer_id),
+                'devices' => $this->devices($customer_id),
+            ]
+            : [
+                'search_terms' => [],
+                'keywords' => [],
+                'landing_pages' => [],
+                'devices' => [],
+            ];
+
         $result = [
             'summary' => $summary,
             'campaigns' => $campaigns,
-            'search_terms' => $this->searchTerms($customer_id),
-            'keywords' => $this->keywords($customer_id),
-            'landing_pages' => $this->landingPages($customer_id),
-            'devices' => $this->devices($customer_id),
-        ];
-        if (!$this->errors) {
+        ] + $detail_reports;
+        if (!$this->errors()) {
             set_transient($cache_key, $result, 15 * MINUTE_IN_SECONDS);
         }
         return $result;

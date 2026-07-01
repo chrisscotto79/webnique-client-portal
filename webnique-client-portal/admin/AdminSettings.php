@@ -107,7 +107,7 @@ final class AdminSettings
 
                     <div class="settings-panel">
                         <h2>Google Ads API</h2>
-                        <p class="description">Internal, read-only reporting connection. Credentials stay server-side and are never sent to the client portal JavaScript.</p>
+                        <p class="description">Internal, read-only reporting connection. Credentials stay server-side and are never sent to the client portal JavaScript. Use the developer token, MCC ID, OAuth client, OAuth secret, and OAuth refresh token here.</p>
                         <table class="form-table" role="presentation">
                             <tr>
                                 <th><label for="wnq_google_ads_developer_token">Developer Token</label></th>
@@ -165,7 +165,7 @@ final class AdminSettings
                         <div class="wnq-ads-help">
                             <strong>Required connection</strong>
                             <span>Developer token</span><span>Manager customer ID</span><span>OAuth client ID</span><span>OAuth client secret</span><span>OAuth refresh token</span>
-                            <p>An API key and service account are not used by this OAuth reporting connection.</p>
+                            <p>An API key and service account are not used by this OAuth reporting connection. The OAuth refresh token must be generated from a Google account that can view the manager account and its linked client accounts.</p>
                         </div>
                     </div>
 
