@@ -547,6 +547,7 @@ final class ClientPortal
         $keywords = [];
         $landing_pages = [];
         $devices = [];
+        $billing = [];
         $account = [];
         $available_accounts = [];
         $access_level = (string)get_option('wnq_google_ads_access_level', 'test');
@@ -584,6 +585,7 @@ final class ClientPortal
                     $keywords = $performance['keywords'] ?? [];
                     $landing_pages = $performance['landing_pages'] ?? [];
                     $devices = $performance['devices'] ?? [];
+                    $billing = $ads->billingSummary((string)$raw_settings['customer_id'], $refresh);
                 }
                 $ads_errors = $ads->errors();
                 $api_connection_verified = !empty($available_accounts) && empty($ads_errors);
@@ -669,6 +671,7 @@ final class ClientPortal
             'keywords' => $keywords,
             'landing_pages' => $landing_pages,
             'devices' => $devices,
+            'billing' => $billing,
             'available_accounts' => $available_accounts,
             'available_accounts_count' => count($available_accounts),
             'has_report_data' => $has_report_data,
