@@ -928,7 +928,7 @@
     state.adsSection = resource.configured ? (state.adsSection || "overview") : "connection";
     view.innerHTML = `${heading("Internal Reporting", "Google Ads", "Read-only performance from the Google Ads accounts linked to your manager account.")}
       <section class="wnq-ads-hero"><div><span class="wnq-eyebrow">Reporting Workspace</span><h2>${esc(adsStateTitle(resource))}</h2><p>${esc(adsStateCopy(resource))}</p></div><div class="wnq-ads-hero-actions"><button type="button" class="wnq-button is-secondary" id="wnq-refresh-ads">Refresh Ads Data</button>${status(adsStateTone(resource), titleCase(resource.data_status || "setup needed"))}</div></section>
-      <div class="wnq-ads-account-bar"><div><span>Client account</span><strong>${esc(resource.matched_account_name || "Not matched")}</strong><small>${esc(resource.customer_id || "No customer ID")} ${resource.time_zone ? `· ${esc(resource.time_zone)}` : ""}</small></div><div><span>MCC accounts</span><strong>${Number(resource.available_accounts_count || 0).toLocaleString()}</strong><small>Available for matching</small></div><div><span>API status</span><strong>${esc(resource.access_status_label || titleCase(resource.access_level || "test"))}</strong><small>${esc(resource.reporting_window || "Last 30 days")} · ${esc(date(resource.last_checked))}</small></div></div>
+      <div class="wnq-ads-account-bar"><div><span>Client account</span><strong>${esc(resource.matched_account_name || "Not matched")}</strong><small>${esc(resource.customer_id || "No customer ID")} ${resource.time_zone ? `· ${esc(resource.time_zone)}` : ""}</small></div><div><span>MCC accounts</span><strong>${Number(resource.available_accounts_count || 0).toLocaleString()}</strong><small>Available for matching</small></div><div><span>Spend alert</span><strong>${Number(resource.spend_alert_threshold || 0) > 0 ? money(resource.spend_alert_threshold) : "Off"}</strong><small>Rolling 30-day threshold</small></div><div><span>API status</span><strong>${esc(resource.access_status_label || titleCase(resource.access_level || "test"))}</strong><small>${esc(resource.reporting_window || "Last 30 days")} · ${esc(date(resource.last_checked))}</small></div></div>
       <nav class="wnq-ads-nav" aria-label="Google Ads reports">
         ${[["overview", "Overview"], ["campaigns", "Campaigns"], ["search", "Search Insights"], ["pages", "Pages & Devices"], ["connection", "Connection"]].map(([key, label]) => `<button type="button" data-ads-section="${key}" class="${state.adsSection === key ? "is-active" : ""}" aria-selected="${state.adsSection === key ? "true" : "false"}">${label}</button>`).join("")}
       </nav>
@@ -972,11 +972,11 @@
       try {
         await api("/portal/ads-settings", { method: "POST", body: JSON.stringify(formObject(form)) });
         delete state.cache.ads;
-        sessionStorage.setItem("wnqAdsNotice", "Client Ads account saved and reporting refreshed.");
+        sessionStorage.setItem("wnqAdsNotice", "Client Ads account and spend alert saved.");
         show("ads", true);
       } catch (error) {
         formStatus(form, "yellow", error.message);
-        submit.disabled = false; submit.textContent = "Save Account Link";
+        submit.disabled = false; submit.textContent = "Save Account & Alert";
       }
     });
   }
@@ -1025,8 +1025,9 @@
     ${notice ? `<div class="wnq-form-status is-green">${esc(notice)}</div>` : ""}
     ${accountControl}
     <label><span>Manager Account</span><input type="text" value="${esc(data.manager_customer_id || "Not configured")}" readonly><small>Inherited from WordPress settings</small></label>
+    <label class="wnq-money-field"><span>30-Day Spend Alert</span><div><b>$</b><input type="number" name="spend_alert_threshold" value="${esc(Number(data.spend_alert_threshold || 0).toFixed(2))}" min="0" step="0.01"></div><small>Telegram alerts when this client reaches this amount. Use $0 to disable the alert.</small></label>
     <div class="is-wide wnq-ads-requirements"><strong>Connection checklist</strong>${(data.setup_checks || []).map((item) => `<span class="${item.ok ? "is-ok" : "is-needed"}">${esc(item.label)}: ${item.ok ? "Ready" : "Needed"}</span>`).join("")}<p class="wnq-note">API keys and service accounts are not used for this OAuth connection.</p></div>
-    <div class="wnq-form-actions"><button class="wnq-button" type="submit">Save Account Link</button></div></form>`;
+    <div class="wnq-form-actions"><button class="wnq-button" type="submit">Save Account & Alert</button></div></form>`;
   };
   const adsClientNotice = (data) => `<section class="wnq-panel"><div class="wnq-panel-head"><h2>Ads Access</h2>${status(data.configured ? "green" : "yellow", data.configured ? "Connected" : "Pending")}</div><p class="wnq-note">Once Golden Web Marketing connects your Google Ads account, this tab will show read-only campaign results and reporting.</p></section>`;
 
@@ -1195,7 +1196,7 @@
     const data = await load("overview", refresh); const client = data.client || {};
     view.innerHTML = `${heading("Account", "Billing", "Your plan and billing status at a glance.")}
       <div class="wnq-health"><div><span>Billing status</span>${status(data.health.billing.tone, data.health.billing.label)}</div><div><span>Plan</span><strong>${esc(client.tier || "Not set")}</strong></div><div><span>Billing cycle</span><strong>${esc(client.billing_cycle || "Not set")}</strong></div></div>
-      <div class="wnq-panel"><div class="wnq-billing-total"><span>Monthly service rate</span><strong>${money(client.monthly_rate)}</strong></div><p>Last payment: ${date(client.last_payment_date)}</p><p class="wnq-note">Stripe payment management will appear here once Stripe is connected.</p></div>`;
+      <div class="wnq-panel"><div class="wnq-billing-total"><span>Monthly service rate</span><strong>${money(client.monthly_rate)}</strong></div><p>Next payment due: <strong>${date(client.next_payment_due_date)}</strong></p><p>Last payment: ${date(client.last_payment_date)}</p><p class="wnq-note">Payment methods and transactions remain securely managed through the connected billing provider.</p></div>`;
   }
 
   async function learning(view, refresh) {

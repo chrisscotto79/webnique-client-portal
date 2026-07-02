@@ -52,6 +52,7 @@ final class NotificationManager
             'client_requests' => true,
             'learning_requests' => true,
             'payments' => true,
+            'payment_due' => true,
             'ads_spend' => true,
             'ads_connection' => true,
             'overdue_tasks' => true,
@@ -65,6 +66,7 @@ final class NotificationManager
             'today' => 'Show tasks due today',
             'overdue' => 'Show overdue agency tasks',
             'ads' => 'Show 30-day client ad spend',
+            'billing' => 'Show upcoming client payments',
             'requests' => 'Show open client requests',
             'status' => 'Show notification system status',
             'help' => 'Show all available commands',
@@ -225,6 +227,16 @@ final class NotificationManager
 
     public static function onPaymentRecorded(string $client_id, float $amount, string $source, string $payment_id, string $status = 'paid'): void
     {
+        $payment_schedule_key = 'wnq_payment_schedule_' . md5($client_id . '|' . $payment_id);
+        if (
+            $client_id !== ''
+            && !in_array($status, ['failed', 'past_due'], true)
+            && !get_transient($payment_schedule_key)
+        ) {
+            if (self::recordSuccessfulPayment($client_id)) {
+                set_transient($payment_schedule_key, 1, 180 * DAY_IN_SECONDS);
+            }
+        }
         $heading = in_array($status, ['failed', 'past_due'], true) ? 'Payment needs attention' : 'Payment received';
         $message = self::htmlMessage($heading, [
             'Client' => $client_id !== '' ? self::clientName($client_id) : 'Unmatched Stripe customer',
@@ -239,15 +251,16 @@ final class NotificationManager
     public static function runScheduledChecks(bool $force = false): array
     {
         if (!(bool)get_option('wnq_telegram_enabled', false)) {
-            return ['ok' => false, 'message' => 'Telegram notifications are disabled.', 'ads_alerts' => 0, 'task_alerts' => 0];
+            return ['ok' => false, 'message' => 'Telegram notifications are disabled.', 'ads_alerts' => 0, 'payment_alerts' => 0, 'task_alerts' => 0];
         }
         if (!$force && get_transient(self::CRON_LOCK)) {
-            return ['ok' => true, 'message' => 'Notification checks are already running.', 'ads_alerts' => 0, 'task_alerts' => 0];
+            return ['ok' => true, 'message' => 'Notification checks are already running.', 'ads_alerts' => 0, 'payment_alerts' => 0, 'task_alerts' => 0];
         }
         set_transient(self::CRON_LOCK, 1, 15 * MINUTE_IN_SECONDS);
 
         try {
             $ads_alerts = self::checkAdsAccounts();
+            $payment_alerts = self::checkPaymentDueDates();
             $task_alerts = self::checkOverdueTasks();
         } finally {
             delete_transient(self::CRON_LOCK);
@@ -256,8 +269,9 @@ final class NotificationManager
         update_option('wnq_telegram_last_check_at', current_time('mysql'), false);
         return [
             'ok' => true,
-            'message' => sprintf('Checks completed. %d Ads alert%s and %d overdue task alert%s sent.', $ads_alerts, $ads_alerts === 1 ? '' : 's', $task_alerts, $task_alerts === 1 ? '' : 's'),
+            'message' => sprintf('Checks completed. %d Ads alert%s, %d payment alert%s, and %d overdue task alert%s sent.', $ads_alerts, $ads_alerts === 1 ? '' : 's', $payment_alerts, $payment_alerts === 1 ? '' : 's', $task_alerts, $task_alerts === 1 ? '' : 's'),
             'ads_alerts' => $ads_alerts,
+            'payment_alerts' => $payment_alerts,
             'task_alerts' => $task_alerts,
         ];
     }
@@ -302,7 +316,6 @@ final class NotificationManager
         if (!self::eventEnabled('ads_spend') && !self::eventEnabled('ads_connection')) {
             return 0;
         }
-        $threshold = max(0.0, (float)get_option('wnq_telegram_ads_spend_threshold', 1000));
         $state = get_option('wnq_telegram_ads_spend_state', []);
         $state = is_array($state) ? $state : [];
         $sent = 0;
@@ -314,6 +327,7 @@ final class NotificationManager
                 continue;
             }
             $ads = ClientPortal::getAdsResource($client_id, true, false);
+            $threshold = max(0.0, (float)($ads['spend_alert_threshold'] ?? 0));
             $errors = array_values(array_filter(array_map('sanitize_text_field', (array)($ads['errors'] ?? []))));
             if ($errors && self::eventEnabled('ads_connection')) {
                 $result = $notifier->notify(
@@ -360,6 +374,69 @@ final class NotificationManager
             $state[$client_id] = ['above' => $was_above, 'threshold' => $threshold, 'spend' => $spend, 'checked_at' => current_time('mysql')];
         }
         update_option('wnq_telegram_ads_spend_state', $state, false);
+        return $sent;
+    }
+
+    private static function checkPaymentDueDates(): int
+    {
+        if (!self::eventEnabled('payment_due')) {
+            return 0;
+        }
+        $today = current_datetime()->setTime(0, 0);
+        $sent = 0;
+        $notifier = new TelegramNotifier();
+        foreach (Client::getAll() as $client) {
+            if (($client['status'] ?? 'active') !== 'active' || empty($client['payment_notifications_enabled'])) {
+                continue;
+            }
+            $due_value = (string)($client['next_payment_due_date'] ?? '');
+            if ($due_value === '') {
+                continue;
+            }
+            try {
+                $due = new \DateTimeImmutable($due_value, wp_timezone());
+            } catch (\Exception $exception) {
+                continue;
+            }
+            $due = $due->setTime(0, 0);
+            $days_until = (int)$today->diff($due)->format('%r%a');
+            $reminder_days = max(0, min(30, (int)($client['payment_reminder_days'] ?? 3)));
+            $phase = '';
+            $heading = '';
+            if ($days_until === $reminder_days && $reminder_days > 0) {
+                $phase = 'upcoming';
+                $heading = 'Client payment due soon';
+            } elseif ($days_until === 0) {
+                $phase = 'today';
+                $heading = 'Client payment due today';
+            } elseif ($days_until < 0) {
+                $phase = 'overdue';
+                $heading = 'Client payment overdue';
+            }
+            if ($phase === '') {
+                continue;
+            }
+            $client_id = sanitize_text_field((string)($client['client_id'] ?? ''));
+            $fields = [
+                'Client' => self::clientName($client_id),
+                'Amount' => self::money(self::billingAmount($client)),
+                'Due date' => self::formatDate($due_value),
+                'Billing cycle' => self::label((string)($client['billing_cycle'] ?? 'monthly')),
+            ];
+            if ($days_until < 0) {
+                $fields['Overdue by'] = abs($days_until) . ' day' . (abs($days_until) === 1 ? '' : 's');
+            }
+            $result = $notifier->notify(
+                'payment_due',
+                self::htmlMessage($heading, $fields),
+                'payment-due:' . md5($client_id . '|' . $due_value . '|' . $phase),
+                120 * DAY_IN_SECONDS,
+                self::telegramOptions('Open client', self::adminUrl($client_id))
+            );
+            if (!empty($result['ok'])) {
+                $sent++;
+            }
+        }
         return $sent;
     }
 
@@ -456,6 +533,9 @@ final class NotificationManager
             case 'ads':
                 $notifier->send(self::adsCommandMessage(), self::telegramOptions('Open portal', admin_url('admin.php?page=wnq-client-portal-dashboard')));
                 break;
+            case 'billing':
+                $notifier->send(self::billingCommandMessage(), self::telegramOptions('Open clients', admin_url('admin.php?page=wnq-clients')));
+                break;
             case 'requests':
                 $notifier->send(self::requestsCommandMessage(), self::telegramOptions('Open portal', admin_url('admin.php?page=wnq-client-portal-dashboard')));
                 break;
@@ -485,8 +565,10 @@ final class NotificationManager
                 continue;
             }
             $spend = (float)($ads['summary']['spend'] ?? 0);
+            $threshold = (float)($ads['spend_alert_threshold'] ?? 0);
             $total += $spend;
-            $rows[] = '<b>' . self::html(self::clientName($client_id)) . '</b>: ' . self::html(self::money($spend));
+            $rows[] = '<b>' . self::html(self::clientName($client_id)) . '</b>: ' . self::html(self::money($spend))
+                . ($threshold > 0 ? ' / ' . self::html(self::money($threshold)) . ' alert' : ' / alert disabled');
         }
         if ($rows === []) {
             return '<b>Google Ads spend</b>' . "\n" . 'No client Ads accounts are currently linked.';
@@ -517,6 +599,32 @@ final class NotificationManager
         foreach ($rows as $index => $row) {
             $lines[] = ($index + 1) . '. <b>' . self::html(self::clean((string)$row['title'])) . '</b>';
             $lines[] = '   ' . self::html(self::clean((string)$row['client_name'])) . ' · ' . self::html(self::label((string)$row['priority']));
+        }
+        return implode("\n", $lines);
+    }
+
+    private static function billingCommandMessage(): string
+    {
+        $clients = array_values(array_filter(Client::getAll(), static function (array $client): bool {
+            return ($client['status'] ?? 'active') === 'active'
+                && !empty($client['payment_notifications_enabled'])
+                && !empty($client['next_payment_due_date']);
+        }));
+        usort($clients, static fn(array $left, array $right): int => strcmp(
+            (string)($left['next_payment_due_date'] ?? '9999-12-31'),
+            (string)($right['next_payment_due_date'] ?? '9999-12-31')
+        ));
+        if ($clients === []) {
+            return '<b>Upcoming client payments</b>' . "\n" . 'No client payment due dates are configured.';
+        }
+        $lines = ['<b>Upcoming client payments</b>', '<b>Configured:</b> ' . count($clients), ''];
+        foreach (array_slice($clients, 0, 15) as $index => $client) {
+            $lines[] = ($index + 1) . '. <b>' . self::html(self::clean((string)(($client['company'] ?? '') ?: ($client['name'] ?? 'Client')))) . '</b>';
+            $lines[] = '   ' . self::html(self::formatDate((string)$client['next_payment_due_date'])) . ' · ' . self::html(self::money(self::billingAmount($client)));
+        }
+        if (count($clients) > 15) {
+            $lines[] = '';
+            $lines[] = '+' . (count($clients) - 15) . ' more in WordPress';
         }
         return implode("\n", $lines);
     }
@@ -596,6 +704,43 @@ final class NotificationManager
             'due_date' => current_datetime()->modify('+' . $days . ' days')->format('Y-m-d'),
             'notes' => '[portal-auto] ' . sanitize_text_field($source),
         ]);
+    }
+
+    private static function recordSuccessfulPayment(string $client_id): bool
+    {
+        $client = Client::getByClientId($client_id);
+        if (!$client) {
+            return false;
+        }
+        $cycle_months = [
+            'monthly' => 1,
+            'quarterly' => 3,
+            'annually' => 12,
+        ][sanitize_key((string)($client['billing_cycle'] ?? 'monthly'))] ?? 1;
+        $today = current_datetime()->setTime(0, 0);
+        $due_value = (string)($client['next_payment_due_date'] ?? '');
+        try {
+            $next_due = $due_value !== '' ? new \DateTimeImmutable($due_value, wp_timezone()) : $today;
+        } catch (\Exception $exception) {
+            $next_due = $today;
+        }
+        do {
+            $next_due = $next_due->modify('+' . $cycle_months . ' months');
+        } while ($next_due <= $today);
+        return Client::update((int)$client['id'], [
+            'last_payment_date' => $today->format('Y-m-d'),
+            'next_payment_due_date' => $next_due->format('Y-m-d'),
+        ]);
+    }
+
+    private static function billingAmount(array $client): float
+    {
+        $multiplier = [
+            'monthly' => 1,
+            'quarterly' => 3,
+            'annually' => 12,
+        ][sanitize_key((string)($client['billing_cycle'] ?? 'monthly'))] ?? 1;
+        return (float)($client['monthly_rate'] ?? 0) * $multiplier;
     }
 
     private static function primeCommandOffset(TelegramNotifier $notifier): void

@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.52
+Stable tag: 2.4.53
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,14 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.53 - Per-Client Ads and Payment Alerts
+
+- Added a separate rolling 30-day Google Ads spend threshold to every linked client Ads account
+- Added per-client next payment due date, reminder lead time, and payment notification controls
+- Sends upcoming, due-today, and overdue payment reminders to the internal Telegram group
+- Advances the next payment date automatically after a successful payment using the client's billing cycle
+- Added the read-only `/billing` Telegram command for upcoming client payment dates
+
 2.4.52 - Agency Task Alerts and Telegram Commands
 
 - Removed Telegram alerts for client CRM leads, jobs, conversions, and client-company follow-ups

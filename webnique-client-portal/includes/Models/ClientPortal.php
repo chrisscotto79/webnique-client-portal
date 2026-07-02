@@ -662,6 +662,7 @@ final class ClientPortal
             'customer_id' => (string)($settings['customer_id'] ?? ''),
             'manager_customer_id' => (string)($settings['manager_customer_id'] ?? ''),
             'matched_account_name' => (string)($account['name'] ?? $settings['matched_account_name'] ?? ($match['name'] ?? '')),
+            'spend_alert_threshold' => (float)($raw_settings['spend_alert_threshold'] ?? 0),
             'currency_code' => (string)($account['currency_code'] ?? 'USD'),
             'time_zone' => (string)($account['time_zone'] ?? ''),
             'match_score' => (int)($match['match_score'] ?? 0),
@@ -720,7 +721,7 @@ final class ClientPortal
     {
         $stored = get_option(self::adsOptionKey($client_id), []);
         $settings = is_array($stored) ? $stored : [];
-        $allowed = ['customer_id', 'matched_account_name'];
+        $allowed = ['customer_id', 'matched_account_name', 'spend_alert_threshold'];
         $inherited_keys = [];
         foreach ($allowed as $key) {
             if (!array_key_exists($key, $data)) {
@@ -739,6 +740,8 @@ final class ClientPortal
                 if ($settings[$key] === '') {
                     unset($settings['matched_account_name']);
                 }
+            } elseif ($key === 'spend_alert_threshold') {
+                $settings[$key] = max(0, round((float)preg_replace('/[^0-9.\-]/', '', $value), 2));
             } else {
                 $settings[$key] = sanitize_text_field($value);
             }
@@ -753,7 +756,7 @@ final class ClientPortal
     {
         $settings = get_option(self::adsOptionKey($client_id), []);
         $settings = is_array($settings) ? $settings : [];
-        $settings = array_intersect_key($settings, array_flip(['customer_id', 'matched_account_name']));
+        $settings = array_intersect_key($settings, array_flip(['customer_id', 'matched_account_name', 'spend_alert_threshold']));
         $defaults = [
             'developer_token' => (string)get_option('wnq_google_ads_developer_token', ''),
             'customer_id' => '',
@@ -762,6 +765,7 @@ final class ClientPortal
             'oauth_client_secret' => (string)get_option('wnq_google_ads_oauth_client_secret', ''),
             'refresh_token' => (string)get_option('wnq_google_ads_refresh_token', ''),
             'matched_account_name' => '',
+            'spend_alert_threshold' => 0,
         ];
         $settings = array_merge($defaults, $settings);
         if ($masked) {
@@ -1532,6 +1536,8 @@ final class ClientPortal
             'billing_cycle'     => (string)($client['billing_cycle'] ?? ''),
             'monthly_rate'      => (float)($client['monthly_rate'] ?? 0),
             'last_payment_date' => (string)($client['last_payment_date'] ?? ''),
+            'next_payment_due_date' => (string)($client['next_payment_due_date'] ?? ''),
+            'payment_reminder_days' => (int)($client['payment_reminder_days'] ?? 3),
             'active_services'   => self::services($client['active_services'] ?? ''),
         ];
     }

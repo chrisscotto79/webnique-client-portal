@@ -56,14 +56,14 @@ final class AdminSettings
             'client_requests' => 'Client service requests',
             'learning_requests' => 'Learning center requests',
             'payments' => 'Payments and payment failures',
-            'ads_spend' => 'Google Ads spend threshold',
+            'payment_due' => 'Client payment due-date reminders',
+            'ads_spend' => 'Google Ads spend thresholds (set per client)',
             'ads_connection' => 'Google Ads connection problems',
             'overdue_tasks' => 'Daily overdue agency task summary',
         ];
         $telegram_commands = class_exists('WNQ\Services\NotificationManager')
             ? \WNQ\Services\NotificationManager::botCommands()
             : [];
-        $telegram_ads_threshold = (float)get_option('wnq_telegram_ads_spend_threshold', 1000);
         $telegram_last_sent = (string)get_option('wnq_telegram_last_sent_at', '');
         $telegram_last_check = (string)get_option('wnq_telegram_last_check_at', '');
         $telegram_last_error = (string)get_option('wnq_telegram_last_error', '');
@@ -301,13 +301,6 @@ final class AdminSettings
                                             </label>
                                         <?php endforeach; ?>
                                     </div>
-                                </td>
-                            </tr>
-                            <tr>
-                                <th><label for="wnq_telegram_ads_spend_threshold">Ads Spend Threshold</label></th>
-                                <td>
-                                    <span class="wnq-money-input"><span>$</span><input type="number" name="wnq_telegram_ads_spend_threshold" id="wnq_telegram_ads_spend_threshold" value="<?php echo esc_attr(number_format($telegram_ads_threshold, 2, '.', '')); ?>" min="0" step="0.01"></span>
-                                    <p class="description">Send one internal alert when a linked client's rolling 30-day Google Ads spend crosses this amount. It resets only after spend drops below the threshold.</p>
                                 </td>
                             </tr>
                         </table>
@@ -604,7 +597,6 @@ final class AdminSettings
             $telegram_events[$event_key] = !empty($posted_telegram_events[$event_key]);
         }
         update_option('wnq_telegram_events', $telegram_events, false);
-        update_option('wnq_telegram_ads_spend_threshold', max(0, (float)($_POST['wnq_telegram_ads_spend_threshold'] ?? 1000)), false);
         $telegram_chat_id = sanitize_text_field(wp_unslash($_POST['wnq_telegram_chat_id'] ?? ''));
         if ($telegram_chat_id !== '' && preg_match('/^-?\d+$/', $telegram_chat_id) !== 1) {
             $telegram_chat_id = '';
