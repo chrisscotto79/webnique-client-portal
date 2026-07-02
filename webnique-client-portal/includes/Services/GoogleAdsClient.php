@@ -36,7 +36,7 @@ final class GoogleAdsClient
 
     public function errors(): array
     {
-        return $this->errors;
+        return array_values(array_unique(array_filter($this->errors)));
     }
 
     public function listManagerAccounts(bool $refresh = false): array
@@ -55,6 +55,7 @@ final class GoogleAdsClient
             return [];
         }
 
+        $error_count = count($this->errors);
         $rows = $this->search($manager_id, "SELECT customer_client.client_customer, customer_client.descriptive_name, customer_client.id, customer_client.manager, customer_client.status, customer_client.currency_code, customer_client.time_zone FROM customer_client WHERE customer_client.status != 'CANCELED'");
         $accounts = [];
         foreach ($rows as $row) {
@@ -72,7 +73,9 @@ final class GoogleAdsClient
             ];
         }
 
-        set_transient($cache_key, $accounts, 30 * MINUTE_IN_SECONDS);
+        if (count($this->errors) === $error_count) {
+            set_transient($cache_key, $accounts, 30 * MINUTE_IN_SECONDS);
+        }
         return $accounts;
     }
 
@@ -99,14 +102,44 @@ final class GoogleAdsClient
         return $best;
     }
 
-    public function accountPerformance(string $customer_id): array
+    public function connectionTest(): array
+    {
+        if (!$this->isConfigured()) {
+            return [
+                'ok' => false,
+                'accounts' => [],
+                'message' => 'Google Ads credentials are incomplete.',
+            ];
+        }
+
+        $accounts = $this->listManagerAccounts(true);
+        $errors = $this->errors();
+        return [
+            'ok' => empty($errors),
+            'accounts' => $accounts,
+            'message' => empty($errors)
+                ? sprintf('Connected successfully. %d client account%s found.', count($accounts), count($accounts) === 1 ? '' : 's')
+                : implode(' ', $errors),
+        ];
+    }
+
+    public function accountPerformance(string $customer_id, bool $refresh = false): array
     {
         $customer_id = $this->customerId($customer_id);
         if ($customer_id === '') {
             return $this->emptyPerformance();
         }
 
+        $cache_key = 'wnq_google_ads_report_' . md5($customer_id);
+        if (!$refresh) {
+            $cached = get_transient($cache_key);
+            if (is_array($cached)) {
+                return $cached;
+            }
+        }
+
         $query = "SELECT campaign.id, campaign.name, campaign.status, metrics.clicks, metrics.impressions, metrics.ctr, metrics.average_cpc, metrics.cost_micros, metrics.conversions FROM campaign WHERE segments.date DURING LAST_30_DAYS ORDER BY metrics.cost_micros DESC LIMIT 100";
+        $error_count = count($this->errors);
         $rows = $this->search($customer_id, $query);
         $summary = [
             'spend' => 0.0,
@@ -114,6 +147,7 @@ final class GoogleAdsClient
             'impressions' => 0,
             'ctr' => 0.0,
             'conversions' => 0.0,
+            'conversion_rate' => 0.0,
             'cost_per_conversion' => 0.0,
         ];
         $campaigns = [];
@@ -142,12 +176,97 @@ final class GoogleAdsClient
         }
 
         $summary['ctr'] = $summary['impressions'] > 0 ? $summary['clicks'] / $summary['impressions'] : 0;
+        $summary['conversion_rate'] = $summary['clicks'] > 0 ? $summary['conversions'] / $summary['clicks'] : 0;
         $summary['cost_per_conversion'] = $summary['conversions'] > 0 ? $summary['spend'] / $summary['conversions'] : 0;
 
-        return [
+        $detail_reports = count($this->errors) === $error_count
+            ? [
+                'search_terms' => $this->searchTerms($customer_id),
+                'keywords' => $this->keywords($customer_id),
+                'landing_pages' => $this->landingPages($customer_id),
+                'devices' => $this->devices($customer_id),
+            ]
+            : [
+                'search_terms' => [],
+                'keywords' => [],
+                'landing_pages' => [],
+                'devices' => [],
+            ];
+
+        $result = [
             'summary' => $summary,
             'campaigns' => $campaigns,
-        ];
+        ] + $detail_reports;
+        if (!$this->errors()) {
+            set_transient($cache_key, $result, 15 * MINUTE_IN_SECONDS);
+        }
+        return $result;
+    }
+
+    private function searchTerms(string $customer_id): array
+    {
+        $rows = $this->search($customer_id, "SELECT search_term_view.search_term, campaign.name, ad_group.name, metrics.clicks, metrics.impressions, metrics.ctr, metrics.conversions FROM search_term_view WHERE segments.date DURING LAST_30_DAYS ORDER BY metrics.clicks DESC LIMIT 100");
+        return array_map(static function (array $row): array {
+            $metrics = $row['metrics'] ?? [];
+            return [
+                'term' => sanitize_text_field((string)($row['searchTermView']['searchTerm'] ?? '')),
+                'campaign' => sanitize_text_field((string)($row['campaign']['name'] ?? '')),
+                'ad_group' => sanitize_text_field((string)($row['adGroup']['name'] ?? '')),
+                'clicks' => (int)($metrics['clicks'] ?? 0),
+                'impressions' => (int)($metrics['impressions'] ?? 0),
+                'ctr' => (float)($metrics['ctr'] ?? 0),
+                'conversions' => (float)($metrics['conversions'] ?? 0),
+            ];
+        }, $rows);
+    }
+
+    private function keywords(string $customer_id): array
+    {
+        $rows = $this->search($customer_id, "SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.status, campaign.name, ad_group.name, metrics.clicks, metrics.impressions, metrics.ctr, metrics.conversions FROM keyword_view WHERE segments.date DURING LAST_30_DAYS ORDER BY metrics.clicks DESC LIMIT 100");
+        return array_map(static function (array $row): array {
+            $criterion = $row['adGroupCriterion'] ?? [];
+            $metrics = $row['metrics'] ?? [];
+            return [
+                'keyword' => sanitize_text_field((string)($criterion['keyword']['text'] ?? '')),
+                'match_type' => strtolower(sanitize_key((string)($criterion['keyword']['matchType'] ?? ''))),
+                'status' => strtolower(sanitize_key((string)($criterion['status'] ?? ''))),
+                'campaign' => sanitize_text_field((string)($row['campaign']['name'] ?? '')),
+                'ad_group' => sanitize_text_field((string)($row['adGroup']['name'] ?? '')),
+                'clicks' => (int)($metrics['clicks'] ?? 0),
+                'impressions' => (int)($metrics['impressions'] ?? 0),
+                'ctr' => (float)($metrics['ctr'] ?? 0),
+                'conversions' => (float)($metrics['conversions'] ?? 0),
+            ];
+        }, $rows);
+    }
+
+    private function landingPages(string $customer_id): array
+    {
+        $rows = $this->search($customer_id, "SELECT landing_page_view.unexpanded_final_url, metrics.clicks, metrics.impressions, metrics.ctr, metrics.conversions FROM landing_page_view WHERE segments.date DURING LAST_30_DAYS ORDER BY metrics.clicks DESC LIMIT 100");
+        return array_map(static function (array $row): array {
+            $metrics = $row['metrics'] ?? [];
+            return [
+                'url' => esc_url_raw((string)($row['landingPageView']['unexpandedFinalUrl'] ?? '')),
+                'clicks' => (int)($metrics['clicks'] ?? 0),
+                'impressions' => (int)($metrics['impressions'] ?? 0),
+                'ctr' => (float)($metrics['ctr'] ?? 0),
+                'conversions' => (float)($metrics['conversions'] ?? 0),
+            ];
+        }, $rows);
+    }
+
+    private function devices(string $customer_id): array
+    {
+        $rows = $this->search($customer_id, "SELECT segments.device, metrics.clicks, metrics.impressions, metrics.conversions FROM customer WHERE segments.date DURING LAST_30_DAYS ORDER BY metrics.clicks DESC");
+        return array_map(static function (array $row): array {
+            $metrics = $row['metrics'] ?? [];
+            return [
+                'device' => strtolower(sanitize_key((string)($row['segments']['device'] ?? 'unknown'))),
+                'clicks' => (int)($metrics['clicks'] ?? 0),
+                'impressions' => (int)($metrics['impressions'] ?? 0),
+                'conversions' => (float)($metrics['conversions'] ?? 0),
+            ];
+        }, $rows);
     }
 
     private function search(string $customer_id, string $query): array
@@ -285,9 +404,14 @@ final class GoogleAdsClient
                 'impressions' => 0,
                 'ctr' => 0,
                 'conversions' => 0,
+                'conversion_rate' => 0,
                 'cost_per_conversion' => 0,
             ],
             'campaigns' => [],
+            'search_terms' => [],
+            'keywords' => [],
+            'landing_pages' => [],
+            'devices' => [],
         ];
     }
 }

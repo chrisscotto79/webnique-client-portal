@@ -911,25 +911,85 @@
   const moneyField = (name, label, value = "") => `<label class="wnq-money-field"><span>${esc(label)}</span><div><b>$</b><input type="number" name="${esc(name)}" value="${esc(value)}" min="0" step="0.01" inputmode="decimal"></div></label>`;
 
   async function ads(view, refresh) {
-    view.innerHTML = `${heading("Google Ads", "Ads", "Google Ads reporting is coming soon.")}
-      <section class="wnq-panel wnq-coming-soon"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">Coming Soon</span><h2>Ads reporting is temporarily paused</h2></div>${status("yellow", "Coming soon")}</div><p class="wnq-note">We’ll bring this tab back when the Google Ads connection is ready. For now, campaign reporting will stay out of the client portal so the dashboard stays clean.</p></section>`;
+    if (!canSeePrivate) {
+      view.innerHTML = `${heading("Google Ads", "Ads", "Campaign reporting is being prepared for your account.")}
+        <section class="wnq-panel wnq-coming-soon wnq-ads-client-hold"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">Coming Soon</span><h2>Ads reporting is in progress</h2></div>${status("yellow", "Coming soon")}</div><p>Golden Web Marketing is validating the reporting connection before making Google Ads performance available inside client accounts.</p><div class="wnq-ads-client-steps"><span>Manager access</span><span>Read-only reports</span><span>Client-safe dashboard</span></div></section>`;
+      return;
+    }
+    const resource = refresh ? await api("/portal/ads?refresh=1") : await load("ads");
+    state.cache.ads = resource;
+    const summary = resource.summary || {};
+    const rows = resource.campaigns || [];
+    const percent = (value) => `${(Number(value || 0) * 100).toFixed(1)}%`;
+    const enabledCampaigns = rows.filter((row) => String(row.status || "").toLowerCase() === "enabled").length;
+    view.innerHTML = `${heading("Internal Reporting", "Google Ads", "Read-only performance from the Google Ads accounts linked to your manager account.")}
+      <section class="wnq-ads-hero"><div><span class="wnq-eyebrow">Reporting Workspace</span><h2>${esc(adsStateTitle(resource))}</h2><p>${esc(adsStateCopy(resource))}</p></div><div class="wnq-ads-hero-actions"><button type="button" class="wnq-button is-secondary" id="wnq-refresh-ads">Refresh Ads Data</button>${status(adsStateTone(resource), titleCase(resource.data_status || "setup needed"))}</div></section>
+      <div class="wnq-ads-account-bar"><div><span>Client account</span><strong>${esc(resource.matched_account_name || "Not matched")}</strong><small>${esc(resource.customer_id || "No customer ID")} ${resource.time_zone ? `· ${esc(resource.time_zone)}` : ""}</small></div><div><span>MCC accounts</span><strong>${Number(resource.available_accounts_count || 0).toLocaleString()}</strong><small>Available for matching</small></div><div><span>API access</span><strong>${esc(titleCase(resource.access_level || "test"))}</strong><small>${esc(resource.reporting_window || "Last 30 days")} · ${esc(date(resource.last_checked))}</small></div></div>
+      ${adsProgress(resource)}
+      ${adsDiagnostics(resource)}
+      ${resource.configured ? `<section class="wnq-metrics wnq-ads-metrics">${metric("Clicks", Number(summary.clicks || 0).toLocaleString(), resource.reporting_window || "Last 30 days")}${metric("Impressions", Number(summary.impressions || 0).toLocaleString(), resource.reporting_window || "Last 30 days")}${metric("CTR", percent(summary.ctr), "Click-through rate")}${metric("Conversions", Number(summary.conversions || 0).toFixed(1), "Tracked actions")}${metric("Conversion Rate", percent(summary.conversion_rate), "Conversions per click")}${metric("Campaigns", rows.length.toLocaleString(), `${enabledCampaigns} enabled`)}</section>
+        <section class="wnq-ads-internal-strip"><div><span>Internal cost visibility</span><strong>${money(summary.spend)}</strong><small>Total spend for admin reporting only</small></div><div><span>Cost / conversion</span><strong>${money(summary.cost_per_conversion)}</strong><small>Based on tracked conversions</small></div></section>
+        ${!resource.has_report_data ? adsEmptyReport(resource) : ""}
+        ${adsTable("Campaign Performance", ["Campaign", "Status", "Clicks", "Impressions", "CTR", "Conversions", "Spend"], rows, (row) => [esc(row.name), status(row.status === "enabled" ? "green" : "yellow", titleCase(row.status)), Number(row.clicks || 0).toLocaleString(), Number(row.impressions || 0).toLocaleString(), percent(row.ctr), Number(row.conversions || 0).toFixed(1), money(row.spend)], "No campaign performance was returned for the last 30 days.")}
+        <div class="wnq-grid-2 wnq-ads-report-grid">
+          ${adsTable("Search Terms", ["Search term", "Campaign", "Clicks", "Impressions", "Conversions"], resource.search_terms || [], (row) => [esc(row.term), esc(row.campaign), row.clicks, row.impressions, Number(row.conversions || 0).toFixed(1)], "No search-term activity was returned.")}
+          ${adsTable("Keywords", ["Keyword", "Match", "Campaign", "Clicks", "Conversions"], resource.keywords || [], (row) => [esc(row.keyword), esc(titleCase(row.match_type)), esc(row.campaign), row.clicks, Number(row.conversions || 0).toFixed(1)], "No keyword activity was returned.")}
+          ${adsTable("Landing Pages", ["Landing page", "Clicks", "Impressions", "Conversions"], resource.landing_pages || [], (row) => [`<a href="${esc(row.url)}" target="_blank" rel="noopener">${esc(row.url || "Not set")}</a>`, row.clicks, row.impressions, Number(row.conversions || 0).toFixed(1)], "No landing-page activity was returned.")}
+          ${adsTable("Device Performance", ["Device", "Clicks", "Impressions", "Conversions"], resource.devices || [], (row) => [esc(titleCase(row.device)), row.clicks, row.impressions, Number(row.conversions || 0).toFixed(1)], "No device data was returned.")}
+        </div>` : ""}
+      ${adsSettingsForm(resource)}`;
+    view.querySelector("#wnq-refresh-ads")?.addEventListener("click", () => show("ads", true));
+    const form = view.querySelector("#wnq-ads-settings");
+    form?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const submit = form.querySelector('[type="submit"]');
+      submit.disabled = true; submit.textContent = "Saving...";
+      try {
+        await api("/portal/ads-settings", { method: "POST", body: JSON.stringify(formObject(form)) });
+        delete state.cache.ads;
+        sessionStorage.setItem("wnqAdsNotice", "Client Ads account saved and reporting refreshed.");
+        show("ads", true);
+      } catch (error) {
+        formStatus(form, "yellow", error.message);
+        submit.disabled = false; submit.textContent = "Save Account Link";
+      }
+    });
   }
+
+  const adsStateTone = (data) => data.errors?.length ? "red" : data.configured ? "green" : "yellow";
+  const adsStateTitle = (data) => ({
+    report_ready: "Ads report is connected",
+    connected_empty: "Connected, but no recent activity",
+    account_link_needed: "Choose the client Ads account",
+    api_attention: "Google Ads needs attention",
+    setup_needed: "Finish the Google Ads setup",
+  }[data.data_status] || (data.configured ? "Ads report is connected" : "Finish the Google Ads setup"));
+  const adsStateCopy = (data) => ({
+    report_ready: "Performance data is being pulled from the matched Google Ads account.",
+    connected_empty: "The API connection worked, but Google returned no activity for the current reporting window.",
+    account_link_needed: "The MCC is connected. Pick the right child account below or let the portal auto-match by client name.",
+    api_attention: "The account link exists, but Google returned an API message while pulling report data.",
+    setup_needed: "Save the global OAuth credentials in WordPress settings, then link this client to a Google Ads account.",
+  }[data.data_status] || "Use this internal screen to connect client Ads accounts and review read-only reporting.");
+  const adsProgress = (data) => `<div class="wnq-setup-checks wnq-ads-progress">${(data.setup_checks || []).map((check) => `<span class="${check.ok ? "is-ok" : "is-needed"}">${esc(check.label)}</span>`).join("")}</div>`;
+  const adsEmptyReport = (data) => `<section class="wnq-panel wnq-ads-empty-report"><div><span class="wnq-eyebrow">No recent activity</span><h2>Google returned an empty report</h2><p>This usually means the selected account had no clicks or impressions during ${esc(data.reporting_window || "the selected window")}, or the account has no enabled campaigns yet.</p></div></section>`;
+  const adsTable = (title, columns, rows = [], render, fallback) => `<section class="wnq-panel wnq-table-wrap wnq-ads-table"><div class="wnq-panel-head"><div><h2>${esc(title)}</h2><small>${esc(rows.length)} row${rows.length === 1 ? "" : "s"} · Last 30 days</small></div></div><table><thead><tr>${columns.map((label) => `<th>${esc(label)}</th>`).join("")}</tr></thead><tbody>${rows.length ? rows.map((row) => `<tr>${render(row).map((value, index) => `<td data-label="${esc(columns[index])}">${value}</td>`).join("")}</tr>`).join("") : `<tr><td colspan="${columns.length}">${empty(fallback)}</td></tr>`}</tbody></table></section>`;
 
   const adsDiagnostics = (data) => {
     const messages = [...(data.errors || []), ...(data.diagnostics || [])].filter(Boolean);
-    const checks = data.setup_checks || [];
-    return `${messages.length ? `<div class="wnq-error"><strong>Google Ads setup message</strong>${messages.map((message) => `<p>${esc(message)}</p>`).join("")}</div>` : ""}${checks.length ? `<div class="wnq-setup-checks">${checks.map((check) => `<span class="${check.ok ? "is-ok" : "is-needed"}">${esc(check.label)}</span>`).join("")}</div>` : ""}`;
+    return messages.length ? `<section class="wnq-ads-diagnostics ${data.errors?.length ? "is-error" : ""}"><strong>Google Ads setup message</strong>${messages.map((message) => `<p>${esc(message)}</p>`).join("")}</section>` : "";
   };
   const adsSettingsForm = (data) => {
     const notice = sessionStorage.getItem("wnqAdsNotice") || "";
     if (notice) sessionStorage.removeItem("wnqAdsNotice");
-    return `<form class="wnq-panel wnq-form" id="wnq-ads-settings"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">Admin Setup</span><h2>Google Ads Read-only Connection</h2></div></div>
+    const accounts = data.available_accounts || [];
+    const currentExists = accounts.some((account) => String(account.customer_id) === String(data.customer_id));
+    return `<form class="wnq-panel wnq-form wnq-ads-link-form" id="wnq-ads-settings"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">Account Link</span><h2>Client Ads Account</h2><small>Global OAuth credentials are managed in the WordPress portal settings.</small></div></div>
     ${notice ? `<div class="wnq-form-status is-green">${esc(notice)}</div>` : ""}
-    ${field("customer_id", "Google Ads Customer ID", data.customer_id || "")}${field("manager_customer_id", "Manager Account ID", data.manager_customer_id || "")}${field("service_account_email", "Service Account Email", data.service_account_email || "")}
-    ${field("api_key", "API Key", data.has_api_key ? "Saved" : "", false, "password")}${field("developer_token", "Developer Token", data.has_developer_token ? "Saved" : "", false, "password")}${field("oauth_client_id", "OAuth Client ID", data.has_oauth_client_id ? "Saved" : "")}
-    ${field("oauth_client_secret", "OAuth Client Secret", data.has_oauth_client_secret ? "Saved" : "", false, "password")}${field("refresh_token", "OAuth Refresh Token", data.has_refresh_token ? "Saved" : "", false, "password")}
-    <div class="is-wide wnq-ads-requirements"><strong>Still needed for live API pulls</strong>${(data.requirements || []).map((item) => `<span>${esc(item)}</span>`).join("")}<p class="wnq-note">The API key is stored server-side. The frontend only receives saved/not-saved flags.</p></div>
-    <div class="wnq-form-actions"><button class="wnq-button" type="submit">Save Ads Setup</button></div></form>`;
+    <label><span>Google Ads Client Account</span><select name="customer_id"><option value="">Auto-match by client name</option>${data.customer_id && !currentExists ? `<option value="${esc(data.customer_id)}" selected>${esc(data.matched_account_name || data.customer_id)}</option>` : ""}${accounts.map((account) => `<option value="${esc(account.customer_id)}" ${String(account.customer_id) === String(data.customer_id) ? "selected" : ""}>${esc(account.name || "Unnamed account")} · ${esc(account.customer_id)}</option>`).join("")}</select><small>${esc(accounts.length)} client account${accounts.length === 1 ? "" : "s"} available under the MCC.</small></label>
+    <label><span>Manager Account</span><input type="text" value="${esc(data.manager_customer_id || "Not configured")}" readonly><small>Inherited from WordPress settings</small></label>
+    <div class="is-wide wnq-ads-requirements"><strong>Connection checklist</strong>${(data.setup_checks || []).map((item) => `<span class="${item.ok ? "is-ok" : "is-needed"}">${esc(item.label)}: ${item.ok ? "Ready" : "Needed"}</span>`).join("")}<p class="wnq-note">API keys and service accounts are not used for this OAuth connection.</p></div>
+    <div class="wnq-form-actions"><button class="wnq-button" type="submit">Save Account Link</button></div></form>`;
   };
   const adsClientNotice = (data) => `<section class="wnq-panel"><div class="wnq-panel-head"><h2>Ads Access</h2>${status(data.configured ? "green" : "yellow", data.configured ? "Connected" : "Pending")}</div><p class="wnq-note">Once Golden Web Marketing connects your Google Ads account, this tab will show read-only campaign results and reporting.</p></section>`;
 

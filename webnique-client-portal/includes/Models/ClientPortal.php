@@ -520,7 +520,7 @@ final class ClientPortal
         };
     }
 
-    public static function getAdsResource(string $client_id, bool $include_financial = true): array
+    public static function getAdsResource(string $client_id, bool $include_financial = true, bool $refresh = false): array
     {
         $settings = self::adsSettings($client_id);
         $raw_settings = self::adsSettings($client_id, false);
@@ -543,13 +543,19 @@ final class ClientPortal
             'cost_per_conversion' => 0,
         ];
         $campaigns = [];
+        $search_terms = [];
+        $keywords = [];
+        $landing_pages = [];
+        $devices = [];
+        $account = [];
+        $available_accounts = [];
         $access_level = (string)get_option('wnq_google_ads_access_level', 'test');
 
         if (class_exists(GoogleAdsClient::class)) {
             $ads = new GoogleAdsClient($raw_settings);
             if ($ads->isConfigured()) {
                 if ((string)($raw_settings['customer_id'] ?? '') === '') {
-                    $match = $ads->matchClient($client);
+                    $match = $ads->matchClient($client, $refresh);
                     if ($match && (int)($match['match_score'] ?? 0) >= 70) {
                         $raw_settings['customer_id'] = (string)$match['customer_id'];
                         $settings['customer_id'] = (string)$match['customer_id'];
@@ -559,11 +565,24 @@ final class ClientPortal
                             'matched_account_name' => (string)$match['name'],
                         ]);
                     }
+                    $available_accounts = $ads->listManagerAccounts(false);
+                } else {
+                    $available_accounts = $ads->listManagerAccounts($refresh);
                 }
                 if ((string)($raw_settings['customer_id'] ?? '') !== '') {
-                    $performance = $ads->accountPerformance((string)$raw_settings['customer_id']);
+                    foreach ($available_accounts as $listed_account) {
+                        if (preg_replace('/\D+/', '', (string)($listed_account['customer_id'] ?? '')) === preg_replace('/\D+/', '', (string)$raw_settings['customer_id'])) {
+                            $account = $listed_account;
+                            break;
+                        }
+                    }
+                    $performance = $ads->accountPerformance((string)$raw_settings['customer_id'], $refresh);
                     $summary = $performance['summary'] ?? $summary;
                     $campaigns = $performance['campaigns'] ?? [];
+                    $search_terms = $performance['search_terms'] ?? [];
+                    $keywords = $performance['keywords'] ?? [];
+                    $landing_pages = $performance['landing_pages'] ?? [];
+                    $devices = $performance['devices'] ?? [];
                 }
                 $ads_errors = $ads->errors();
                 if ((string)($raw_settings['customer_id'] ?? '') === '' && !$match && empty($ads_errors)) {
@@ -591,6 +610,24 @@ final class ClientPortal
         }
 
         $ready = $has_developer_token && $has_manager_customer_id && !empty($raw_settings['customer_id']) && $has_oauth && $access_level !== 'test';
+        $has_report_data = !empty($campaigns)
+            || !empty($search_terms)
+            || !empty($keywords)
+            || !empty($landing_pages)
+            || !empty($devices)
+            || (int)($summary['clicks'] ?? 0) > 0
+            || (int)($summary['impressions'] ?? 0) > 0
+            || (float)($summary['conversions'] ?? 0) > 0;
+        $data_status = 'setup_needed';
+        if ($ready && !empty($ads_errors)) {
+            $data_status = 'api_attention';
+        } elseif ($ready && $has_report_data) {
+            $data_status = 'report_ready';
+        } elseif ($ready) {
+            $data_status = 'connected_empty';
+        } elseif ($has_developer_token && $has_manager_customer_id && $has_oauth && !empty($available_accounts)) {
+            $data_status = 'account_link_needed';
+        }
         if (!$include_financial) {
             unset($summary['spend'], $summary['cost_per_conversion'], $summary['average_cpc'], $summary['cost'], $summary['cost_micros'], $summary['budget']);
             $campaigns = array_map(static function (array $campaign): array {
@@ -601,14 +638,17 @@ final class ClientPortal
 
         return [
             'configured' => $ready,
+            'data_status' => $data_status,
             'mode' => 'read_only',
+            'reporting_window' => 'Last 30 days',
+            'last_checked' => current_time('mysql'),
             'access_level' => $access_level,
-            'service_account_email' => (string)($settings['service_account_email'] ?: 'webnique-portal@webnique-client-portal-486204.iam.gserviceaccount.com'),
             'customer_id' => (string)($settings['customer_id'] ?? ''),
             'manager_customer_id' => (string)($settings['manager_customer_id'] ?? ''),
-            'matched_account_name' => (string)($settings['matched_account_name'] ?? ($match['name'] ?? '')),
+            'matched_account_name' => (string)($account['name'] ?? $settings['matched_account_name'] ?? ($match['name'] ?? '')),
+            'currency_code' => (string)($account['currency_code'] ?? 'USD'),
+            'time_zone' => (string)($account['time_zone'] ?? ''),
             'match_score' => (int)($match['match_score'] ?? 0),
-            'has_api_key' => !empty($settings['api_key']),
             'has_developer_token' => $has_developer_token,
             'has_manager_customer_id' => $has_manager_customer_id,
             'has_oauth_client_id' => $has_oauth_client_id,
@@ -617,6 +657,13 @@ final class ClientPortal
             'has_oauth' => $has_oauth,
             'summary' => $summary,
             'campaigns' => $campaigns,
+            'search_terms' => $search_terms,
+            'keywords' => $keywords,
+            'landing_pages' => $landing_pages,
+            'devices' => $devices,
+            'available_accounts' => $available_accounts,
+            'available_accounts_count' => count($available_accounts),
+            'has_report_data' => $has_report_data,
             'errors' => $ads_errors,
             'diagnostics' => $diagnostics,
             'setup_checks' => [
@@ -642,8 +689,8 @@ final class ClientPortal
     {
         $stored = get_option(self::adsOptionKey($client_id), []);
         $settings = is_array($stored) ? $stored : [];
-        $allowed = ['api_key', 'developer_token', 'customer_id', 'manager_customer_id', 'service_account_email', 'oauth_client_id', 'oauth_client_secret', 'refresh_token', 'matched_account_name'];
-        $inherited_keys = ['api_key', 'developer_token', 'manager_customer_id', 'service_account_email', 'oauth_client_id', 'oauth_client_secret', 'refresh_token'];
+        $allowed = ['customer_id', 'matched_account_name'];
+        $inherited_keys = [];
         foreach ($allowed as $key) {
             if (!array_key_exists($key, $data)) {
                 continue;
@@ -656,10 +703,11 @@ final class ClientPortal
                 unset($settings[$key]);
                 continue;
             }
-            if ($key === 'service_account_email') {
-                $settings[$key] = sanitize_email($value);
-            } elseif ($key === 'customer_id' || $key === 'manager_customer_id') {
+            if ($key === 'customer_id') {
                 $settings[$key] = preg_replace('/[^0-9-]/', '', $value);
+                if ($settings[$key] === '') {
+                    unset($settings['matched_account_name']);
+                }
             } else {
                 $settings[$key] = sanitize_text_field($value);
             }
@@ -674,13 +722,11 @@ final class ClientPortal
     {
         $settings = get_option(self::adsOptionKey($client_id), []);
         $settings = is_array($settings) ? $settings : [];
-        $global_service_account = sanitize_email((string)get_option('wnq_google_ads_service_account_email', 'webnique-portal@webnique-client-portal-486204.iam.gserviceaccount.com'));
+        $settings = array_intersect_key($settings, array_flip(['customer_id', 'matched_account_name']));
         $defaults = [
-            'api_key' => '',
             'developer_token' => (string)get_option('wnq_google_ads_developer_token', ''),
             'customer_id' => '',
             'manager_customer_id' => (string)get_option('wnq_google_ads_manager_customer_id', ''),
-            'service_account_email' => $global_service_account ?: 'webnique-portal@webnique-client-portal-486204.iam.gserviceaccount.com',
             'oauth_client_id' => (string)get_option('wnq_google_ads_oauth_client_id', ''),
             'oauth_client_secret' => (string)get_option('wnq_google_ads_oauth_client_secret', ''),
             'refresh_token' => (string)get_option('wnq_google_ads_refresh_token', ''),
@@ -688,7 +734,7 @@ final class ClientPortal
         ];
         $settings = array_merge($defaults, $settings);
         if ($masked) {
-            foreach (['api_key', 'developer_token', 'oauth_client_secret', 'refresh_token'] as $secret) {
+            foreach (['developer_token', 'oauth_client_id', 'oauth_client_secret', 'refresh_token'] as $secret) {
                 if (!empty($settings[$secret])) {
                     $settings[$secret] = 'Saved';
                 }
