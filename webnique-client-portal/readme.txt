@@ -227,6 +227,12 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.50 - Telegram Group Discovery
+
+- Added a secure server-side action that finds Telegram groups recently connected to the saved bot
+- Automatically saves the chat ID when exactly one group is found and offers selection buttons when multiple groups are returned
+- Replaced Telegram's vague chat-not-found response with clear bot membership and group command instructions
+
 2.4.49 - Telegram Notification Settings
 
 - Added secure server-side settings for a Telegram bot token and private group chat ID
