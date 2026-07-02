@@ -383,6 +383,8 @@ final class ClientPortal
                 self::$last_error = (string)$wpdb->last_error;
                 return false;
             }
+            $saved_record = self::getCustomer($id, $client_id) ?: $record;
+            do_action('wnq_portal_crm_record_saved', $id, $client_id, $saved_record, true);
             return $id;
         }
         $result = $wpdb->insert($table, $record);
@@ -390,7 +392,10 @@ final class ClientPortal
             self::$last_error = (string)$wpdb->last_error;
             return false;
         }
-        return (int)$wpdb->insert_id;
+        $insert_id = (int)$wpdb->insert_id;
+        $saved_record = self::getCustomer($insert_id, $client_id) ?: $record;
+        do_action('wnq_portal_crm_record_saved', $insert_id, $client_id, $saved_record, false);
+        return $insert_id;
     }
 
     public static function convertLeadToJob(string $client_id, int $id): int|false
@@ -422,6 +427,7 @@ final class ClientPortal
             self::$last_error = (string)$wpdb->last_error;
             return false;
         }
+        do_action('wnq_portal_lead_converted', $id, $client_id, self::getCustomer($id, $client_id) ?: $record);
         return $id;
     }
 
@@ -980,6 +986,12 @@ final class ClientPortal
                 $message . "\n\nView the full ticket in the client portal."
             );
         }
+        do_action('wnq_portal_message_created', $id, $client_id, $sender_role, [
+            'subject' => $subject,
+            'category' => $category,
+            'priority' => $priority,
+            'message' => $message,
+        ], $ticket_key);
         return $id;
     }
 
@@ -1140,7 +1152,16 @@ final class ClientPortal
             'details'      => sanitize_textarea_field((string)($data['details'] ?? '')),
             'status'       => 'submitted',
         ]);
-        return $result === false ? false : (int)$wpdb->insert_id;
+        if ($result === false) {
+            return false;
+        }
+        $id = (int)$wpdb->insert_id;
+        do_action('wnq_portal_learning_request_created', $id, $client_id, [
+            'request_type' => $request_type,
+            'title' => $title,
+            'details' => sanitize_textarea_field((string)($data['details'] ?? '')),
+        ]);
+        return $id;
     }
 
     public static function courses(): array

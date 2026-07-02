@@ -22,6 +22,8 @@ final class Plugin
 
     self::includes();
 
+    \WNQ\Services\NotificationManager::register();
+
     // ✅ Register REST routes (v1: /wnq/v1/ping)
     \WNQ\Core\Router::register();
 
@@ -55,6 +57,13 @@ final class Plugin
     Activator::run();
   }
 
+  public static function deactivate(): void
+  {
+    if (class_exists(\WNQ\Services\NotificationManager::class)) {
+      \WNQ\Services\NotificationManager::unschedule();
+    }
+  }
+
   /**
    * Load all required files
    */
@@ -84,6 +93,7 @@ final class Plugin
     require_once WNQ_PORTAL_PATH . 'includes/Services/FirebaseStore.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/GoogleAdsClient.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramNotifier.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Services/NotificationManager.php';
 
     /**
      * Views

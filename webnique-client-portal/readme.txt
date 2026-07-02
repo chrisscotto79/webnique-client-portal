@@ -227,6 +227,14 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.51 - Telegram Notification System
+
+- Added configurable Telegram alerts for new CRM records, lead conversions, client messages, service requests, learning requests, payments, Ads thresholds, Ads connection problems, and overdue follow-ups
+- Added a locked daily alert checker with threshold-crossing state and duplicate suppression
+- Added signed Stripe webhook support for successful and failed payment events
+- Added notification health, event toggles, Ads threshold controls, and a manual Run Alert Checks action in WordPress settings
+- Connected successful CRM, request, message, learning, and manually recorded payment actions to the alert dispatcher
+
 2.4.50 - Telegram Group Discovery
 
 - Added a secure server-side action that finds Telegram groups recently connected to the saved bot
