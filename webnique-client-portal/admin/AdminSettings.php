@@ -40,6 +40,13 @@ final class AdminSettings
         if (is_array($google_ads_test)) {
             delete_transient('wnq_google_ads_test_' . get_current_user_id());
         }
+        $telegram_enabled = (bool)get_option('wnq_telegram_enabled', false);
+        $telegram_has_token = (string)get_option('wnq_telegram_bot_token', '') !== '';
+        $telegram_chat_id = (string)get_option('wnq_telegram_chat_id', '');
+        $telegram_test = get_transient('wnq_telegram_test_' . get_current_user_id());
+        if (is_array($telegram_test)) {
+            delete_transient('wnq_telegram_test_' . get_current_user_id());
+        }
         $seo_enabled = function_exists('wnq_seo_features_enabled') && wnq_seo_features_enabled();
 
         ?>
@@ -52,6 +59,11 @@ final class AdminSettings
             <?php if (is_array($google_ads_test)): ?>
                 <div class="notice <?php echo !empty($google_ads_test['ok']) ? 'notice-success' : 'notice-error'; ?> is-dismissible">
                     <p><strong>Google Ads connection:</strong> <?php echo esc_html((string)($google_ads_test['message'] ?? 'Connection test completed.')); ?></p>
+                </div>
+            <?php endif; ?>
+            <?php if (is_array($telegram_test)): ?>
+                <div class="notice <?php echo !empty($telegram_test['ok']) ? 'notice-success' : 'notice-error'; ?> is-dismissible">
+                    <p><strong>Telegram connection:</strong> <?php echo esc_html((string)($telegram_test['message'] ?? 'Connection test completed.')); ?></p>
                 </div>
             <?php endif; ?>
 
@@ -170,6 +182,39 @@ final class AdminSettings
                     </div>
 
                     <div class="settings-panel">
+                        <h2>Telegram Notifications</h2>
+                        <p class="description">Internal operational alerts sent to a private Telegram group. The bot token stays server-side and is never exposed in the client portal.</p>
+                        <table class="form-table" role="presentation">
+                            <tr>
+                                <th>Enable Notifications</th>
+                                <td>
+                                    <label>
+                                        <input type="checkbox" name="wnq_telegram_enabled" value="1" <?php checked($telegram_enabled); ?>>
+                                        Allow the portal to send enabled internal alerts
+                                    </label>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th><label for="wnq_telegram_bot_token">Bot Token</label></th>
+                                <td>
+                                    <input type="password" name="wnq_telegram_bot_token" id="wnq_telegram_bot_token" value="" class="large-text" placeholder="<?php echo esc_attr($telegram_has_token ? 'Saved - leave blank to keep current token' : 'Paste the BotFather token'); ?>" autocomplete="new-password">
+                                    <?php if ($telegram_has_token): ?>
+                                        <label class="wnq-inline-check"><input type="checkbox" name="wnq_telegram_clear_bot_token" value="1"> Clear saved token</label>
+                                    <?php endif; ?>
+                                    <p class="description">Generate a fresh token in BotFather if a previous token appeared in a screenshot or message.</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th><label for="wnq_telegram_chat_id">Group Chat ID</label></th>
+                                <td>
+                                    <input type="text" name="wnq_telegram_chat_id" id="wnq_telegram_chat_id" value="<?php echo esc_attr($telegram_chat_id); ?>" class="regular-text" placeholder="-1001234567890" inputmode="numeric">
+                                    <p class="description">Telegram group IDs are usually negative and may begin with <code>-100</code>.</p>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <div class="settings-panel">
                         <h2>Support Contact</h2>
                         <table class="form-table" role="presentation">
                             <tr>
@@ -201,6 +246,7 @@ final class AdminSettings
                     <p class="submit">
                         <button type="submit" class="button button-primary button-large">Save Settings</button>
                         <button type="submit" name="wnq_test_google_ads" value="1" class="button button-secondary button-large">Save &amp; Test Google Ads</button>
+                        <button type="submit" name="wnq_test_telegram" value="1" class="button button-secondary button-large">Save &amp; Test Telegram</button>
                     </p>
                 </form>
 
@@ -221,6 +267,8 @@ final class AdminSettings
                         <dd><?php echo esc_html(ucfirst((string)$google_ads_access_level)); ?></dd>
                         <dt>Google Ads OAuth</dt>
                         <dd><span class="status-pill <?php echo ($google_ads_has_oauth_client_id && $google_ads_has_oauth_client_secret && $google_ads_has_refresh_token) ? 'active' : 'inactive'; ?>"><?php echo ($google_ads_has_oauth_client_id && $google_ads_has_oauth_client_secret && $google_ads_has_refresh_token) ? 'Saved' : 'Missing'; ?></span></dd>
+                        <dt>Telegram Alerts</dt>
+                        <dd><span class="status-pill <?php echo ($telegram_enabled && $telegram_has_token && $telegram_chat_id !== '') ? 'active' : 'inactive'; ?>"><?php echo ($telegram_enabled && $telegram_has_token && $telegram_chat_id !== '') ? 'Enabled' : 'Not configured'; ?></span></dd>
                         <dt>Analytics Admin</dt>
                         <dd><?php echo class_exists('WNQ\\Admin\\AnalyticsAdmin') ? 'Available' : 'Loads on demand'; ?></dd>
                     </dl>
@@ -323,6 +371,20 @@ final class AdminSettings
         update_option('wnq_default_billing_cycle', $billing_cycle);
         update_option('wnq_stripe_test_publishable_key', sanitize_text_field($_POST['wnq_stripe_test_publishable_key'] ?? ''));
         update_option('wnq_stripe_test_secret_key', sanitize_text_field($_POST['wnq_stripe_test_secret_key'] ?? ''));
+        update_option('wnq_telegram_enabled', !empty($_POST['wnq_telegram_enabled']), false);
+        $telegram_chat_id = sanitize_text_field(wp_unslash($_POST['wnq_telegram_chat_id'] ?? ''));
+        if ($telegram_chat_id !== '' && preg_match('/^-?\d+$/', $telegram_chat_id) !== 1) {
+            $telegram_chat_id = '';
+        }
+        update_option('wnq_telegram_chat_id', $telegram_chat_id, false);
+        if (!empty($_POST['wnq_telegram_clear_bot_token'])) {
+            update_option('wnq_telegram_bot_token', '', false);
+        } else {
+            $telegram_token = sanitize_text_field(wp_unslash($_POST['wnq_telegram_bot_token'] ?? ''));
+            if ($telegram_token !== '') {
+                update_option('wnq_telegram_bot_token', $telegram_token, false);
+            }
+        }
         $google_ads_token = sanitize_text_field(wp_unslash($_POST['wnq_google_ads_developer_token'] ?? ''));
         $clear_google_ads_token = !empty($_POST['wnq_google_ads_clear_developer_token']);
         if ($clear_google_ads_token) {
@@ -375,10 +437,25 @@ final class AdminSettings
             set_transient('wnq_google_ads_test_' . get_current_user_id(), $ads->connectionTest(), 5 * MINUTE_IN_SECONDS);
         }
 
+        $telegram_tested = false;
+        if (!empty($_POST['wnq_test_telegram'])) {
+            $telegram_tested = true;
+            if (!class_exists('WNQ\\Services\\TelegramNotifier')) {
+                require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramNotifier.php';
+            }
+            $telegram = new \WNQ\Services\TelegramNotifier();
+            set_transient(
+                'wnq_telegram_test_' . get_current_user_id(),
+                $telegram->send('Golden Web Marketing portal notifications are connected.'),
+                5 * MINUTE_IN_SECONDS
+            );
+        }
+
         wp_redirect(add_query_arg([
             'page' => 'wnq-portal',
             'settings-updated' => 'true',
             'ads-tested' => $tested ? 'true' : 'false',
+            'telegram-tested' => $telegram_tested ? 'true' : 'false',
         ], admin_url('admin.php')));
         exit;
     }

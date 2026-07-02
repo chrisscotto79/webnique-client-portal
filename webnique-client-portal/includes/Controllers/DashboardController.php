@@ -206,11 +206,7 @@ final class DashboardController
       'learning'  => ['courses' => ClientPortal::courses(), 'requests' => ClientPortal::getLearningRequests($client_id)],
       'ads'       => $include_private
         ? ClientPortal::getAdsResource($client_id, true, $refresh)
-        : [
-          'configured' => false,
-          'mode' => 'internal_reporting_only',
-          'message' => 'Google Ads reporting is currently available to the Golden Web Marketing reporting team only.',
-        ],
+        : ClientPortal::getAdsPublicStatus($client_id),
       'notifications' => ClientPortal::getPortalNotifications($client_id),
       'settings'  => ClientPortal::getPortalSettings($client_id),
       default     => [],

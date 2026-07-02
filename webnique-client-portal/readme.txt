@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.47
+Stable tag: 2.4.49
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,20 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.49 - Telegram Notification Settings
+
+- Added secure server-side settings for a Telegram bot token and private group chat ID
+- Added an enable switch, connection status, masked secret handling, and token clearing control
+- Added a Save and Test Telegram action that sends a real connection message to the configured group
+- Added a reusable Telegram notifier service for upcoming CRM, payment, request, and Ads alerts
+
+2.4.48 - Ads No-Account State
+
+- Added a clear client-facing message when no Google Ads account is linked
+- Treats an unmatched client as likely not running Ads instead of presenting a setup error
+- Keeps administrator connection controls available for clients who begin advertising later
+- Exposes only the linked/not-linked state to client users, never MCC account details
+
 2.4.47 - Locked Ads Connection
 
 - Removed the Google Ads Billing link because client users do not have direct billing access
