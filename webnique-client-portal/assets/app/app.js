@@ -911,13 +911,14 @@
   const moneyField = (name, label, value = "") => `<label class="wnq-money-field"><span>${esc(label)}</span><div><b>$</b><input type="number" name="${esc(name)}" value="${esc(value)}" min="0" step="0.01" inputmode="decimal"></div></label>`;
 
   async function ads(view, refresh) {
+    const resource = refresh && canSeePrivate ? await api("/portal/ads?refresh=1") : await load("ads");
+    state.cache.ads = resource;
     if (!canSeePrivate) {
-      view.innerHTML = `${heading("Google Ads", "Ads", "Campaign reporting is being prepared for your account.")}
-        <section class="wnq-panel wnq-coming-soon wnq-ads-client-hold"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">Coming Soon</span><h2>Ads reporting is in progress</h2></div>${status("yellow", "Coming soon")}</div><p>Golden Web Marketing is validating the reporting connection before making Google Ads performance available inside client accounts.</p><div class="wnq-ads-client-steps"><span>Manager access</span><span>Read-only reports</span><span>Client-safe dashboard</span></div></section>`;
+      const linked = !!resource.has_linked_account;
+      view.innerHTML = `${heading("Google Ads", "Ads", linked ? "Campaign reporting is being prepared for your account." : "Google Ads reporting will appear here when an account is connected.")}
+        <section class="wnq-panel wnq-coming-soon wnq-ads-client-hold"><div class="wnq-panel-head"><div><span class="wnq-eyebrow">${linked ? "Reporting status" : "Account status"}</span><h2>${linked ? "Ads reporting is in progress" : "No Google Ads account connected"}</h2></div>${status(linked ? "yellow" : "green", linked ? "In progress" : "Not running")}</div><p>${linked ? "Golden Web Marketing is validating the reporting connection before making Google Ads performance available inside your portal." : "It looks like your business is not currently connected to Google Ads. There is nothing you need to do. If you begin running ads later, reporting will be added here automatically."}</p>${linked ? `<div class="wnq-ads-client-steps"><span>Manager access</span><span>Read-only reports</span><span>Client-safe dashboard</span></div>` : ""}</section>`;
       return;
     }
-    const resource = refresh ? await api("/portal/ads?refresh=1") : await load("ads");
-    state.cache.ads = resource;
     const summary = resource.summary || {};
     const rows = resource.campaigns || [];
     const percent = (value) => `${(Number(value || 0) * 100).toFixed(1)}%`;
@@ -984,14 +985,14 @@
   const adsStateTitle = (data) => ({
     report_ready: "Ads report is connected",
     connected_empty: "Connected, but no recent activity",
-    account_link_needed: "Choose the client Ads account",
+    account_link_needed: "No Ads account linked",
     api_attention: "Google Ads needs attention",
     setup_needed: "Finish the Google Ads setup",
   }[data.data_status] || (data.configured ? "Ads report is connected" : "Finish the Google Ads setup"));
   const adsStateCopy = (data) => ({
     report_ready: "Performance data is being pulled from the matched Google Ads account.",
     connected_empty: "The API connection worked, but Google returned no activity for the current reporting window.",
-    account_link_needed: "The MCC is connected. Pick the right child account below or let the portal auto-match by client name.",
+    account_link_needed: "This client may not be running Google Ads. If they are, open Connection and assign the correct account.",
     api_attention: "The account link exists, but Google returned an API message while pulling report data.",
     setup_needed: "Save the global OAuth credentials in WordPress settings, then link this client to a Google Ads account.",
   }[data.data_status] || "Use this internal screen to connect client Ads accounts and review read-only reporting.");

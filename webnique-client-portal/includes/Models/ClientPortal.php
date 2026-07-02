@@ -696,6 +696,20 @@ final class ClientPortal
         ];
     }
 
+    public static function getAdsPublicStatus(string $client_id): array
+    {
+        $stored = get_option(self::adsOptionKey($client_id), []);
+        $has_linked_account = is_array($stored) && trim((string)($stored['customer_id'] ?? '')) !== '';
+        return [
+            'configured' => false,
+            'has_linked_account' => $has_linked_account,
+            'mode' => 'internal_reporting_only',
+            'message' => $has_linked_account
+                ? 'Google Ads reporting is being prepared for this account.'
+                : 'No Google Ads account is currently connected to this client.',
+        ];
+    }
+
     public static function saveAdsSettings(string $client_id, array $data): bool
     {
         $stored = get_option(self::adsOptionKey($client_id), []);
