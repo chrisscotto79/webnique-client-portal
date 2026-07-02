@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.49
+Stable tag: 2.4.52
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,14 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.52 - Agency Task Alerts and Telegram Commands
+
+- Removed Telegram alerts for client CRM leads, jobs, conversions, and client-company follow-ups
+- Replaced the CRM follow-up digest with Golden Web Marketing task alerts from the Tasks dashboard
+- Added read-only Telegram commands for open tasks, today's tasks, overdue tasks, Ads spend, client requests, and system status
+- Automatically creates agency tasks for new client requests, learning requests, and new support tickets without duplicating tasks for replies
+- Added compact Telegram formatting and action buttons so internal alerts no longer expose long raw WordPress URLs
+
 2.4.51 - Telegram Notification System
 
 - Added configurable Telegram alerts for new CRM records, lead conversions, client messages, service requests, learning requests, payments, Ads thresholds, Ads connection problems, and overdue follow-ups

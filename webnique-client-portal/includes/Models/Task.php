@@ -187,8 +187,13 @@ final class Task
         }
 
         $result = $wpdb->insert($table_name, $insert_data);
+        if ($result === false) {
+            return false;
+        }
 
-        return $result !== false ? $wpdb->insert_id : false;
+        $task_id = (int)$wpdb->insert_id;
+        do_action('wnq_task_created', $task_id, self::getById($task_id) ?: $insert_data);
+        return $task_id;
     }
 
     /**
