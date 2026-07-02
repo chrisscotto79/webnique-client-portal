@@ -203,6 +203,52 @@ final class GoogleAdsClient
         return $result;
     }
 
+    public function billingSummary(string $customer_id, bool $refresh = false): array
+    {
+        $customer_id = $this->customerId($customer_id);
+        $empty = [
+            'available' => false,
+            'status' => '',
+            'payments_account_id' => '',
+            'payments_account_name' => '',
+            'payments_profile_id' => '',
+            'payments_profile_name' => '',
+        ];
+        if ($customer_id === '') {
+            return $empty;
+        }
+
+        $cache_key = 'wnq_google_ads_billing_' . md5($customer_id);
+        if (!$refresh) {
+            $cached = get_transient($cache_key);
+            if (is_array($cached)) {
+                return $cached;
+            }
+        }
+
+        // Billing activity such as card details and individual payments is not
+        // exposed by the Ads API. This query returns only the account setup.
+        $existing_errors = $this->errors;
+        $rows = $this->search($customer_id, "SELECT billing_setup.status, billing_setup.payments_account_info.payments_account_id, billing_setup.payments_account_info.payments_account_name, billing_setup.payments_account_info.payments_profile_id, billing_setup.payments_account_info.payments_profile_name, billing_setup.start_date_time, billing_setup.end_date_time FROM billing_setup ORDER BY billing_setup.start_date_time DESC LIMIT 1");
+        if (count($this->errors) > count($existing_errors)) {
+            $this->errors = $existing_errors;
+            return $empty;
+        }
+
+        $setup = $rows[0]['billingSetup'] ?? [];
+        $info = is_array($setup['paymentsAccountInfo'] ?? null) ? $setup['paymentsAccountInfo'] : [];
+        $result = [
+            'available' => !empty($setup),
+            'status' => strtolower(sanitize_key((string)($setup['status'] ?? ''))),
+            'payments_account_id' => sanitize_text_field((string)($info['paymentsAccountId'] ?? '')),
+            'payments_account_name' => sanitize_text_field((string)($info['paymentsAccountName'] ?? '')),
+            'payments_profile_id' => sanitize_text_field((string)($info['paymentsProfileId'] ?? '')),
+            'payments_profile_name' => sanitize_text_field((string)($info['paymentsProfileName'] ?? '')),
+        ];
+        set_transient($cache_key, $result, HOUR_IN_SECONDS);
+        return $result;
+    }
+
     private function searchTerms(string $customer_id): array
     {
         $rows = $this->search($customer_id, "SELECT search_term_view.search_term, campaign.name, ad_group.name, metrics.clicks, metrics.impressions, metrics.ctr, metrics.conversions FROM search_term_view WHERE segments.date DURING LAST_30_DAYS ORDER BY metrics.clicks DESC LIMIT 100");

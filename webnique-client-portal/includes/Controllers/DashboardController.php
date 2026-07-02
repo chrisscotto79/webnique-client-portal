@@ -122,7 +122,9 @@ final class DashboardController
     register_rest_route('wnq/v1', '/portal/ads-settings', [
       'methods'  => 'POST',
       'callback' => [self::class, 'saveAdsSettings'],
-      'permission_callback' => [self::class, 'canUsePortal'],
+      'permission_callback' => static function (): bool {
+        return is_user_logged_in() && Permissions::currentUserCanManagePortal();
+      },
     ]);
 
     register_rest_route('wnq/v1', '/portal/reports/(?P<id>\d+)', [

@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.45
+Stable tag: 2.4.46
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,13 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.46 - Ads Account Isolation and Billing Setup
+
+- Restricted the Ads account-link endpoint to Golden Web Marketing portal administrators at the REST permission layer
+- Clarified that client users are locked to their assigned portal account and never receive the MCC account list
+- Added an admin-only Billing Account card using Google Ads billing setup metadata
+- Added a safe link to Google Ads for credit, payment method, and payment activity that the Ads API does not expose
+
 2.4.45 - Google Ads Workspace Redesign
 
 - Split the Ads screen into focused Overview, Campaigns, Search Insights, Pages and Devices, and Connection views
