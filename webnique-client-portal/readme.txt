@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.44
+Stable tag: 2.4.45
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,13 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.45 - Google Ads Workspace Redesign
+
+- Split the Ads screen into focused Overview, Campaigns, Search Insights, Pages and Devices, and Connection views
+- Limited long report tables to 12 visible rows with Show all and Show fewer controls
+- Reworked the Ads summary cards, account status, responsive layout, and connection diagnostics
+- Uses a successful Google Ads manager-account query to verify the connection instead of blocking reports on a stale portal access label
+
 2.4.44 - Google Ads QA and UI Polish
 
 - Added clearer Google Ads connection states, refresh controls, and setup diagnostics

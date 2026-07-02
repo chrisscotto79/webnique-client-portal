@@ -136,7 +136,7 @@ final class AdminSettings
                                         <option value="basic" <?php selected($google_ads_access_level, 'basic'); ?>>Basic Access</option>
                                         <option value="standard" <?php selected($google_ads_access_level, 'standard'); ?>>Standard Access</option>
                                     </select>
-                                    <p class="description">This is a label for the portal status. Google controls the actual API access level.</p>
+                                    <p class="description">This is a portal display label because Google does not expose the developer-token access tier through the reporting API. After Google approves Basic Access, select Basic Access here and save.</p>
                                 </td>
                             </tr>
                             <tr>
