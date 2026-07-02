@@ -47,6 +47,10 @@ final class AdminSettings
         if (is_array($telegram_test)) {
             delete_transient('wnq_telegram_test_' . get_current_user_id());
         }
+        $telegram_discovery = get_transient('wnq_telegram_discovery_' . get_current_user_id());
+        if (is_array($telegram_discovery)) {
+            delete_transient('wnq_telegram_discovery_' . get_current_user_id());
+        }
         $seo_enabled = function_exists('wnq_seo_features_enabled') && wnq_seo_features_enabled();
 
         ?>
@@ -64,6 +68,11 @@ final class AdminSettings
             <?php if (is_array($telegram_test)): ?>
                 <div class="notice <?php echo !empty($telegram_test['ok']) ? 'notice-success' : 'notice-error'; ?> is-dismissible">
                     <p><strong>Telegram connection:</strong> <?php echo esc_html((string)($telegram_test['message'] ?? 'Connection test completed.')); ?></p>
+                </div>
+            <?php endif; ?>
+            <?php if (is_array($telegram_discovery)): ?>
+                <div class="notice <?php echo !empty($telegram_discovery['ok']) ? 'notice-success' : 'notice-warning'; ?> is-dismissible">
+                    <p><strong>Telegram groups:</strong> <?php echo esc_html((string)($telegram_discovery['message'] ?? 'Group discovery completed.')); ?></p>
                 </div>
             <?php endif; ?>
 
@@ -208,7 +217,17 @@ final class AdminSettings
                                 <th><label for="wnq_telegram_chat_id">Group Chat ID</label></th>
                                 <td>
                                     <input type="text" name="wnq_telegram_chat_id" id="wnq_telegram_chat_id" value="<?php echo esc_attr($telegram_chat_id); ?>" class="regular-text" placeholder="-1001234567890" inputmode="numeric">
-                                    <p class="description">Telegram group IDs are usually negative and may begin with <code>-100</code>.</p>
+                                    <p class="description">Add the bot to the group and send <code>/start@YourBotUsername</code> there before finding the group. Telegram group IDs are negative and may begin with <code>-100</code>.</p>
+                                    <?php if (!empty($telegram_discovery['chats']) && is_array($telegram_discovery['chats'])): ?>
+                                        <div class="wnq-telegram-groups" aria-label="Discovered Telegram groups">
+                                            <?php foreach ($telegram_discovery['chats'] as $chat): ?>
+                                                <button type="button" class="button wnq-telegram-group" data-chat-id="<?php echo esc_attr((string)($chat['id'] ?? '')); ?>">
+                                                    <?php echo esc_html((string)($chat['title'] ?? 'Telegram group')); ?>
+                                                    <code><?php echo esc_html((string)($chat['id'] ?? '')); ?></code>
+                                                </button>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         </table>
@@ -246,6 +265,7 @@ final class AdminSettings
                     <p class="submit">
                         <button type="submit" class="button button-primary button-large">Save Settings</button>
                         <button type="submit" name="wnq_test_google_ads" value="1" class="button button-secondary button-large">Save &amp; Test Google Ads</button>
+                        <button type="submit" name="wnq_find_telegram_groups" value="1" class="button button-secondary button-large">Save &amp; Find Telegram Groups</button>
                         <button type="submit" name="wnq_test_telegram" value="1" class="button button-secondary button-large">Save &amp; Test Telegram</button>
                     </p>
                 </form>
@@ -337,12 +357,34 @@ final class AdminSettings
         }
         .wnq-ads-help strong, .wnq-ads-help p { flex-basis: 100%; margin: 0; }
         .wnq-ads-help span { padding: 4px 8px; border-radius: 4px; background: #fff; border: 1px solid #e5d9ae; }
+        .wnq-telegram-groups {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .wnq-telegram-group code {
+            margin-left: 6px;
+        }
         @media (max-width: 960px) {
             .wnq-settings-layout {
                 grid-template-columns: 1fr;
             }
         }
         </style>
+        <script>
+        document.addEventListener('click', function (event) {
+            var button = event.target.closest('.wnq-telegram-group');
+            if (!button) {
+                return;
+            }
+            var input = document.getElementById('wnq_telegram_chat_id');
+            if (input) {
+                input.value = button.getAttribute('data-chat-id') || '';
+                input.focus();
+            }
+        });
+        </script>
         <?php
     }
 
@@ -438,6 +480,23 @@ final class AdminSettings
         }
 
         $telegram_tested = false;
+        $telegram_groups_found = false;
+        if (!empty($_POST['wnq_find_telegram_groups'])) {
+            $telegram_groups_found = true;
+            if (!class_exists('WNQ\\Services\\TelegramNotifier')) {
+                require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramNotifier.php';
+            }
+            $telegram = new \WNQ\Services\TelegramNotifier();
+            $discovery = $telegram->discoverChats();
+            if (!empty($discovery['ok']) && count((array)($discovery['chats'] ?? [])) === 1) {
+                $chat = reset($discovery['chats']);
+                if (is_array($chat) && preg_match('/^-?\d+$/', (string)($chat['id'] ?? '')) === 1) {
+                    update_option('wnq_telegram_chat_id', (string)$chat['id'], false);
+                }
+            }
+            set_transient('wnq_telegram_discovery_' . get_current_user_id(), $discovery, 5 * MINUTE_IN_SECONDS);
+        }
+
         if (!empty($_POST['wnq_test_telegram'])) {
             $telegram_tested = true;
             if (!class_exists('WNQ\\Services\\TelegramNotifier')) {
@@ -455,6 +514,7 @@ final class AdminSettings
             'page' => 'wnq-portal',
             'settings-updated' => 'true',
             'ads-tested' => $tested ? 'true' : 'false',
+            'telegram-groups-found' => $telegram_groups_found ? 'true' : 'false',
             'telegram-tested' => $telegram_tested ? 'true' : 'false',
         ], admin_url('admin.php')));
         exit;
