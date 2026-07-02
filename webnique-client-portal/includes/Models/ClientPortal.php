@@ -550,6 +550,7 @@ final class ClientPortal
         $account = [];
         $available_accounts = [];
         $access_level = (string)get_option('wnq_google_ads_access_level', 'test');
+        $api_connection_verified = false;
 
         if (class_exists(GoogleAdsClient::class)) {
             $ads = new GoogleAdsClient($raw_settings);
@@ -585,6 +586,7 @@ final class ClientPortal
                     $devices = $performance['devices'] ?? [];
                 }
                 $ads_errors = $ads->errors();
+                $api_connection_verified = !empty($available_accounts) && empty($ads_errors);
                 if ((string)($raw_settings['customer_id'] ?? '') === '' && !$match && empty($ads_errors)) {
                     $diagnostics[] = 'No linked client Google Ads account was returned from the manager account. Confirm the client account accepted the manager invitation and that the OAuth user can view it.';
                 } elseif ((string)($raw_settings['customer_id'] ?? '') === '' && $match) {
@@ -605,11 +607,14 @@ final class ClientPortal
             $diagnostics[] = 'Google Ads API client class is not loaded in the plugin.';
         }
 
-        if ($access_level === 'test') {
+        if ($access_level === 'test' && !$api_connection_verified) {
             $diagnostics[] = 'Your developer token is labeled Test Account Access. Production client accounts will not return live data until Google approves Basic Access, or unless you connect Google Ads test accounts.';
+        } elseif ($access_level === 'test' && $api_connection_verified) {
+            $diagnostics[] = 'Google Ads is responding successfully. The portal Access Level label is still set to Test Account Access; update it to Basic Access in WordPress settings so the displayed label matches your Google approval.';
         }
 
-        $ready = $has_developer_token && $has_manager_customer_id && !empty($raw_settings['customer_id']) && $has_oauth && $access_level !== 'test';
+        $has_production_access = $access_level !== 'test' || $api_connection_verified;
+        $ready = $has_developer_token && $has_manager_customer_id && !empty($raw_settings['customer_id']) && $has_oauth && $has_production_access;
         $has_report_data = !empty($campaigns)
             || !empty($search_terms)
             || !empty($keywords)
@@ -643,6 +648,9 @@ final class ClientPortal
             'reporting_window' => 'Last 30 days',
             'last_checked' => current_time('mysql'),
             'access_level' => $access_level,
+            'access_status_label' => $api_connection_verified ? 'Verified connection' : ucfirst($access_level) . ' access',
+            'api_connection_verified' => $api_connection_verified,
+            'access_label_needs_update' => $access_level === 'test' && $api_connection_verified,
             'customer_id' => (string)($settings['customer_id'] ?? ''),
             'manager_customer_id' => (string)($settings['manager_customer_id'] ?? ''),
             'matched_account_name' => (string)($account['name'] ?? $settings['matched_account_name'] ?? ($match['name'] ?? '')),
@@ -673,14 +681,14 @@ final class ClientPortal
                 ['label' => 'OAuth client secret', 'ok' => $has_oauth_client_secret],
                 ['label' => 'OAuth refresh token', 'ok' => $has_refresh_token],
                 ['label' => 'Matched client account', 'ok' => !empty($raw_settings['customer_id'])],
-                ['label' => 'Basic API access', 'ok' => $access_level !== 'test'],
+                ['label' => 'Google Ads API connection', 'ok' => $has_production_access],
             ],
             'requirements' => array_values(array_filter([
                 $has_manager_customer_id ? '' : 'Google Ads manager customer ID',
                 $has_developer_token ? '' : 'Google Ads developer token',
                 $has_oauth ? '' : 'OAuth client ID, client secret, and refresh token',
                 !empty($raw_settings['customer_id']) ? '' : 'Client Ads account linked under the manager account',
-                $access_level !== 'test' ? '' : 'Google Ads API Basic Access for production accounts',
+                $has_production_access ? '' : 'Google Ads API Basic Access for production accounts',
             ])),
         ];
     }

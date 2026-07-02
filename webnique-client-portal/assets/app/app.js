@@ -922,23 +922,46 @@
     const rows = resource.campaigns || [];
     const percent = (value) => `${(Number(value || 0) * 100).toFixed(1)}%`;
     const enabledCampaigns = rows.filter((row) => String(row.status || "").toLowerCase() === "enabled").length;
+    const campaignColumns = ["Campaign", "Status", "Clicks", "Impressions", "CTR", "Conversions", "Spend"];
+    const campaignRow = (row) => [esc(row.name), status(row.status === "enabled" ? "green" : "yellow", titleCase(row.status)), Number(row.clicks || 0).toLocaleString(), Number(row.impressions || 0).toLocaleString(), percent(row.ctr), Number(row.conversions || 0).toFixed(1), money(row.spend)];
+    state.adsSection = resource.configured ? (state.adsSection || "overview") : "connection";
     view.innerHTML = `${heading("Internal Reporting", "Google Ads", "Read-only performance from the Google Ads accounts linked to your manager account.")}
       <section class="wnq-ads-hero"><div><span class="wnq-eyebrow">Reporting Workspace</span><h2>${esc(adsStateTitle(resource))}</h2><p>${esc(adsStateCopy(resource))}</p></div><div class="wnq-ads-hero-actions"><button type="button" class="wnq-button is-secondary" id="wnq-refresh-ads">Refresh Ads Data</button>${status(adsStateTone(resource), titleCase(resource.data_status || "setup needed"))}</div></section>
-      <div class="wnq-ads-account-bar"><div><span>Client account</span><strong>${esc(resource.matched_account_name || "Not matched")}</strong><small>${esc(resource.customer_id || "No customer ID")} ${resource.time_zone ? `· ${esc(resource.time_zone)}` : ""}</small></div><div><span>MCC accounts</span><strong>${Number(resource.available_accounts_count || 0).toLocaleString()}</strong><small>Available for matching</small></div><div><span>API access</span><strong>${esc(titleCase(resource.access_level || "test"))}</strong><small>${esc(resource.reporting_window || "Last 30 days")} · ${esc(date(resource.last_checked))}</small></div></div>
-      ${adsProgress(resource)}
-      ${adsDiagnostics(resource)}
-      ${resource.configured ? `<section class="wnq-metrics wnq-ads-metrics">${metric("Clicks", Number(summary.clicks || 0).toLocaleString(), resource.reporting_window || "Last 30 days")}${metric("Impressions", Number(summary.impressions || 0).toLocaleString(), resource.reporting_window || "Last 30 days")}${metric("CTR", percent(summary.ctr), "Click-through rate")}${metric("Conversions", Number(summary.conversions || 0).toFixed(1), "Tracked actions")}${metric("Conversion Rate", percent(summary.conversion_rate), "Conversions per click")}${metric("Campaigns", rows.length.toLocaleString(), `${enabledCampaigns} enabled`)}</section>
-        <section class="wnq-ads-internal-strip"><div><span>Internal cost visibility</span><strong>${money(summary.spend)}</strong><small>Total spend for admin reporting only</small></div><div><span>Cost / conversion</span><strong>${money(summary.cost_per_conversion)}</strong><small>Based on tracked conversions</small></div></section>
-        ${!resource.has_report_data ? adsEmptyReport(resource) : ""}
-        ${adsTable("Campaign Performance", ["Campaign", "Status", "Clicks", "Impressions", "CTR", "Conversions", "Spend"], rows, (row) => [esc(row.name), status(row.status === "enabled" ? "green" : "yellow", titleCase(row.status)), Number(row.clicks || 0).toLocaleString(), Number(row.impressions || 0).toLocaleString(), percent(row.ctr), Number(row.conversions || 0).toFixed(1), money(row.spend)], "No campaign performance was returned for the last 30 days.")}
-        <div class="wnq-grid-2 wnq-ads-report-grid">
-          ${adsTable("Search Terms", ["Search term", "Campaign", "Clicks", "Impressions", "Conversions"], resource.search_terms || [], (row) => [esc(row.term), esc(row.campaign), row.clicks, row.impressions, Number(row.conversions || 0).toFixed(1)], "No search-term activity was returned.")}
-          ${adsTable("Keywords", ["Keyword", "Match", "Campaign", "Clicks", "Conversions"], resource.keywords || [], (row) => [esc(row.keyword), esc(titleCase(row.match_type)), esc(row.campaign), row.clicks, Number(row.conversions || 0).toFixed(1)], "No keyword activity was returned.")}
-          ${adsTable("Landing Pages", ["Landing page", "Clicks", "Impressions", "Conversions"], resource.landing_pages || [], (row) => [`<a href="${esc(row.url)}" target="_blank" rel="noopener">${esc(row.url || "Not set")}</a>`, row.clicks, row.impressions, Number(row.conversions || 0).toFixed(1)], "No landing-page activity was returned.")}
-          ${adsTable("Device Performance", ["Device", "Clicks", "Impressions", "Conversions"], resource.devices || [], (row) => [esc(titleCase(row.device)), row.clicks, row.impressions, Number(row.conversions || 0).toFixed(1)], "No device data was returned.")}
-        </div>` : ""}
-      ${adsSettingsForm(resource)}`;
+      <div class="wnq-ads-account-bar"><div><span>Client account</span><strong>${esc(resource.matched_account_name || "Not matched")}</strong><small>${esc(resource.customer_id || "No customer ID")} ${resource.time_zone ? `· ${esc(resource.time_zone)}` : ""}</small></div><div><span>MCC accounts</span><strong>${Number(resource.available_accounts_count || 0).toLocaleString()}</strong><small>Available for matching</small></div><div><span>API status</span><strong>${esc(resource.access_status_label || titleCase(resource.access_level || "test"))}</strong><small>${esc(resource.reporting_window || "Last 30 days")} · ${esc(date(resource.last_checked))}</small></div></div>
+      <nav class="wnq-ads-nav" aria-label="Google Ads reports">
+        ${[["overview", "Overview"], ["campaigns", "Campaigns"], ["search", "Search Insights"], ["pages", "Pages & Devices"], ["connection", "Connection"]].map(([key, label]) => `<button type="button" data-ads-section="${key}" class="${state.adsSection === key ? "is-active" : ""}" aria-selected="${state.adsSection === key ? "true" : "false"}">${label}</button>`).join("")}
+      </nav>
+      ${resource.errors?.length ? adsDiagnostics(resource, true) : ""}
+      <div class="wnq-ads-sections">
+        <section class="wnq-ads-section ${state.adsSection === "overview" ? "is-active" : ""}" data-ads-panel="overview">
+          ${resource.configured ? `<section class="wnq-metrics wnq-ads-metrics">${metric("Clicks", Number(summary.clicks || 0).toLocaleString(), resource.reporting_window || "Last 30 days")}${metric("Impressions", Number(summary.impressions || 0).toLocaleString(), resource.reporting_window || "Last 30 days")}${metric("CTR", percent(summary.ctr), "Click-through rate")}${metric("Conversions", Number(summary.conversions || 0).toFixed(1), "Tracked actions")}${metric("Conversion Rate", percent(summary.conversion_rate), "Conversions per click")}${metric("Campaigns", rows.length.toLocaleString(), `${enabledCampaigns} enabled`)}</section>
+            <section class="wnq-ads-internal-strip"><div><span>Internal cost visibility</span><strong>${money(summary.spend)}</strong><small>Total spend for admin reporting only</small></div><div><span>Cost / conversion</span><strong>${money(summary.cost_per_conversion)}</strong><small>Based on tracked conversions</small></div></section>
+            ${!resource.has_report_data ? adsEmptyReport(resource) : ""}
+            <div class="wnq-ads-overview-grid">${adsTable("Campaign Snapshot", campaignColumns, rows.slice(0, 6), campaignRow, "No campaign performance was returned for the last 30 days.")}${adsTable("Device Performance", ["Device", "Clicks", "Impressions", "Conversions"], resource.devices || [], (row) => [esc(titleCase(row.device)), row.clicks, row.impressions, Number(row.conversions || 0).toFixed(1)], "No device data was returned.")}</div>` : `<section class="wnq-panel wnq-ads-empty-report"><div><span class="wnq-eyebrow">Setup required</span><h2>Connect an Ads account to begin</h2><p>Open Connection to review the account link and credentials checklist.</p></div><button type="button" class="wnq-button" data-open-ads-connection>Open Connection</button></section>`}
+        </section>
+        <section class="wnq-ads-section ${state.adsSection === "campaigns" ? "is-active" : ""}" data-ads-panel="campaigns">${adsTable("Campaign Performance", campaignColumns, rows, campaignRow, "No campaign performance was returned for the last 30 days.")}</section>
+        <section class="wnq-ads-section ${state.adsSection === "search" ? "is-active" : ""}" data-ads-panel="search"><div class="wnq-ads-stack">${adsTable("Search Terms", ["Search term", "Campaign", "Clicks", "Impressions", "Conversions"], resource.search_terms || [], (row) => [esc(row.term), esc(row.campaign), row.clicks, row.impressions, Number(row.conversions || 0).toFixed(1)], "No search-term activity was returned.")}${adsTable("Keywords", ["Keyword", "Match", "Campaign", "Clicks", "Conversions"], resource.keywords || [], (row) => [esc(row.keyword), esc(titleCase(row.match_type)), esc(row.campaign), row.clicks, Number(row.conversions || 0).toFixed(1)], "No keyword activity was returned.")}</div></section>
+        <section class="wnq-ads-section ${state.adsSection === "pages" ? "is-active" : ""}" data-ads-panel="pages"><div class="wnq-ads-report-grid">${adsTable("Landing Pages", ["Landing page", "Clicks", "Impressions", "Conversions"], resource.landing_pages || [], (row) => [`<a href="${esc(row.url)}" target="_blank" rel="noopener">${esc(row.url || "Not set")}</a>`, row.clicks, row.impressions, Number(row.conversions || 0).toFixed(1)], "No landing-page activity was returned.")}${adsTable("Device Performance", ["Device", "Clicks", "Impressions", "Conversions"], resource.devices || [], (row) => [esc(titleCase(row.device)), row.clicks, row.impressions, Number(row.conversions || 0).toFixed(1)], "No device data was returned.")}</div></section>
+        <section class="wnq-ads-section ${state.adsSection === "connection" ? "is-active" : ""}" data-ads-panel="connection">${adsProgress(resource)}${adsDiagnostics(resource)}${adsSettingsForm(resource)}</section>
+      </div>`;
     view.querySelector("#wnq-refresh-ads")?.addEventListener("click", () => show("ads", true));
+    const selectAdsSection = (key) => {
+      state.adsSection = key;
+      view.querySelectorAll("[data-ads-section]").forEach((button) => {
+        const active = button.dataset.adsSection === key;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      view.querySelectorAll("[data-ads-panel]").forEach((panel) => panel.classList.toggle("is-active", panel.dataset.adsPanel === key));
+    };
+    view.querySelectorAll("[data-ads-section]").forEach((button) => button.addEventListener("click", () => selectAdsSection(button.dataset.adsSection)));
+    view.querySelector("[data-open-ads-connection]")?.addEventListener("click", () => selectAdsSection("connection"));
+    view.querySelectorAll("[data-ads-table-toggle]").forEach((button) => button.addEventListener("click", () => {
+      const section = button.closest(".wnq-ads-table");
+      const expanded = section?.classList.toggle("is-expanded");
+      button.textContent = expanded ? "Show fewer" : `Show all ${button.dataset.total}`;
+      button.setAttribute("aria-expanded", expanded ? "true" : "false");
+    }));
     const form = view.querySelector("#wnq-ads-settings");
     form?.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -973,10 +996,17 @@
   }[data.data_status] || "Use this internal screen to connect client Ads accounts and review read-only reporting.");
   const adsProgress = (data) => `<div class="wnq-setup-checks wnq-ads-progress">${(data.setup_checks || []).map((check) => `<span class="${check.ok ? "is-ok" : "is-needed"}">${esc(check.label)}</span>`).join("")}</div>`;
   const adsEmptyReport = (data) => `<section class="wnq-panel wnq-ads-empty-report"><div><span class="wnq-eyebrow">No recent activity</span><h2>Google returned an empty report</h2><p>This usually means the selected account had no clicks or impressions during ${esc(data.reporting_window || "the selected window")}, or the account has no enabled campaigns yet.</p></div></section>`;
-  const adsTable = (title, columns, rows = [], render, fallback) => `<section class="wnq-panel wnq-table-wrap wnq-ads-table"><div class="wnq-panel-head"><div><h2>${esc(title)}</h2><small>${esc(rows.length)} row${rows.length === 1 ? "" : "s"} · Last 30 days</small></div></div><table><thead><tr>${columns.map((label) => `<th>${esc(label)}</th>`).join("")}</tr></thead><tbody>${rows.length ? rows.map((row) => `<tr>${render(row).map((value, index) => `<td data-label="${esc(columns[index])}">${value}</td>`).join("")}</tr>`).join("") : `<tr><td colspan="${columns.length}">${empty(fallback)}</td></tr>`}</tbody></table></section>`;
+  const adsTable = (title, columns, rows = [], render, fallback) => {
+    const previewLimit = 12;
+    const hasMore = rows.length > previewLimit;
+    const body = rows.length
+      ? rows.map((row, rowIndex) => `<tr class="${rowIndex >= previewLimit ? "wnq-ads-row-extra" : ""}">${render(row).map((value, index) => `<td data-label="${esc(columns[index])}">${value}</td>`).join("")}</tr>`).join("")
+      : `<tr><td colspan="${columns.length}">${empty(fallback)}</td></tr>`;
+    return `<section class="wnq-panel wnq-table-wrap wnq-ads-table"><div class="wnq-panel-head"><div><h2>${esc(title)}</h2><small>${esc(rows.length)} row${rows.length === 1 ? "" : "s"} · Last 30 days</small></div></div><table><thead><tr>${columns.map((label) => `<th>${esc(label)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>${hasMore ? `<div class="wnq-ads-table-footer"><span>Showing ${previewLimit} of ${rows.length}</span><button type="button" class="wnq-button is-secondary" data-ads-table-toggle data-total="${rows.length}" aria-expanded="false">Show all ${rows.length}</button></div>` : ""}</section>`;
+  };
 
-  const adsDiagnostics = (data) => {
-    const messages = [...(data.errors || []), ...(data.diagnostics || [])].filter(Boolean);
+  const adsDiagnostics = (data, errorsOnly = false) => {
+    const messages = errorsOnly ? [...(data.errors || [])].filter(Boolean) : [...(data.errors || []), ...(data.diagnostics || [])].filter(Boolean);
     return messages.length ? `<section class="wnq-ads-diagnostics ${data.errors?.length ? "is-error" : ""}"><strong>Google Ads setup message</strong>${messages.map((message) => `<p>${esc(message)}</p>`).join("")}</section>` : "";
   };
   const adsSettingsForm = (data) => {
