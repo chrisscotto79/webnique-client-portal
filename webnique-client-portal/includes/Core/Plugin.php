@@ -83,6 +83,7 @@ final class Plugin
      */
     require_once WNQ_PORTAL_PATH . 'includes/Services/FirebaseStore.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/GoogleAdsClient.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramNotifier.php';
 
     /**
      * Views
