@@ -51,16 +51,18 @@ final class AdminSettings
         $telegram_stored_events = get_option('wnq_telegram_events', []);
         $telegram_events = array_merge($telegram_event_defaults, is_array($telegram_stored_events) ? $telegram_stored_events : []);
         $telegram_event_labels = [
-            'crm_records' => 'New leads and jobs',
-            'lead_conversions' => 'Lead converted to job',
+            'tasks' => 'New Golden Web Marketing tasks',
             'support_messages' => 'Client support messages',
             'client_requests' => 'Client service requests',
             'learning_requests' => 'Learning center requests',
             'payments' => 'Payments and payment failures',
             'ads_spend' => 'Google Ads spend threshold',
             'ads_connection' => 'Google Ads connection problems',
-            'overdue_followups' => 'Daily overdue follow-up summary',
+            'overdue_tasks' => 'Daily overdue agency task summary',
         ];
+        $telegram_commands = class_exists('WNQ\Services\NotificationManager')
+            ? \WNQ\Services\NotificationManager::botCommands()
+            : [];
         $telegram_ads_threshold = (float)get_option('wnq_telegram_ads_spend_threshold', 1000);
         $telegram_last_sent = (string)get_option('wnq_telegram_last_sent_at', '');
         $telegram_last_check = (string)get_option('wnq_telegram_last_check_at', '');
@@ -76,6 +78,10 @@ final class AdminSettings
         $notification_check = get_transient('wnq_notification_check_' . get_current_user_id());
         if (is_array($notification_check)) {
             delete_transient('wnq_notification_check_' . get_current_user_id());
+        }
+        $telegram_command_sync = get_transient('wnq_telegram_command_sync_' . get_current_user_id());
+        if (is_array($telegram_command_sync)) {
+            delete_transient('wnq_telegram_command_sync_' . get_current_user_id());
         }
         $seo_enabled = function_exists('wnq_seo_features_enabled') && wnq_seo_features_enabled();
 
@@ -104,6 +110,11 @@ final class AdminSettings
             <?php if (is_array($notification_check)): ?>
                 <div class="notice <?php echo !empty($notification_check['ok']) ? 'notice-success' : 'notice-warning'; ?> is-dismissible">
                     <p><strong>Notification checks:</strong> <?php echo esc_html((string)($notification_check['message'] ?? 'Scheduled checks completed.')); ?></p>
+                </div>
+            <?php endif; ?>
+            <?php if (is_array($telegram_command_sync)): ?>
+                <div class="notice <?php echo !empty($telegram_command_sync['ok']) ? 'notice-success' : 'notice-warning'; ?> is-dismissible">
+                    <p><strong>Telegram commands:</strong> <?php echo esc_html((string)($telegram_command_sync['message'] ?? 'Command sync completed.')); ?></p>
                 </div>
             <?php endif; ?>
 
@@ -305,6 +316,17 @@ final class AdminSettings
                             <span><strong>Last scheduled check</strong><?php echo esc_html($telegram_last_check !== '' ? $telegram_last_check : 'Never'); ?></span>
                             <span class="<?php echo $telegram_last_error !== '' ? 'has-error' : ''; ?>"><strong>Last delivery issue</strong><?php echo esc_html($telegram_last_error !== '' ? $telegram_last_error : 'None'); ?></span>
                         </div>
+                        <div class="wnq-command-guide">
+                            <div>
+                                <h3>Bot Commands</h3>
+                                <p>Use these read-only commands in the connected internal group. Client CRM leads and jobs are intentionally excluded.</p>
+                            </div>
+                            <div class="wnq-command-grid">
+                                <?php foreach ($telegram_commands as $command => $description): ?>
+                                    <span><code>/<?php echo esc_html($command); ?></code><?php echo esc_html($description); ?></span>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="settings-panel">
@@ -341,6 +363,7 @@ final class AdminSettings
                         <button type="submit" name="wnq_test_google_ads" value="1" class="button button-secondary button-large">Save &amp; Test Google Ads</button>
                         <button type="submit" name="wnq_find_telegram_groups" value="1" class="button button-secondary button-large">Save &amp; Find Telegram Groups</button>
                         <button type="submit" name="wnq_test_telegram" value="1" class="button button-secondary button-large">Save &amp; Test Telegram</button>
+                        <button type="submit" name="wnq_sync_telegram_commands" value="1" class="button button-secondary button-large">Save &amp; Sync Bot Commands</button>
                         <button type="submit" name="wnq_run_notification_checks" value="1" class="button button-secondary button-large">Save &amp; Run Alert Checks</button>
                     </p>
                 </form>
@@ -476,11 +499,41 @@ final class AdminSettings
             background: #f6f7f7;
         }
         .wnq-notification-health .has-error { border-color: #d63638; background: #fcf0f1; }
+        .wnq-command-guide {
+            display: grid;
+            grid-template-columns: minmax(220px, .7fr) minmax(320px, 1.3fr);
+            gap: 20px;
+            align-items: start;
+            margin-top: 16px;
+            padding: 18px;
+            border: 1px solid #e4d7a8;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #fffdf6, #f8f4e7);
+        }
+        .wnq-command-guide h3, .wnq-command-guide p { margin: 0; }
+        .wnq-command-guide p { margin-top: 6px; color: #646970; }
+        .wnq-command-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+        }
+        .wnq-command-grid span {
+            display: grid;
+            grid-template-columns: 86px 1fr;
+            gap: 8px;
+            align-items: center;
+            min-width: 0;
+            padding: 9px 10px;
+            border: 1px solid #e5e1d5;
+            border-radius: 6px;
+            background: #fff;
+        }
+        .wnq-command-grid code { color: #755d00; font-weight: 700; }
         @media (max-width: 960px) {
             .wnq-settings-layout {
                 grid-template-columns: 1fr;
             }
-            .wnq-notification-events, .wnq-notification-health { grid-template-columns: 1fr; }
+            .wnq-notification-events, .wnq-notification-health, .wnq-command-guide, .wnq-command-grid { grid-template-columns: 1fr; }
         }
         </style>
         <script>
@@ -539,6 +592,8 @@ final class AdminSettings
                 update_option('wnq_stripe_webhook_secret', $stripe_webhook_secret, false);
             }
         }
+        $previous_telegram_token = (string)get_option('wnq_telegram_bot_token', '');
+        $previous_telegram_chat_id = (string)get_option('wnq_telegram_chat_id', '');
         update_option('wnq_telegram_enabled', !empty($_POST['wnq_telegram_enabled']), false);
         $telegram_event_defaults = class_exists('WNQ\\Services\\NotificationManager')
             ? \WNQ\Services\NotificationManager::eventDefaults()
@@ -562,6 +617,13 @@ final class AdminSettings
             if ($telegram_token !== '') {
                 update_option('wnq_telegram_bot_token', $telegram_token, false);
             }
+        }
+        if (
+            $previous_telegram_token !== (string)get_option('wnq_telegram_bot_token', '')
+            || $previous_telegram_chat_id !== (string)get_option('wnq_telegram_chat_id', '')
+        ) {
+            delete_option('wnq_telegram_update_offset');
+            delete_option('wnq_telegram_commands_hash');
         }
         $google_ads_token = sanitize_text_field(wp_unslash($_POST['wnq_google_ads_developer_token'] ?? ''));
         $clear_google_ads_token = !empty($_POST['wnq_google_ads_clear_developer_token']);
@@ -650,6 +712,19 @@ final class AdminSettings
             );
         }
 
+        $telegram_commands_synced = false;
+        if (!empty($_POST['wnq_sync_telegram_commands'])) {
+            $telegram_commands_synced = true;
+            if (!class_exists('WNQ\\Services\\NotificationManager')) {
+                require_once WNQ_PORTAL_PATH . 'includes/Services/NotificationManager.php';
+            }
+            set_transient(
+                'wnq_telegram_command_sync_' . get_current_user_id(),
+                \WNQ\Services\NotificationManager::syncBotCommands(true),
+                5 * MINUTE_IN_SECONDS
+            );
+        }
+
         $notification_checks_run = false;
         if (!empty($_POST['wnq_run_notification_checks'])) {
             $notification_checks_run = true;
@@ -669,6 +744,7 @@ final class AdminSettings
             'ads-tested' => $tested ? 'true' : 'false',
             'telegram-groups-found' => $telegram_groups_found ? 'true' : 'false',
             'telegram-tested' => $telegram_tested ? 'true' : 'false',
+            'telegram-commands-synced' => $telegram_commands_synced ? 'true' : 'false',
             'notification-checks-run' => $notification_checks_run ? 'true' : 'false',
         ], admin_url('admin.php')));
         exit;

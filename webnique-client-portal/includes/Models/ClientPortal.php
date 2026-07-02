@@ -991,7 +991,7 @@ final class ClientPortal
             'category' => $category,
             'priority' => $priority,
             'message' => $message,
-        ], $ticket_key);
+        ], $ticket_key, !$existing);
         return $id;
     }
 

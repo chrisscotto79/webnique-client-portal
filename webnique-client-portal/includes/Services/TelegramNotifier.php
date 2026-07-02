@@ -28,9 +28,23 @@ final class TelegramNotifier
             && preg_match('/^-?\d+$/', $this->chat_id) === 1;
     }
 
-    public function send(string $message): array
+    public function getChatId(): string
     {
-        $message = trim(wp_strip_all_tags($message));
+        return $this->chat_id;
+    }
+
+    public function send(string $message, array $options = []): array
+    {
+        $html = !empty($options['html']);
+        $message = $html
+            ? trim(wp_kses($message, [
+                'b' => [],
+                'strong' => [],
+                'i' => [],
+                'em' => [],
+                'code' => [],
+            ]))
+            : trim(wp_strip_all_tags($message));
         if (!$this->isConfigured()) {
             return ['ok' => false, 'message' => 'Telegram bot token and group chat ID are required.'];
         }
@@ -38,16 +52,22 @@ final class TelegramNotifier
             return ['ok' => false, 'message' => 'Telegram message cannot be empty.'];
         }
 
+        $body = [
+            'chat_id' => $this->chat_id,
+            'text' => function_exists('mb_substr') ? mb_substr($message, 0, 4000) : substr($message, 0, 4000),
+            'disable_web_page_preview' => 'true',
+        ];
+        if ($html) {
+            $body['parse_mode'] = 'HTML';
+        }
+        $buttons = self::sanitizeButtons((array)($options['buttons'] ?? []));
+        if ($buttons !== []) {
+            $body['reply_markup'] = wp_json_encode(['inline_keyboard' => [$buttons]]);
+        }
+
         $response = wp_remote_post(
             'https://api.telegram.org/bot' . $this->bot_token . '/sendMessage',
-            [
-                'timeout' => 20,
-                'body' => [
-                    'chat_id' => $this->chat_id,
-                    'text' => $message,
-                    'disable_web_page_preview' => 'true',
-                ],
-            ]
+            ['timeout' => 20, 'body' => $body]
         );
 
         if (is_wp_error($response)) {
@@ -71,7 +91,7 @@ final class TelegramNotifier
         return ['ok' => true, 'message' => 'Test notification sent to the Telegram group.'];
     }
 
-    public function notify(string $event, string $message, string $dedupe_key = '', int $dedupe_ttl = DAY_IN_SECONDS): array
+    public function notify(string $event, string $message, string $dedupe_key = '', int $dedupe_ttl = DAY_IN_SECONDS, array $options = []): array
     {
         if (!(bool)get_option('wnq_telegram_enabled', false)) {
             return ['ok' => false, 'skipped' => true, 'message' => 'Telegram notifications are disabled.'];
@@ -89,7 +109,7 @@ final class TelegramNotifier
             return ['ok' => false, 'skipped' => true, 'message' => 'Duplicate Telegram alert suppressed.'];
         }
 
-        $result = $this->send($message);
+        $result = $this->send($message, $options);
         if (!empty($result['ok'])) {
             if ($transient_key !== '') {
                 set_transient($transient_key, 1, max(MINUTE_IN_SECONDS, $dedupe_ttl));
@@ -178,5 +198,88 @@ final class TelegramNotifier
                 : sprintf('%d Telegram groups were found. Select the correct group below.', count($chats)),
             'chats' => $chats,
         ];
+    }
+
+    /**
+     * Read recent bot updates for the command poller.
+     *
+     * @return array{ok: bool, message: string, updates: array<int, array>}
+     */
+    public function getUpdates(int $offset = 0): array
+    {
+        if (preg_match('/^\d+:[A-Za-z0-9_-]+$/', $this->bot_token) !== 1) {
+            return ['ok' => false, 'message' => 'A valid Telegram bot token is required.', 'updates' => []];
+        }
+
+        $url = add_query_arg([
+            'offset' => max(0, $offset),
+            'limit' => 50,
+            'timeout' => 0,
+            'allowed_updates' => wp_json_encode(['message']),
+        ], 'https://api.telegram.org/bot' . $this->bot_token . '/getUpdates');
+        $response = wp_remote_get($url, ['timeout' => 20]);
+        if (is_wp_error($response)) {
+            return ['ok' => false, 'message' => $response->get_error_message(), 'updates' => []];
+        }
+        $status = (int)wp_remote_retrieve_response_code($response);
+        $body = json_decode((string)wp_remote_retrieve_body($response), true);
+        if ($status < 200 || $status >= 300 || empty($body['ok'])) {
+            return [
+                'ok' => false,
+                'message' => sanitize_text_field((string)($body['description'] ?? 'Telegram could not retrieve bot commands.')),
+                'updates' => [],
+            ];
+        }
+        return ['ok' => true, 'message' => 'Telegram updates retrieved.', 'updates' => (array)($body['result'] ?? [])];
+    }
+
+    public function setCommands(array $commands): array
+    {
+        if (!$this->isConfigured()) {
+            return ['ok' => false, 'message' => 'Telegram bot token and group chat ID are required.'];
+        }
+        $clean = [];
+        foreach ($commands as $command => $description) {
+            $command = sanitize_key((string)$command);
+            $description = sanitize_text_field((string)$description);
+            if ($command !== '' && $description !== '') {
+                $clean[] = ['command' => $command, 'description' => $description];
+            }
+        }
+        if ($clean === []) {
+            return ['ok' => false, 'message' => 'At least one bot command is required.'];
+        }
+        $response = wp_remote_post(
+            'https://api.telegram.org/bot' . $this->bot_token . '/setMyCommands',
+            [
+                'timeout' => 20,
+                'body' => ['commands' => wp_json_encode($clean)],
+            ]
+        );
+        if (is_wp_error($response)) {
+            return ['ok' => false, 'message' => $response->get_error_message()];
+        }
+        $status = (int)wp_remote_retrieve_response_code($response);
+        $body = json_decode((string)wp_remote_retrieve_body($response), true);
+        if ($status < 200 || $status >= 300 || empty($body['ok'])) {
+            return ['ok' => false, 'message' => sanitize_text_field((string)($body['description'] ?? 'Telegram could not save bot commands.'))];
+        }
+        return ['ok' => true, 'message' => 'Telegram bot commands are ready.'];
+    }
+
+    private static function sanitizeButtons(array $buttons): array
+    {
+        $clean = [];
+        foreach (array_slice($buttons, 0, 3) as $button) {
+            if (!is_array($button)) {
+                continue;
+            }
+            $text = sanitize_text_field((string)($button['text'] ?? ''));
+            $url = esc_url_raw((string)($button['url'] ?? ''));
+            if ($text !== '' && $url !== '') {
+                $clean[] = ['text' => $text, 'url' => $url];
+            }
+        }
+        return $clean;
     }
 }
