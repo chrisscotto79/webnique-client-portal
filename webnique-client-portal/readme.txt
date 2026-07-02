@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.46
+Stable tag: 2.4.47
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,13 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.47 - Locked Ads Connection
+
+- Removed the Google Ads Billing link because client users do not have direct billing access
+- Replaced the open account selector with a locked linked-account summary after a client account is assigned
+- Moved account reassignment into a collapsed administrator-only control
+- Clarified that payment activity remains private and managed by Golden Web Marketing
+
 2.4.46 - Ads Account Isolation and Billing Setup
 
 - Restricted the Ads account-link endpoint to Golden Web Marketing portal administrators at the REST permission layer
