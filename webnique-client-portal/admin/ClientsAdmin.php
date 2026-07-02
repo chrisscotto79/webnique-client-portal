@@ -948,6 +948,15 @@ final class ClientsAdmin
             ]);
         }
 
+        do_action(
+            'wnq_portal_payment_recorded',
+            sanitize_text_field((string)($client['client_id'] ?? '')),
+            (float)($client['after_fees'] ?? $client['monthly_rate'] ?? 0),
+            'WordPress - marked paid',
+            'marked-paid-' . (int)$client['id'] . '-' . $new_payment_count,
+            'paid'
+        );
+
         wp_redirect(admin_url('admin.php?page=wnq-clients'));
         exit;
     }
@@ -963,17 +972,32 @@ final class ClientsAdmin
         self::ensureFinanceModel();
         $success = false;
 
+        $entry_type = sanitize_key($_POST['type'] ?? 'income');
+        $entry_amount = floatval($_POST['amount'] ?? 0);
+        $entry_client_id = intval($_POST['client_id'] ?? 0);
         if (class_exists('WNQ\\Models\\FinanceEntry')) {
             $success = FinanceEntry::create([
-                'type' => sanitize_key($_POST['type'] ?? 'income'),
-                'amount' => floatval($_POST['amount'] ?? 0),
+                'type' => $entry_type,
+                'amount' => $entry_amount,
                 'entry_date' => sanitize_text_field($_POST['entry_date'] ?? current_time('Y-m-d')),
                 'recurrence' => sanitize_key($_POST['recurrence'] ?? 'one_time'),
                 'category' => sanitize_text_field($_POST['category'] ?? ''),
-                'client_id' => intval($_POST['client_id'] ?? 0),
+                'client_id' => $entry_client_id,
                 'payment_method' => sanitize_text_field($_POST['payment_method'] ?? ''),
                 'description' => sanitize_textarea_field($_POST['description'] ?? ''),
             ]);
+        }
+
+        if ($success && $entry_type === 'income' && $entry_client_id > 0) {
+            $payment_client = Client::getById($entry_client_id) ?: [];
+            do_action(
+                'wnq_portal_payment_recorded',
+                sanitize_text_field((string)($payment_client['client_id'] ?? '')),
+                $entry_amount,
+                sanitize_text_field((string)($_POST['payment_method'] ?? 'Manual finance entry')),
+                'finance-entry-' . (int)$success,
+                'paid'
+            );
         }
 
         wp_redirect(add_query_arg([

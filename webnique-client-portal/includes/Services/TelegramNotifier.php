@@ -71,6 +71,37 @@ final class TelegramNotifier
         return ['ok' => true, 'message' => 'Test notification sent to the Telegram group.'];
     }
 
+    public function notify(string $event, string $message, string $dedupe_key = '', int $dedupe_ttl = DAY_IN_SECONDS): array
+    {
+        if (!(bool)get_option('wnq_telegram_enabled', false)) {
+            return ['ok' => false, 'skipped' => true, 'message' => 'Telegram notifications are disabled.'];
+        }
+        $stored_events = get_option('wnq_telegram_events', []);
+        $defaults = class_exists(NotificationManager::class) ? NotificationManager::eventDefaults() : [];
+        $events = array_merge($defaults, is_array($stored_events) ? $stored_events : []);
+        if (array_key_exists($event, $events) && empty($events[$event])) {
+            return ['ok' => false, 'skipped' => true, 'message' => 'This Telegram alert type is disabled.'];
+        }
+
+        $dedupe_key = sanitize_key($dedupe_key);
+        $transient_key = $dedupe_key !== '' ? 'wnq_telegram_sent_' . md5($event . '|' . $dedupe_key) : '';
+        if ($transient_key !== '' && get_transient($transient_key)) {
+            return ['ok' => false, 'skipped' => true, 'message' => 'Duplicate Telegram alert suppressed.'];
+        }
+
+        $result = $this->send($message);
+        if (!empty($result['ok'])) {
+            if ($transient_key !== '') {
+                set_transient($transient_key, 1, max(MINUTE_IN_SECONDS, $dedupe_ttl));
+            }
+            update_option('wnq_telegram_last_sent_at', current_time('mysql'), false);
+            delete_option('wnq_telegram_last_error');
+        } else {
+            update_option('wnq_telegram_last_error', sanitize_text_field((string)($result['message'] ?? 'Telegram delivery failed.')), false);
+        }
+        return $result;
+    }
+
     /**
      * Find groups that have recently interacted with the configured bot.
      *

@@ -29,7 +29,9 @@ final class AdminSettings
         $brand_primary = get_option('wnq_brand_primary', '#0d539e');
         $default_billing_cycle = get_option('wnq_default_billing_cycle', 'monthly');
         $stripe_publishable_key = get_option('wnq_stripe_test_publishable_key', '');
-        $stripe_secret_key = get_option('wnq_stripe_test_secret_key', '');
+        $stripe_has_secret_key = (string)get_option('wnq_stripe_test_secret_key', '') !== '';
+        $stripe_has_webhook_secret = (string)get_option('wnq_stripe_webhook_secret', '') !== '';
+        $stripe_webhook_url = rest_url('wnq/v1/notifications/stripe');
         $google_ads_has_developer_token = (string)get_option('wnq_google_ads_developer_token', '') !== '';
         $google_ads_access_level = get_option('wnq_google_ads_access_level', 'test');
         $google_ads_manager_customer_id = get_option('wnq_google_ads_manager_customer_id', '');
@@ -43,6 +45,26 @@ final class AdminSettings
         $telegram_enabled = (bool)get_option('wnq_telegram_enabled', false);
         $telegram_has_token = (string)get_option('wnq_telegram_bot_token', '') !== '';
         $telegram_chat_id = (string)get_option('wnq_telegram_chat_id', '');
+        $telegram_event_defaults = class_exists('WNQ\\Services\\NotificationManager')
+            ? \WNQ\Services\NotificationManager::eventDefaults()
+            : [];
+        $telegram_stored_events = get_option('wnq_telegram_events', []);
+        $telegram_events = array_merge($telegram_event_defaults, is_array($telegram_stored_events) ? $telegram_stored_events : []);
+        $telegram_event_labels = [
+            'crm_records' => 'New leads and jobs',
+            'lead_conversions' => 'Lead converted to job',
+            'support_messages' => 'Client support messages',
+            'client_requests' => 'Client service requests',
+            'learning_requests' => 'Learning center requests',
+            'payments' => 'Payments and payment failures',
+            'ads_spend' => 'Google Ads spend threshold',
+            'ads_connection' => 'Google Ads connection problems',
+            'overdue_followups' => 'Daily overdue follow-up summary',
+        ];
+        $telegram_ads_threshold = (float)get_option('wnq_telegram_ads_spend_threshold', 1000);
+        $telegram_last_sent = (string)get_option('wnq_telegram_last_sent_at', '');
+        $telegram_last_check = (string)get_option('wnq_telegram_last_check_at', '');
+        $telegram_last_error = (string)get_option('wnq_telegram_last_error', '');
         $telegram_test = get_transient('wnq_telegram_test_' . get_current_user_id());
         if (is_array($telegram_test)) {
             delete_transient('wnq_telegram_test_' . get_current_user_id());
@@ -50,6 +72,10 @@ final class AdminSettings
         $telegram_discovery = get_transient('wnq_telegram_discovery_' . get_current_user_id());
         if (is_array($telegram_discovery)) {
             delete_transient('wnq_telegram_discovery_' . get_current_user_id());
+        }
+        $notification_check = get_transient('wnq_notification_check_' . get_current_user_id());
+        if (is_array($notification_check)) {
+            delete_transient('wnq_notification_check_' . get_current_user_id());
         }
         $seo_enabled = function_exists('wnq_seo_features_enabled') && wnq_seo_features_enabled();
 
@@ -73,6 +99,11 @@ final class AdminSettings
             <?php if (is_array($telegram_discovery)): ?>
                 <div class="notice <?php echo !empty($telegram_discovery['ok']) ? 'notice-success' : 'notice-warning'; ?> is-dismissible">
                     <p><strong>Telegram groups:</strong> <?php echo esc_html((string)($telegram_discovery['message'] ?? 'Group discovery completed.')); ?></p>
+                </div>
+            <?php endif; ?>
+            <?php if (is_array($notification_check)): ?>
+                <div class="notice <?php echo !empty($notification_check['ok']) ? 'notice-success' : 'notice-warning'; ?> is-dismissible">
+                    <p><strong>Notification checks:</strong> <?php echo esc_html((string)($notification_check['message'] ?? 'Scheduled checks completed.')); ?></p>
                 </div>
             <?php endif; ?>
 
@@ -112,8 +143,8 @@ final class AdminSettings
                     </div>
 
                     <div class="settings-panel">
-                        <h2>Stripe Test Connection</h2>
-                        <p class="description">Stored server-side for testing. These values are not exposed in the frontend portal.</p>
+                        <h2>Stripe Connection</h2>
+                        <p class="description">Stored server-side for testing and verified payment webhooks. These values are not exposed in the frontend portal.</p>
                         <table class="form-table" role="presentation">
                             <tr>
                                 <th><label for="wnq_stripe_test_publishable_key">Test Publishable Key</label></th>
@@ -121,7 +152,25 @@ final class AdminSettings
                             </tr>
                             <tr>
                                 <th><label for="wnq_stripe_test_secret_key">Test Secret Key</label></th>
-                                <td><input type="text" name="wnq_stripe_test_secret_key" id="wnq_stripe_test_secret_key" value="<?php echo esc_attr($stripe_secret_key); ?>" class="large-text" placeholder="sk_test_..." autocomplete="off"></td>
+                                <td>
+                                    <input type="password" name="wnq_stripe_test_secret_key" id="wnq_stripe_test_secret_key" value="" class="large-text" placeholder="<?php echo esc_attr($stripe_has_secret_key ? 'Saved - leave blank to keep current secret key' : 'sk_test_...'); ?>" autocomplete="new-password">
+                                    <?php if ($stripe_has_secret_key): ?><label class="wnq-inline-check"><input type="checkbox" name="wnq_stripe_clear_secret_key" value="1"> Clear saved secret key</label><?php endif; ?>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th><label for="wnq_stripe_webhook_secret">Webhook Signing Secret</label></th>
+                                <td>
+                                    <input type="password" name="wnq_stripe_webhook_secret" id="wnq_stripe_webhook_secret" value="" class="large-text" placeholder="<?php echo esc_attr($stripe_has_webhook_secret ? 'Saved - leave blank to keep current webhook secret' : 'whsec_...'); ?>" autocomplete="new-password">
+                                    <?php if ($stripe_has_webhook_secret): ?><label class="wnq-inline-check"><input type="checkbox" name="wnq_stripe_clear_webhook_secret" value="1"> Clear saved webhook secret</label><?php endif; ?>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Stripe Webhook URL</th>
+                                <td>
+                                    <input type="url" value="<?php echo esc_attr($stripe_webhook_url); ?>" class="large-text code" readonly>
+                                    <p class="description">Add this endpoint in Stripe for <code>invoice.paid</code>, <code>invoice.payment_failed</code>, <code>payment_intent.succeeded</code>, <code>payment_intent.payment_failed</code>, and <code>checkout.session.completed</code>.</p>
+                                    <p class="description">Payments are matched to clients using Stripe metadata named <code>wnq_client_id</code> or <code>client_id</code>, Checkout's client reference ID, or the client's saved billing email.</p>
+                                </td>
                             </tr>
                         </table>
                     </div>
@@ -230,7 +279,32 @@ final class AdminSettings
                                     <?php endif; ?>
                                 </td>
                             </tr>
+                            <tr>
+                                <th>Alert Types</th>
+                                <td>
+                                    <div class="wnq-notification-events">
+                                        <?php foreach ($telegram_event_labels as $event_key => $event_label): ?>
+                                            <label>
+                                                <input type="checkbox" name="wnq_telegram_events[<?php echo esc_attr($event_key); ?>]" value="1" <?php checked(!empty($telegram_events[$event_key])); ?>>
+                                                <?php echo esc_html($event_label); ?>
+                                            </label>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th><label for="wnq_telegram_ads_spend_threshold">Ads Spend Threshold</label></th>
+                                <td>
+                                    <span class="wnq-money-input"><span>$</span><input type="number" name="wnq_telegram_ads_spend_threshold" id="wnq_telegram_ads_spend_threshold" value="<?php echo esc_attr(number_format($telegram_ads_threshold, 2, '.', '')); ?>" min="0" step="0.01"></span>
+                                    <p class="description">Send one internal alert when a linked client's rolling 30-day Google Ads spend crosses this amount. It resets only after spend drops below the threshold.</p>
+                                </td>
+                            </tr>
                         </table>
+                        <div class="wnq-notification-health">
+                            <span><strong>Last alert</strong><?php echo esc_html($telegram_last_sent !== '' ? $telegram_last_sent : 'Never'); ?></span>
+                            <span><strong>Last scheduled check</strong><?php echo esc_html($telegram_last_check !== '' ? $telegram_last_check : 'Never'); ?></span>
+                            <span class="<?php echo $telegram_last_error !== '' ? 'has-error' : ''; ?>"><strong>Last delivery issue</strong><?php echo esc_html($telegram_last_error !== '' ? $telegram_last_error : 'None'); ?></span>
+                        </div>
                     </div>
 
                     <div class="settings-panel">
@@ -267,6 +341,7 @@ final class AdminSettings
                         <button type="submit" name="wnq_test_google_ads" value="1" class="button button-secondary button-large">Save &amp; Test Google Ads</button>
                         <button type="submit" name="wnq_find_telegram_groups" value="1" class="button button-secondary button-large">Save &amp; Find Telegram Groups</button>
                         <button type="submit" name="wnq_test_telegram" value="1" class="button button-secondary button-large">Save &amp; Test Telegram</button>
+                        <button type="submit" name="wnq_run_notification_checks" value="1" class="button button-secondary button-large">Save &amp; Run Alert Checks</button>
                     </p>
                 </form>
 
@@ -289,6 +364,8 @@ final class AdminSettings
                         <dd><span class="status-pill <?php echo ($google_ads_has_oauth_client_id && $google_ads_has_oauth_client_secret && $google_ads_has_refresh_token) ? 'active' : 'inactive'; ?>"><?php echo ($google_ads_has_oauth_client_id && $google_ads_has_oauth_client_secret && $google_ads_has_refresh_token) ? 'Saved' : 'Missing'; ?></span></dd>
                         <dt>Telegram Alerts</dt>
                         <dd><span class="status-pill <?php echo ($telegram_enabled && $telegram_has_token && $telegram_chat_id !== '') ? 'active' : 'inactive'; ?>"><?php echo ($telegram_enabled && $telegram_has_token && $telegram_chat_id !== '') ? 'Enabled' : 'Not configured'; ?></span></dd>
+                        <dt>Stripe Webhook</dt>
+                        <dd><span class="status-pill <?php echo $stripe_has_webhook_secret ? 'active' : 'inactive'; ?>"><?php echo $stripe_has_webhook_secret ? 'Ready' : 'Not configured'; ?></span></dd>
                         <dt>Analytics Admin</dt>
                         <dd><?php echo class_exists('WNQ\\Admin\\AnalyticsAdmin') ? 'Available' : 'Loads on demand'; ?></dd>
                     </dl>
@@ -366,10 +443,44 @@ final class AdminSettings
         .wnq-telegram-group code {
             margin-left: 6px;
         }
+        .wnq-notification-events {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(220px, 1fr));
+            gap: 10px 18px;
+            max-width: 760px;
+        }
+        .wnq-notification-events label {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .wnq-money-input {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-weight: 700;
+        }
+        .wnq-money-input input { width: 150px; }
+        .wnq-notification-health {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+            margin-top: 16px;
+        }
+        .wnq-notification-health span {
+            display: grid;
+            gap: 4px;
+            padding: 12px;
+            border: 1px solid #dcdcde;
+            border-radius: 6px;
+            background: #f6f7f7;
+        }
+        .wnq-notification-health .has-error { border-color: #d63638; background: #fcf0f1; }
         @media (max-width: 960px) {
             .wnq-settings-layout {
                 grid-template-columns: 1fr;
             }
+            .wnq-notification-events, .wnq-notification-health { grid-template-columns: 1fr; }
         }
         </style>
         <script>
@@ -412,8 +523,33 @@ final class AdminSettings
         update_option('wnq_brand_primary', $brand_primary);
         update_option('wnq_default_billing_cycle', $billing_cycle);
         update_option('wnq_stripe_test_publishable_key', sanitize_text_field($_POST['wnq_stripe_test_publishable_key'] ?? ''));
-        update_option('wnq_stripe_test_secret_key', sanitize_text_field($_POST['wnq_stripe_test_secret_key'] ?? ''));
+        if (!empty($_POST['wnq_stripe_clear_secret_key'])) {
+            update_option('wnq_stripe_test_secret_key', '', false);
+        } else {
+            $stripe_secret_key = sanitize_text_field(wp_unslash($_POST['wnq_stripe_test_secret_key'] ?? ''));
+            if ($stripe_secret_key !== '') {
+                update_option('wnq_stripe_test_secret_key', $stripe_secret_key, false);
+            }
+        }
+        if (!empty($_POST['wnq_stripe_clear_webhook_secret'])) {
+            update_option('wnq_stripe_webhook_secret', '', false);
+        } else {
+            $stripe_webhook_secret = sanitize_text_field(wp_unslash($_POST['wnq_stripe_webhook_secret'] ?? ''));
+            if ($stripe_webhook_secret !== '') {
+                update_option('wnq_stripe_webhook_secret', $stripe_webhook_secret, false);
+            }
+        }
         update_option('wnq_telegram_enabled', !empty($_POST['wnq_telegram_enabled']), false);
+        $telegram_event_defaults = class_exists('WNQ\\Services\\NotificationManager')
+            ? \WNQ\Services\NotificationManager::eventDefaults()
+            : [];
+        $posted_telegram_events = is_array($_POST['wnq_telegram_events'] ?? null) ? wp_unslash($_POST['wnq_telegram_events']) : [];
+        $telegram_events = [];
+        foreach ($telegram_event_defaults as $event_key => $default_value) {
+            $telegram_events[$event_key] = !empty($posted_telegram_events[$event_key]);
+        }
+        update_option('wnq_telegram_events', $telegram_events, false);
+        update_option('wnq_telegram_ads_spend_threshold', max(0, (float)($_POST['wnq_telegram_ads_spend_threshold'] ?? 1000)), false);
         $telegram_chat_id = sanitize_text_field(wp_unslash($_POST['wnq_telegram_chat_id'] ?? ''));
         if ($telegram_chat_id !== '' && preg_match('/^-?\d+$/', $telegram_chat_id) !== 1) {
             $telegram_chat_id = '';
@@ -463,6 +599,10 @@ final class AdminSettings
         update_option('wnq_support_phone', sanitize_text_field($_POST['wnq_support_phone'] ?? ''));
         update_option('wnq_support_phone_display', sanitize_text_field($_POST['wnq_support_phone_display'] ?? ''));
 
+        if (class_exists('WNQ\\Services\\NotificationManager')) {
+            \WNQ\Services\NotificationManager::syncSchedule();
+        }
+
         $tested = false;
         if (!empty($_POST['wnq_test_google_ads'])) {
             $tested = true;
@@ -510,12 +650,26 @@ final class AdminSettings
             );
         }
 
+        $notification_checks_run = false;
+        if (!empty($_POST['wnq_run_notification_checks'])) {
+            $notification_checks_run = true;
+            if (!class_exists('WNQ\\Services\\NotificationManager')) {
+                require_once WNQ_PORTAL_PATH . 'includes/Services/NotificationManager.php';
+            }
+            set_transient(
+                'wnq_notification_check_' . get_current_user_id(),
+                \WNQ\Services\NotificationManager::runScheduledChecks(true),
+                5 * MINUTE_IN_SECONDS
+            );
+        }
+
         wp_redirect(add_query_arg([
             'page' => 'wnq-portal',
             'settings-updated' => 'true',
             'ads-tested' => $tested ? 'true' : 'false',
             'telegram-groups-found' => $telegram_groups_found ? 'true' : 'false',
             'telegram-tested' => $telegram_tested ? 'true' : 'false',
+            'notification-checks-run' => $notification_checks_run ? 'true' : 'false',
         ], admin_url('admin.php')));
         exit;
     }
