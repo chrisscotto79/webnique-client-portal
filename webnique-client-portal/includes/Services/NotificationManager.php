@@ -68,7 +68,7 @@ final class NotificationManager
             'addtask' => 'Create a new agency task',
             'donetask' => 'Complete a task by ID',
             'ideanote' => 'Save an idea note',
-            'ads' => 'Show client ad spend this month',
+            'ads' => 'Show client ad spend for past 31 days',
             'billing' => 'Show upcoming client payments',
             'requests' => 'Show open client requests',
             'status' => 'Show notification system status',
@@ -356,22 +356,19 @@ final class NotificationManager
             }
 
             $spend = (float)($ads['spend'] ?? 0);
-            $period = sanitize_text_field((string)($ads['period'] ?? current_time('Y-m')));
             $previous = is_array($state[$client_id] ?? null) ? $state[$client_id] : [];
-            $same_threshold = isset($previous['threshold'], $previous['period'])
-                && (float)$previous['threshold'] === $threshold
-                && (string)$previous['period'] === $period;
+            $same_threshold = isset($previous['threshold']) && (float)$previous['threshold'] === $threshold;
             $was_above = $same_threshold && !empty($previous['above']);
             if ($spend >= $threshold && !$was_above) {
                 $result = $notifier->notify(
                     'ads_spend',
                     self::htmlMessage('Google Ads spend threshold', [
                         'Client' => self::clientName($client_id),
-                        'This month' => self::money($spend),
+                        'Past 31 days' => self::money($spend),
                         'Alert threshold' => self::money($threshold),
                     ]),
-                    'ads-threshold:' . md5($client_id . '|' . $threshold . '|' . $period),
-                    45 * DAY_IN_SECONDS,
+                    'ads-threshold:' . md5($client_id . '|' . $threshold . '|' . current_time('Y-m-d')),
+                    DAY_IN_SECONDS,
                     self::telegramOptions('Open client', self::adminUrl($client_id))
                 );
                 if (!empty($result['ok'])) {
@@ -383,7 +380,7 @@ final class NotificationManager
             } elseif ($spend < $threshold) {
                 $was_above = false;
             }
-            $state[$client_id] = ['above' => $was_above, 'threshold' => $threshold, 'period' => $period, 'spend' => $spend, 'checked_at' => current_time('mysql')];
+            $state[$client_id] = ['above' => $was_above, 'threshold' => $threshold, 'spend' => $spend, 'checked_at' => current_time('mysql')];
         }
         update_option('wnq_telegram_ads_spend_state', $state, false);
         return $sent;
@@ -689,7 +686,7 @@ final class NotificationManager
             return '<b>Google Ads spend</b>' . "\n" . 'No client Ads accounts are currently linked.';
         }
         return '<b>Google Ads spend</b>' . "\n"
-            . '<b>Window:</b> This month' . "\n"
+            . '<b>Window:</b> Past 31 days' . "\n"
             . '<b>Total:</b> ' . self::html(self::money($total)) . "\n\n"
             . implode("\n", array_slice($rows, 0, 20));
     }
