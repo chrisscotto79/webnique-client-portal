@@ -22,6 +22,7 @@ final class ClientPortalAdmin
         add_action('admin_menu', [self::class, 'addPage'], 25);
         add_action('admin_post_wnq_portal_admin_message', [self::class, 'handleMessage']);
         add_action('admin_post_wnq_portal_request_status', [self::class, 'handleRequestStatus']);
+        add_action('admin_post_wnq_portal_ads_threshold', [self::class, 'handleAdsThreshold']);
         add_action('admin_post_wnq_portal_export_report', [self::class, 'handleReportExport']);
         add_action('admin_post_wnq_portal_download_attachment', [self::class, 'handleAttachmentDownload']);
         add_action('admin_notices', [self::class, 'messageNotice']);
@@ -67,22 +68,31 @@ final class ClientPortalAdmin
         $unread_messages = ClientPortal::getUnreadClientMessages();
         $month_jobs = 0;
         $month_profit = 0.0;
+        $month_ads_spend = 0.0;
+        $ads_snapshots = [];
         foreach ($clients as $client) {
+            $client_id = (string)$client['client_id'];
             $performance = ClientPortal::getMonthlyPerformance((string)$client['client_id']);
             $current = $performance ? end($performance) : [];
             $month_jobs += (int)($current['jobs'] ?? 0);
             $month_profit += (float)($current['profit'] ?? 0);
+            $ads_snapshots[$client_id] = ClientPortal::getAdsSpendSnapshot($client_id, false);
+            $month_ads_spend += (float)($ads_snapshots[$client_id]['spend'] ?? 0);
         }
         ?>
         <div class="wrap wnq-cp-admin">
             <h1>Client Portal Dashboard</h1>
             <p class="description">Client activity, CRM performance, reports, billing health, and unread messages in one place.</p>
+            <?php if (sanitize_key((string)($_GET['ads_threshold'] ?? '')) === 'saved'): ?>
+                <div class="notice notice-success is-dismissible"><p>Client Ads spend threshold saved.</p></div>
+            <?php endif; ?>
             <div class="wnq-cp-stats">
                 <div><strong><?php echo count($clients); ?></strong><span>Clients</span></div>
                 <div><strong><?php echo count(array_filter($clients, static fn($c) => ($c['status'] ?? '') === 'active')); ?></strong><span>Active Accounts</span></div>
                 <div><strong><?php echo esc_html(number_format(array_sum(array_map(static fn($c) => (float)($c['monthly_rate'] ?? 0), $clients)), 0)); ?></strong><span>Monthly Managed Revenue</span></div>
                 <div><strong><?php echo (int)$month_jobs; ?></strong><span>Client Jobs This Month</span></div>
                 <div><strong class="<?php echo $month_profit >= 0 ? 'is-positive' : 'is-negative'; ?>">$<?php echo esc_html(number_format($month_profit, 0)); ?></strong><span>Client Profit This Month</span></div>
+                <div><strong>$<?php echo esc_html(number_format($month_ads_spend, 2)); ?></strong><span>Google Ads Spend This Month</span></div>
                 <div><strong><?php echo (int)ClientPortal::getUnreadMessageCount(); ?></strong><span>Unread Client Messages</span></div>
                 <div><strong><?php echo (int)ClientPortal::getOpenRequestCount(); ?></strong><span>Open Client Requests</span></div>
             </div>
@@ -100,8 +110,9 @@ final class ClientPortalAdmin
             <?php endif; ?>
             <div class="wnq-cp-panel">
                 <h2>All Clients</h2>
+                <div class="wnq-cp-table-scroll">
                 <table class="widefat striped">
-                    <thead><tr><th>Client</th><th>Account</th><th>Billing</th><th>Customers</th><th>Jobs This Month</th><th>Revenue This Month</th><th>Profit This Month</th><th>Messages</th><th>Requests</th><th></th></tr></thead>
+                    <thead><tr><th>Client</th><th>Account</th><th>Billing</th><th>Customers</th><th>Jobs This Month</th><th>Revenue This Month</th><th>Profit This Month</th><th>Ads This Month</th><th>Ads Spend Alert</th><th>Messages</th><th>Requests</th><th></th></tr></thead>
                     <tbody>
                     <?php foreach ($clients as $client):
                         $overview = ClientPortal::overview((string)$client['client_id']);
@@ -109,6 +120,11 @@ final class ClientPortalAdmin
                         $crm = $overview['customers'];
                         $performance = $overview['performance'];
                         $current = $performance ? end($performance) : [];
+                        $ads = $ads_snapshots[(string)$client['client_id']] ?? [];
+                        $ads_linked = !empty($ads['has_linked_account']);
+                        $ads_ready = !empty($ads['configured']);
+                        $ads_threshold = (float)($ads['threshold'] ?? 0);
+                        $ads_over_threshold = $ads_ready && $ads_threshold > 0 && (float)($ads['spend'] ?? 0) >= $ads_threshold;
                     ?>
                         <tr>
                             <td><strong><?php echo esc_html($client['company'] ?: $client['name']); ?></strong><br><small><?php echo esc_html($client['client_id']); ?></small></td>
@@ -118,14 +134,29 @@ final class ClientPortalAdmin
                             <td><?php echo (int)($current['jobs'] ?? 0); ?></td>
                             <td>$<?php echo esc_html(number_format((float)($current['revenue'] ?? 0), 2)); ?></td>
                             <td class="<?php echo (float)($current['profit'] ?? 0) >= 0 ? 'is-positive' : 'is-negative'; ?>">$<?php echo esc_html(number_format((float)($current['profit'] ?? 0), 2)); ?></td>
+                            <td class="<?php echo $ads_over_threshold ? 'is-negative' : ''; ?>"><?php echo $ads_ready ? '$' . esc_html(number_format((float)($ads['spend'] ?? 0), 2)) : ($ads_linked ? '<span class="is-negative">Connection issue</span>' : '<span class="text-muted">Not linked</span>'); ?></td>
+                            <td>
+                                <?php if ($ads_linked): ?>
+                                    <form class="wnq-cp-threshold-form <?php echo $ads_over_threshold ? 'is-reached' : ''; ?>" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                                        <?php wp_nonce_field('wnq_portal_ads_threshold_' . (string)$client['client_id']); ?>
+                                        <input type="hidden" name="action" value="wnq_portal_ads_threshold">
+                                        <input type="hidden" name="client_id" value="<?php echo esc_attr((string)$client['client_id']); ?>">
+                                        <label><span class="screen-reader-text">Monthly Ads spend alert for <?php echo esc_html($client['company'] ?: $client['name']); ?></span><b>$</b><input type="number" name="spend_alert_threshold" value="<?php echo esc_attr(number_format($ads_threshold, 2, '.', '')); ?>" min="0" step="0.01"></label>
+                                        <button type="submit" class="button button-small">Save</button>
+                                    </form>
+                                <?php else: ?>
+                                    <span class="text-muted">Unavailable</span>
+                                <?php endif; ?>
+                            </td>
                             <td><?php echo (int)ClientPortal::getUnreadMessageCount((string)$client['client_id']); ?></td>
                             <td><?php echo (int)ClientPortal::getOpenRequestCount((string)$client['client_id']); ?></td>
                             <td><a class="button" href="<?php echo esc_url(admin_url('admin.php?page=wnq-client-portal-dashboard&client_id=' . rawurlencode((string)$client['client_id']))); ?>">View</a></td>
                         </tr>
                     <?php endforeach; ?>
-                    <?php if (!$clients): ?><tr><td colspan="10">No clients found.</td></tr><?php endif; ?>
+                    <?php if (!$clients): ?><tr><td colspan="12">No clients found.</td></tr><?php endif; ?>
                     </tbody>
                 </table>
+                </div>
             </div>
             <?php if ($selected): self::renderClient($selected); endif; ?>
         </div>
@@ -310,6 +341,22 @@ final class ClientPortalAdmin
         exit;
     }
 
+    public static function handleAdsThreshold(): void
+    {
+        self::checkCapability();
+        $client_id = sanitize_text_field(wp_unslash($_POST['client_id'] ?? ''));
+        check_admin_referer('wnq_portal_ads_threshold_' . $client_id);
+        if ($client_id === '' || !Client::getByClientId($client_id)) {
+            wp_die('Client not found.', 'Invalid client', ['response' => 404]);
+        }
+        $raw_threshold = preg_replace('/[^0-9.\-]/', '', (string)wp_unslash($_POST['spend_alert_threshold'] ?? '0'));
+        ClientPortal::saveAdsSettings($client_id, [
+            'spend_alert_threshold' => max(0, round((float)$raw_threshold, 2)),
+        ]);
+        wp_safe_redirect(admin_url('admin.php?page=wnq-client-portal-dashboard&ads_threshold=saved'));
+        exit;
+    }
+
     private static function handleUploads(): array
     {
         if (empty($_FILES['attachments']['name'])) return [];
@@ -415,6 +462,7 @@ final class ClientPortalAdmin
         .wnq-cp-admin{max-width:1500px}.wnq-cp-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px;margin:24px 0}
         .wnq-cp-stats div,.wnq-cp-panel{background:#fff;border:1px solid #dcdcde;padding:20px;margin-bottom:20px}.wnq-cp-stats strong{display:block;font-size:28px}.wnq-cp-stats span{color:#646970}.wnq-cp-inbox{border-left:4px solid #d7b846}.wnq-cp-inbox>a{display:grid;grid-template-columns:220px 220px 1fr;gap:15px;padding:12px 0;border-bottom:1px solid #eee;text-decoration:none;color:#1d2327}.wnq-cp-inbox small{color:#646970}
         .wnq-cp-status{display:inline-block;padding:5px 9px;border-radius:4px;font-weight:700}.wnq-cp-status.is-green{background:#dcfce7;color:#166534}.wnq-cp-status.is-yellow{background:#fef3c7;color:#92400e}.wnq-cp-status.is-red{background:#fee2e2;color:#991b1b}
+        .wnq-cp-table-scroll{overflow-x:auto}.wnq-cp-table-scroll table{min-width:1450px}.wnq-cp-threshold-form{display:flex;align-items:center;gap:6px}.wnq-cp-threshold-form label{display:flex;align-items:center;border:1px solid #8c8f94;border-radius:4px;background:#fff;overflow:hidden}.wnq-cp-threshold-form.is-reached label{border-color:#dc2626;background:#fff5f5}.wnq-cp-threshold-form b{padding-left:7px}.wnq-cp-threshold-form input{width:82px;min-height:30px;border:0;box-shadow:none;background:transparent}.wnq-cp-threshold-form input:focus{box-shadow:none}.text-muted{color:#646970}
         .is-positive{color:#166534;font-weight:700}.is-negative{color:#991b1b;font-weight:700}.wnq-cp-chart{height:230px;display:grid;grid-template-columns:repeat(6,minmax(70px,1fr));gap:18px;align-items:end;border-bottom:1px solid #dcdcde;padding:20px 10px 0}.wnq-cp-chart>div{height:100%;display:flex;flex-direction:column;justify-content:flex-end;text-align:center;gap:5px}.wnq-cp-bar{display:block;min-height:3px;background:#16a34a}.wnq-cp-bar.is-negative{background:#dc2626}.wnq-cp-chart small{color:#646970}.wnq-cp-panel textarea{display:block;width:100%;max-width:700px;margin:10px 0}.wnq-cp-detail{margin-top:30px}
         .wnq-cp-tickets{display:grid;gap:12px}.wnq-cp-ticket{border:1px solid #dcdcde;border-radius:6px;background:#f9f9f9}.wnq-cp-ticket summary{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:16px;cursor:pointer}.wnq-cp-ticket summary span,.wnq-cp-ticket summary small{display:block}.wnq-cp-ticket summary small{color:#646970;margin-top:4px}.wnq-cp-thread{display:grid;gap:10px;padding:0 16px 16px}.wnq-cp-thread article{max-width:75%;padding:12px 14px;border-radius:6px;background:#fff;border:1px solid #dcdcde}.wnq-cp-thread article.is-admin{justify-self:end;background:#fff8db}.wnq-cp-thread header{display:flex;justify-content:space-between;gap:20px}.wnq-cp-thread time{color:#646970;font-size:11px}.wnq-cp-ticket-reply{display:flex;align-items:end;gap:10px;padding:16px;border-top:1px solid #dcdcde;background:#fff}.wnq-cp-ticket-reply textarea{flex:1;margin:0}.wnq-cp-panel>form select{margin:0 6px 8px 0}.wnq-cp-attachments{display:flex;gap:6px;flex-wrap:wrap}.wnq-cp-attachments a{background:#fff;padding:5px 8px;border:1px solid #dcdcde;text-decoration:none}.wnq-cp-requests{display:grid;gap:12px}.wnq-cp-requests>article{display:grid;grid-template-columns:1fr auto;gap:20px;padding:16px;border:1px solid #dcdcde;background:#f9f9f9}.wnq-cp-requests small{display:block;color:#646970;margin-top:5px}.wnq-cp-requests dl{display:grid;grid-template-columns:160px 1fr;gap:5px}.wnq-cp-requests dt{font-weight:700;text-transform:capitalize}.wnq-cp-requests dd{margin:0}
         @media(max-width:782px){.wnq-cp-stats{grid-template-columns:1fr}.wnq-cp-panel{overflow:auto}.wnq-cp-ticket-reply{display:block}.wnq-cp-thread article{max-width:100%}}

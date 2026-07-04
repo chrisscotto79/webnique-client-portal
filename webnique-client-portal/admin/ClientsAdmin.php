@@ -188,7 +188,7 @@ final class ClientsAdmin
                                 <th style="width: 120px;">Tier</th>
                                 <th style="width: 100px;">Monthly</th>
                                 <th style="width: 100px;">After Fees</th>
-                                <th style="width: 120px;">Last Payment</th>
+                                <th style="width: 145px;">Payment Schedule</th>
                                 <th style="width: 80px;">Status</th>
                                 <th style="width: 380px;">Actions</th>
                             </tr>
@@ -236,11 +236,14 @@ final class ClientsAdmin
                                         <br><small class="text-muted">-$<?php echo number_format(($client['monthly_rate'] ?? 0) - ($client['after_fees'] ?? 0), 2); ?></small>
                                     </td>
                                     <td>
-                                        <?php if ($client['last_payment_date']): ?>
-                                            <strong><?php echo date('M j, Y', strtotime($client['last_payment_date'])); ?></strong>
-                                            <br><small class="text-muted"><?php echo intval($client['payment_count'] ?? 0); ?> payments</small>
+                                        <?php if (!empty($client['next_payment_due_date'])): ?>
+                                            <strong>Due <?php echo esc_html(date('M j, Y', strtotime($client['next_payment_due_date']))); ?></strong>
+                                            <br><small class="text-muted"><?php echo !empty($client['payment_notifications_enabled']) ? esc_html((int)($client['payment_reminder_days'] ?? 3) . '-day reminder') : 'Reminders off'; ?></small>
                                         <?php else: ?>
-                                            <span class="text-muted">No payments</span>
+                                            <strong class="text-muted">Due date not set</strong>
+                                        <?php endif; ?>
+                                        <?php if ($client['last_payment_date']): ?>
+                                            <br><small class="text-muted">Last paid <?php echo esc_html(date('M j', strtotime($client['last_payment_date']))); ?></small>
                                         <?php endif; ?>
                                     </td>
                                     <td>
@@ -1249,6 +1252,26 @@ final class ClientsAdmin
                         </td>
                     </tr>
                     <tr>
+                        <th><label for="next_payment_due_date">Next Payment Due</label></th>
+                        <td>
+                            <input type="date" name="next_payment_due_date" id="next_payment_due_date" value="<?php echo esc_attr($client['next_payment_due_date'] ?? ''); ?>" class="regular-text">
+                            <p class="description">Telegram reminders use this date. A successful payment advances it using the billing cycle.</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th><label for="payment_reminder_days">Reminder Lead Time</label></th>
+                        <td>
+                            <input type="number" name="payment_reminder_days" id="payment_reminder_days" value="<?php echo esc_attr((string)($client['payment_reminder_days'] ?? 3)); ?>" min="0" max="30" class="small-text"> days before
+                            <p class="description">Use 0 to send only the due-date and overdue alerts.</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Payment Notifications</th>
+                        <td>
+                            <label><input type="checkbox" name="payment_notifications_enabled" value="1" <?php checked((int)($client['payment_notifications_enabled'] ?? 1), 1); ?>> Send Telegram reminders for this client</label>
+                        </td>
+                    </tr>
+                    <tr>
                         <th><label for="payment_count">Number of Payments</label></th>
                         <td>
                             <input type="number" name="payment_count" id="payment_count" value="<?php echo esc_attr($client['payment_count'] ?? '0'); ?>" min="0" class="small-text">
@@ -1474,6 +1497,9 @@ final class ClientsAdmin
             'stripe_fee_flat' => floatval($_POST['stripe_fee_flat'] ?? 0.30),
             'after_fees' => floatval($_POST['after_fees'] ?? 0),
             'last_payment_date' => sanitize_text_field($_POST['last_payment_date'] ?? ''),
+            'next_payment_due_date' => sanitize_text_field($_POST['next_payment_due_date'] ?? ''),
+            'payment_reminder_days' => max(0, min(30, intval($_POST['payment_reminder_days'] ?? 3))),
+            'payment_notifications_enabled' => !empty($_POST['payment_notifications_enabled']) ? 1 : 0,
             'payment_count' => intval($_POST['payment_count'] ?? 0),
             'total_collected' => floatval($_POST['total_collected'] ?? 0),
             'notes' => wp_kses_post($_POST['notes'] ?? ''),

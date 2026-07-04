@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) {
  */
 final class Client
 {
-    private const SCHEMA_VERSION = '2';
+    private const SCHEMA_VERSION = '3';
 
     /**
      * Table name
@@ -82,6 +82,9 @@ final class Client
             stripe_fee_flat decimal(10,2) DEFAULT 0.30,
             after_fees decimal(10,2) DEFAULT 0.00,
             last_payment_date date DEFAULT NULL,
+            next_payment_due_date date DEFAULT NULL,
+            payment_reminder_days int(11) DEFAULT 3,
+            payment_notifications_enabled tinyint(1) DEFAULT 1,
             payment_count int(11) DEFAULT 0,
             total_collected decimal(10,2) DEFAULT 0.00,
             
@@ -101,6 +104,15 @@ final class Client
 
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         dbDelta($sql);
+        $wpdb->query(
+            "UPDATE $table_name
+             SET next_payment_due_date = CASE billing_cycle
+                 WHEN 'quarterly' THEN DATE_ADD(last_payment_date, INTERVAL 3 MONTH)
+                 WHEN 'annually' THEN DATE_ADD(last_payment_date, INTERVAL 12 MONTH)
+                 ELSE DATE_ADD(last_payment_date, INTERVAL 1 MONTH)
+             END
+             WHERE next_payment_due_date IS NULL AND last_payment_date IS NOT NULL"
+        );
         update_option('wnq_clients_schema_version', self::SCHEMA_VERSION, false);
     }
 
@@ -235,6 +247,15 @@ final class Client
         if (isset($data['last_payment_date'])) {
             $insert_data['last_payment_date'] = sanitize_text_field($data['last_payment_date']);
         }
+        if (isset($data['next_payment_due_date'])) {
+            $insert_data['next_payment_due_date'] = self::dateValue($data['next_payment_due_date']);
+        }
+        if (isset($data['payment_reminder_days'])) {
+            $insert_data['payment_reminder_days'] = max(0, min(30, intval($data['payment_reminder_days'])));
+        }
+        if (isset($data['payment_notifications_enabled'])) {
+            $insert_data['payment_notifications_enabled'] = !empty($data['payment_notifications_enabled']) ? 1 : 0;
+        }
         if (isset($data['payment_count'])) {
             $insert_data['payment_count'] = intval($data['payment_count']);
         }
@@ -352,6 +373,15 @@ final class Client
         }
         if (isset($data['last_payment_date'])) {
             $update_data['last_payment_date'] = sanitize_text_field($data['last_payment_date']);
+        }
+        if (isset($data['next_payment_due_date'])) {
+            $update_data['next_payment_due_date'] = self::dateValue($data['next_payment_due_date']);
+        }
+        if (isset($data['payment_reminder_days'])) {
+            $update_data['payment_reminder_days'] = max(0, min(30, intval($data['payment_reminder_days'])));
+        }
+        if (isset($data['payment_notifications_enabled'])) {
+            $update_data['payment_notifications_enabled'] = !empty($data['payment_notifications_enabled']) ? 1 : 0;
         }
         if (isset($data['payment_count'])) {
             $update_data['payment_count'] = intval($data['payment_count']);
@@ -471,5 +501,14 @@ final class Client
         return (int) $wpdb->get_var(
             $wpdb->prepare("SELECT COUNT(*) FROM $table_name WHERE status = %s", $status)
         );
+    }
+
+    private static function dateValue($value): ?string
+    {
+        $date = sanitize_text_field((string)$value);
+        if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $date, $parts) !== 1) {
+            return null;
+        }
+        return checkdate((int)$parts[2], (int)$parts[3], (int)$parts[1]) ? $date : null;
     }
 }
