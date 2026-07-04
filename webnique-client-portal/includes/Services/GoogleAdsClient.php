@@ -130,7 +130,7 @@ final class GoogleAdsClient
             return $this->emptyPerformance();
         }
 
-        $cache_key = 'wnq_google_ads_report_month_' . current_time('Ym') . '_' . md5($customer_id);
+        $cache_key = 'wnq_google_ads_report_31d_' . current_time('Ymd') . '_' . md5($customer_id);
         if (!$refresh) {
             $cached = get_transient($cache_key);
             if (is_array($cached)) {
@@ -138,7 +138,7 @@ final class GoogleAdsClient
             }
         }
 
-        $query = "SELECT campaign.id, campaign.name, campaign.status, metrics.clicks, metrics.impressions, metrics.ctr, metrics.average_cpc, metrics.cost_micros, metrics.conversions FROM campaign WHERE segments.date DURING THIS_MONTH ORDER BY metrics.cost_micros DESC LIMIT 100";
+        $query = "SELECT campaign.id, campaign.name, campaign.status, metrics.clicks, metrics.impressions, metrics.ctr, metrics.average_cpc, metrics.cost_micros, metrics.conversions FROM campaign WHERE " . $this->reportingDateWhere() . " ORDER BY metrics.cost_micros DESC LIMIT 100";
         $error_count = count($this->errors);
         $rows = $this->search($customer_id, $query);
         $summary = [
@@ -203,14 +203,14 @@ final class GoogleAdsClient
         return $result;
     }
 
-    public function monthlySpend(string $customer_id, bool $refresh = false): float
+    public function recentSpend(string $customer_id, bool $refresh = false): float
     {
         $customer_id = $this->customerId($customer_id);
         if ($customer_id === '') {
             return 0.0;
         }
 
-        $cache_key = 'wnq_google_ads_spend_month_' . current_time('Ym') . '_' . md5($customer_id);
+        $cache_key = 'wnq_google_ads_spend_31d_' . current_time('Ymd') . '_' . md5($customer_id);
         if (!$refresh) {
             $cached = get_transient($cache_key);
             if (is_numeric($cached)) {
@@ -218,7 +218,7 @@ final class GoogleAdsClient
             }
         }
 
-        $rows = $this->search($customer_id, "SELECT metrics.cost_micros FROM customer WHERE segments.date DURING THIS_MONTH");
+        $rows = $this->search($customer_id, "SELECT metrics.cost_micros FROM customer WHERE " . $this->reportingDateWhere());
         $spend = 0.0;
         foreach ($rows as $row) {
             $spend += ((float)($row['metrics']['costMicros'] ?? 0)) / 1000000;
@@ -277,7 +277,7 @@ final class GoogleAdsClient
 
     private function searchTerms(string $customer_id): array
     {
-        $rows = $this->search($customer_id, "SELECT search_term_view.search_term, campaign.name, ad_group.name, metrics.clicks, metrics.impressions, metrics.ctr, metrics.conversions FROM search_term_view WHERE segments.date DURING THIS_MONTH ORDER BY metrics.clicks DESC LIMIT 100");
+        $rows = $this->search($customer_id, "SELECT search_term_view.search_term, campaign.name, ad_group.name, metrics.clicks, metrics.impressions, metrics.ctr, metrics.conversions FROM search_term_view WHERE " . $this->reportingDateWhere() . " ORDER BY metrics.clicks DESC LIMIT 100");
         return array_map(static function (array $row): array {
             $metrics = $row['metrics'] ?? [];
             return [
@@ -294,7 +294,7 @@ final class GoogleAdsClient
 
     private function keywords(string $customer_id): array
     {
-        $rows = $this->search($customer_id, "SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.status, campaign.name, ad_group.name, metrics.clicks, metrics.impressions, metrics.ctr, metrics.conversions FROM keyword_view WHERE segments.date DURING THIS_MONTH ORDER BY metrics.clicks DESC LIMIT 100");
+        $rows = $this->search($customer_id, "SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.status, campaign.name, ad_group.name, metrics.clicks, metrics.impressions, metrics.ctr, metrics.conversions FROM keyword_view WHERE " . $this->reportingDateWhere() . " ORDER BY metrics.clicks DESC LIMIT 100");
         return array_map(static function (array $row): array {
             $criterion = $row['adGroupCriterion'] ?? [];
             $metrics = $row['metrics'] ?? [];
@@ -314,7 +314,7 @@ final class GoogleAdsClient
 
     private function landingPages(string $customer_id): array
     {
-        $rows = $this->search($customer_id, "SELECT landing_page_view.unexpanded_final_url, metrics.clicks, metrics.impressions, metrics.ctr, metrics.conversions FROM landing_page_view WHERE segments.date DURING THIS_MONTH ORDER BY metrics.clicks DESC LIMIT 100");
+        $rows = $this->search($customer_id, "SELECT landing_page_view.unexpanded_final_url, metrics.clicks, metrics.impressions, metrics.ctr, metrics.conversions FROM landing_page_view WHERE " . $this->reportingDateWhere() . " ORDER BY metrics.clicks DESC LIMIT 100");
         return array_map(static function (array $row): array {
             $metrics = $row['metrics'] ?? [];
             return [
@@ -329,7 +329,7 @@ final class GoogleAdsClient
 
     private function devices(string $customer_id): array
     {
-        $rows = $this->search($customer_id, "SELECT segments.device, metrics.clicks, metrics.impressions, metrics.conversions FROM customer WHERE segments.date DURING THIS_MONTH ORDER BY metrics.clicks DESC");
+        $rows = $this->search($customer_id, "SELECT segments.device, metrics.clicks, metrics.impressions, metrics.conversions FROM customer WHERE " . $this->reportingDateWhere() . " ORDER BY metrics.clicks DESC");
         return array_map(static function (array $row): array {
             $metrics = $row['metrics'] ?? [];
             return [
@@ -339,6 +339,13 @@ final class GoogleAdsClient
                 'conversions' => (float)($metrics['conversions'] ?? 0),
             ];
         }, $rows);
+    }
+
+    private function reportingDateWhere(): string
+    {
+        $today = current_datetime()->setTime(0, 0);
+        $start = $today->modify('-30 days');
+        return "segments.date BETWEEN '" . $start->format('Y-m-d') . "' AND '" . $today->format('Y-m-d') . "'";
     }
 
     private function search(string $customer_id, string $query): array

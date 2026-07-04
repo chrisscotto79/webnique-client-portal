@@ -68,7 +68,7 @@ final class ClientPortalAdmin
         $unread_messages = ClientPortal::getUnreadClientMessages();
         $month_jobs = 0;
         $month_profit = 0.0;
-        $month_ads_spend = 0.0;
+        $recent_ads_spend = 0.0;
         $ads_snapshots = [];
         foreach ($clients as $client) {
             $client_id = (string)$client['client_id'];
@@ -77,7 +77,7 @@ final class ClientPortalAdmin
             $month_jobs += (int)($current['jobs'] ?? 0);
             $month_profit += (float)($current['profit'] ?? 0);
             $ads_snapshots[$client_id] = ClientPortal::getAdsSpendSnapshot($client_id, false);
-            $month_ads_spend += (float)($ads_snapshots[$client_id]['spend'] ?? 0);
+            $recent_ads_spend += (float)($ads_snapshots[$client_id]['spend'] ?? 0);
         }
         ?>
         <div class="wrap wnq-cp-admin">
@@ -92,7 +92,7 @@ final class ClientPortalAdmin
                 <div><strong><?php echo esc_html(number_format(array_sum(array_map(static fn($c) => (float)($c['monthly_rate'] ?? 0), $clients)), 0)); ?></strong><span>Monthly Managed Revenue</span></div>
                 <div><strong><?php echo (int)$month_jobs; ?></strong><span>Client Jobs This Month</span></div>
                 <div><strong class="<?php echo $month_profit >= 0 ? 'is-positive' : 'is-negative'; ?>">$<?php echo esc_html(number_format($month_profit, 0)); ?></strong><span>Client Profit This Month</span></div>
-                <div><strong>$<?php echo esc_html(number_format($month_ads_spend, 2)); ?></strong><span>Google Ads Spend This Month</span></div>
+                <div><strong>$<?php echo esc_html(number_format($recent_ads_spend, 2)); ?></strong><span>Google Ads Spend Past 31 Days</span></div>
                 <div><strong><?php echo (int)ClientPortal::getUnreadMessageCount(); ?></strong><span>Unread Client Messages</span></div>
                 <div><strong><?php echo (int)ClientPortal::getOpenRequestCount(); ?></strong><span>Open Client Requests</span></div>
             </div>
@@ -112,7 +112,7 @@ final class ClientPortalAdmin
                 <h2>All Clients</h2>
                 <div class="wnq-cp-table-scroll">
                 <table class="widefat striped">
-                    <thead><tr><th>Client</th><th>Account</th><th>Billing</th><th>Customers</th><th>Jobs This Month</th><th>Revenue This Month</th><th>Profit This Month</th><th>Ads This Month</th><th>Ads Spend Alert</th><th>Messages</th><th>Requests</th><th></th></tr></thead>
+                    <thead><tr><th>Client</th><th>Account</th><th>Billing</th><th>Customers</th><th>Jobs This Month</th><th>Revenue This Month</th><th>Profit This Month</th><th>Ads Past 31 Days</th><th>Ads Spend Alert</th><th>Messages</th><th>Requests</th><th></th></tr></thead>
                     <tbody>
                     <?php foreach ($clients as $client):
                         $overview = ClientPortal::overview((string)$client['client_id']);
@@ -141,7 +141,7 @@ final class ClientPortalAdmin
                                         <?php wp_nonce_field('wnq_portal_ads_threshold_' . (string)$client['client_id']); ?>
                                         <input type="hidden" name="action" value="wnq_portal_ads_threshold">
                                         <input type="hidden" name="client_id" value="<?php echo esc_attr((string)$client['client_id']); ?>">
-                                        <label><span class="screen-reader-text">Monthly Ads spend alert for <?php echo esc_html($client['company'] ?: $client['name']); ?></span><b>$</b><input type="number" name="spend_alert_threshold" value="<?php echo esc_attr(number_format($ads_threshold, 2, '.', '')); ?>" min="0" step="0.01"></label>
+                                        <label><span class="screen-reader-text">31-day Ads spend alert for <?php echo esc_html($client['company'] ?: $client['name']); ?></span><b>$</b><input type="number" name="spend_alert_threshold" value="<?php echo esc_attr(number_format($ads_threshold, 2, '.', '')); ?>" min="0" step="0.01"></label>
                                         <button type="submit" class="button button-small">Save</button>
                                     </form>
                                 <?php else: ?>

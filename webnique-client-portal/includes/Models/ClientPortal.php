@@ -537,7 +537,7 @@ final class ClientPortal
             'account_name' => (string)($settings['matched_account_name'] ?? ''),
             'spend' => 0.0,
             'threshold' => max(0.0, (float)($settings['spend_alert_threshold'] ?? 0)),
-            'period' => current_time('Y-m'),
+            'period' => 'past_31_days',
             'errors' => [],
         ];
         if ($customer_id === '' || !class_exists(GoogleAdsClient::class)) {
@@ -550,7 +550,7 @@ final class ClientPortal
             return $snapshot;
         }
 
-        $snapshot['spend'] = $ads->monthlySpend($customer_id, $refresh);
+        $snapshot['spend'] = $ads->recentSpend($customer_id, $refresh);
         $snapshot['errors'] = $ads->errors();
         $snapshot['configured'] = $snapshot['errors'] === [];
         return $snapshot;
@@ -683,7 +683,7 @@ final class ClientPortal
             'configured' => $ready,
             'data_status' => $data_status,
             'mode' => 'read_only',
-            'reporting_window' => 'This month',
+            'reporting_window' => 'Past 31 days',
             'last_checked' => current_time('mysql'),
             'access_level' => $access_level,
             'access_status_label' => $api_connection_verified ? 'Verified connection' : ucfirst($access_level) . ' access',

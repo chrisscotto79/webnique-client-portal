@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.54
+Stable tag: 2.4.55
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,12 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.55 - Rolling 31-Day Ads Reporting
+
+- Changed Google Ads reporting, dashboard totals, and spend alerts to an inclusive rolling 31-day window
+- Updated Ads cache keys daily so the rolling window remains current
+- Updated WordPress and Telegram labels to match the 31-day reporting period
+
 2.4.54 - Monthly Ads Alerts and Telegram Task Actions
 
 - Changed Google Ads reporting and spend alerts from a rolling 30-day window to the current calendar month
