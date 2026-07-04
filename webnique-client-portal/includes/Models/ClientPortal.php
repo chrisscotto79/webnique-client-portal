@@ -526,6 +526,36 @@ final class ClientPortal
         };
     }
 
+    public static function getAdsSpendSnapshot(string $client_id, bool $refresh = false): array
+    {
+        $settings = self::adsSettings($client_id, false);
+        $customer_id = (string)($settings['customer_id'] ?? '');
+        $snapshot = [
+            'has_linked_account' => $customer_id !== '',
+            'configured' => false,
+            'customer_id' => $customer_id,
+            'account_name' => (string)($settings['matched_account_name'] ?? ''),
+            'spend' => 0.0,
+            'threshold' => max(0.0, (float)($settings['spend_alert_threshold'] ?? 0)),
+            'period' => current_time('Y-m'),
+            'errors' => [],
+        ];
+        if ($customer_id === '' || !class_exists(GoogleAdsClient::class)) {
+            return $snapshot;
+        }
+
+        $ads = new GoogleAdsClient($settings);
+        if (!$ads->isConfigured()) {
+            $snapshot['errors'] = $ads->errors() ?: ['Google Ads credentials are incomplete.'];
+            return $snapshot;
+        }
+
+        $snapshot['spend'] = $ads->monthlySpend($customer_id, $refresh);
+        $snapshot['errors'] = $ads->errors();
+        $snapshot['configured'] = $snapshot['errors'] === [];
+        return $snapshot;
+    }
+
     public static function getAdsResource(string $client_id, bool $include_financial = true, bool $refresh = false): array
     {
         $settings = self::adsSettings($client_id);
@@ -653,7 +683,7 @@ final class ClientPortal
             'configured' => $ready,
             'data_status' => $data_status,
             'mode' => 'read_only',
-            'reporting_window' => 'Last 30 days',
+            'reporting_window' => 'This month',
             'last_checked' => current_time('mysql'),
             'access_level' => $access_level,
             'access_status_label' => $api_connection_verified ? 'Verified connection' : ucfirst($access_level) . ' access',

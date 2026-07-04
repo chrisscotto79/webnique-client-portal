@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.53
+Stable tag: 2.4.54
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,14 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.54 - Monthly Ads Alerts and Telegram Task Actions
+
+- Changed Google Ads reporting and spend alerts from a rolling 30-day window to the current calendar month
+- Added current-month Ads spend and editable per-client alert thresholds to the internal client dashboard
+- Added lightweight monthly spend checks to reduce unnecessary Google Ads API requests
+- Added `/addtask`, `/donetask`, and `/ideanote` Telegram commands
+- Added task IDs to Telegram task lists for reliable task completion
+
 2.4.53 - Per-Client Ads and Payment Alerts
 
 - Added a separate rolling 30-day Google Ads spend threshold to every linked client Ads account

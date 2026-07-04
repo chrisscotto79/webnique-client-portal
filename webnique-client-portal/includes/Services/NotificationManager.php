@@ -65,7 +65,10 @@ final class NotificationManager
             'tasks' => 'Show open agency tasks',
             'today' => 'Show tasks due today',
             'overdue' => 'Show overdue agency tasks',
-            'ads' => 'Show 30-day client ad spend',
+            'addtask' => 'Create a new agency task',
+            'donetask' => 'Complete a task by ID',
+            'ideanote' => 'Save an idea note',
+            'ads' => 'Show client ad spend this month',
             'billing' => 'Show upcoming client payments',
             'requests' => 'Show open client requests',
             'status' => 'Show notification system status',
@@ -207,7 +210,11 @@ final class NotificationManager
 
     public static function onTaskCreated(int $task_id, array $task): void
     {
-        if (($task['status'] ?? 'todo') === 'done' || str_contains((string)($task['notes'] ?? ''), '[portal-auto]')) {
+        if (
+            ($task['status'] ?? 'todo') === 'done'
+            || str_contains((string)($task['notes'] ?? ''), '[portal-auto]')
+            || str_contains((string)($task['notes'] ?? ''), '[telegram-command]')
+        ) {
             return;
         }
         $message = self::htmlMessage('New agency task', [
@@ -326,8 +333,8 @@ final class NotificationManager
             if ($client_id === '' || empty(ClientPortal::getAdsPublicStatus($client_id)['has_linked_account'])) {
                 continue;
             }
-            $ads = ClientPortal::getAdsResource($client_id, true, false);
-            $threshold = max(0.0, (float)($ads['spend_alert_threshold'] ?? 0));
+            $ads = ClientPortal::getAdsSpendSnapshot($client_id, false);
+            $threshold = max(0.0, (float)($ads['threshold'] ?? 0));
             $errors = array_values(array_filter(array_map('sanitize_text_field', (array)($ads['errors'] ?? []))));
             if ($errors && self::eventEnabled('ads_connection')) {
                 $result = $notifier->notify(
@@ -348,30 +355,35 @@ final class NotificationManager
                 continue;
             }
 
-            $spend = (float)($ads['summary']['spend'] ?? 0);
+            $spend = (float)($ads['spend'] ?? 0);
+            $period = sanitize_text_field((string)($ads['period'] ?? current_time('Y-m')));
             $previous = is_array($state[$client_id] ?? null) ? $state[$client_id] : [];
-            $same_threshold = isset($previous['threshold']) && (float)$previous['threshold'] === $threshold;
+            $same_threshold = isset($previous['threshold'], $previous['period'])
+                && (float)$previous['threshold'] === $threshold
+                && (string)$previous['period'] === $period;
             $was_above = $same_threshold && !empty($previous['above']);
             if ($spend >= $threshold && !$was_above) {
                 $result = $notifier->notify(
                     'ads_spend',
                     self::htmlMessage('Google Ads spend threshold', [
                         'Client' => self::clientName($client_id),
-                        'Last 30 days' => self::money($spend),
+                        'This month' => self::money($spend),
                         'Alert threshold' => self::money($threshold),
                     ]),
-                    'ads-threshold:' . md5($client_id . '|' . $threshold . '|' . current_time('Y-m-d')),
-                    DAY_IN_SECONDS,
+                    'ads-threshold:' . md5($client_id . '|' . $threshold . '|' . $period),
+                    45 * DAY_IN_SECONDS,
                     self::telegramOptions('Open client', self::adminUrl($client_id))
                 );
                 if (!empty($result['ok'])) {
                     $sent++;
+                }
+                if (!empty($result['ok']) || !empty($result['skipped'])) {
                     $was_above = true;
                 }
             } elseif ($spend < $threshold) {
                 $was_above = false;
             }
-            $state[$client_id] = ['above' => $was_above, 'threshold' => $threshold, 'spend' => $spend, 'checked_at' => current_time('mysql')];
+            $state[$client_id] = ['above' => $was_above, 'threshold' => $threshold, 'period' => $period, 'spend' => $spend, 'checked_at' => current_time('mysql')];
         }
         update_option('wnq_telegram_ads_spend_state', $state, false);
         return $sent;
@@ -506,14 +518,16 @@ final class NotificationManager
             if ($chat_id !== $notifier->getChatId() || !str_starts_with($text, '/')) {
                 continue;
             }
-            $command = strtolower((string)preg_replace('/@[^\s]+$/', '', strtok($text, " \t\r\n") ?: ''));
-            self::respondToCommand($notifier, ltrim($command, '/'));
+            $command_token = strtok($text, " \t\r\n") ?: '';
+            $command = strtolower((string)preg_replace('/@[^\s]+$/', '', $command_token));
+            $arguments = trim(substr($text, strlen($command_token)));
+            self::respondToCommand($notifier, ltrim($command, '/'), $arguments);
         }
         delete_option('wnq_telegram_last_error');
         update_option('wnq_telegram_last_command_check_at', current_time('mysql'), false);
     }
 
-    private static function respondToCommand(TelegramNotifier $notifier, string $command): void
+    private static function respondToCommand(TelegramNotifier $notifier, string $command, string $arguments = ''): void
     {
         switch ($command) {
             case 'tasks':
@@ -529,6 +543,16 @@ final class NotificationManager
                 break;
             case 'overdue':
                 $notifier->send(self::taskListMessage('Overdue agency tasks', Task::getOverdue(), 12), self::telegramOptions('Open tasks', self::tasksUrl()));
+                break;
+            case 'addtask':
+                $notifier->send(self::addTaskCommand($arguments), self::telegramOptions('Open tasks', self::tasksUrl()));
+                break;
+            case 'donetask':
+                $notifier->send(self::doneTaskCommand($arguments), self::telegramOptions('Open tasks', self::tasksUrl()));
+                break;
+            case 'idea':
+            case 'ideanote':
+                $notifier->send(self::ideaCommand($arguments), self::telegramOptions('Open tasks', self::tasksUrl()));
                 break;
             case 'ads':
                 $notifier->send(self::adsCommandMessage(), self::telegramOptions('Open portal', admin_url('admin.php?page=wnq-client-portal-dashboard')));
@@ -550,6 +574,97 @@ final class NotificationManager
         }
     }
 
+    private static function addTaskCommand(string $arguments): string
+    {
+        if (trim($arguments) === '') {
+            return '<b>Add task</b>' . "\n" . 'Use <code>/addtask Task title | tomorrow | high</code>. The date and priority are optional.';
+        }
+        $parts = array_values(array_filter(array_map('trim', explode('|', $arguments)), static fn(string $part): bool => $part !== ''));
+        $title = self::clip((string)array_shift($parts), 220);
+        $priority = 'medium';
+        $due_date = current_time('Y-m-d');
+        foreach ($parts as $part) {
+            $candidate = sanitize_key($part);
+            if (in_array($candidate, ['low', 'normal', 'medium', 'high', 'urgent'], true)) {
+                $priority = $candidate;
+                continue;
+            }
+            if (strtolower($part) === 'tomorrow') {
+                $due_date = current_datetime()->modify('+1 day')->format('Y-m-d');
+                continue;
+            }
+            if (strtolower($part) === 'today') {
+                $due_date = current_time('Y-m-d');
+                continue;
+            }
+            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $part) === 1) {
+                $due_date = $part;
+            }
+        }
+        $task_id = Task::create([
+            'title' => $title,
+            'status' => 'todo',
+            'task_type' => 'general',
+            'priority' => $priority,
+            'due_date' => $due_date,
+            'notes' => '[telegram-command] Created from Telegram.',
+        ]);
+        if (!$task_id) {
+            return '<b>Task not created</b>' . "\n" . 'WordPress could not save the task.';
+        }
+        return self::htmlMessage('Task created', [
+            'ID' => '#' . $task_id,
+            'Task' => $title,
+            'Due' => self::formatDate($due_date),
+            'Priority' => self::label($priority),
+        ]);
+    }
+
+    private static function doneTaskCommand(string $arguments): string
+    {
+        $task_id = absint(trim($arguments));
+        if ($task_id < 1) {
+            return '<b>Complete task</b>' . "\n" . 'Use <code>/donetask 42</code>. Find task IDs with <code>/tasks</code>.';
+        }
+        $task = Task::getById($task_id);
+        if (!$task) {
+            return '<b>Task not found</b>' . "\n" . 'No task exists with ID #' . $task_id . '.';
+        }
+        if (($task['status'] ?? '') === 'done') {
+            return '<b>Task already complete</b>' . "\n" . '#' . $task_id . ' ' . self::html(self::clean((string)$task['title']));
+        }
+        if (!Task::update($task_id, ['status' => 'done'])) {
+            return '<b>Task not updated</b>' . "\n" . 'WordPress could not complete task #' . $task_id . '.';
+        }
+        return self::htmlMessage('Task completed', [
+            'ID' => '#' . $task_id,
+            'Task' => self::clean((string)$task['title']),
+        ]);
+    }
+
+    private static function ideaCommand(string $arguments): string
+    {
+        if (trim($arguments) === '') {
+            return '<b>Save idea</b>' . "\n" . 'Use <code>/ideanote Your idea or note</code>.';
+        }
+        $idea = self::clip($arguments, 1000);
+        $task_id = Task::create([
+            'title' => 'Idea: ' . self::clip($arguments, 180),
+            'description' => $idea,
+            'status' => 'todo',
+            'task_type' => 'general',
+            'priority' => 'low',
+            'notes' => '[telegram-command] Idea captured from Telegram.',
+        ]);
+        if (!$task_id) {
+            return '<b>Idea not saved</b>' . "\n" . 'WordPress could not save the idea.';
+        }
+        return self::htmlMessage('Idea saved', [
+            'ID' => '#' . $task_id,
+            'Note' => $idea,
+        ]);
+    }
+
     private static function adsCommandMessage(): string
     {
         $rows = [];
@@ -559,13 +674,13 @@ final class NotificationManager
             if ($client_id === '' || empty(ClientPortal::getAdsPublicStatus($client_id)['has_linked_account'])) {
                 continue;
             }
-            $ads = ClientPortal::getAdsResource($client_id, true, false);
+            $ads = ClientPortal::getAdsSpendSnapshot($client_id, false);
             if (empty($ads['configured'])) {
                 $rows[] = '<b>' . self::html(self::clientName($client_id)) . '</b>: connection needs attention';
                 continue;
             }
-            $spend = (float)($ads['summary']['spend'] ?? 0);
-            $threshold = (float)($ads['spend_alert_threshold'] ?? 0);
+            $spend = (float)($ads['spend'] ?? 0);
+            $threshold = (float)($ads['threshold'] ?? 0);
             $total += $spend;
             $rows[] = '<b>' . self::html(self::clientName($client_id)) . '</b>: ' . self::html(self::money($spend))
                 . ($threshold > 0 ? ' / ' . self::html(self::money($threshold)) . ' alert' : ' / alert disabled');
@@ -574,7 +689,7 @@ final class NotificationManager
             return '<b>Google Ads spend</b>' . "\n" . 'No client Ads accounts are currently linked.';
         }
         return '<b>Google Ads spend</b>' . "\n"
-            . '<b>Window:</b> Last 30 days' . "\n"
+            . '<b>Window:</b> This month' . "\n"
             . '<b>Total:</b> ' . self::html(self::money($total)) . "\n\n"
             . implode("\n", array_slice($rows, 0, 20));
     }
@@ -651,7 +766,12 @@ final class NotificationManager
             $lines[] = '<code>/' . self::html($command) . '</code> - ' . self::html($description);
         }
         $lines[] = '';
-        $lines[] = 'Commands are read-only and only work in the connected internal group.';
+        $lines[] = '<b>Examples</b>';
+        $lines[] = '<code>/addtask Call client | tomorrow | high</code>';
+        $lines[] = '<code>/donetask 42</code>';
+        $lines[] = '<code>/ideanote Add a client onboarding checklist</code>';
+        $lines[] = '';
+        $lines[] = 'Commands only work in the connected internal group.';
         return implode("\n", $lines);
     }
 
@@ -662,7 +782,8 @@ final class NotificationManager
         }
         $lines = ['<b>' . self::html($title) . '</b>', '<b>Total:</b> ' . count($tasks), ''];
         foreach (array_slice($tasks, 0, max(1, $limit)) as $index => $task) {
-            $lines[] = ($index + 1) . '. <b>' . self::html(self::clean((string)($task['title'] ?? 'Untitled task'))) . '</b>';
+            $task_id = absint($task['id'] ?? 0);
+            $lines[] = ($index + 1) . '. <b>#' . $task_id . ' ' . self::html(self::clean((string)($task['title'] ?? 'Untitled task'))) . '</b>';
             $parts = [self::formatDate((string)($task['due_date'] ?? '')), self::label((string)($task['priority'] ?? 'medium'))];
             if (!empty($task['client_id'])) {
                 $parts[] = self::clientName((string)$task['client_id']);
