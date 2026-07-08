@@ -125,12 +125,32 @@ final class GoogleAdsClient
 
     public function accountPerformance(string $customer_id, bool $refresh = false): array
     {
+        $today = current_datetime()->setTime(0, 0);
+        return $this->accountPerformanceForRange(
+            $customer_id,
+            $today->modify('-30 days')->format('Y-m-d'),
+            $today->format('Y-m-d'),
+            $refresh
+        );
+    }
+
+    public function accountPerformanceForRange(string $customer_id, string $start_date, string $end_date, bool $refresh = false, bool $include_details = true): array
+    {
         $customer_id = $this->customerId($customer_id);
         if ($customer_id === '') {
             return $this->emptyPerformance();
         }
 
-        $cache_key = 'wnq_google_ads_report_31d_' . current_time('Ymd') . '_' . md5($customer_id);
+        $start_date = $this->validDate($start_date);
+        $end_date = $this->validDate($end_date);
+        if ($start_date === '' || $end_date === '' || $start_date > $end_date) {
+            $this->errors[] = 'Google Ads reporting dates are invalid.';
+            return $this->emptyPerformance();
+        }
+
+        $date_where = $this->reportingDateWhere($start_date, $end_date);
+
+        $cache_key = 'wnq_google_ads_report_range_' . md5($customer_id . '|' . $start_date . '|' . $end_date . '|' . (int)$include_details);
         if (!$refresh) {
             $cached = get_transient($cache_key);
             if (is_array($cached)) {
@@ -138,7 +158,7 @@ final class GoogleAdsClient
             }
         }
 
-        $query = "SELECT campaign.id, campaign.name, campaign.status, metrics.clicks, metrics.impressions, metrics.ctr, metrics.average_cpc, metrics.cost_micros, metrics.conversions FROM campaign WHERE " . $this->reportingDateWhere() . " ORDER BY metrics.cost_micros DESC LIMIT 100";
+        $query = "SELECT campaign.id, campaign.name, campaign.status, metrics.clicks, metrics.impressions, metrics.ctr, metrics.average_cpc, metrics.cost_micros, metrics.conversions FROM campaign WHERE " . $date_where . " ORDER BY metrics.cost_micros DESC LIMIT 100";
         $error_count = count($this->errors);
         $rows = $this->search($customer_id, $query);
         $summary = [
@@ -179,12 +199,12 @@ final class GoogleAdsClient
         $summary['conversion_rate'] = $summary['clicks'] > 0 ? $summary['conversions'] / $summary['clicks'] : 0;
         $summary['cost_per_conversion'] = $summary['conversions'] > 0 ? $summary['spend'] / $summary['conversions'] : 0;
 
-        $detail_reports = count($this->errors) === $error_count
+        $detail_reports = $include_details && count($this->errors) === $error_count
             ? [
-                'search_terms' => $this->searchTerms($customer_id),
-                'keywords' => $this->keywords($customer_id),
-                'landing_pages' => $this->landingPages($customer_id),
-                'devices' => $this->devices($customer_id),
+                'search_terms' => $this->searchTerms($customer_id, $date_where),
+                'keywords' => $this->keywords($customer_id, $date_where),
+                'landing_pages' => $this->landingPages($customer_id, $date_where),
+                'devices' => $this->devices($customer_id, $date_where),
             ]
             : [
                 'search_terms' => [],
@@ -275,9 +295,9 @@ final class GoogleAdsClient
         return $result;
     }
 
-    private function searchTerms(string $customer_id): array
+    private function searchTerms(string $customer_id, string $date_where): array
     {
-        $rows = $this->search($customer_id, "SELECT search_term_view.search_term, campaign.name, ad_group.name, metrics.clicks, metrics.impressions, metrics.ctr, metrics.conversions FROM search_term_view WHERE " . $this->reportingDateWhere() . " ORDER BY metrics.clicks DESC LIMIT 100");
+        $rows = $this->search($customer_id, "SELECT search_term_view.search_term, campaign.name, ad_group.name, metrics.clicks, metrics.impressions, metrics.ctr, metrics.conversions FROM search_term_view WHERE " . $date_where . " ORDER BY metrics.clicks DESC LIMIT 100");
         return array_map(static function (array $row): array {
             $metrics = $row['metrics'] ?? [];
             return [
@@ -292,9 +312,9 @@ final class GoogleAdsClient
         }, $rows);
     }
 
-    private function keywords(string $customer_id): array
+    private function keywords(string $customer_id, string $date_where): array
     {
-        $rows = $this->search($customer_id, "SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.status, campaign.name, ad_group.name, metrics.clicks, metrics.impressions, metrics.ctr, metrics.conversions FROM keyword_view WHERE " . $this->reportingDateWhere() . " ORDER BY metrics.clicks DESC LIMIT 100");
+        $rows = $this->search($customer_id, "SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.status, campaign.name, ad_group.name, metrics.clicks, metrics.impressions, metrics.ctr, metrics.conversions FROM keyword_view WHERE " . $date_where . " ORDER BY metrics.clicks DESC LIMIT 100");
         return array_map(static function (array $row): array {
             $criterion = $row['adGroupCriterion'] ?? [];
             $metrics = $row['metrics'] ?? [];
@@ -312,9 +332,9 @@ final class GoogleAdsClient
         }, $rows);
     }
 
-    private function landingPages(string $customer_id): array
+    private function landingPages(string $customer_id, string $date_where): array
     {
-        $rows = $this->search($customer_id, "SELECT landing_page_view.unexpanded_final_url, metrics.clicks, metrics.impressions, metrics.ctr, metrics.conversions FROM landing_page_view WHERE " . $this->reportingDateWhere() . " ORDER BY metrics.clicks DESC LIMIT 100");
+        $rows = $this->search($customer_id, "SELECT landing_page_view.unexpanded_final_url, metrics.clicks, metrics.impressions, metrics.ctr, metrics.conversions FROM landing_page_view WHERE " . $date_where . " ORDER BY metrics.clicks DESC LIMIT 100");
         return array_map(static function (array $row): array {
             $metrics = $row['metrics'] ?? [];
             return [
@@ -327,9 +347,9 @@ final class GoogleAdsClient
         }, $rows);
     }
 
-    private function devices(string $customer_id): array
+    private function devices(string $customer_id, string $date_where): array
     {
-        $rows = $this->search($customer_id, "SELECT segments.device, metrics.clicks, metrics.impressions, metrics.conversions FROM customer WHERE " . $this->reportingDateWhere() . " ORDER BY metrics.clicks DESC");
+        $rows = $this->search($customer_id, "SELECT segments.device, metrics.clicks, metrics.impressions, metrics.conversions FROM customer WHERE " . $date_where . " ORDER BY metrics.clicks DESC");
         return array_map(static function (array $row): array {
             $metrics = $row['metrics'] ?? [];
             return [
@@ -341,11 +361,21 @@ final class GoogleAdsClient
         }, $rows);
     }
 
-    private function reportingDateWhere(): string
+    private function reportingDateWhere(string $start_date = '', string $end_date = ''): string
     {
-        $today = current_datetime()->setTime(0, 0);
-        $start = $today->modify('-30 days');
-        return "segments.date BETWEEN '" . $start->format('Y-m-d') . "' AND '" . $today->format('Y-m-d') . "'";
+        if ($start_date === '' || $end_date === '') {
+            $today = current_datetime()->setTime(0, 0);
+            $start_date = $today->modify('-30 days')->format('Y-m-d');
+            $end_date = $today->format('Y-m-d');
+        }
+        return "segments.date BETWEEN '" . $start_date . "' AND '" . $end_date . "'";
+    }
+
+    private function validDate(string $value): string
+    {
+        $value = trim($value);
+        $date = \DateTimeImmutable::createFromFormat('!Y-m-d', $value);
+        return $date && $date->format('Y-m-d') === $value ? $value : '';
     }
 
     private function search(string $customer_id, string $query): array
