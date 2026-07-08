@@ -556,6 +556,47 @@ final class ClientPortal
         return $snapshot;
     }
 
+    public static function getAdsReportData(string $client_id, string $start_date, string $end_date, bool $refresh = false): array
+    {
+        $settings = self::adsSettings($client_id, false);
+        $customer_id = (string)($settings['customer_id'] ?? '');
+        $result = [
+            'has_linked_account' => $customer_id !== '',
+            'configured' => false,
+            'customer_id' => $customer_id,
+            'account_name' => (string)($settings['matched_account_name'] ?? ''),
+            'currency_code' => 'USD',
+            'period' => ['start' => $start_date, 'end' => $end_date],
+            'summary' => [
+                'spend' => 0.0,
+                'clicks' => 0,
+                'impressions' => 0,
+                'ctr' => 0.0,
+                'conversions' => 0.0,
+                'conversion_rate' => 0.0,
+                'cost_per_conversion' => 0.0,
+            ],
+            'campaigns' => [],
+            'errors' => [],
+        ];
+        if ($customer_id === '' || !class_exists(GoogleAdsClient::class)) {
+            return $result;
+        }
+
+        $ads = new GoogleAdsClient($settings);
+        if (!$ads->isConfigured()) {
+            $result['errors'] = ['Google Ads credentials are incomplete.'];
+            return $result;
+        }
+
+        $performance = $ads->accountPerformanceForRange($customer_id, $start_date, $end_date, $refresh, false);
+        $result['summary'] = is_array($performance['summary'] ?? null) ? $performance['summary'] : $result['summary'];
+        $result['campaigns'] = is_array($performance['campaigns'] ?? null) ? $performance['campaigns'] : [];
+        $result['errors'] = $ads->errors();
+        $result['configured'] = empty($result['errors']);
+        return $result;
+    }
+
     public static function getAdsResource(string $client_id, bool $include_financial = true, bool $refresh = false): array
     {
         $settings = self::adsSettings($client_id);

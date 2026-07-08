@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.55
+Stable tag: 2.4.56
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,13 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.56 - Constructive SEO Reports with Google Ads
+
+- Updated AI report summaries to describe weaker periods accurately with calm, constructive language
+- Added period-matched Google Ads metrics and campaign performance to web and PDF SEO reports
+- Added a factual non-AI summary fallback that includes available Ads performance
+- Kept rolling 31-day Ads dashboards and alerts independent from report-specific date ranges
+
 2.4.55 - Rolling 31-Day Ads Reporting
 
 - Changed Google Ads reporting, dashboard totals, and spend alerts to an inclusive rolling 31-day window

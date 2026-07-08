@@ -24,6 +24,7 @@ final class AIEngine
 {
     private const BLOG_PROMPT_VERSION = '2026-05-manual-html-format-v1';
     private const SERVICE_CITY_PROMPT_VERSION = '2026-05-short-headings-no-intro-v1';
+    private const REPORT_PROMPT_VERSION = '2026-07-constructive-ads-v1';
 
     const CACHE_GROUP   = 'wnq_ai_cache';
     const RATE_KEY      = 'wnq_ai_rate_';
@@ -128,6 +129,7 @@ You are an SEO agency reporting specialist. Write a professional executive summa
 Client: {client_name}
 Period: {period}
 GA4 Metrics:
+- Available: {analytics_available}
 - Traffic: {traffic_change}
 - Visitors: {visitors}
 - Sessions: {sessions}
@@ -136,16 +138,30 @@ GA4 Metrics:
 - Key Events: {key_events}
 
 Google Search Console Metrics:
+- Available: {search_available}
 - Organic Clicks: {search_clicks}
 - Search Impressions: {search_impressions}
 - CTR: {search_ctr}
 - Average Position: {search_position}
 - Top Queries: {top_queries}
 
+Google Ads Metrics:
+- Available: {ads_available}
+- Spend: {ads_spend}
+- Clicks: {ads_clicks}
+- Impressions: {ads_impressions}
+- CTR: {ads_ctr}
+- Conversions: {ads_conversions}
+- Cost per Conversion: {ads_cost_per_conversion}
+- Top Campaigns: {ads_campaigns}
+
 Write a 2-3 paragraph executive summary that:
-1. Summarizes website traffic and engagement clearly
-2. Summarizes organic search visibility from Google Search Console
-3. Keeps the tone client-friendly and factual
+1. Summarizes website traffic and engagement clearly when GA4 is available
+2. Summarizes organic search visibility when Google Search Console is available
+3. Includes Google Ads performance only when Available is Yes
+4. Keeps the tone calm, constructive, client-friendly, and factual
+
+Report weaker results accurately without harsh, alarming, or blame-focused language. Prefer neutral wording such as "activity was lower than the previous period" or "this was a quieter month" instead of language that sounds like a failure. Balance declines with any stable visibility, engagement, conversions, or useful baseline shown by the data. Do not describe an unavailable source as having zero performance. Never hide a decline, change a number, invent a cause, promise improvement, or claim a win the metrics do not support.
 
 Do not include recommended next steps, technical audit notes, site health, or blog activity.
 
@@ -586,6 +602,9 @@ PROMPT,
         if (in_array($key, ['service_city_page', 'service_city_page_expansion'], true)) {
             self::ensureServiceCityPromptDefaults();
         }
+        if ($key === 'report_summary') {
+            self::ensureReportPromptDefault();
+        }
 
         $overrides = get_option('wnq_ai_prompt_templates', []);
         if (!empty($overrides[$key])) {
@@ -633,6 +652,18 @@ PROMPT,
         $overrides['service_city_page_expansion'] = self::$prompt_templates['service_city_page_expansion'];
         update_option('wnq_ai_prompt_templates', $overrides);
         update_option('wnq_ai_service_city_prompt_version', self::SERVICE_CITY_PROMPT_VERSION);
+    }
+
+    private static function ensureReportPromptDefault(): void
+    {
+        if (get_option('wnq_ai_report_prompt_version', '') === self::REPORT_PROMPT_VERSION) {
+            return;
+        }
+
+        $overrides = get_option('wnq_ai_prompt_templates', []);
+        $overrides['report_summary'] = self::$prompt_templates['report_summary'];
+        update_option('wnq_ai_prompt_templates', $overrides);
+        update_option('wnq_ai_report_prompt_version', self::REPORT_PROMPT_VERSION);
     }
 
     public static function getSettings(): array
