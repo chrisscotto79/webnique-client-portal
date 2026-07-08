@@ -66,6 +66,8 @@
 .wnq-main .wnq-donut span{margin-top:5px;line-height:1.2}
 .wnq-main .wnq-button:hover,.wnq-main .wnq-link:hover,.wnq-main a.wnq-link:hover{color:var(--ink)!important}
 .wnq-main .wnq-button:hover{background:#e2c658;border-color:#8c700b;filter:none}
+.wnq-portal button:focus-visible,.wnq-portal a:focus-visible,.wnq-portal input:focus-visible,.wnq-portal select:focus-visible,.wnq-portal textarea:focus-visible{outline:3px solid rgba(214,180,61,.55);outline-offset:2px}
+@media(prefers-reduced-motion:reduce){.wnq-portal *{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 .wnq-main .wnq-button.is-secondary:hover{background:#fff8db}
 .wnq-report-nav{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 18px;padding:10px;border:1px solid rgba(187,180,160,.72);border-radius:999px;background:rgba(255,255,255,.62);box-shadow:var(--shadow-soft);width:max-content;max-width:100%}
 .wnq-report-nav a{display:inline-flex;align-items:center;min-height:34px;padding:8px 13px;border-radius:999px;color:#725b08;text-decoration:none;font-weight:900}

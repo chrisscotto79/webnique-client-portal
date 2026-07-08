@@ -253,12 +253,14 @@ final class DashboardController
       ClientPortal::deletePrivateAttachments($body['files']);
       ClientPortal::deletePrivateAttachments($body['before_photos']);
       ClientPortal::deletePrivateAttachments($body['after_photos']);
-      $db_error = Permissions::currentUserCanManagePortal() ? ClientPortal::lastError() : '';
+      $model_error = ClientPortal::lastError();
+      $safe_validation_error = str_starts_with($model_error, 'Invalid date supplied') ? $model_error : '';
+      $db_error = Permissions::currentUserCanManagePortal() ? $model_error : '';
       return new \WP_REST_Response([
         'ok' => false,
         'error' => $submitted_name === ''
           ? 'Contact name is required.'
-          : ($db_error !== '' ? 'The CRM record could not be saved. Database error: ' . $db_error : 'The CRM record could not be saved. Please refresh and try again.'),
+          : ($safe_validation_error !== '' ? $safe_validation_error : ($db_error !== '' ? 'The CRM record could not be saved. Database error: ' . $db_error : 'The CRM record could not be saved. Please refresh and try again.')),
       ], 400);
     }
     $saved_record = ClientPortal::getCustomer((int)$id, $client_id);

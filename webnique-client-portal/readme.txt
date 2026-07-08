@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.56
+Stable tag: 2.4.57
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,18 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.57 - Client Portal Production QA
+
+- Fixed report and attachment access for portal managers with the custom management capability
+- Added strict CRM date validation and clearer invalid-date errors
+- Removed repeated customer schema checks during normal portal requests
+- Batched support ticket loading and reduced the minute-by-minute notification query load
+- Migrated legacy CRM files and before/after photos into protected private storage with path validation
+- Reduced duplicate database queries on the internal all-client dashboard
+- Reduced the client portal sidebar logo transfer size while preserving the high-resolution report asset
+- Added safer download response headers, keyboard focus styles, reduced-motion support, and clearer follow-up actions
+- Corrected the Money Management admin menu label
+
 2.4.56 - Constructive SEO Reports with Google Ads
 
 - Updated AI report summaries to describe weaker periods accurately with calm, constructive language

@@ -70,10 +70,11 @@ final class ClientPortalAdmin
         $month_profit = 0.0;
         $recent_ads_spend = 0.0;
         $ads_snapshots = [];
+        $client_snapshots = [];
         foreach ($clients as $client) {
             $client_id = (string)$client['client_id'];
-            $performance = ClientPortal::getMonthlyPerformance((string)$client['client_id']);
-            $current = $performance ? end($performance) : [];
+            $client_snapshots[$client_id] = ClientPortal::getAdminDashboardSnapshot($client_id);
+            $current = $client_snapshots[$client_id]['current_performance'] ?? [];
             $month_jobs += (int)($current['jobs'] ?? 0);
             $month_profit += (float)($current['profit'] ?? 0);
             $ads_snapshots[$client_id] = ClientPortal::getAdsSpendSnapshot($client_id, false);
@@ -115,12 +116,12 @@ final class ClientPortalAdmin
                     <thead><tr><th>Client</th><th>Account</th><th>Billing</th><th>Customers</th><th>Jobs This Month</th><th>Revenue This Month</th><th>Profit This Month</th><th>Ads Past 31 Days</th><th>Ads Spend Alert</th><th>Messages</th><th>Requests</th><th></th></tr></thead>
                     <tbody>
                     <?php foreach ($clients as $client):
-                        $overview = ClientPortal::overview((string)$client['client_id']);
-                        $health = $overview['health'];
-                        $crm = $overview['customers'];
-                        $performance = $overview['performance'];
-                        $current = $performance ? end($performance) : [];
-                        $ads = $ads_snapshots[(string)$client['client_id']] ?? [];
+                        $client_id = (string)$client['client_id'];
+                        $snapshot = $client_snapshots[$client_id] ?? [];
+                        $health = $snapshot['health'] ?? ['overall' => 'yellow', 'billing' => ['tone' => 'yellow', 'label' => 'Review']];
+                        $crm = $snapshot['customers'] ?? [];
+                        $current = $snapshot['current_performance'] ?? [];
+                        $ads = $ads_snapshots[$client_id] ?? [];
                         $ads_linked = !empty($ads['has_linked_account']);
                         $ads_ready = !empty($ads['configured']);
                         $ads_threshold = (float)($ads['threshold'] ?? 0);
@@ -148,8 +149,8 @@ final class ClientPortalAdmin
                                     <span class="text-muted">Unavailable</span>
                                 <?php endif; ?>
                             </td>
-                            <td><?php echo (int)ClientPortal::getUnreadMessageCount((string)$client['client_id']); ?></td>
-                            <td><?php echo (int)ClientPortal::getOpenRequestCount((string)$client['client_id']); ?></td>
+                            <td><?php echo (int)($snapshot['unread_messages'] ?? 0); ?></td>
+                            <td><?php echo (int)($snapshot['open_requests'] ?? 0); ?></td>
                             <td><a class="button" href="<?php echo esc_url(admin_url('admin.php?page=wnq-client-portal-dashboard&client_id=' . rawurlencode((string)$client['client_id']))); ?>">View</a></td>
                         </tr>
                     <?php endforeach; ?>
@@ -392,6 +393,8 @@ final class ClientPortalAdmin
             wp_die('Attachment not found.', 'Not Found', ['response' => 404]);
         }
         nocache_headers();
+        header('X-Content-Type-Options: nosniff');
+        header('Referrer-Policy: no-referrer');
         $type = (string)($attachment['type'] ?: 'application/octet-stream');
         $preview = !empty($_GET['preview']) && str_starts_with($type, 'image/');
         header('Content-Type: ' . $type);
@@ -427,6 +430,8 @@ final class ClientPortalAdmin
             wp_die('Report could not be rendered.');
         }
         nocache_headers();
+        header('X-Content-Type-Options: nosniff');
+        header('Referrer-Policy: no-referrer');
         if ($format === 'pdf') {
             header('Content-Type: application/pdf');
             header('Content-Disposition: attachment; filename="' . $filename . '.pdf"');
@@ -434,6 +439,7 @@ final class ClientPortalAdmin
         } else {
             header('Content-Type: text/html; charset=utf-8');
             header('Content-Disposition: inline; filename="' . $filename . '.html"');
+            header("Content-Security-Policy: default-src 'none'; img-src data: https:; style-src 'unsafe-inline'; font-src data: https:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'");
         }
         echo $content;
         exit;
