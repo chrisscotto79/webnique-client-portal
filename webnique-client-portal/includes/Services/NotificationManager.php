@@ -20,8 +20,10 @@ final class NotificationManager
     private const CRON_HOOK = 'wnq_portal_notification_checks';
     private const CRON_LOCK = 'wnq_portal_notification_check_lock';
     private const COMMAND_CRON_HOOK = 'wnq_telegram_command_poll';
-    private const COMMAND_CRON_SCHEDULE = 'wnq_every_five_minutes';
+    private const COMMAND_CRON_SCHEDULE = 'wnq_every_minute';
+    private const COMMAND_LOCK = 'wnq_telegram_command_poll_lock';
     private const COMMAND_OFFSET_OPTION = 'wnq_telegram_update_offset';
+    private const MAX_AI_QUESTIONS_PER_POLL = 3;
     private static bool $registered = false;
 
     public static function register(): void
@@ -72,6 +74,7 @@ final class NotificationManager
             'billing' => 'Show upcoming client payments',
             'requests' => 'Show open client requests',
             'status' => 'Show notification system status',
+            'ask' => 'Ask Golden a read-only question',
             'help' => 'Show all available commands',
         ];
     }
@@ -79,8 +82,8 @@ final class NotificationManager
     public static function addCronSchedules(array $schedules): array
     {
         $schedules[self::COMMAND_CRON_SCHEDULE] = [
-            'interval' => 5 * MINUTE_IN_SECONDS,
-            'display' => 'Every five minutes',
+            'interval' => MINUTE_IN_SECONDS,
+            'display' => 'Every minute',
         ];
         return $schedules;
     }
@@ -93,6 +96,13 @@ final class NotificationManager
         }
         if (!wp_next_scheduled(self::CRON_HOOK)) {
             wp_schedule_event(time() + (10 * MINUTE_IN_SECONDS), 'daily', self::CRON_HOOK);
+        }
+        if (wp_next_scheduled(self::COMMAND_CRON_HOOK) && wp_get_schedule(self::COMMAND_CRON_HOOK) !== self::COMMAND_CRON_SCHEDULE) {
+            $timestamp = wp_next_scheduled(self::COMMAND_CRON_HOOK);
+            while ($timestamp) {
+                wp_unschedule_event($timestamp, self::COMMAND_CRON_HOOK);
+                $timestamp = wp_next_scheduled(self::COMMAND_CRON_HOOK);
+            }
         }
         if (!wp_next_scheduled(self::COMMAND_CRON_HOOK)) {
             wp_schedule_event(time() + MINUTE_IN_SECONDS, self::COMMAND_CRON_SCHEDULE, self::COMMAND_CRON_HOOK);
@@ -113,6 +123,7 @@ final class NotificationManager
             $timestamp = wp_next_scheduled(self::COMMAND_CRON_HOOK);
         }
         delete_transient(self::CRON_LOCK);
+        delete_transient(self::COMMAND_LOCK);
     }
 
     public static function registerRoutes(): void
@@ -497,31 +508,58 @@ final class NotificationManager
         if (!$notifier->isConfigured()) {
             return;
         }
-        $offset = max(0, (int)get_option(self::COMMAND_OFFSET_OPTION, 0));
-        $result = $notifier->getUpdates($offset);
-        if (empty($result['ok'])) {
-            update_option('wnq_telegram_last_error', sanitize_text_field((string)($result['message'] ?? 'Telegram command polling failed.')), false);
+        if (get_transient(self::COMMAND_LOCK)) {
             return;
         }
+        set_transient(self::COMMAND_LOCK, 1, 2 * MINUTE_IN_SECONDS);
 
-        foreach ((array)($result['updates'] ?? []) as $update) {
-            $update_id = absint($update['update_id'] ?? 0);
-            if ($update_id > 0) {
-                update_option(self::COMMAND_OFFSET_OPTION, $update_id + 1, false);
+        try {
+            $offset = max(0, (int)get_option(self::COMMAND_OFFSET_OPTION, 0));
+            $result = $notifier->getUpdates($offset);
+            if (empty($result['ok'])) {
+                update_option('wnq_telegram_last_error', sanitize_text_field((string)($result['message'] ?? 'Telegram command polling failed.')), false);
+                return;
             }
-            $message = is_array($update['message'] ?? null) ? $update['message'] : [];
-            $chat_id = (string)($message['chat']['id'] ?? '');
-            $text = trim((string)($message['text'] ?? ''));
-            if ($chat_id !== $notifier->getChatId() || !str_starts_with($text, '/')) {
-                continue;
+
+            $ai_questions = 0;
+            $limit_notified = false;
+            foreach ((array)($result['updates'] ?? []) as $update) {
+                $update_id = absint($update['update_id'] ?? 0);
+                if ($update_id > 0) {
+                    update_option(self::COMMAND_OFFSET_OPTION, $update_id + 1, false);
+                }
+                $message = is_array($update['message'] ?? null) ? $update['message'] : [];
+                $chat_id = (string)($message['chat']['id'] ?? '');
+                $text = trim((string)($message['text'] ?? ''));
+                if ($chat_id !== $notifier->getChatId() || $text === '' || !empty($message['from']['is_bot'])) {
+                    continue;
+                }
+                if (str_starts_with($text, '/')) {
+                    $command_token = strtok($text, " \t\r\n") ?: '';
+                    $command = strtolower((string)preg_replace('/@[^\s]+$/', '', $command_token));
+                    $arguments = trim(substr($text, strlen($command_token)));
+                    self::respondToCommand($notifier, ltrim($command, '/'), $arguments);
+                    continue;
+                }
+                $question = class_exists(TelegramAssistant::class) ? TelegramAssistant::invocationQuestion($text) : null;
+                if ($question === null) {
+                    continue;
+                }
+                if ($ai_questions >= self::MAX_AI_QUESTIONS_PER_POLL) {
+                    if (!$limit_notified) {
+                        $notifier->send('Golden received several questions at once. Please resend any unanswered question in a minute.');
+                        $limit_notified = true;
+                    }
+                    continue;
+                }
+                $ai_questions++;
+                $notifier->send(TelegramAssistant::answer($question));
             }
-            $command_token = strtok($text, " \t\r\n") ?: '';
-            $command = strtolower((string)preg_replace('/@[^\s]+$/', '', $command_token));
-            $arguments = trim(substr($text, strlen($command_token)));
-            self::respondToCommand($notifier, ltrim($command, '/'), $arguments);
+            delete_option('wnq_telegram_last_error');
+            update_option('wnq_telegram_last_command_check_at', current_time('mysql'), false);
+        } finally {
+            delete_transient(self::COMMAND_LOCK);
         }
-        delete_option('wnq_telegram_last_error');
-        update_option('wnq_telegram_last_command_check_at', current_time('mysql'), false);
     }
 
     private static function respondToCommand(TelegramNotifier $notifier, string $command, string $arguments = ''): void
@@ -562,6 +600,11 @@ final class NotificationManager
                 break;
             case 'status':
                 $notifier->send(self::statusCommandMessage(), self::telegramOptions('Open settings', admin_url('admin.php?page=wnq-portal')));
+                break;
+            case 'ask':
+                $notifier->send(class_exists(TelegramAssistant::class)
+                    ? TelegramAssistant::answer($arguments)
+                    : 'Golden AI is not available yet.');
                 break;
             case 'start':
             case 'help':
@@ -767,8 +810,10 @@ final class NotificationManager
         $lines[] = '<code>/addtask Call client | tomorrow | high</code>';
         $lines[] = '<code>/donetask 42</code>';
         $lines[] = '<code>/ideanote Add a client onboarding checklist</code>';
+        $lines[] = '<code>/ask When is Lucas payment date?</code>';
+        $lines[] = '<code>Hey Golden: what is the SOP for a new Golden package client?</code>';
         $lines[] = '';
-        $lines[] = 'Commands only work in the connected internal group.';
+        $lines[] = 'Questions and commands only work in the connected internal group. “Hey Golden” requires Telegram group privacy to be disabled for this bot.';
         return implode("\n", $lines);
     }
 

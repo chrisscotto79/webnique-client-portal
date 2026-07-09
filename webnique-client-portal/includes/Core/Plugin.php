@@ -44,6 +44,7 @@ final class Plugin
     if (is_admin()) {
       add_action('admin_menu', [\WNQ\Admin\AdminMenu::class, 'register']);
       \WNQ\Admin\ClientPortalAdmin::register();
+      \WNQ\Admin\KnowledgeBaseAdmin::register();
     }
   }
 
@@ -54,6 +55,7 @@ final class Plugin
   {
     self::includes();
     \WNQ\Models\ClientPortal::createTables();
+    \WNQ\Models\KnowledgeBase::createTables();
     Activator::run();
   }
 
@@ -75,6 +77,7 @@ final class Plugin
     require_once WNQ_PORTAL_PATH . 'includes/Controllers/DashboardController.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/Client.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/ClientPortal.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Models/KnowledgeBase.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/Task.php';
 
     /**
@@ -92,7 +95,9 @@ final class Plugin
      */
     require_once WNQ_PORTAL_PATH . 'includes/Services/FirebaseStore.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/GoogleAdsClient.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Services/AIEngine.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramNotifier.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramAssistant.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/NotificationManager.php';
 
     /**
@@ -111,5 +116,6 @@ final class Plugin
     require_once WNQ_PORTAL_PATH . 'admin/AdminMenu.php';
     require_once WNQ_PORTAL_PATH . 'admin/AdminSettings.php';
     require_once WNQ_PORTAL_PATH . 'admin/ClientPortalAdmin.php';
+    require_once WNQ_PORTAL_PATH . 'admin/KnowledgeBaseAdmin.php';
   }
 }
