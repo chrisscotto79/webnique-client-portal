@@ -45,8 +45,7 @@ final class NotificationManager
         add_action(self::CRON_HOOK, [self::class, 'runScheduledChecks']);
         add_action(self::COMMAND_CRON_HOOK, [self::class, 'pollBotCommands']);
         add_action('rest_api_init', [self::class, 'registerRoutes']);
-
-        self::syncSchedule();
+        add_action('admin_init', [self::class, 'syncSchedule'], 20);
     }
 
     public static function eventDefaults(): array
@@ -93,24 +92,30 @@ final class NotificationManager
 
     public static function syncSchedule(): void
     {
-        if (!(bool)get_option('wnq_telegram_enabled', false)) {
-            self::unschedule();
-            return;
-        }
-        if (!wp_next_scheduled(self::CRON_HOOK)) {
-            wp_schedule_event(time() + (10 * MINUTE_IN_SECONDS), 'daily', self::CRON_HOOK);
-        }
-        self::syncBotCommands();
-        $webhook = self::syncWebhook();
-        if (!empty($webhook['ok'])) {
-            self::unscheduleCommandPoll();
-            return;
-        }
-        if (wp_next_scheduled(self::COMMAND_CRON_HOOK) && wp_get_schedule(self::COMMAND_CRON_HOOK) !== self::COMMAND_CRON_SCHEDULE) {
-            self::unscheduleCommandPoll();
-        }
-        if (!wp_next_scheduled(self::COMMAND_CRON_HOOK)) {
-            wp_schedule_event(time() + MINUTE_IN_SECONDS, self::COMMAND_CRON_SCHEDULE, self::COMMAND_CRON_HOOK);
+        try {
+            if (!(bool)get_option('wnq_telegram_enabled', false)) {
+                self::unschedule();
+                return;
+            }
+            if (!wp_next_scheduled(self::CRON_HOOK)) {
+                wp_schedule_event(time() + (10 * MINUTE_IN_SECONDS), 'daily', self::CRON_HOOK);
+            }
+            self::syncBotCommands();
+            $webhook = self::syncWebhook();
+            if (!empty($webhook['ok'])) {
+                self::unscheduleCommandPoll();
+                return;
+            }
+            if (wp_next_scheduled(self::COMMAND_CRON_HOOK) && wp_get_schedule(self::COMMAND_CRON_HOOK) !== self::COMMAND_CRON_SCHEDULE) {
+                self::unscheduleCommandPoll();
+            }
+            if (!wp_next_scheduled(self::COMMAND_CRON_HOOK)) {
+                wp_schedule_event(time() + MINUTE_IN_SECONDS, self::COMMAND_CRON_SCHEDULE, self::COMMAND_CRON_HOOK);
+            }
+        } catch (\Throwable $exception) {
+            update_option('wnq_telegram_webhook_active', 0, false);
+            update_option('wnq_telegram_webhook_last_error', self::safeErrorMessage($exception), false);
+            self::scheduleCommandFallback();
         }
     }
 
@@ -144,7 +149,11 @@ final class NotificationManager
             return ['ok' => true, 'skipped' => true, 'message' => 'Telegram instant replies are already connected.'];
         }
 
-        $result = $notifier->setWebhook($url, $secret);
+        try {
+            $result = $notifier->setWebhook($url, $secret);
+        } catch (\Throwable $exception) {
+            $result = ['ok' => false, 'message' => self::safeErrorMessage($exception)];
+        }
         update_option('wnq_telegram_webhook_last_sync_at', current_time('mysql'), false);
         if (!empty($result['ok'])) {
             update_option(self::WEBHOOK_HASH_OPTION, $hash, false);
@@ -184,12 +193,26 @@ final class NotificationManager
         delete_transient(self::COMMAND_LOCK);
     }
 
+    private static function scheduleCommandFallback(): void
+    {
+        if (!function_exists('wp_next_scheduled') || !function_exists('wp_schedule_event')) {
+            return;
+        }
+        if (!wp_next_scheduled(self::COMMAND_CRON_HOOK)) {
+            wp_schedule_event(time() + MINUTE_IN_SECONDS, self::COMMAND_CRON_SCHEDULE, self::COMMAND_CRON_HOOK);
+        }
+    }
+
     private static function disableWebhook(): void
     {
         $was_active = (bool)get_option('wnq_telegram_webhook_active', false)
             || (string)get_option(self::WEBHOOK_HASH_OPTION, '') !== '';
         if ($was_active) {
-            (new TelegramNotifier())->deleteWebhook();
+            try {
+                (new TelegramNotifier())->deleteWebhook();
+            } catch (\Throwable $exception) {
+                update_option('wnq_telegram_webhook_last_error', self::safeErrorMessage($exception), false);
+            }
         }
         delete_option(self::WEBHOOK_HASH_OPTION);
         delete_option('wnq_telegram_webhook_active');
@@ -298,8 +321,8 @@ final class NotificationManager
     {
         if (
             ($task['status'] ?? 'todo') === 'done'
-            || str_contains((string)($task['notes'] ?? ''), '[portal-auto]')
-            || str_contains((string)($task['notes'] ?? ''), '[telegram-command]')
+            || strpos((string)($task['notes'] ?? ''), '[portal-auto]') !== false
+            || strpos((string)($task['notes'] ?? ''), '[telegram-command]') !== false
         ) {
             return;
         }
@@ -660,7 +683,7 @@ final class NotificationManager
                 if ($chat_id !== $notifier->getChatId() || $text === '' || !empty($message['from']['is_bot'])) {
                     continue;
                 }
-                if (str_starts_with($text, '/')) {
+                if (isset($text[0]) && $text[0] === '/') {
                     $command_token = strtok($text, " \t\r\n") ?: '';
                     $command = strtolower((string)preg_replace('/@[^\s]+$/', '', $command_token));
                     $arguments = trim(substr($text, strlen($command_token)));
@@ -694,7 +717,7 @@ final class NotificationManager
         if ($chat_id !== $notifier->getChatId() || $text === '' || !empty($message['from']['is_bot'])) {
             return false;
         }
-        if (str_starts_with($text, '/')) {
+        if (isset($text[0]) && $text[0] === '/') {
             $command_token = strtok($text, " \t\r\n") ?: '';
             $command = strtolower((string)preg_replace('/@[^\s]+$/', '', $command_token));
             $arguments = trim(substr($text, strlen($command_token)));
@@ -1107,6 +1130,16 @@ final class NotificationManager
     private static function adminUrl(string $client_id): string
     {
         return admin_url('admin.php?page=wnq-client-portal-dashboard&client_id=' . rawurlencode($client_id));
+    }
+
+    private static function safeErrorMessage(\Throwable $exception): string
+    {
+        $message = sanitize_text_field($exception->getMessage());
+        if ($message === '') {
+            $message = 'Telegram setup failed unexpectedly.';
+        }
+        error_log('Golden Web Marketing Telegram Error: ' . $message);
+        return function_exists('mb_substr') ? mb_substr($message, 0, 300) : substr($message, 0, 300);
     }
 
     private static function clean(string $value): string

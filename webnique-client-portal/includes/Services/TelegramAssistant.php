@@ -239,7 +239,7 @@ final class TelegramAssistant
                 if ($normalized_candidate === '') {
                     continue;
                 }
-                if (strlen($normalized_candidate) >= 4 && str_contains(' ' . $normalized_question . ' ', ' ' . $normalized_candidate . ' ')) {
+                if (strlen($normalized_candidate) >= 4 && strpos(' ' . $normalized_question . ' ', ' ' . $normalized_candidate . ' ') !== false) {
                     $score += 120 + strlen($normalized_candidate);
                 }
                 $candidate_tokens = explode(' ', $normalized_candidate);
@@ -247,7 +247,7 @@ final class TelegramAssistant
                     foreach ($candidate_tokens as $candidate_token) {
                         if ($question_token === $candidate_token) {
                             $score += 25;
-                        } elseif (strlen($question_token) >= 4 && strlen($candidate_token) >= 4 && (str_starts_with($candidate_token, $question_token) || str_starts_with($question_token, $candidate_token))) {
+                        } elseif (strlen($question_token) >= 4 && strlen($candidate_token) >= 4 && (strpos($candidate_token, $question_token) === 0 || strpos($question_token, $candidate_token) === 0)) {
                             $score += 8;
                         }
                     }
@@ -379,7 +379,7 @@ final class TelegramAssistant
     {
         $question = strtolower($question);
         foreach ($needles as $needle) {
-            if (str_contains($question, strtolower($needle))) {
+            if (strpos($question, strtolower($needle)) !== false) {
                 return true;
             }
         }

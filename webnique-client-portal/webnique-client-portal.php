@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Golden Web Marketing Client Portal
  * Description: Complete client management with portal, analytics, billing, tasks, SEO tracking, and messaging
- * Version: 2.4.59
+ * Version: 2.4.60
  * Author: Golden Web Marketing
  * Requires at least: 6.0
  * Requires PHP: 8.0
@@ -13,7 +13,13 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WNQ_PORTAL_VERSION', '2.4.59');
+// Prevent a second uploaded copy of the plugin from redeclaring global helpers.
+if (defined('WNQ_PORTAL_VERSION')) {
+    error_log('Golden Web Marketing Portal: duplicate plugin copy skipped. Remove the extra plugin directory.');
+    return;
+}
+
+define('WNQ_PORTAL_VERSION', '2.4.60');
 define('WNQ_PORTAL_PATH', plugin_dir_path(__FILE__));
 define('WNQ_PORTAL_URL', plugin_dir_url(__FILE__));
 
@@ -21,28 +27,32 @@ if (!defined('WNQ_ENABLE_SEO_FEATURES')) {
     define('WNQ_ENABLE_SEO_FEATURES', true);
 }
 
-function wnq_seo_features_enabled(): bool {
-    return defined('WNQ_ENABLE_SEO_FEATURES') && WNQ_ENABLE_SEO_FEATURES;
+if (!function_exists('wnq_seo_features_enabled')) {
+    function wnq_seo_features_enabled(): bool {
+        return defined('WNQ_ENABLE_SEO_FEATURES') && WNQ_ENABLE_SEO_FEATURES;
+    }
 }
 
-function wnq_load_portal_sales_tools(): void {
-    $files = [
-        'includes/Models/Lead.php',
-        'includes/Data/FloridaZips.php',
-        'includes/Services/GoogleMapsClient.php',
-        'includes/Services/LeadSEOScorer.php',
-        'includes/Services/LeadEmailExtractor.php',
-        'includes/Services/LeadEnrichmentService.php',
-        'includes/Services/LeadFinderEngine.php',
-        'admin/LeadFinderAdmin.php',
-        'includes/Models/ColdTracker.php',
-        'admin/ColdTrackerAdmin.php',
-    ];
+if (!function_exists('wnq_load_portal_sales_tools')) {
+    function wnq_load_portal_sales_tools(): void {
+        $files = [
+            'includes/Models/Lead.php',
+            'includes/Data/FloridaZips.php',
+            'includes/Services/GoogleMapsClient.php',
+            'includes/Services/LeadSEOScorer.php',
+            'includes/Services/LeadEmailExtractor.php',
+            'includes/Services/LeadEnrichmentService.php',
+            'includes/Services/LeadFinderEngine.php',
+            'admin/LeadFinderAdmin.php',
+            'includes/Models/ColdTracker.php',
+            'admin/ColdTrackerAdmin.php',
+        ];
 
-    foreach ($files as $file) {
-        $path = WNQ_PORTAL_PATH . $file;
-        if (file_exists($path)) {
-            require_once $path;
+        foreach ($files as $file) {
+            $path = WNQ_PORTAL_PATH . $file;
+            if (file_exists($path)) {
+                require_once $path;
+            }
         }
     }
 }
@@ -188,7 +198,7 @@ add_action('plugins_loaded', function() {
 
     try {
         WNQ\Core\Plugin::init();
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         error_log('Golden Web Marketing Portal Init Error: ' . $e->getMessage());
     }
 }, 10);
@@ -758,6 +768,7 @@ add_action('admin_enqueue_scripts', function($hook) {
 
 
 // RENDER FUNCTIONS
+if (!function_exists('wnq_render_settings_page')) {
 function wnq_render_settings_page() {
     if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
         wp_die(__('You do not have sufficient permissions to access this page.'));
@@ -928,4 +939,5 @@ function wnq_render_requests_page() {
     @keyframes spin { to { transform: rotate(360deg); } }
     </style>
     <?php
+}
 }
