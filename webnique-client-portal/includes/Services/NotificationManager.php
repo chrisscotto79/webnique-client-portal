@@ -23,6 +23,9 @@ final class NotificationManager
     private const COMMAND_CRON_SCHEDULE = 'wnq_every_minute';
     private const COMMAND_LOCK = 'wnq_telegram_command_poll_lock';
     private const COMMAND_OFFSET_OPTION = 'wnq_telegram_update_offset';
+    private const WEBHOOK_SECRET_OPTION = 'wnq_telegram_webhook_secret';
+    private const WEBHOOK_HASH_OPTION = 'wnq_telegram_webhook_hash';
+    private const WEBHOOK_RETRY_LOCK = 'wnq_telegram_webhook_retry_lock';
     private const MAX_AI_QUESTIONS_PER_POLL = 3;
     private static bool $registered = false;
 
@@ -97,17 +100,65 @@ final class NotificationManager
         if (!wp_next_scheduled(self::CRON_HOOK)) {
             wp_schedule_event(time() + (10 * MINUTE_IN_SECONDS), 'daily', self::CRON_HOOK);
         }
+        self::syncBotCommands();
+        $webhook = self::syncWebhook();
+        if (!empty($webhook['ok'])) {
+            self::unscheduleCommandPoll();
+            return;
+        }
         if (wp_next_scheduled(self::COMMAND_CRON_HOOK) && wp_get_schedule(self::COMMAND_CRON_HOOK) !== self::COMMAND_CRON_SCHEDULE) {
-            $timestamp = wp_next_scheduled(self::COMMAND_CRON_HOOK);
-            while ($timestamp) {
-                wp_unschedule_event($timestamp, self::COMMAND_CRON_HOOK);
-                $timestamp = wp_next_scheduled(self::COMMAND_CRON_HOOK);
-            }
+            self::unscheduleCommandPoll();
         }
         if (!wp_next_scheduled(self::COMMAND_CRON_HOOK)) {
             wp_schedule_event(time() + MINUTE_IN_SECONDS, self::COMMAND_CRON_SCHEDULE, self::COMMAND_CRON_HOOK);
         }
-        self::syncBotCommands();
+    }
+
+    public static function syncWebhook(bool $force = false): array
+    {
+        $notifier = new TelegramNotifier();
+        if (!(bool)get_option('wnq_telegram_enabled', false)) {
+            return ['ok' => false, 'skipped' => true, 'message' => 'Telegram instant replies are disabled.'];
+        }
+        if (!(bool)get_option('wnq_telegram_webhook_enabled', true)) {
+            self::disableWebhook();
+            return ['ok' => false, 'skipped' => true, 'message' => 'Telegram instant replies are disabled; cron fallback is active.'];
+        }
+        if (!$notifier->isConfigured()) {
+            return ['ok' => false, 'skipped' => true, 'message' => 'Configure the Telegram bot token and group before enabling instant replies.'];
+        }
+        if (!$force && get_transient(self::WEBHOOK_RETRY_LOCK)) {
+            return ['ok' => false, 'skipped' => true, 'message' => 'Telegram instant reply setup is waiting before another retry.'];
+        }
+
+        $secret = (string)get_option(self::WEBHOOK_SECRET_OPTION, '');
+        if (preg_match('/^[A-Za-z0-9_-]{24,256}$/', $secret) !== 1) {
+            $secret = preg_replace('/[^A-Za-z0-9_-]/', '', wp_generate_password(48, false, false)) ?? '';
+            update_option(self::WEBHOOK_SECRET_OPTION, $secret, false);
+        }
+        $url = rest_url('wnq/v1/notifications/telegram');
+        $hash = hash('sha256', (string)get_option('wnq_telegram_bot_token', '') . '|' . $url . '|' . $secret);
+        $saved_hash = (string)get_option(self::WEBHOOK_HASH_OPTION, '');
+        if (!$force && $saved_hash !== '' && hash_equals($saved_hash, $hash)) {
+            update_option('wnq_telegram_webhook_active', 1, false);
+            return ['ok' => true, 'skipped' => true, 'message' => 'Telegram instant replies are already connected.'];
+        }
+
+        $result = $notifier->setWebhook($url, $secret);
+        update_option('wnq_telegram_webhook_last_sync_at', current_time('mysql'), false);
+        if (!empty($result['ok'])) {
+            update_option(self::WEBHOOK_HASH_OPTION, $hash, false);
+            update_option('wnq_telegram_webhook_active', 1, false);
+            delete_option('wnq_telegram_webhook_last_error');
+            delete_transient(self::WEBHOOK_RETRY_LOCK);
+            return $result;
+        }
+
+        delete_option(self::WEBHOOK_HASH_OPTION);
+        update_option('wnq_telegram_webhook_active', 0, false);
+        update_option('wnq_telegram_webhook_last_error', sanitize_text_field((string)($result['message'] ?? 'Telegram instant reply setup failed.')), false);
+        set_transient(self::WEBHOOK_RETRY_LOCK, 1, 5 * MINUTE_IN_SECONDS);
+        return $result;
     }
 
     public static function unschedule(): void
@@ -117,13 +168,32 @@ final class NotificationManager
             wp_unschedule_event($timestamp, self::CRON_HOOK);
             $timestamp = wp_next_scheduled(self::CRON_HOOK);
         }
+        self::unscheduleCommandPoll();
+        self::disableWebhook();
+        delete_transient(self::CRON_LOCK);
+        delete_transient(self::COMMAND_LOCK);
+    }
+
+    private static function unscheduleCommandPoll(): void
+    {
         $timestamp = wp_next_scheduled(self::COMMAND_CRON_HOOK);
         while ($timestamp) {
             wp_unschedule_event($timestamp, self::COMMAND_CRON_HOOK);
             $timestamp = wp_next_scheduled(self::COMMAND_CRON_HOOK);
         }
-        delete_transient(self::CRON_LOCK);
         delete_transient(self::COMMAND_LOCK);
+    }
+
+    private static function disableWebhook(): void
+    {
+        $was_active = (bool)get_option('wnq_telegram_webhook_active', false)
+            || (string)get_option(self::WEBHOOK_HASH_OPTION, '') !== '';
+        if ($was_active) {
+            (new TelegramNotifier())->deleteWebhook();
+        }
+        delete_option(self::WEBHOOK_HASH_OPTION);
+        delete_option('wnq_telegram_webhook_active');
+        delete_transient(self::WEBHOOK_RETRY_LOCK);
     }
 
     public static function registerRoutes(): void
@@ -131,6 +201,11 @@ final class NotificationManager
         register_rest_route('wnq/v1', '/notifications/stripe', [
             'methods' => 'POST',
             'callback' => [self::class, 'handleStripeWebhook'],
+            'permission_callback' => '__return_true',
+        ]);
+        register_rest_route('wnq/v1', '/notifications/telegram', [
+            'methods' => 'POST',
+            'callback' => [self::class, 'handleTelegramWebhook'],
             'permission_callback' => '__return_true',
         ]);
     }
@@ -329,6 +404,55 @@ final class NotificationManager
         return new \WP_REST_Response(['ok' => true], 200);
     }
 
+    public static function handleTelegramWebhook(\WP_REST_Request $request): \WP_REST_Response
+    {
+        if (!(bool)get_option('wnq_telegram_enabled', false) || !(bool)get_option('wnq_telegram_webhook_enabled', true)) {
+            return new \WP_REST_Response(['ok' => false, 'error' => 'Telegram instant replies are disabled.'], 503);
+        }
+        $secret = (string)get_option(self::WEBHOOK_SECRET_OPTION, '');
+        $provided_secret = (string)$request->get_header('x-telegram-bot-api-secret-token');
+        if ($secret === '' || $provided_secret === '' || !hash_equals($secret, $provided_secret)) {
+            return new \WP_REST_Response(['ok' => false, 'error' => 'Invalid Telegram webhook signature.'], 401);
+        }
+
+        $update = $request->get_json_params();
+        if (!is_array($update)) {
+            return new \WP_REST_Response(['ok' => false, 'error' => 'Invalid Telegram update.'], 400);
+        }
+        $update_id = absint($update['update_id'] ?? 0);
+        $processed_updates = get_option('wnq_telegram_webhook_processed_updates', []);
+        $processed_updates = is_array($processed_updates) ? array_map('absint', $processed_updates) : [];
+        $claim_key = $update_id > 0 ? 'wnq_telegram_webhook_update_' . $update_id : '';
+        if (($update_id > 0 && in_array($update_id, $processed_updates, true)) || ($claim_key !== '' && get_transient($claim_key))) {
+            return new \WP_REST_Response(['ok' => true, 'duplicate' => true], 200);
+        }
+        if ($claim_key !== '') {
+            set_transient($claim_key, 1, 5 * MINUTE_IN_SECONDS);
+        }
+
+        try {
+            $notifier = new TelegramNotifier();
+            $message = is_array($update['message'] ?? null) ? $update['message'] : [];
+            $processed = self::processTelegramMessage($notifier, $message);
+            if ($update_id > 0) {
+                $processed_updates[] = $update_id;
+                $processed_updates = array_slice(array_values(array_unique($processed_updates)), -100);
+                update_option('wnq_telegram_webhook_processed_updates', $processed_updates, false);
+            }
+            update_option('wnq_telegram_last_command_check_at', current_time('mysql'), false);
+            if ($claim_key !== '') {
+                delete_transient($claim_key);
+            }
+            return new \WP_REST_Response(['ok' => true, 'processed' => $processed], 200);
+        } catch (\Throwable $exception) {
+            if ($claim_key !== '') {
+                delete_transient($claim_key);
+            }
+            update_option('wnq_telegram_last_error', sanitize_text_field($exception->getMessage()), false);
+            return new \WP_REST_Response(['ok' => false, 'error' => 'Telegram update processing failed.'], 500);
+        }
+    }
+
     private static function checkAdsAccounts(): int
     {
         if (!self::eventEnabled('ads_spend') && !self::eventEnabled('ads_connection')) {
@@ -494,7 +618,6 @@ final class NotificationManager
         $result = $notifier->setCommands(self::botCommands());
         if (!empty($result['ok'])) {
             update_option('wnq_telegram_commands_hash', $hash, false);
-            self::primeCommandOffset($notifier);
         }
         return $result;
     }
@@ -502,6 +625,9 @@ final class NotificationManager
     public static function pollBotCommands(): void
     {
         if (!(bool)get_option('wnq_telegram_enabled', false)) {
+            return;
+        }
+        if ((bool)get_option('wnq_telegram_webhook_active', false)) {
             return;
         }
         $notifier = new TelegramNotifier();
@@ -538,7 +664,7 @@ final class NotificationManager
                     $command_token = strtok($text, " \t\r\n") ?: '';
                     $command = strtolower((string)preg_replace('/@[^\s]+$/', '', $command_token));
                     $arguments = trim(substr($text, strlen($command_token)));
-                    self::respondToCommand($notifier, ltrim($command, '/'), $arguments);
+                    self::recordTelegramDelivery(self::respondToCommand($notifier, ltrim($command, '/'), $arguments));
                     continue;
                 }
                 $question = class_exists(TelegramAssistant::class) ? TelegramAssistant::invocationQuestion($text) : null;
@@ -553,64 +679,86 @@ final class NotificationManager
                     continue;
                 }
                 $ai_questions++;
-                $notifier->send(TelegramAssistant::answer($question));
+                self::recordTelegramDelivery($notifier->send(TelegramAssistant::answer($question)));
             }
-            delete_option('wnq_telegram_last_error');
             update_option('wnq_telegram_last_command_check_at', current_time('mysql'), false);
         } finally {
             delete_transient(self::COMMAND_LOCK);
         }
     }
 
-    private static function respondToCommand(TelegramNotifier $notifier, string $command, string $arguments = ''): void
+    private static function processTelegramMessage(TelegramNotifier $notifier, array $message): bool
+    {
+        $chat_id = (string)($message['chat']['id'] ?? '');
+        $text = trim((string)($message['text'] ?? ''));
+        if ($chat_id !== $notifier->getChatId() || $text === '' || !empty($message['from']['is_bot'])) {
+            return false;
+        }
+        if (str_starts_with($text, '/')) {
+            $command_token = strtok($text, " \t\r\n") ?: '';
+            $command = strtolower((string)preg_replace('/@[^\s]+$/', '', $command_token));
+            $arguments = trim(substr($text, strlen($command_token)));
+            self::recordTelegramDelivery(self::respondToCommand($notifier, ltrim($command, '/'), $arguments));
+            return true;
+        }
+        $question = class_exists(TelegramAssistant::class) ? TelegramAssistant::invocationQuestion($text) : null;
+        if ($question === null) {
+            return false;
+        }
+        self::recordTelegramDelivery($notifier->send(TelegramAssistant::answer($question)));
+        return true;
+    }
+
+    private static function recordTelegramDelivery(array $result): void
+    {
+        if (!empty($result['ok'])) {
+            delete_option('wnq_telegram_last_error');
+            return;
+        }
+        update_option(
+            'wnq_telegram_last_error',
+            sanitize_text_field((string)($result['message'] ?? 'Telegram reply delivery failed.')),
+            false
+        );
+    }
+
+    private static function respondToCommand(TelegramNotifier $notifier, string $command, string $arguments = ''): array
     {
         switch ($command) {
             case 'tasks':
                 $tasks = array_values(array_filter(Task::getAll(), static fn(array $task): bool => ($task['status'] ?? '') !== 'done'));
                 self::sortTasks($tasks);
-                $notifier->send(self::taskListMessage('Open agency tasks', $tasks, 12), self::telegramOptions('Open tasks', self::tasksUrl()));
-                break;
+                return $notifier->send(self::taskListMessage('Open agency tasks', $tasks, 12), self::telegramOptions('Open tasks', self::tasksUrl()));
             case 'today':
                 $today = current_time('Y-m-d');
                 $tasks = array_values(array_filter(Task::getAll(), static fn(array $task): bool => ($task['status'] ?? '') !== 'done' && ($task['due_date'] ?? '') === $today));
                 self::sortTasks($tasks);
-                $notifier->send(self::taskListMessage('Tasks due today', $tasks, 12), self::telegramOptions('Open tasks', self::tasksUrl()));
-                break;
+                return $notifier->send(self::taskListMessage('Tasks due today', $tasks, 12), self::telegramOptions('Open tasks', self::tasksUrl()));
             case 'overdue':
-                $notifier->send(self::taskListMessage('Overdue agency tasks', Task::getOverdue(), 12), self::telegramOptions('Open tasks', self::tasksUrl()));
-                break;
+                return $notifier->send(self::taskListMessage('Overdue agency tasks', Task::getOverdue(), 12), self::telegramOptions('Open tasks', self::tasksUrl()));
             case 'addtask':
-                $notifier->send(self::addTaskCommand($arguments), self::telegramOptions('Open tasks', self::tasksUrl()));
-                break;
+                return $notifier->send(self::addTaskCommand($arguments), self::telegramOptions('Open tasks', self::tasksUrl()));
             case 'donetask':
-                $notifier->send(self::doneTaskCommand($arguments), self::telegramOptions('Open tasks', self::tasksUrl()));
-                break;
+                return $notifier->send(self::doneTaskCommand($arguments), self::telegramOptions('Open tasks', self::tasksUrl()));
             case 'idea':
             case 'ideanote':
-                $notifier->send(self::ideaCommand($arguments), self::telegramOptions('Open tasks', self::tasksUrl()));
-                break;
+                return $notifier->send(self::ideaCommand($arguments), self::telegramOptions('Open tasks', self::tasksUrl()));
             case 'ads':
-                $notifier->send(self::adsCommandMessage(), self::telegramOptions('Open portal', admin_url('admin.php?page=wnq-client-portal-dashboard')));
-                break;
+                return $notifier->send(self::adsCommandMessage(), self::telegramOptions('Open portal', admin_url('admin.php?page=wnq-client-portal-dashboard')));
             case 'billing':
-                $notifier->send(self::billingCommandMessage(), self::telegramOptions('Open clients', admin_url('admin.php?page=wnq-clients')));
-                break;
+                return $notifier->send(self::billingCommandMessage(), self::telegramOptions('Open clients', admin_url('admin.php?page=wnq-clients')));
             case 'requests':
-                $notifier->send(self::requestsCommandMessage(), self::telegramOptions('Open portal', admin_url('admin.php?page=wnq-client-portal-dashboard')));
-                break;
+                return $notifier->send(self::requestsCommandMessage(), self::telegramOptions('Open portal', admin_url('admin.php?page=wnq-client-portal-dashboard')));
             case 'status':
-                $notifier->send(self::statusCommandMessage(), self::telegramOptions('Open settings', admin_url('admin.php?page=wnq-portal')));
-                break;
+                return $notifier->send(self::statusCommandMessage(), self::telegramOptions('Open settings', admin_url('admin.php?page=wnq-portal')));
             case 'ask':
-                $notifier->send(class_exists(TelegramAssistant::class)
+                return $notifier->send(class_exists(TelegramAssistant::class)
                     ? TelegramAssistant::answer($arguments)
                     : 'Golden AI is not available yet.');
-                break;
             case 'start':
             case 'help':
             default:
-                $notifier->send(self::helpCommandMessage(), self::telegramOptions('Open tasks', self::tasksUrl()));
-                break;
+                return $notifier->send(self::helpCommandMessage(), self::telegramOptions('Open tasks', self::tasksUrl()));
         }
     }
 
@@ -791,6 +939,7 @@ final class NotificationManager
         $open_tasks = count(array_filter(Task::getAll(), static fn(array $task): bool => ($task['status'] ?? '') !== 'done'));
         return self::htmlMessage('Notification system status', [
             'Telegram' => (bool)get_option('wnq_telegram_enabled', false) ? 'Enabled' : 'Disabled',
+            'Reply delivery' => (bool)get_option('wnq_telegram_webhook_active', false) ? 'Instant webhook' : 'Cron fallback',
             'Open tasks' => (string)$open_tasks,
             'Overdue tasks' => (string)count(Task::getOverdue()),
             'Open client requests' => (string)ClientPortal::getOpenRequestCount(),
@@ -904,21 +1053,6 @@ final class NotificationManager
             'annually' => 12,
         ][sanitize_key((string)($client['billing_cycle'] ?? 'monthly'))] ?? 1;
         return (float)($client['monthly_rate'] ?? 0) * $multiplier;
-    }
-
-    private static function primeCommandOffset(TelegramNotifier $notifier): void
-    {
-        if ((int)get_option(self::COMMAND_OFFSET_OPTION, 0) > 0) {
-            return;
-        }
-        $result = $notifier->getUpdates(0);
-        $max = 0;
-        foreach ((array)($result['updates'] ?? []) as $update) {
-            $max = max($max, absint($update['update_id'] ?? 0));
-        }
-        if ($max > 0) {
-            update_option(self::COMMAND_OFFSET_OPTION, $max + 1, false);
-        }
     }
 
     private static function eventEnabled(string $event): bool

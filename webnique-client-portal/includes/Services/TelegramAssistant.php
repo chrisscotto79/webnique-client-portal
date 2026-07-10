@@ -36,6 +36,11 @@ final class TelegramAssistant
         if ($question === '') {
             return "Ask me a read-only question after “Hey Golden:” or use /ask.\n\nExample: Hey Golden: when is Lucas's payment date?";
         }
+        if (self::isGreeting($question)) {
+            $answer = 'Hi. Ask me about a client payment date, agency tasks, Google Ads performance, reports, requests, or an SOP saved in the AI Knowledge Base.';
+            KnowledgeBase::logQuery($question, $answer, '', [], 'greeting');
+            return $answer;
+        }
 
         $match = self::matchClient($question);
         if (!empty($match['ambiguous'])) {
@@ -54,6 +59,11 @@ final class TelegramAssistant
         if ($direct_answer !== null) {
             KnowledgeBase::logQuery($question, $direct_answer, $client_id, ['WordPress client billing record'], 'answered_direct');
             return $direct_answer;
+        }
+        if ($sources === []) {
+            $answer = self::missingSourceAnswer($question);
+            KnowledgeBase::logQuery($question, $answer, $client_id, [], 'no_source');
+            return $answer;
         }
 
         if (!class_exists(AIEngine::class)) {
@@ -339,6 +349,19 @@ final class TelegramAssistant
             return self::clip((string)($item['content'] ?? ''), 3400) . "\n\nSource: Knowledge Base: " . sanitize_text_field((string)($item['title'] ?? 'Knowledge item'));
         }
         return 'I could not find enough verified information in WordPress to answer that. Add the missing information to the AI Knowledge Base or check the client record.';
+    }
+
+    private static function missingSourceAnswer(string $question): string
+    {
+        if (self::containsAny($question, ['sop', 'standard operating procedure', 'process', 'procedure', 'onboarding', 'checklist'])) {
+            return 'I do not have a matching SOP saved in WordPress yet. Add it under Golden Web Marketing Portal > AI Knowledge Base, then ask me again.';
+        }
+        return 'I could not find matching verified information in WordPress. Add the information to the AI Knowledge Base or ask about a specific client, task, report, request, billing date, or Google Ads account.';
+    }
+
+    private static function isGreeting(string $question): bool
+    {
+        return preg_match('/^(hi|hello|hey|good morning|good afternoon|good evening)[!.?\s]*$/iu', trim($question)) === 1;
     }
 
     private static function directAnswer(string $question, ?array $client): ?string
