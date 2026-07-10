@@ -15,8 +15,11 @@ if (!defined('ABSPATH')) {
 
 final class ClientPortal
 {
-    private const SCHEMA_VERSION = '12';
+    private const SCHEMA_VERSION = '13';
     private static bool $schema_ready = false;
+    private static bool $customer_columns_ready = false;
+    private static array $customer_columns = [];
+    private static bool $customer_indexes_ready = false;
     private static string $last_error = '';
 
     public static function ensureSchema(): void
@@ -25,16 +28,20 @@ final class ClientPortal
             return;
         }
         self::$schema_ready = true;
-        global $wpdb;
-        $customers_table = $wpdb->prefix . 'wnq_portal_customers';
-        $table_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $customers_table)) === $customers_table;
-        if ((string)get_option('wnq_client_portal_schema_version', '') !== self::SCHEMA_VERSION || !$table_exists || self::customerColumnsMissing($customers_table)) {
-            self::createTables();
+        if ((string)get_option('wnq_client_portal_schema_version', '') === self::SCHEMA_VERSION) {
+            self::$customer_columns = array_keys(self::customerColumnDefinitions());
+            self::$customer_columns_ready = true;
+            self::$customer_indexes_ready = true;
+            return;
         }
+        self::createTables();
     }
 
     public static function createTables(): void
     {
+        self::$customer_columns_ready = false;
+        self::$customer_columns = [];
+        self::$customer_indexes_ready = false;
         global $wpdb;
         $charset = $wpdb->get_charset_collate();
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -136,13 +143,21 @@ final class ClientPortal
 
         self::ensureCustomerColumns();
         self::ensureCustomerIndexes();
-        self::migrateCustomerRecordTypes();
+        if (self::$customer_columns_ready) {
+            self::migrateCustomerRecordTypes();
+        }
+        self::migrateLegacyTicketKeys();
         self::migrateLegacyAttachments();
-        update_option('wnq_client_portal_schema_version', self::SCHEMA_VERSION, false);
+        if (self::$customer_columns_ready && self::$customer_indexes_ready) {
+            update_option('wnq_client_portal_schema_version', self::SCHEMA_VERSION, false);
+        }
     }
 
     private static function ensureCustomerColumns(): void
     {
+        if (self::$customer_columns_ready) {
+            return;
+        }
         global $wpdb;
         $table = $wpdb->prefix . 'wnq_portal_customers';
         if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) {
@@ -150,19 +165,28 @@ final class ClientPortal
         }
         $safe_table = self::sqlIdentifier($table);
         $existing = self::tableColumns($table);
+        $ready = true;
         foreach (self::customerColumnDefinitions() as $column => $definition) {
             if (in_array($column, $existing, true)) {
                 continue;
             }
             $result = $wpdb->query("ALTER TABLE {$safe_table} ADD COLUMN {$definition}");
-            if (false === $result && $wpdb->last_error) {
-                self::$last_error = $wpdb->last_error;
+            if (false === $result) {
+                if ($wpdb->last_error) self::$last_error = $wpdb->last_error;
+                $ready = false;
+            } else {
+                $existing[] = $column;
             }
         }
+        self::$customer_columns = array_values(array_unique($existing));
+        self::$customer_columns_ready = $ready;
     }
 
     private static function ensureCustomerIndexes(): void
     {
+        if (self::$customer_indexes_ready) {
+            return;
+        }
         global $wpdb;
         $table = $wpdb->prefix . 'wnq_portal_customers';
         if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table)) !== $table) {
@@ -170,17 +194,20 @@ final class ClientPortal
         }
         $safe_table = self::sqlIdentifier($table);
         $indexes = $wpdb->get_col("SHOW INDEX FROM {$safe_table}", 2) ?: [];
-        $columns = self::tableColumns($table);
+        $columns = self::$customer_columns ?: self::tableColumns($table);
+        $ready = true;
         foreach (['record_type', 'pipeline_stage', 'status', 'follow_up_date', 'reminder_date', 'job_date'] as $index) {
             if (!in_array($index, $columns, true) || in_array($index, $indexes, true)) {
                 continue;
             }
             $safe_index = self::sqlIdentifier($index);
             $result = $wpdb->query("ALTER TABLE {$safe_table} ADD INDEX {$safe_index} ({$safe_index})");
-            if (false === $result && $wpdb->last_error) {
-                self::$last_error = $wpdb->last_error;
+            if (false === $result) {
+                if ($wpdb->last_error) self::$last_error = $wpdb->last_error;
+                $ready = false;
             }
         }
+        self::$customer_indexes_ready = $ready;
     }
 
     private static function migrateCustomerRecordTypes(): void
@@ -201,20 +228,6 @@ final class ClientPortal
             $wpdb->query("UPDATE {$table} SET pipeline_stage='quote-sent' WHERE record_type='lead' AND status IN ('quoted','estimate_sent') AND pipeline_stage IN ('','new')");
             update_option('wnq_pipeline_stage_migrated', '1', false);
         }
-    }
-
-    private static function customerColumnsMissing(string $table): bool
-    {
-        $existing = self::tableColumns($table);
-        if (!$existing) {
-            return true;
-        }
-        foreach (array_keys(self::customerColumnDefinitions()) as $column) {
-            if (!in_array($column, $existing, true)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static function tableColumns(string $table): array
@@ -324,6 +337,17 @@ final class ClientPortal
         $reminder_date = self::dateField($data['reminder_date'] ?? '');
         $job_date = self::dateField($data['job_date'] ?? '');
         $completion_date = self::dateField($data['completion_date'] ?? '');
+        foreach ([
+            'follow_up_date' => $follow_up,
+            'reminder_date' => $reminder_date,
+            'job_date' => $job_date,
+            'completion_date' => $completion_date,
+        ] as $date_key => $clean_date) {
+            if (trim((string)($data[$date_key] ?? '')) !== '' && $clean_date === '') {
+                self::$last_error = 'Invalid date supplied for ' . str_replace('_', ' ', $date_key) . '.';
+                return false;
+            }
+        }
         $job_count = $record_type === 'job' ? 1 : 0;
         $final_value = self::moneyAmount($data['final_value'] ?? 0);
         $pipeline_stages = self::getPortalSettings($client_id)['crm']['pipeline_stages'] ?? self::defaultPipelineStages();
@@ -370,7 +394,7 @@ final class ClientPortal
             }
         }
         $table = $wpdb->prefix . 'wnq_portal_customers';
-        $available_columns = array_flip(self::tableColumns($table));
+        $available_columns = array_flip(self::$customer_columns ?: self::tableColumns($table));
         if ($available_columns) {
             $record = array_intersect_key($record, $available_columns);
         }
@@ -919,19 +943,36 @@ final class ClientPortal
         global $wpdb;
         $limit = max(1, min(100, $limit));
         $table = $wpdb->prefix . 'wnq_portal_messages';
-        $wpdb->query($wpdb->prepare(
-            "UPDATE $table SET ticket_key=CONCAT('legacy-', id) WHERE client_id=%s AND (ticket_key IS NULL OR ticket_key='')",
-            $client_id
-        ));
         $keys = $wpdb->get_col($wpdb->prepare(
             "SELECT ticket_key FROM $table WHERE client_id=%s GROUP BY ticket_key ORDER BY MAX(created_at) DESC, MAX(id) DESC LIMIT %d",
             $client_id,
             $limit
         )) ?: [];
-        return array_values(array_filter(array_map(
-            static fn($key) => self::getTicket($client_id, sanitize_key((string)$key)),
-            $keys
-        )));
+        $keys = array_values(array_filter(array_map(static fn($key): string => sanitize_key((string)$key), $keys)));
+        if ($keys === []) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($keys), '%s'));
+        $messages = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM $table WHERE client_id=%s AND ticket_key IN ($placeholders) ORDER BY created_at ASC, id ASC",
+            array_merge([$client_id], $keys)
+        ), ARRAY_A) ?: [];
+        $grouped = [];
+        foreach ($messages as $message) {
+            $key = sanitize_key((string)($message['ticket_key'] ?? ''));
+            if ($key !== '') {
+                $grouped[$key][] = $message;
+            }
+        }
+
+        $tickets = [];
+        foreach ($keys as $key) {
+            if (!empty($grouped[$key])) {
+                $tickets[] = self::ticketFromMessages($key, $grouped[$key]);
+            }
+        }
+        return $tickets;
     }
 
     public static function getTicket(string $client_id, string $ticket_key): ?array
@@ -945,6 +986,11 @@ final class ClientPortal
             $ticket_key
         ), ARRAY_A) ?: [];
         if (!$messages) return null;
+        return self::ticketFromMessages($ticket_key, $messages);
+    }
+
+    private static function ticketFromMessages(string $ticket_key, array $messages): array
+    {
         $messages = array_map(static function (array $row): array {
             $row['attachments'] = self::hydrateAttachments(self::jsonArray($row['attachments'] ?? ''), (string)$row['client_id']);
             return $row;
@@ -963,6 +1009,34 @@ final class ClientPortal
             'response_time' => self::responseTime((string)($latest['priority'] ?: 'normal')),
             'messages'      => $messages,
         ];
+    }
+
+    public static function getUnreadSupportReplies(string $client_id, int $limit = 25): array
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT ticket_key,subject,created_at,id
+             FROM {$wpdb->prefix}wnq_portal_messages
+             WHERE client_id=%s AND sender_role='admin' AND status='unread'
+             ORDER BY created_at DESC,id DESC LIMIT %d",
+            $client_id,
+            max(1, min(100, $limit))
+        ), ARRAY_A) ?: [];
+        $replies = [];
+        foreach ($rows as $row) {
+            $key = sanitize_key((string)($row['ticket_key'] ?? ''));
+            $key = $key !== '' ? $key : 'legacy-' . absint($row['id'] ?? 0);
+            if (isset($replies[$key])) {
+                continue;
+            }
+            $replies[$key] = [
+                'ticket_key' => $key,
+                'subject' => sanitize_text_field((string)($row['subject'] ?? 'Support ticket updated')),
+                'updated_at' => sanitize_text_field((string)($row['created_at'] ?? '')),
+            ];
+        }
+        return array_values($replies);
     }
 
     public static function getUnreadMessageCount(?string $client_id = null, string $sender_role = 'client'): int
@@ -1342,10 +1416,7 @@ final class ClientPortal
         $items = [];
 
         if (!empty($preferences['support_replies'])) {
-            foreach (self::getTickets($client_id, 25) as $ticket) {
-                if (empty($ticket['unread'])) {
-                    continue;
-                }
+            foreach (self::getUnreadSupportReplies($client_id, 25) as $ticket) {
                 $items[] = [
                     'type' => 'support', 'tone' => 'gold', 'attention' => true,
                     'title' => 'New support reply',
@@ -1590,6 +1661,35 @@ final class ClientPortal
         ];
     }
 
+    public static function getAdminDashboardSnapshot(string $client_id): array
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $client = Client::getByClientId($client_id) ?: [];
+        $activity = $wpdb->get_row($wpdb->prepare(
+            "SELECT
+                (SELECT COUNT(*) FROM {$wpdb->prefix}wnq_portal_messages WHERE client_id=%s AND sender_role='client' AND status='unread') unread_messages,
+                (SELECT COUNT(*) FROM {$wpdb->prefix}wnq_portal_requests WHERE client_id=%s AND status IN ('submitted','reviewing','scheduled','in_progress')) open_requests",
+            $client_id,
+            $client_id
+        ), ARRAY_A) ?: [];
+        $billing = self::billingHealth($client);
+        $performance = self::getMonthlyPerformance($client_id, 6, true);
+        $unread_messages = absint($activity['unread_messages'] ?? 0);
+        $open_requests = absint($activity['open_requests'] ?? 0);
+        return [
+            'health' => [
+                'overall' => $billing['tone'] === 'red' ? 'red' : (($billing['tone'] !== 'green' || $unread_messages > 0 || $open_requests > 0) ? 'yellow' : 'green'),
+                'billing' => $billing,
+            ],
+            'customers' => self::getCustomerSummary($client_id, true),
+            'performance' => $performance,
+            'current_performance' => $performance ? end($performance) : [],
+            'unread_messages' => $unread_messages,
+            'open_requests' => $open_requests,
+        ];
+    }
+
     public static function publicClient(array $client): array
     {
         return [
@@ -1804,7 +1904,14 @@ final class ClientPortal
     public static function privateAttachmentPath(array $attachment): string
     {
         $path = sanitize_file_name((string)($attachment['path'] ?? ''));
-        return $path === '' ? '' : trailingslashit(self::privateUploadDirectory()) . $path;
+        $directory = self::privateUploadDirectory();
+        if ($path === '' || $directory === '') return '';
+        $directory_real = realpath($directory);
+        $file_real = realpath(trailingslashit($directory) . $path);
+        if ($directory_real === false || $file_real === false || !str_starts_with($file_real, trailingslashit($directory_real))) {
+            return '';
+        }
+        return $file_real;
     }
 
     private static function sanitizeAttachments($attachments): array
@@ -1866,6 +1973,19 @@ final class ClientPortal
         }
     }
 
+    private static function migrateLegacyTicketKeys(): void
+    {
+        if ((string)get_option('wnq_portal_ticket_keys_migrated_v1', '') === '1') {
+            return;
+        }
+        global $wpdb;
+        $table = self::sqlIdentifier($wpdb->prefix . 'wnq_portal_messages');
+        $result = $wpdb->query("UPDATE {$table} SET ticket_key=CONCAT('legacy-', id) WHERE ticket_key IS NULL OR ticket_key=''");
+        if ($result !== false) {
+            update_option('wnq_portal_ticket_keys_migrated_v1', '1', false);
+        }
+    }
+
     private static function migrateLegacyAttachments(): void
     {
         global $wpdb;
@@ -1875,35 +1995,48 @@ final class ClientPortal
         self::protectPrivateUploadDirectory($directory);
         $base_url = trailingslashit((string)$uploads['baseurl']);
         $base_dir = trailingslashit((string)$uploads['basedir']);
-        foreach (['wnq_portal_messages', 'wnq_portal_requests'] as $suffix) {
+        $base_real = realpath($base_dir);
+        if ($base_real === false) return;
+        $base_real = trailingslashit($base_real);
+        $locations = [
+            'wnq_portal_messages' => ['attachments'],
+            'wnq_portal_requests' => ['attachments'],
+            'wnq_portal_customers' => ['files', 'before_photos', 'after_photos'],
+        ];
+        foreach ($locations as $suffix => $columns) {
             $table = $wpdb->prefix . $suffix;
-            $rows = $wpdb->get_results("SELECT id,attachments FROM $table WHERE attachments LIKE '%\"url\"%'", ARRAY_A) ?: [];
-            foreach ($rows as $row) {
-                $changed = false;
-                $attachments = self::jsonArray($row['attachments'] ?? '');
-                foreach ($attachments as &$attachment) {
-                    $url = esc_url_raw((string)($attachment['url'] ?? ''));
-                    if ($url === '' || !str_starts_with($url, $base_url)) continue;
-                    $source = $base_dir . ltrim(substr($url, strlen($base_url)), '/');
-                    if (!is_file($source) || !is_readable($source)) continue;
-                    $token = str_replace('-', '', wp_generate_uuid4());
-                    $extension = sanitize_key((string)pathinfo($source, PATHINFO_EXTENSION));
-                    $filename = $token . ($extension !== '' ? '.' . $extension : '');
-                    $destination = trailingslashit($directory) . $filename;
-                    if (!@rename($source, $destination) && (!@copy($source, $destination) || !@unlink($source))) continue;
-                    @chmod($destination, 0640);
-                    $attachment = [
-                        'name' => sanitize_file_name((string)($attachment['name'] ?? basename($source))),
-                        'token' => $token,
-                        'path' => $filename,
-                        'type' => sanitize_mime_type((string)($attachment['type'] ?? '')),
-                        'size' => (int)filesize($destination),
-                    ];
-                    $changed = true;
-                }
-                unset($attachment);
-                if ($changed) {
-                    $wpdb->update($table, ['attachments' => wp_json_encode(self::sanitizeAttachments($attachments))], ['id' => absint($row['id'])]);
+            $safe_table = self::sqlIdentifier($table);
+            foreach ($columns as $column) {
+                $safe_column = self::sqlIdentifier($column);
+                $rows = $wpdb->get_results("SELECT id,{$safe_column} FROM {$safe_table} WHERE {$safe_column} LIKE '%\"url\"%'", ARRAY_A) ?: [];
+                foreach ($rows as $row) {
+                    $changed = false;
+                    $attachments = self::jsonArray($row[$column] ?? '');
+                    foreach ($attachments as &$attachment) {
+                        $url = esc_url_raw((string)($attachment['url'] ?? ''));
+                        if ($url === '' || !str_starts_with($url, $base_url)) continue;
+                        $source = $base_dir . ltrim(substr($url, strlen($base_url)), '/');
+                        $source_real = realpath($source);
+                        if ($source_real === false || !str_starts_with($source_real, $base_real) || !is_file($source_real) || !is_readable($source_real)) continue;
+                        $token = str_replace('-', '', wp_generate_uuid4());
+                        $extension = sanitize_key((string)pathinfo($source_real, PATHINFO_EXTENSION));
+                        $filename = $token . ($extension !== '' ? '.' . $extension : '');
+                        $destination = trailingslashit($directory) . $filename;
+                        if (!@rename($source_real, $destination) && (!@copy($source_real, $destination) || !@unlink($source_real))) continue;
+                        @chmod($destination, 0640);
+                        $attachment = [
+                            'name' => sanitize_file_name((string)($attachment['name'] ?? basename($source_real))),
+                            'token' => $token,
+                            'path' => $filename,
+                            'type' => sanitize_mime_type((string)($attachment['type'] ?? '')),
+                            'size' => (int)filesize($destination),
+                        ];
+                        $changed = true;
+                    }
+                    unset($attachment);
+                    if ($changed) {
+                        $wpdb->update($table, [$column => wp_json_encode(self::sanitizeAttachments($attachments))], ['id' => absint($row['id'])]);
+                    }
                 }
             }
         }
@@ -1938,7 +2071,11 @@ final class ClientPortal
     private static function dateField($value): string
     {
         $date = sanitize_text_field((string)$value);
-        return preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) ? $date : '';
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $date) !== 1) {
+            return '';
+        }
+        $parsed = \DateTimeImmutable::createFromFormat('!Y-m-d', $date, wp_timezone());
+        return $parsed instanceof \DateTimeImmutable && $parsed->format('Y-m-d') === $date ? $date : '';
     }
 
     private static function reportExportUrl(int $report_id, string $format = 'html'): string

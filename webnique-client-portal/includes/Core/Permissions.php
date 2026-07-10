@@ -49,7 +49,7 @@ final class Permissions
       return false;
     }
 
-    if (current_user_can('wnq_view_all_clients') || current_user_can('manage_options')) {
+    if (self::currentUserCanManagePortal() || current_user_can('wnq_view_all_clients')) {
       return true;
     }
 

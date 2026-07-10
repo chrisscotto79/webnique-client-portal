@@ -83,6 +83,19 @@ final class AdminSettings
         if (is_array($telegram_command_sync)) {
             delete_transient('wnq_telegram_command_sync_' . get_current_user_id());
         }
+        $ai_settings = class_exists('WNQ\\Services\\AIEngine')
+            ? \WNQ\Services\AIEngine::getSettings()
+            : [];
+        $ai_provider = sanitize_key((string)($ai_settings['provider'] ?? 'openai'));
+        $ai_provider_names = [
+            'openai' => 'OpenAI',
+            'groq' => 'Groq',
+            'together' => 'Together AI',
+            'xai' => 'xAI',
+        ];
+        $ai_provider_name = $ai_provider_names[$ai_provider] ?? ucfirst($ai_provider);
+        $ai_model = sanitize_text_field((string)($ai_settings[$ai_provider . '_model'] ?? ''));
+        $ai_configured = trim((string)($ai_settings[$ai_provider . '_api_key'] ?? '')) !== '';
         $seo_enabled = function_exists('wnq_seo_features_enabled') && wnq_seo_features_enabled();
 
         ?>
@@ -309,10 +322,28 @@ final class AdminSettings
                             <span><strong>Last scheduled check</strong><?php echo esc_html($telegram_last_check !== '' ? $telegram_last_check : 'Never'); ?></span>
                             <span class="<?php echo $telegram_last_error !== '' ? 'has-error' : ''; ?>"><strong>Last delivery issue</strong><?php echo esc_html($telegram_last_error !== '' ? $telegram_last_error : 'None'); ?></span>
                         </div>
+                        <div class="wnq-ai-assistant">
+                            <div class="wnq-ai-assistant-head">
+                                <div>
+                                    <span>GOLDEN AI ASSISTANT</span>
+                                    <h3>Read-only answers from WordPress</h3>
+                                </div>
+                                <span class="status-pill <?php echo $ai_configured ? 'active' : 'inactive'; ?>"><?php echo $ai_configured ? 'AI ready' : 'AI setup needed'; ?></span>
+                            </div>
+                            <p>Golden uses the existing <?php echo esc_html($ai_provider_name); ?> provider<?php echo $ai_model !== '' ? ' (' . esc_html($ai_model) . ')' : ''; ?>. It can read approved client, billing, task, report, request, CRM, and Google Ads data, but natural-language questions cannot change WordPress.</p>
+                            <div class="wnq-ai-assistant-grid">
+                                <span><strong>Natural question</strong><code>Hey Golden: when is Lucas payment date?</code></span>
+                                <span><strong>Reliable command</strong><code>/ask What is the Golden package onboarding SOP?</code></span>
+                                <span><strong>Add internal knowledge</strong><a href="<?php echo esc_url(admin_url('admin.php?page=wnq-ai-knowledge')); ?>">Open AI Knowledge Base</a></span>
+                                <span><strong>Telegram group privacy</strong>Disable privacy for the bot in BotFather to use “Hey Golden.” <code>/ask</code> works without that change.</span>
+                            </div>
+                            <p class="description">WordPress Cron checks for questions about once per minute while the site receives traffic. No API keys, tokens, passwords, or raw credentials are included in AI context.</p>
+                            <?php if (!$ai_configured): ?><p><a class="button" href="<?php echo esc_url(admin_url('admin.php?page=wnq-seo-hub-settings')); ?>">Configure Existing AI Provider</a></p><?php endif; ?>
+                        </div>
                         <div class="wnq-command-guide">
                             <div>
                                 <h3>Bot Commands</h3>
-                                <p>Use these read-only commands in the connected internal group. Client CRM leads and jobs are intentionally excluded.</p>
+                                <p>AI questions are read-only. Explicit task commands can add or complete agency tasks. Client CRM activity is not sent as a notification.</p>
                             </div>
                             <div class="wnq-command-grid">
                                 <?php foreach ($telegram_commands as $command => $description): ?>
@@ -380,6 +411,8 @@ final class AdminSettings
                         <dd><span class="status-pill <?php echo ($google_ads_has_oauth_client_id && $google_ads_has_oauth_client_secret && $google_ads_has_refresh_token) ? 'active' : 'inactive'; ?>"><?php echo ($google_ads_has_oauth_client_id && $google_ads_has_oauth_client_secret && $google_ads_has_refresh_token) ? 'Saved' : 'Missing'; ?></span></dd>
                         <dt>Telegram Alerts</dt>
                         <dd><span class="status-pill <?php echo ($telegram_enabled && $telegram_has_token && $telegram_chat_id !== '') ? 'active' : 'inactive'; ?>"><?php echo ($telegram_enabled && $telegram_has_token && $telegram_chat_id !== '') ? 'Enabled' : 'Not configured'; ?></span></dd>
+                        <dt>Golden AI</dt>
+                        <dd><span class="status-pill <?php echo $ai_configured ? 'active' : 'inactive'; ?>"><?php echo esc_html($ai_configured ? $ai_provider_name . ' ready' : 'Provider key missing'); ?></span></dd>
                         <dt>Stripe Webhook</dt>
                         <dd><span class="status-pill <?php echo $stripe_has_webhook_secret ? 'active' : 'inactive'; ?>"><?php echo $stripe_has_webhook_secret ? 'Ready' : 'Not configured'; ?></span></dd>
                         <dt>Analytics Admin</dt>
@@ -492,6 +525,36 @@ final class AdminSettings
             background: #f6f7f7;
         }
         .wnq-notification-health .has-error { border-color: #d63638; background: #fcf0f1; }
+        .wnq-ai-assistant {
+            margin-top: 16px;
+            padding: 18px;
+            border: 1px solid #d9c468;
+            border-radius: 8px;
+            background: #fffdf5;
+        }
+        .wnq-ai-assistant-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+        }
+        .wnq-ai-assistant-head h3 { margin: 4px 0 0; font-size: 18px; }
+        .wnq-ai-assistant-head > div > span { color: #806500; font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+        .wnq-ai-assistant > p { color: #50575e; line-height: 1.55; }
+        .wnq-ai-assistant-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+        }
+        .wnq-ai-assistant-grid > span {
+            display: grid;
+            gap: 6px;
+            padding: 12px;
+            border: 1px solid #e7dfbf;
+            border-radius: 6px;
+            background: #fff;
+        }
+        .wnq-ai-assistant-grid code { overflow-wrap: anywhere; }
         .wnq-command-guide {
             display: grid;
             grid-template-columns: minmax(220px, .7fr) minmax(320px, 1.3fr);
@@ -526,7 +589,7 @@ final class AdminSettings
             .wnq-settings-layout {
                 grid-template-columns: 1fr;
             }
-            .wnq-notification-events, .wnq-notification-health, .wnq-command-guide, .wnq-command-grid { grid-template-columns: 1fr; }
+            .wnq-notification-events, .wnq-notification-health, .wnq-ai-assistant-grid, .wnq-command-guide, .wnq-command-grid { grid-template-columns: 1fr; }
         }
         </style>
         <script>
