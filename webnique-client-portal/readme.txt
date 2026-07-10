@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.59
+Stable tag: 2.4.60
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,13 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.60 - WordPress Bootstrap Hotfix
+
+- Moved Telegram webhook synchronization out of the public plugin bootstrap path
+- Added fail-closed guards so Telegram setup errors cannot trigger a site-wide WordPress fatal
+- Added compatibility-safe string checks for the Telegram delivery and assistant code paths
+- Added duplicate plugin-copy detection to prevent global helper redeclaration during manual uploads
+
 2.4.59 - Instant Telegram AI Replies
 
 - Replaced traffic-dependent AI question polling with a signed Telegram webhook for immediate replies

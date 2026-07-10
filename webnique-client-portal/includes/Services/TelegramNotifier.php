@@ -274,7 +274,7 @@ final class TelegramNotifier
         }
         $url = esc_url_raw($url);
         $secret = preg_replace('/[^A-Za-z0-9_-]/', '', $secret) ?? '';
-        if ($url === '' || !str_starts_with($url, 'https://') || $secret === '') {
+        if ($url === '' || strpos($url, 'https://') !== 0 || $secret === '') {
             return ['ok' => false, 'message' => 'Telegram instant replies require an HTTPS webhook URL and a valid secret.'];
         }
         $response = wp_remote_post(
