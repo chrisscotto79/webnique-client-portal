@@ -67,6 +67,12 @@ final class AdminSettings
         $telegram_last_sent = (string)get_option('wnq_telegram_last_sent_at', '');
         $telegram_last_check = (string)get_option('wnq_telegram_last_check_at', '');
         $telegram_last_error = (string)get_option('wnq_telegram_last_error', '');
+        $telegram_webhook_enabled = (bool)get_option('wnq_telegram_webhook_enabled', true);
+        $telegram_webhook_active = (bool)get_option('wnq_telegram_webhook_active', false);
+        $telegram_webhook_last_sync = (string)get_option('wnq_telegram_webhook_last_sync_at', '');
+        $telegram_webhook_last_error = (string)get_option('wnq_telegram_webhook_last_error', '');
+        $telegram_last_command_check = (string)get_option('wnq_telegram_last_command_check_at', '');
+        $telegram_webhook_endpoint = rest_url('wnq/v1/notifications/telegram');
         $telegram_test = get_transient('wnq_telegram_test_' . get_current_user_id());
         if (is_array($telegram_test)) {
             delete_transient('wnq_telegram_test_' . get_current_user_id());
@@ -82,6 +88,10 @@ final class AdminSettings
         $telegram_command_sync = get_transient('wnq_telegram_command_sync_' . get_current_user_id());
         if (is_array($telegram_command_sync)) {
             delete_transient('wnq_telegram_command_sync_' . get_current_user_id());
+        }
+        $telegram_webhook_sync = get_transient('wnq_telegram_webhook_sync_' . get_current_user_id());
+        if (is_array($telegram_webhook_sync)) {
+            delete_transient('wnq_telegram_webhook_sync_' . get_current_user_id());
         }
         $ai_settings = class_exists('WNQ\\Services\\AIEngine')
             ? \WNQ\Services\AIEngine::getSettings()
@@ -128,6 +138,11 @@ final class AdminSettings
             <?php if (is_array($telegram_command_sync)): ?>
                 <div class="notice <?php echo !empty($telegram_command_sync['ok']) ? 'notice-success' : 'notice-warning'; ?> is-dismissible">
                     <p><strong>Telegram commands:</strong> <?php echo esc_html((string)($telegram_command_sync['message'] ?? 'Command sync completed.')); ?></p>
+                </div>
+            <?php endif; ?>
+            <?php if (is_array($telegram_webhook_sync)): ?>
+                <div class="notice <?php echo !empty($telegram_webhook_sync['ok']) ? 'notice-success' : 'notice-warning'; ?> is-dismissible">
+                    <p><strong>Telegram instant replies:</strong> <?php echo esc_html((string)($telegram_webhook_sync['message'] ?? 'Webhook setup completed.')); ?></p>
                 </div>
             <?php endif; ?>
 
@@ -304,6 +319,17 @@ final class AdminSettings
                                 </td>
                             </tr>
                             <tr>
+                                <th>Instant Bot Replies</th>
+                                <td>
+                                    <label>
+                                        <input type="checkbox" name="wnq_telegram_webhook_enabled" value="1" <?php checked($telegram_webhook_enabled); ?>>
+                                        Use secure instant delivery for commands and Golden AI questions
+                                    </label>
+                                    <p class="description">Recommended. Telegram sends each question directly to WordPress instead of waiting for site traffic to trigger cron. Cron remains available as an automatic fallback.</p>
+                                    <p class="description"><strong>Webhook endpoint:</strong> <code><?php echo esc_html($telegram_webhook_endpoint); ?></code></p>
+                                </td>
+                            </tr>
+                            <tr>
                                 <th>Alert Types</th>
                                 <td>
                                     <div class="wnq-notification-events">
@@ -318,9 +344,12 @@ final class AdminSettings
                             </tr>
                         </table>
                         <div class="wnq-notification-health">
+                            <span><strong>Reply delivery</strong><?php echo esc_html($telegram_webhook_active ? 'Instant webhook' : 'Cron fallback'); ?></span>
+                            <span><strong>Last question check</strong><?php echo esc_html($telegram_last_command_check !== '' ? $telegram_last_command_check : 'Never'); ?></span>
                             <span><strong>Last alert</strong><?php echo esc_html($telegram_last_sent !== '' ? $telegram_last_sent : 'Never'); ?></span>
                             <span><strong>Last scheduled check</strong><?php echo esc_html($telegram_last_check !== '' ? $telegram_last_check : 'Never'); ?></span>
-                            <span class="<?php echo $telegram_last_error !== '' ? 'has-error' : ''; ?>"><strong>Last delivery issue</strong><?php echo esc_html($telegram_last_error !== '' ? $telegram_last_error : 'None'); ?></span>
+                            <span><strong>Webhook sync</strong><?php echo esc_html($telegram_webhook_last_sync !== '' ? $telegram_webhook_last_sync : 'Never'); ?></span>
+                            <span class="<?php echo ($telegram_last_error !== '' || $telegram_webhook_last_error !== '') ? 'has-error' : ''; ?>"><strong>Last delivery issue</strong><?php echo esc_html($telegram_last_error !== '' ? $telegram_last_error : ($telegram_webhook_last_error !== '' ? $telegram_webhook_last_error : 'None')); ?></span>
                         </div>
                         <div class="wnq-ai-assistant">
                             <div class="wnq-ai-assistant-head">
@@ -337,7 +366,7 @@ final class AdminSettings
                                 <span><strong>Add internal knowledge</strong><a href="<?php echo esc_url(admin_url('admin.php?page=wnq-ai-knowledge')); ?>">Open AI Knowledge Base</a></span>
                                 <span><strong>Telegram group privacy</strong>Disable privacy for the bot in BotFather to use “Hey Golden.” <code>/ask</code> works without that change.</span>
                             </div>
-                            <p class="description">WordPress Cron checks for questions about once per minute while the site receives traffic. No API keys, tokens, passwords, or raw credentials are included in AI context.</p>
+                            <p class="description"><?php echo $telegram_webhook_active ? 'Questions are delivered to WordPress instantly through a signed Telegram webhook.' : 'Instant delivery is not active, so WordPress Cron is being used as a fallback and may depend on site traffic.'; ?> No API keys, tokens, passwords, or raw credentials are included in AI context.</p>
                             <?php if (!$ai_configured): ?><p><a class="button" href="<?php echo esc_url(admin_url('admin.php?page=wnq-seo-hub-settings')); ?>">Configure Existing AI Provider</a></p><?php endif; ?>
                         </div>
                         <div class="wnq-command-guide">
@@ -388,6 +417,7 @@ final class AdminSettings
                         <button type="submit" name="wnq_find_telegram_groups" value="1" class="button button-secondary button-large">Save &amp; Find Telegram Groups</button>
                         <button type="submit" name="wnq_test_telegram" value="1" class="button button-secondary button-large">Save &amp; Test Telegram</button>
                         <button type="submit" name="wnq_sync_telegram_commands" value="1" class="button button-secondary button-large">Save &amp; Sync Bot Commands</button>
+                        <button type="submit" name="wnq_sync_telegram_webhook" value="1" class="button button-secondary button-large">Save &amp; Repair Instant Replies</button>
                         <button type="submit" name="wnq_run_notification_checks" value="1" class="button button-secondary button-large">Save &amp; Run Alert Checks</button>
                     </p>
                 </form>
@@ -651,6 +681,7 @@ final class AdminSettings
         $previous_telegram_token = (string)get_option('wnq_telegram_bot_token', '');
         $previous_telegram_chat_id = (string)get_option('wnq_telegram_chat_id', '');
         update_option('wnq_telegram_enabled', !empty($_POST['wnq_telegram_enabled']), false);
+        update_option('wnq_telegram_webhook_enabled', !empty($_POST['wnq_telegram_webhook_enabled']), false);
         $telegram_event_defaults = class_exists('WNQ\\Services\\NotificationManager')
             ? \WNQ\Services\NotificationManager::eventDefaults()
             : [];
@@ -679,6 +710,10 @@ final class AdminSettings
         ) {
             delete_option('wnq_telegram_update_offset');
             delete_option('wnq_telegram_commands_hash');
+            delete_option('wnq_telegram_webhook_hash');
+            delete_option('wnq_telegram_webhook_active');
+            delete_option('wnq_telegram_webhook_processed_updates');
+            delete_transient('wnq_telegram_webhook_retry_lock');
         }
         $google_ads_token = sanitize_text_field(wp_unslash($_POST['wnq_google_ads_developer_token'] ?? ''));
         $clear_google_ads_token = !empty($_POST['wnq_google_ads_clear_developer_token']);
@@ -744,6 +779,11 @@ final class AdminSettings
                 require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramNotifier.php';
             }
             $telegram = new \WNQ\Services\TelegramNotifier();
+            if ((bool)get_option('wnq_telegram_webhook_active', false)) {
+                $telegram->deleteWebhook();
+                delete_option('wnq_telegram_webhook_hash');
+                delete_option('wnq_telegram_webhook_active');
+            }
             $discovery = $telegram->discoverChats();
             if (!empty($discovery['ok']) && count((array)($discovery['chats'] ?? [])) === 1) {
                 $chat = reset($discovery['chats']);
@@ -752,6 +792,9 @@ final class AdminSettings
                 }
             }
             set_transient('wnq_telegram_discovery_' . get_current_user_id(), $discovery, 5 * MINUTE_IN_SECONDS);
+            if (class_exists('WNQ\\Services\\NotificationManager')) {
+                \WNQ\Services\NotificationManager::syncWebhook(true);
+            }
         }
 
         if (!empty($_POST['wnq_test_telegram'])) {
@@ -780,6 +823,19 @@ final class AdminSettings
             );
         }
 
+        $telegram_webhook_synced = false;
+        if (!empty($_POST['wnq_sync_telegram_webhook'])) {
+            $telegram_webhook_synced = true;
+            if (!class_exists('WNQ\\Services\\NotificationManager')) {
+                require_once WNQ_PORTAL_PATH . 'includes/Services/NotificationManager.php';
+            }
+            set_transient(
+                'wnq_telegram_webhook_sync_' . get_current_user_id(),
+                \WNQ\Services\NotificationManager::syncWebhook(true),
+                5 * MINUTE_IN_SECONDS
+            );
+        }
+
         $notification_checks_run = false;
         if (!empty($_POST['wnq_run_notification_checks'])) {
             $notification_checks_run = true;
@@ -800,6 +856,7 @@ final class AdminSettings
             'telegram-groups-found' => $telegram_groups_found ? 'true' : 'false',
             'telegram-tested' => $telegram_tested ? 'true' : 'false',
             'telegram-commands-synced' => $telegram_commands_synced ? 'true' : 'false',
+            'telegram-webhook-synced' => $telegram_webhook_synced ? 'true' : 'false',
             'notification-checks-run' => $notification_checks_run ? 'true' : 'false',
         ], admin_url('admin.php')));
         exit;

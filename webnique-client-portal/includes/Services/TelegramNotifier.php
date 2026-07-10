@@ -267,6 +267,56 @@ final class TelegramNotifier
         return ['ok' => true, 'message' => 'Telegram bot commands are ready.'];
     }
 
+    public function setWebhook(string $url, string $secret): array
+    {
+        if (!$this->isConfigured()) {
+            return ['ok' => false, 'message' => 'Telegram bot token and group chat ID are required.'];
+        }
+        $url = esc_url_raw($url);
+        $secret = preg_replace('/[^A-Za-z0-9_-]/', '', $secret) ?? '';
+        if ($url === '' || !str_starts_with($url, 'https://') || $secret === '') {
+            return ['ok' => false, 'message' => 'Telegram instant replies require an HTTPS webhook URL and a valid secret.'];
+        }
+        $response = wp_remote_post(
+            'https://api.telegram.org/bot' . $this->bot_token . '/setWebhook',
+            [
+                'timeout' => 20,
+                'body' => [
+                    'url' => $url,
+                    'secret_token' => $secret,
+                    'allowed_updates' => wp_json_encode(['message']),
+                    'drop_pending_updates' => 'false',
+                ],
+            ]
+        );
+        return self::telegramApiResult($response, 'Telegram could not enable instant replies.', 'Telegram instant replies are connected.');
+    }
+
+    public function deleteWebhook(): array
+    {
+        if (preg_match('/^\d+:[A-Za-z0-9_-]+$/', $this->bot_token) !== 1) {
+            return ['ok' => false, 'message' => 'A valid Telegram bot token is required.'];
+        }
+        $response = wp_remote_post(
+            'https://api.telegram.org/bot' . $this->bot_token . '/deleteWebhook',
+            ['timeout' => 20, 'body' => ['drop_pending_updates' => 'false']]
+        );
+        return self::telegramApiResult($response, 'Telegram could not disable the webhook.', 'Telegram webhook disabled.');
+    }
+
+    private static function telegramApiResult($response, string $failure_message, string $success_message): array
+    {
+        if (is_wp_error($response)) {
+            return ['ok' => false, 'message' => $response->get_error_message()];
+        }
+        $status = (int)wp_remote_retrieve_response_code($response);
+        $body = json_decode((string)wp_remote_retrieve_body($response), true);
+        if ($status < 200 || $status >= 300 || empty($body['ok'])) {
+            return ['ok' => false, 'message' => sanitize_text_field((string)($body['description'] ?? $failure_message))];
+        }
+        return ['ok' => true, 'message' => $success_message];
+    }
+
     private static function sanitizeButtons(array $buttons): array
     {
         $clean = [];

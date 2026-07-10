@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.58
+Stable tag: 2.4.59
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,14 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.59 - Instant Telegram AI Replies
+
+- Replaced traffic-dependent AI question polling with a signed Telegram webhook for immediate replies
+- Kept WordPress Cron as an automatic fallback when instant delivery cannot be configured
+- Prevented command synchronization from consuming unanswered Telegram messages
+- Added replay protection, exact-group enforcement, webhook repair controls, and delivery diagnostics
+- Added clean greeting and missing-knowledge responses without empty source labels or invented SOP details
+
 2.4.58 - Grounded Telegram AI Assistant
 
 - Added read-only natural-language Telegram questions through `/ask` and “Hey Golden” messages
