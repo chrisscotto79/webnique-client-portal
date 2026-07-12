@@ -1054,6 +1054,19 @@ final class NotificationManager
         ][sanitize_key((string)($client['billing_cycle'] ?? 'monthly'))] ?? 1;
         $today = current_datetime()->setTime(0, 0);
         $due_value = (string)($client['next_payment_due_date'] ?? '');
+        $due_day = Client::normalizePaymentDueDay($client['payment_due_day'] ?? 0);
+        if ($due_day > 0) {
+            $following_due = Client::calculateFollowingPaymentDate(
+                $due_day,
+                $due_value,
+                $cycle_months,
+                $today->format('Y-m-d')
+            );
+            return Client::update((int)$client['id'], [
+                'last_payment_date' => $today->format('Y-m-d'),
+                'next_payment_due_date' => $following_due,
+            ]);
+        }
         try {
             $next_due = $due_value !== '' ? new \DateTimeImmutable($due_value, wp_timezone()) : $today;
         } catch (\Exception $exception) {

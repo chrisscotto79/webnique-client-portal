@@ -359,7 +359,7 @@ final class AdminSettings
                                 </div>
                                 <span class="status-pill <?php echo $ai_configured ? 'active' : 'inactive'; ?>"><?php echo $ai_configured ? 'AI ready' : 'AI setup needed'; ?></span>
                             </div>
-                            <p>Golden uses the existing <?php echo esc_html($ai_provider_name); ?> provider<?php echo $ai_model !== '' ? ' (' . esc_html($ai_model) . ')' : ''; ?>. It can read approved client, billing, task, report, request, CRM, and Google Ads data, but natural-language questions cannot change WordPress.</p>
+                            <p>Golden uses the existing <?php echo esc_html($ai_provider_name); ?> provider<?php echo $ai_model !== '' ? ' (' . esc_html($ai_model) . ')' : ''; ?>. It can read approved client, billing, Money Management, task, report, request, CRM, and Google Ads data, but natural-language questions cannot change WordPress.</p>
                             <div class="wnq-ai-assistant-grid">
                                 <span><strong>Natural question</strong><code>Hey Golden: when is Lucas payment date?</code></span>
                                 <span><strong>Reliable command</strong><code>/ask What is the Golden package onboarding SOP?</code></span>

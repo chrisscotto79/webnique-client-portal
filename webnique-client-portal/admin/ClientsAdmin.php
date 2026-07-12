@@ -236,7 +236,13 @@ final class ClientsAdmin
                                         <br><small class="text-muted">-$<?php echo number_format(($client['monthly_rate'] ?? 0) - ($client['after_fees'] ?? 0), 2); ?></small>
                                     </td>
                                     <td>
-                                        <?php if (!empty($client['next_payment_due_date'])): ?>
+                                        <?php if (!empty($client['payment_due_day'])): ?>
+                                            <strong><?php echo esc_html(ucfirst((string)($client['billing_cycle'] ?? 'monthly'))); ?> on day <?php echo esc_html((string)(int)$client['payment_due_day']); ?></strong>
+                                            <?php if (!empty($client['next_payment_due_date'])): ?>
+                                                <br><small class="text-muted">Next: <?php echo esc_html(date('M j, Y', strtotime($client['next_payment_due_date']))); ?></small>
+                                            <?php endif; ?>
+                                            <br><small class="text-muted"><?php echo !empty($client['payment_notifications_enabled']) ? esc_html((int)($client['payment_reminder_days'] ?? 3) . '-day reminder') : 'Reminders off'; ?></small>
+                                        <?php elseif (!empty($client['next_payment_due_date'])): ?>
                                             <strong>Due <?php echo esc_html(date('M j, Y', strtotime($client['next_payment_due_date']))); ?></strong>
                                             <br><small class="text-muted"><?php echo !empty($client['payment_notifications_enabled']) ? esc_html((int)($client['payment_reminder_days'] ?? 3) . '-day reminder') : 'Reminders off'; ?></small>
                                         <?php else: ?>
@@ -1252,10 +1258,17 @@ final class ClientsAdmin
                         </td>
                     </tr>
                     <tr>
+                        <th><label for="payment_due_day">Recurring Payment Due Day</label></th>
+                        <td>
+                            <input type="number" name="payment_due_day" id="payment_due_day" value="<?php echo esc_attr((string)($client['payment_due_day'] ?? '')); ?>" min="1" max="31" inputmode="numeric" class="small-text" placeholder="15"> of each month
+                            <p class="description">For monthly billing, choose the day due each month. Quarterly and annual schedules keep this day in each due month. Short months use their final day.</p>
+                        </td>
+                    </tr>
+                    <tr>
                         <th><label for="next_payment_due_date">Next Payment Due</label></th>
                         <td>
                             <input type="date" name="next_payment_due_date" id="next_payment_due_date" value="<?php echo esc_attr($client['next_payment_due_date'] ?? ''); ?>" class="regular-text">
-                            <p class="description">Telegram reminders use this date. A successful payment advances it using the billing cycle.</p>
+                            <p class="description">Calculated when the recurring due day changes. You can override this date for a one-time billing exception.</p>
                         </td>
                     </tr>
                     <tr>
@@ -1474,6 +1487,39 @@ final class ClientsAdmin
         }
 
         $id = isset($_POST['id']) ? intval($_POST['id']) : 0;
+        $existing_client = $id > 0 ? Client::getById($id) : null;
+        $billing_cycle = sanitize_key($_POST['billing_cycle'] ?? get_option('wnq_default_billing_cycle', 'monthly'));
+        if (!in_array($billing_cycle, ['monthly', 'quarterly', 'annually'], true)) {
+            $billing_cycle = 'monthly';
+        }
+        $cycle_months = ['monthly' => 1, 'quarterly' => 3, 'annually' => 12][$billing_cycle];
+        $last_payment_date = sanitize_text_field($_POST['last_payment_date'] ?? '');
+        $payment_due_day = Client::normalizePaymentDueDay($_POST['payment_due_day'] ?? 0);
+        $next_payment_due_date = sanitize_text_field($_POST['next_payment_due_date'] ?? '');
+        if (
+            $next_payment_due_date !== ''
+            && (
+                preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $next_payment_due_date, $due_parts) !== 1
+                || !checkdate((int)$due_parts[2], (int)$due_parts[3], (int)$due_parts[1])
+            )
+        ) {
+            $next_payment_due_date = '';
+        }
+        $schedule_changed = !$existing_client
+            || $payment_due_day !== Client::normalizePaymentDueDay($existing_client['payment_due_day'] ?? 0)
+            || $last_payment_date !== (string)($existing_client['last_payment_date'] ?? '')
+            || $billing_cycle !== (string)($existing_client['billing_cycle'] ?? 'monthly');
+        if ($payment_due_day > 0 && ($schedule_changed || $next_payment_due_date === '')) {
+            $next_payment_due_date = (string)Client::calculateUpcomingPaymentDate(
+                $payment_due_day,
+                $last_payment_date,
+                $cycle_months
+            );
+        }
+        $monthly_rate = max(0, (float)($_POST['monthly_rate'] ?? 0));
+        $stripe_fee_percent = max(0, min(100, (float)($_POST['stripe_fee_percent'] ?? 2.90)));
+        $stripe_fee_flat = max(0, (float)($_POST['stripe_fee_flat'] ?? 0.30));
+        $after_fees = max(0, round($monthly_rate - ($monthly_rate * ($stripe_fee_percent / 100)) - $stripe_fee_flat, 2));
 
         $data = [
             'name' => sanitize_text_field($_POST['name'] ?? ''),
@@ -1491,13 +1537,14 @@ final class ClientsAdmin
             'status' => sanitize_text_field($_POST['status'] ?? 'active'),
             'tier' => sanitize_text_field($_POST['tier'] ?? 'website'),
             'billing_email' => sanitize_email($_POST['billing_email'] ?? ''),
-            'billing_cycle' => sanitize_text_field($_POST['billing_cycle'] ?? get_option('wnq_default_billing_cycle', 'monthly')),
-            'monthly_rate' => floatval($_POST['monthly_rate'] ?? 0),
-            'stripe_fee_percent' => floatval($_POST['stripe_fee_percent'] ?? 2.90),
-            'stripe_fee_flat' => floatval($_POST['stripe_fee_flat'] ?? 0.30),
-            'after_fees' => floatval($_POST['after_fees'] ?? 0),
-            'last_payment_date' => sanitize_text_field($_POST['last_payment_date'] ?? ''),
-            'next_payment_due_date' => sanitize_text_field($_POST['next_payment_due_date'] ?? ''),
+            'billing_cycle' => $billing_cycle,
+            'monthly_rate' => $monthly_rate,
+            'stripe_fee_percent' => $stripe_fee_percent,
+            'stripe_fee_flat' => $stripe_fee_flat,
+            'after_fees' => $after_fees,
+            'last_payment_date' => $last_payment_date,
+            'payment_due_day' => $payment_due_day,
+            'next_payment_due_date' => $next_payment_due_date,
             'payment_reminder_days' => max(0, min(30, intval($_POST['payment_reminder_days'] ?? 3))),
             'payment_notifications_enabled' => !empty($_POST['payment_notifications_enabled']) ? 1 : 0,
             'payment_count' => intval($_POST['payment_count'] ?? 0),

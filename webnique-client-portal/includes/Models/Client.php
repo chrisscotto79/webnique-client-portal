@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) {
  */
 final class Client
 {
-    private const SCHEMA_VERSION = '3';
+    private const SCHEMA_VERSION = '4';
 
     /**
      * Table name
@@ -82,6 +82,7 @@ final class Client
             stripe_fee_flat decimal(10,2) DEFAULT 0.30,
             after_fees decimal(10,2) DEFAULT 0.00,
             last_payment_date date DEFAULT NULL,
+            payment_due_day tinyint UNSIGNED DEFAULT NULL,
             next_payment_due_date date DEFAULT NULL,
             payment_reminder_days int(11) DEFAULT 3,
             payment_notifications_enabled tinyint(1) DEFAULT 1,
@@ -112,6 +113,11 @@ final class Client
                  ELSE DATE_ADD(last_payment_date, INTERVAL 1 MONTH)
              END
              WHERE next_payment_due_date IS NULL AND last_payment_date IS NOT NULL"
+        );
+        $wpdb->query(
+            "UPDATE $table_name
+             SET payment_due_day = DAYOFMONTH(next_payment_due_date)
+             WHERE payment_due_day IS NULL AND next_payment_due_date IS NOT NULL"
         );
         update_option('wnq_clients_schema_version', self::SCHEMA_VERSION, false);
     }
@@ -245,7 +251,11 @@ final class Client
             $insert_data['after_fees'] = floatval($data['after_fees']);
         }
         if (isset($data['last_payment_date'])) {
-            $insert_data['last_payment_date'] = sanitize_text_field($data['last_payment_date']);
+            $insert_data['last_payment_date'] = self::dateValue($data['last_payment_date']);
+        }
+        if (array_key_exists('payment_due_day', $data)) {
+            $due_day = self::normalizePaymentDueDay($data['payment_due_day']);
+            $insert_data['payment_due_day'] = $due_day > 0 ? $due_day : null;
         }
         if (isset($data['next_payment_due_date'])) {
             $insert_data['next_payment_due_date'] = self::dateValue($data['next_payment_due_date']);
@@ -372,7 +382,11 @@ final class Client
             $update_data['after_fees'] = floatval($data['after_fees']);
         }
         if (isset($data['last_payment_date'])) {
-            $update_data['last_payment_date'] = sanitize_text_field($data['last_payment_date']);
+            $update_data['last_payment_date'] = self::dateValue($data['last_payment_date']);
+        }
+        if (array_key_exists('payment_due_day', $data)) {
+            $due_day = self::normalizePaymentDueDay($data['payment_due_day']);
+            $update_data['payment_due_day'] = $due_day > 0 ? $due_day : null;
         }
         if (isset($data['next_payment_due_date'])) {
             $update_data['next_payment_due_date'] = self::dateValue($data['next_payment_due_date']);
@@ -501,6 +515,113 @@ final class Client
         return (int) $wpdb->get_var(
             $wpdb->prepare("SELECT COUNT(*) FROM $table_name WHERE status = %s", $status)
         );
+    }
+
+    public static function normalizePaymentDueDay($value): int
+    {
+        $day = absint($value);
+        return $day >= 1 && $day <= 31 ? $day : 0;
+    }
+
+    /**
+     * Calculate the next scheduled date when a recurring due day is configured.
+     */
+    public static function calculateUpcomingPaymentDate(
+        int $due_day,
+        string $last_payment_date = '',
+        int $cycle_months = 1,
+        string $reference_date = ''
+    ): ?string {
+        $due_day = self::normalizePaymentDueDay($due_day);
+        if ($due_day === 0) {
+            return null;
+        }
+
+        $cycle_months = max(1, min(12, $cycle_months));
+        $reference = self::dateObject($reference_date) ?? current_datetime()->setTime(0, 0);
+        $last_payment = self::dateObject($last_payment_date);
+
+        if ($last_payment instanceof \DateTimeImmutable) {
+            $candidate = self::dateForMonth(
+                (int)$last_payment->format('Y'),
+                (int)$last_payment->format('n'),
+                $due_day
+            );
+            do {
+                $candidate = self::addCalendarMonths($candidate, $cycle_months, $due_day);
+            } while ($candidate <= $last_payment);
+            return $candidate->format('Y-m-d');
+        }
+
+        $candidate = self::dateForMonth(
+            (int)$reference->format('Y'),
+            (int)$reference->format('n'),
+            $due_day
+        );
+        if ($candidate < $reference) {
+            $candidate = self::addCalendarMonths($candidate, $cycle_months, $due_day);
+        }
+        return $candidate->format('Y-m-d');
+    }
+
+    /**
+     * Advance an existing schedule after a successful payment.
+     */
+    public static function calculateFollowingPaymentDate(
+        int $due_day,
+        string $current_due_date = '',
+        int $cycle_months = 1,
+        string $payment_date = ''
+    ): ?string {
+        $due_day = self::normalizePaymentDueDay($due_day);
+        if ($due_day === 0) {
+            return null;
+        }
+
+        $cycle_months = max(1, min(12, $cycle_months));
+        $payment = self::dateObject($payment_date) ?? current_datetime()->setTime(0, 0);
+        $current_due = self::dateObject($current_due_date);
+        if (!$current_due instanceof \DateTimeImmutable) {
+            $current_due = self::dateForMonth(
+                (int)$payment->format('Y'),
+                (int)$payment->format('n'),
+                $due_day
+            );
+        }
+
+        $candidate = self::addCalendarMonths($current_due, $cycle_months, $due_day);
+        while ($candidate <= $payment) {
+            $candidate = self::addCalendarMonths($candidate, $cycle_months, $due_day);
+        }
+        return $candidate->format('Y-m-d');
+    }
+
+    private static function dateObject(string $value): ?\DateTimeImmutable
+    {
+        $date = self::dateValue($value);
+        if ($date === null) {
+            return null;
+        }
+        try {
+            return new \DateTimeImmutable($date, wp_timezone());
+        } catch (\Throwable $exception) {
+            return null;
+        }
+    }
+
+    private static function dateForMonth(int $year, int $month, int $due_day): \DateTimeImmutable
+    {
+        $first = new \DateTimeImmutable(sprintf('%04d-%02d-01', $year, $month), wp_timezone());
+        $day = min($due_day, (int)$first->format('t'));
+        return $first->setDate($year, $month, $day)->setTime(0, 0);
+    }
+
+    private static function addCalendarMonths(\DateTimeImmutable $date, int $months, int $due_day): \DateTimeImmutable
+    {
+        $month_index = ((int)$date->format('Y') * 12) + ((int)$date->format('n') - 1) + $months;
+        $year = intdiv($month_index, 12);
+        $month = ($month_index % 12) + 1;
+        return self::dateForMonth($year, $month, $due_day);
     }
 
     private static function dateValue($value): ?string

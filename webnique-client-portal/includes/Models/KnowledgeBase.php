@@ -76,6 +76,7 @@ final class KnowledgeBase
             'onboarding' => 'Client Onboarding',
             'sop' => 'Standard Operating Procedure',
             'billing' => 'Billing',
+            'money_management' => 'Money Management',
             'sales' => 'Sales',
             'seo' => 'SEO',
             'ads' => 'Google Ads',
