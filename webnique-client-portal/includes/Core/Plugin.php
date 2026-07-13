@@ -77,6 +77,7 @@ final class Plugin
     require_once WNQ_PORTAL_PATH . 'includes/Controllers/DashboardController.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/Client.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/ClientPortal.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Models/FinanceEntry.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/KnowledgeBase.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/Task.php';
 

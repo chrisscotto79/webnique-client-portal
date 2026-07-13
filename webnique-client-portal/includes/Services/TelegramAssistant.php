@@ -9,6 +9,7 @@ namespace WNQ\Services;
 
 use WNQ\Models\Client;
 use WNQ\Models\ClientPortal;
+use WNQ\Models\FinanceEntry;
 use WNQ\Models\KnowledgeBase;
 use WNQ\Models\Task;
 
@@ -37,7 +38,7 @@ final class TelegramAssistant
             return "Ask me a read-only question after “Hey Golden:” or use /ask.\n\nExample: Hey Golden: when is Lucas's payment date?";
         }
         if (self::isGreeting($question)) {
-            $answer = 'Hi. Ask me about a client payment date, agency tasks, Google Ads performance, reports, requests, or an SOP saved in the AI Knowledge Base.';
+            $answer = 'Hi. Ask me about client payment dates, Money Management, agency tasks, Google Ads performance, reports, requests, or an SOP saved in the AI Knowledge Base.';
             KnowledgeBase::logQuery($question, $answer, '', [], 'greeting');
             return $answer;
         }
@@ -51,15 +52,25 @@ final class TelegramAssistant
         }
 
         $client = is_array($match['client'] ?? null) ? $match['client'] : null;
-        $knowledge = KnowledgeBase::search($question, 4);
-        $sources = [];
-        $context = self::buildContext($question, $client, $knowledge, $sources);
         $client_id = sanitize_text_field((string)($client['client_id'] ?? ''));
         $direct_answer = self::directAnswer($question, $client);
         if ($direct_answer !== null) {
             KnowledgeBase::logQuery($question, $direct_answer, $client_id, ['WordPress client billing record'], 'answered_direct');
             return $direct_answer;
         }
+        $finance_answer = self::directFinanceAnswer($question, $client);
+        if ($finance_answer !== null) {
+            KnowledgeBase::logQuery($question, $finance_answer, $client_id, ['Money Management', 'WordPress client billing records'], 'answered_direct');
+            return $finance_answer;
+        }
+        $task_answer = self::directTaskAnswer($question, $client);
+        if ($task_answer !== null) {
+            KnowledgeBase::logQuery($question, $task_answer, $client_id, ['Agency tasks'], 'answered_direct');
+            return $task_answer;
+        }
+        $knowledge = KnowledgeBase::search($question, 4);
+        $sources = [];
+        $context = self::buildContext($question, $client, $knowledge, $sources);
         if ($sources === []) {
             $answer = self::missingSourceAnswer($question);
             KnowledgeBase::logQuery($question, $answer, $client_id, [], 'no_source');
@@ -99,6 +110,12 @@ final class TelegramAssistant
             'current_date' => current_time('F j, Y'),
             'access_mode' => 'read-only',
         ];
+
+        if (self::isMoneyManagementQuestion($question, $client)) {
+            $context['money_management'] = self::moneyManagementContext();
+            $sources[] = 'Money Management';
+            $sources[] = 'WordPress client billing records';
+        }
 
         if ($client !== null) {
             $client_id = sanitize_text_field((string)($client['client_id'] ?? ''));
@@ -152,6 +169,7 @@ final class TelegramAssistant
                         'billing_cycle' => sanitize_text_field((string)($row['billing_cycle'] ?? '')),
                         'monthly_rate' => (float)($row['monthly_rate'] ?? 0),
                         'last_payment_date' => sanitize_text_field((string)($row['last_payment_date'] ?? '')),
+                        'payment_due_day' => Client::normalizePaymentDueDay($row['payment_due_day'] ?? 0),
                         'next_payment_due_date' => sanitize_text_field((string)($row['next_payment_due_date'] ?? '')),
                     ];
                 }, array_slice(Client::getAll(), 0, 40));
@@ -305,6 +323,7 @@ final class TelegramAssistant
                 'billing_cycle' => sanitize_text_field((string)($client['billing_cycle'] ?? '')),
                 'monthly_rate' => (float)($client['monthly_rate'] ?? 0),
                 'last_payment_date' => sanitize_text_field((string)($client['last_payment_date'] ?? '')),
+                'payment_due_day' => Client::normalizePaymentDueDay($client['payment_due_day'] ?? 0),
                 'next_payment_due_date' => sanitize_text_field((string)($client['next_payment_due_date'] ?? '')),
                 'payment_count' => absint($client['payment_count'] ?? 0),
                 'total_collected' => (float)($client['total_collected'] ?? 0),
@@ -369,10 +388,171 @@ final class TelegramAssistant
         if ($client === null || !self::containsAny($question, ['payment', 'billing', 'bill', 'invoice', 'due date', 'pay date'])) {
             return null;
         }
+        $due_day = Client::normalizePaymentDueDay($client['payment_due_day'] ?? 0);
         $due = sanitize_text_field((string)($client['next_payment_due_date'] ?? ''));
+        if ($due === '' && $due_day > 0) {
+            $due = (string)Client::calculateUpcomingPaymentDate(
+                $due_day,
+                sanitize_text_field((string)($client['last_payment_date'] ?? '')),
+                self::billingCycleMonths((string)($client['billing_cycle'] ?? 'monthly'))
+            );
+        }
         $timestamp = $due !== '' ? strtotime($due) : false;
         $date = $timestamp !== false ? wp_date('F j, Y', $timestamp) : 'not configured in WordPress';
-        return self::clientLabel($client) . " has a next payment date of {$date}.\n\nSource: WordPress client billing record.";
+        $cycle = sanitize_key((string)($client['billing_cycle'] ?? 'monthly'));
+        $schedule_label = $cycle === 'monthly' ? 'each month' : 'each ' . $cycle . ' billing month';
+        $schedule = $due_day > 0 ? ' Their recurring payment day is the ' . self::ordinal($due_day) . ' of ' . $schedule_label . '.' : '';
+        return self::clientLabel($client) . " has a next payment date of {$date}.{$schedule}\n\nSource: WordPress client billing record.";
+    }
+
+    private static function directFinanceAnswer(string $question, ?array $client): ?string
+    {
+        if ($client !== null || !self::isMoneyManagementQuestion($question, null)) {
+            return null;
+        }
+        $is_expense = self::containsAny($question, ['expense', 'expenses', 'costs', 'overhead']);
+        $is_net = self::containsAny($question, ['profit', 'net revenue', 'net income', 'net total', 'cash flow']);
+        $is_revenue = self::containsAny($question, [
+            'revenue', 'income', 'bring in', 'brings in', 'current rev', 'monthly rev', 'mrr',
+            'money management', 'how much money',
+        ]);
+        if (!$is_expense && !$is_net && !$is_revenue) {
+            return null;
+        }
+
+        $money = self::moneyManagementContext();
+        $managed = (array)($money['managed_monthly_revenue'] ?? []);
+        $ledger = (array)($money['ledger_summary'] ?? []);
+        if ($is_expense && !$is_revenue) {
+            return 'Money Management shows ' . self::money((float)($ledger['month_expense'] ?? 0))
+                . " in expenses this month and " . self::money((float)($ledger['expense'] ?? 0))
+                . " in recorded non-recurring and active recurring expenses.\n\nSource: Money Management ledger.";
+        }
+        if ($is_net && !$is_revenue) {
+            return 'Money Management shows a net total of ' . self::money((float)($ledger['month_net'] ?? 0))
+                . " for this month. Active client billing is " . self::money((float)($managed['after_fees'] ?? 0))
+                . " per month after configured processing fees.\n\nSource: Money Management and WordPress client billing records.";
+        }
+
+        return 'Current active-client recurring revenue is ' . self::money((float)($managed['gross'] ?? 0))
+            . ' per month before fees and ' . self::money((float)($managed['after_fees'] ?? 0))
+            . ' after configured processing fees. Money Management records '
+            . self::money((float)($ledger['month_income'] ?? 0))
+            . " in income this month.\n\nSource: Money Management and WordPress client billing records.";
+    }
+
+    private static function directTaskAnswer(string $question, ?array $client): ?string
+    {
+        if ($client !== null || !self::containsAny($question, [
+            'what task', 'which task', 'my tasks', 'open tasks', 'tasks do i', 'have to do',
+            'need to do', 'overdue task', 'tasks today',
+        ])) {
+            return null;
+        }
+
+        $tasks = array_values(array_filter(Task::getAll(), static fn(array $task): bool => ($task['status'] ?? '') !== 'done'));
+        if ($tasks === []) {
+            return "There are no open agency tasks in WordPress.\n\nSource: Agency tasks.";
+        }
+
+        $lines = ['Here are the next open agency tasks:'];
+        foreach (array_slice($tasks, 0, 8) as $task) {
+            $due = sanitize_text_field((string)($task['due_date'] ?? ''));
+            $due_label = $due !== '' && strtotime($due) !== false ? wp_date('M j, Y', strtotime($due)) : 'No due date';
+            $lines[] = sprintf(
+                '%d. #%d %s — %s — %s',
+                count($lines),
+                absint($task['id'] ?? 0),
+                sanitize_text_field((string)($task['title'] ?? 'Untitled task')),
+                $due_label,
+                ucfirst(sanitize_key((string)($task['priority'] ?? 'normal')))
+            );
+        }
+        $lines[] = '';
+        $lines[] = 'Source: Agency tasks.';
+        return implode("\n", $lines);
+    }
+
+    private static function moneyManagementContext(): array
+    {
+        $summary = FinanceEntry::getSummary();
+        $monthly = FinanceEntry::getMonthlyTotals(6);
+        $gross = 0.0;
+        $after_fees = 0.0;
+        $active_count = 0;
+        foreach (Client::getAll() as $client) {
+            if (($client['status'] ?? '') !== 'active') {
+                continue;
+            }
+            $active_count++;
+            $gross += (float)($client['monthly_rate'] ?? 0);
+            $after_fees += (float)($client['after_fees'] ?? 0);
+        }
+
+        $entries = array_map(static function (array $entry): array {
+            return [
+                'type' => sanitize_key((string)($entry['type'] ?? '')),
+                'category' => sanitize_text_field((string)($entry['category'] ?? '')),
+                'amount' => (float)($entry['amount'] ?? 0),
+                'entry_date' => sanitize_text_field((string)($entry['entry_date'] ?? '')),
+                'recurrence' => sanitize_key((string)($entry['recurrence'] ?? '')),
+                'reminder_day' => FinanceEntry::normalizeReminderDay($entry['reminder_day'] ?? 0),
+                'notifications_enabled' => !empty($entry['notifications_enabled']),
+                'client' => sanitize_text_field((string)(($entry['client_company'] ?? '') ?: ($entry['client_name'] ?? ''))),
+                'payment_method' => sanitize_text_field((string)($entry['payment_method'] ?? '')),
+                'description' => self::clip(sanitize_textarea_field((string)($entry['description'] ?? '')), 180),
+            ];
+        }, FinanceEntry::getAll(15));
+
+        return [
+            'managed_monthly_revenue' => [
+                'active_clients' => $active_count,
+                'gross' => round($gross, 2),
+                'after_fees' => round($after_fees, 2),
+                'configured_processing_fees' => round(max(0, $gross - $after_fees), 2),
+            ],
+            'ledger_summary' => array_map(static fn($value): float => round((float)$value, 2), $summary),
+            'six_month_trend' => [
+                'labels' => array_values((array)($monthly['labels'] ?? [])),
+                'income' => array_map('floatval', (array)($monthly['income'] ?? [])),
+                'expenses' => array_map('floatval', (array)($monthly['expenses'] ?? [])),
+                'net' => array_map('floatval', (array)($monthly['net'] ?? [])),
+            ],
+            'recent_entries' => $entries,
+        ];
+    }
+
+    private static function isMoneyManagementQuestion(string $question, ?array $client): bool
+    {
+        if (self::containsAny($question, [
+            'money management', 'company revenue', 'agency revenue', 'our revenue', 'our income',
+            'our expenses', 'company bring in', 'company brings in', 'we bring in', 'current rev',
+            'monthly revenue', 'monthly income', 'monthly expenses', 'business income',
+            'business expenses', 'net income', 'net revenue', 'cash flow', 'mrr',
+        ])) {
+            return true;
+        }
+        return $client === null && self::containsAny($question, ['revenue', 'income', 'expense', 'expenses', 'profit', 'overhead']);
+    }
+
+    private static function billingCycleMonths(string $cycle): int
+    {
+        return ['monthly' => 1, 'quarterly' => 3, 'annually' => 12][sanitize_key($cycle)] ?? 1;
+    }
+
+    private static function ordinal(int $number): string
+    {
+        $number = max(1, min(31, $number));
+        $mod_100 = $number % 100;
+        $suffix = ($mod_100 >= 11 && $mod_100 <= 13)
+            ? 'th'
+            : ([1 => 'st', 2 => 'nd', 3 => 'rd'][$number % 10] ?? 'th');
+        return $number . $suffix;
+    }
+
+    private static function money(float $amount): string
+    {
+        return '$' . number_format($amount, 2);
     }
 
     private static function containsAny(string $question, array $needles): bool

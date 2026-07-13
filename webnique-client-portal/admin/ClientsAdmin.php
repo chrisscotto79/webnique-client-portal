@@ -236,7 +236,13 @@ final class ClientsAdmin
                                         <br><small class="text-muted">-$<?php echo number_format(($client['monthly_rate'] ?? 0) - ($client['after_fees'] ?? 0), 2); ?></small>
                                     </td>
                                     <td>
-                                        <?php if (!empty($client['next_payment_due_date'])): ?>
+                                        <?php if (!empty($client['payment_due_day'])): ?>
+                                            <strong><?php echo esc_html(ucfirst((string)($client['billing_cycle'] ?? 'monthly'))); ?> on day <?php echo esc_html((string)(int)$client['payment_due_day']); ?></strong>
+                                            <?php if (!empty($client['next_payment_due_date'])): ?>
+                                                <br><small class="text-muted">Next: <?php echo esc_html(date('M j, Y', strtotime($client['next_payment_due_date']))); ?></small>
+                                            <?php endif; ?>
+                                            <br><small class="text-muted"><?php echo !empty($client['payment_notifications_enabled']) ? esc_html((int)($client['payment_reminder_days'] ?? 3) . '-day reminder') : 'Reminders off'; ?></small>
+                                        <?php elseif (!empty($client['next_payment_due_date'])): ?>
                                             <strong>Due <?php echo esc_html(date('M j, Y', strtotime($client['next_payment_due_date']))); ?></strong>
                                             <br><small class="text-muted"><?php echo !empty($client['payment_notifications_enabled']) ? esc_html((int)($client['payment_reminder_days'] ?? 3) . '-day reminder') : 'Reminders off'; ?></small>
                                         <?php else: ?>
@@ -642,6 +648,53 @@ final class ClientsAdmin
         .finance-panel h2 {
             margin-top: 0;
         }
+        .finance-reminders-panel {
+            margin-bottom: 20px;
+            border-top: 4px solid #d4af37;
+        }
+        .finance-reminders-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 24px;
+            margin-bottom: 18px;
+        }
+        .finance-reminders-header p {
+            margin: 4px 0 0;
+            color: #6b7280;
+        }
+        .finance-reminder-layout {
+            display: grid;
+            grid-template-columns: minmax(300px, 0.8fr) minmax(0, 1.2fr);
+            gap: 24px;
+            align-items: start;
+        }
+        .finance-reminder-list {
+            display: grid;
+            gap: 10px;
+        }
+        .finance-reminder-item {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto auto;
+            gap: 16px;
+            align-items: center;
+            padding: 14px 16px;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            background: #fafaf9;
+        }
+        .finance-reminder-item strong,
+        .finance-reminder-item span {
+            display: block;
+        }
+        .finance-reminder-item small {
+            color: #6b7280;
+        }
+        .finance-reminder-date {
+            min-width: 118px;
+            color: #7c5d00;
+            font-weight: 700;
+        }
         .finance-form {
             display: grid;
             gap: 16px;
@@ -699,10 +752,13 @@ final class ClientsAdmin
             overflow-x: auto;
         }
         @media (max-width: 1100px) {
-            .finance-grid { grid-template-columns: 1fr; }
+            .finance-grid,
+            .finance-reminder-layout { grid-template-columns: 1fr; }
         }
         @media (max-width: 640px) {
             .finance-field-row { grid-template-columns: 1fr; }
+            .finance-reminders-header { display: block; }
+            .finance-reminder-item { grid-template-columns: 1fr; gap: 8px; }
         }
         </style>
         <?php
@@ -714,6 +770,7 @@ final class ClientsAdmin
 
         $summary = class_exists('WNQ\\Models\\FinanceEntry') ? FinanceEntry::getSummary() : [];
         $entries = class_exists('WNQ\\Models\\FinanceEntry') ? FinanceEntry::getAll(150) : [];
+        $expense_reminders = class_exists('WNQ\\Models\\FinanceEntry') ? FinanceEntry::getMonthlyExpenseReminders() : [];
         $message = isset($_GET['message']) ? sanitize_key($_GET['message']) : '';
 
         ?>
@@ -752,6 +809,92 @@ final class ClientsAdmin
                 <div class="stat-subtitle">Latest 150 shown</div>
             </div>
         </div>
+
+        <section class="finance-panel finance-reminders-panel" aria-labelledby="wnq-expense-reminders-title">
+            <div class="finance-reminders-header">
+                <div>
+                    <h2 id="wnq-expense-reminders-title">Monthly Expense Notifications</h2>
+                    <p>Track recurring bills and send one Telegram reminder on the selected day each month.</p>
+                </div>
+                <span class="frequency-badge"><?php echo count($expense_reminders); ?> active</span>
+            </div>
+            <div class="finance-reminder-layout">
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="finance-form">
+                    <?php wp_nonce_field('wnq_save_finance_entry'); ?>
+                    <input type="hidden" name="action" value="wnq_save_finance_entry">
+                    <input type="hidden" name="type" value="expense">
+                    <input type="hidden" name="recurrence" value="monthly">
+                    <div class="finance-field-row">
+                        <div class="finance-field">
+                            <label for="expense_reminder_category">Expense</label>
+                            <input type="text" name="category" id="expense_reminder_category" placeholder="Software, hosting, insurance" required>
+                        </div>
+                        <div class="finance-field">
+                            <label for="expense_reminder_amount">Monthly Amount</label>
+                            <div class="amount-input"><span>$</span><input type="number" name="amount" id="expense_reminder_amount" min="0.01" step="0.01" required></div>
+                        </div>
+                    </div>
+                    <div class="finance-field-row">
+                        <div class="finance-field">
+                            <label for="expense_reminder_day">Reminder Day</label>
+                            <input type="number" name="reminder_day" id="expense_reminder_day" min="1" max="31" value="1" required>
+                            <small>Days 29-31 use the last day in shorter months.</small>
+                        </div>
+                        <div class="finance-field">
+                            <label for="expense_reminder_start">Starts</label>
+                            <input type="date" name="entry_date" id="expense_reminder_start" value="<?php echo esc_attr(current_time('Y-m-d')); ?>" required>
+                        </div>
+                    </div>
+                    <div class="finance-field-row">
+                        <div class="finance-field">
+                            <label for="expense_reminder_client">Related Client</label>
+                            <select name="client_id" id="expense_reminder_client">
+                                <option value="">Agency expense</option>
+                                <?php foreach ($clients as $client): ?>
+                                    <option value="<?php echo esc_attr($client['id']); ?>"><?php echo esc_html($client['name']); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="finance-field">
+                            <label for="expense_reminder_method">Payment Method</label>
+                            <input type="text" name="payment_method" id="expense_reminder_method" placeholder="Card, ACH, bank account">
+                        </div>
+                    </div>
+                    <div class="finance-field">
+                        <label for="expense_reminder_notes">Notes</label>
+                        <textarea name="description" id="expense_reminder_notes" rows="2" placeholder="Vendor, account, or renewal details"></textarea>
+                    </div>
+                    <label><input type="checkbox" name="notifications_enabled" value="1" checked> Send this reminder to Telegram every month</label>
+                    <div><button type="submit" class="button button-primary">Add Monthly Expense Reminder</button></div>
+                </form>
+
+                <div class="finance-reminder-list">
+                    <?php if ($expense_reminders === []): ?>
+                        <div class="empty-state" style="padding:32px;"><h3>No monthly reminders yet</h3><p>Add the first recurring expense to begin receiving Telegram reminders.</p></div>
+                    <?php else: ?>
+                        <?php foreach ($expense_reminders as $reminder): ?>
+                            <?php $next_reminder = FinanceEntry::nextReminderDate((int)($reminder['reminder_day'] ?? 0)); ?>
+                            <article class="finance-reminder-item">
+                                <div>
+                                    <strong><?php echo esc_html($reminder['category'] ?: 'Monthly expense'); ?></strong>
+                                    <small><?php echo esc_html($reminder['client_name'] ?: 'Agency expense'); ?><?php echo !empty($reminder['payment_method']) ? ' · ' . esc_html($reminder['payment_method']) : ''; ?></small>
+                                </div>
+                                <div><strong>$<?php echo number_format((float)$reminder['amount'], 2); ?></strong><small>every month</small></div>
+                                <div class="finance-reminder-date">
+                                    Next: <?php echo esc_html($next_reminder !== '' ? wp_date('M j', strtotime($next_reminder)) : 'Not set'); ?>
+                                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:6px;">
+                                        <?php wp_nonce_field('wnq_delete_finance_entry'); ?>
+                                        <input type="hidden" name="action" value="wnq_delete_finance_entry">
+                                        <input type="hidden" name="id" value="<?php echo esc_attr($reminder['id']); ?>">
+                                        <button type="submit" class="button button-small button-link-delete" onclick="return confirm('Delete this monthly expense reminder?');">Delete</button>
+                                    </form>
+                                </div>
+                            </article>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </section>
 
         <div class="finance-grid">
             <div class="finance-panel">
@@ -984,6 +1127,8 @@ final class ClientsAdmin
                 'amount' => $entry_amount,
                 'entry_date' => sanitize_text_field($_POST['entry_date'] ?? current_time('Y-m-d')),
                 'recurrence' => sanitize_key($_POST['recurrence'] ?? 'one_time'),
+                'reminder_day' => intval($_POST['reminder_day'] ?? 0),
+                'notifications_enabled' => !empty($_POST['notifications_enabled']) ? 1 : 0,
                 'category' => sanitize_text_field($_POST['category'] ?? ''),
                 'client_id' => $entry_client_id,
                 'payment_method' => sanitize_text_field($_POST['payment_method'] ?? ''),
@@ -1252,10 +1397,17 @@ final class ClientsAdmin
                         </td>
                     </tr>
                     <tr>
+                        <th><label for="payment_due_day">Recurring Payment Due Day</label></th>
+                        <td>
+                            <input type="number" name="payment_due_day" id="payment_due_day" value="<?php echo esc_attr((string)($client['payment_due_day'] ?? '')); ?>" min="1" max="31" inputmode="numeric" class="small-text" placeholder="15"> of each month
+                            <p class="description">For monthly billing, choose the day due each month. Quarterly and annual schedules keep this day in each due month. Short months use their final day.</p>
+                        </td>
+                    </tr>
+                    <tr>
                         <th><label for="next_payment_due_date">Next Payment Due</label></th>
                         <td>
                             <input type="date" name="next_payment_due_date" id="next_payment_due_date" value="<?php echo esc_attr($client['next_payment_due_date'] ?? ''); ?>" class="regular-text">
-                            <p class="description">Telegram reminders use this date. A successful payment advances it using the billing cycle.</p>
+                            <p class="description">Calculated when the recurring due day changes. You can override this date for a one-time billing exception.</p>
                         </td>
                     </tr>
                     <tr>
@@ -1474,6 +1626,39 @@ final class ClientsAdmin
         }
 
         $id = isset($_POST['id']) ? intval($_POST['id']) : 0;
+        $existing_client = $id > 0 ? Client::getById($id) : null;
+        $billing_cycle = sanitize_key($_POST['billing_cycle'] ?? get_option('wnq_default_billing_cycle', 'monthly'));
+        if (!in_array($billing_cycle, ['monthly', 'quarterly', 'annually'], true)) {
+            $billing_cycle = 'monthly';
+        }
+        $cycle_months = ['monthly' => 1, 'quarterly' => 3, 'annually' => 12][$billing_cycle];
+        $last_payment_date = sanitize_text_field($_POST['last_payment_date'] ?? '');
+        $payment_due_day = Client::normalizePaymentDueDay($_POST['payment_due_day'] ?? 0);
+        $next_payment_due_date = sanitize_text_field($_POST['next_payment_due_date'] ?? '');
+        if (
+            $next_payment_due_date !== ''
+            && (
+                preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $next_payment_due_date, $due_parts) !== 1
+                || !checkdate((int)$due_parts[2], (int)$due_parts[3], (int)$due_parts[1])
+            )
+        ) {
+            $next_payment_due_date = '';
+        }
+        $schedule_changed = !$existing_client
+            || $payment_due_day !== Client::normalizePaymentDueDay($existing_client['payment_due_day'] ?? 0)
+            || $last_payment_date !== (string)($existing_client['last_payment_date'] ?? '')
+            || $billing_cycle !== (string)($existing_client['billing_cycle'] ?? 'monthly');
+        if ($payment_due_day > 0 && ($schedule_changed || $next_payment_due_date === '')) {
+            $next_payment_due_date = (string)Client::calculateUpcomingPaymentDate(
+                $payment_due_day,
+                $last_payment_date,
+                $cycle_months
+            );
+        }
+        $monthly_rate = max(0, (float)($_POST['monthly_rate'] ?? 0));
+        $stripe_fee_percent = max(0, min(100, (float)($_POST['stripe_fee_percent'] ?? 2.90)));
+        $stripe_fee_flat = max(0, (float)($_POST['stripe_fee_flat'] ?? 0.30));
+        $after_fees = max(0, round($monthly_rate - ($monthly_rate * ($stripe_fee_percent / 100)) - $stripe_fee_flat, 2));
 
         $data = [
             'name' => sanitize_text_field($_POST['name'] ?? ''),
@@ -1491,13 +1676,14 @@ final class ClientsAdmin
             'status' => sanitize_text_field($_POST['status'] ?? 'active'),
             'tier' => sanitize_text_field($_POST['tier'] ?? 'website'),
             'billing_email' => sanitize_email($_POST['billing_email'] ?? ''),
-            'billing_cycle' => sanitize_text_field($_POST['billing_cycle'] ?? get_option('wnq_default_billing_cycle', 'monthly')),
-            'monthly_rate' => floatval($_POST['monthly_rate'] ?? 0),
-            'stripe_fee_percent' => floatval($_POST['stripe_fee_percent'] ?? 2.90),
-            'stripe_fee_flat' => floatval($_POST['stripe_fee_flat'] ?? 0.30),
-            'after_fees' => floatval($_POST['after_fees'] ?? 0),
-            'last_payment_date' => sanitize_text_field($_POST['last_payment_date'] ?? ''),
-            'next_payment_due_date' => sanitize_text_field($_POST['next_payment_due_date'] ?? ''),
+            'billing_cycle' => $billing_cycle,
+            'monthly_rate' => $monthly_rate,
+            'stripe_fee_percent' => $stripe_fee_percent,
+            'stripe_fee_flat' => $stripe_fee_flat,
+            'after_fees' => $after_fees,
+            'last_payment_date' => $last_payment_date,
+            'payment_due_day' => $payment_due_day,
+            'next_payment_due_date' => $next_payment_due_date,
             'payment_reminder_days' => max(0, min(30, intval($_POST['payment_reminder_days'] ?? 3))),
             'payment_notifications_enabled' => !empty($_POST['payment_notifications_enabled']) ? 1 : 0,
             'payment_count' => intval($_POST['payment_count'] ?? 0),

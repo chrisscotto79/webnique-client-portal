@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.60
+Stable tag: 2.4.62
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,24 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.62 - Monthly Expense Notifications
+
+- Added a dedicated Money Management section for recurring monthly expense reminders
+- Added configurable reminder days, monthly amounts, client links, payment methods, and Telegram delivery
+- Added automatic short-month handling for reminder days 29 through 31
+- Added daily duplicate-safe expense reminder checks and the `/expenses` Telegram command
+- Preserved existing one-time entries, recurring ledger totals, and Money Management AI access
+
+2.4.61 - Recurring Billing Schedule and Money Management AI
+
+- Added a recurring monthly payment due-day setting to each client edit screen
+- Automatically calculates and advances next payment dates while handling short months safely
+- Connected Money Management totals, entries, and trends to Golden's read-only AI context
+- Added direct grounded answers for common agency revenue, expense, and net-total questions
+- Added direct open-task answers so common task questions do not depend on AI rate-limit availability
+- Recalculates after-fee client revenue on the server instead of trusting a submitted browser value
+- Added Money Management as an AI Knowledge Base category and documented live financial context
+
 2.4.60 - WordPress Bootstrap Hotfix
 
 - Moved Telegram webhook synchronization out of the public plugin bootstrap path
