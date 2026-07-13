@@ -496,6 +496,8 @@ final class TelegramAssistant
                 'amount' => (float)($entry['amount'] ?? 0),
                 'entry_date' => sanitize_text_field((string)($entry['entry_date'] ?? '')),
                 'recurrence' => sanitize_key((string)($entry['recurrence'] ?? '')),
+                'reminder_day' => FinanceEntry::normalizeReminderDay($entry['reminder_day'] ?? 0),
+                'notifications_enabled' => !empty($entry['notifications_enabled']),
                 'client' => sanitize_text_field((string)(($entry['client_company'] ?? '') ?: ($entry['client_name'] ?? ''))),
                 'payment_method' => sanitize_text_field((string)($entry['payment_method'] ?? '')),
                 'description' => self::clip(sanitize_textarea_field((string)($entry['description'] ?? '')), 180),

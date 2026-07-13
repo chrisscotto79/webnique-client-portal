@@ -9,6 +9,7 @@ namespace WNQ\Services;
 
 use WNQ\Models\Client;
 use WNQ\Models\ClientPortal;
+use WNQ\Models\FinanceEntry;
 use WNQ\Models\Task;
 
 if (!defined('ABSPATH')) {
@@ -57,6 +58,7 @@ final class NotificationManager
             'learning_requests' => true,
             'payments' => true,
             'payment_due' => true,
+            'expense_due' => true,
             'ads_spend' => true,
             'ads_connection' => true,
             'overdue_tasks' => true,
@@ -74,6 +76,7 @@ final class NotificationManager
             'ideanote' => 'Save an idea note',
             'ads' => 'Show client ad spend for past 31 days',
             'billing' => 'Show upcoming client payments',
+            'expenses' => 'Show monthly expense reminders',
             'requests' => 'Show open client requests',
             'status' => 'Show notification system status',
             'ask' => 'Ask Golden a read-only question',
@@ -367,16 +370,17 @@ final class NotificationManager
     public static function runScheduledChecks(bool $force = false): array
     {
         if (!(bool)get_option('wnq_telegram_enabled', false)) {
-            return ['ok' => false, 'message' => 'Telegram notifications are disabled.', 'ads_alerts' => 0, 'payment_alerts' => 0, 'task_alerts' => 0];
+            return ['ok' => false, 'message' => 'Telegram notifications are disabled.', 'ads_alerts' => 0, 'payment_alerts' => 0, 'expense_alerts' => 0, 'task_alerts' => 0];
         }
         if (!$force && get_transient(self::CRON_LOCK)) {
-            return ['ok' => true, 'message' => 'Notification checks are already running.', 'ads_alerts' => 0, 'payment_alerts' => 0, 'task_alerts' => 0];
+            return ['ok' => true, 'message' => 'Notification checks are already running.', 'ads_alerts' => 0, 'payment_alerts' => 0, 'expense_alerts' => 0, 'task_alerts' => 0];
         }
         set_transient(self::CRON_LOCK, 1, 15 * MINUTE_IN_SECONDS);
 
         try {
             $ads_alerts = self::checkAdsAccounts();
             $payment_alerts = self::checkPaymentDueDates();
+            $expense_alerts = self::checkExpenseReminders();
             $task_alerts = self::checkOverdueTasks();
         } finally {
             delete_transient(self::CRON_LOCK);
@@ -385,9 +389,10 @@ final class NotificationManager
         update_option('wnq_telegram_last_check_at', current_time('mysql'), false);
         return [
             'ok' => true,
-            'message' => sprintf('Checks completed. %d Ads alert%s, %d payment alert%s, and %d overdue task alert%s sent.', $ads_alerts, $ads_alerts === 1 ? '' : 's', $payment_alerts, $payment_alerts === 1 ? '' : 's', $task_alerts, $task_alerts === 1 ? '' : 's'),
+            'message' => sprintf('Checks completed. %d Ads alert%s, %d payment alert%s, %d expense reminder%s, and %d overdue task alert%s sent.', $ads_alerts, $ads_alerts === 1 ? '' : 's', $payment_alerts, $payment_alerts === 1 ? '' : 's', $expense_alerts, $expense_alerts === 1 ? '' : 's', $task_alerts, $task_alerts === 1 ? '' : 's'),
             'ads_alerts' => $ads_alerts,
             'payment_alerts' => $payment_alerts,
+            'expense_alerts' => $expense_alerts,
             'task_alerts' => $task_alerts,
         ];
     }
@@ -607,6 +612,53 @@ final class NotificationManager
         return $sent;
     }
 
+    private static function checkExpenseReminders(): int
+    {
+        if (!self::eventEnabled('expense_due') || !class_exists(FinanceEntry::class)) {
+            return 0;
+        }
+
+        $today = current_datetime()->setTime(0, 0);
+        $today_value = $today->format('Y-m-d');
+        $sent = 0;
+        $notifier = new TelegramNotifier();
+        foreach (FinanceEntry::getMonthlyExpenseReminders() as $expense) {
+            if (($expense['entry_date'] ?? '') > $today_value) {
+                continue;
+            }
+            $reminder_day = FinanceEntry::effectiveReminderDay((int)($expense['reminder_day'] ?? 0), $today);
+            if ($reminder_day === 0 || (int)$today->format('j') !== $reminder_day) {
+                continue;
+            }
+
+            $client_name = trim((string)(($expense['client_company'] ?? '') ?: ($expense['client_name'] ?? '')));
+            $fields = [
+                'Expense' => self::clean((string)(($expense['category'] ?? '') ?: 'Monthly expense')),
+                'Amount' => self::money((float)($expense['amount'] ?? 0)),
+                'Reminder date' => self::formatDate($today_value),
+            ];
+            if ($client_name !== '') {
+                $fields['Related client'] = self::clean($client_name);
+            }
+            if (!empty($expense['payment_method'])) {
+                $fields['Payment method'] = self::clean((string)$expense['payment_method']);
+            }
+
+            $result = $notifier->notify(
+                'expense_due',
+                self::htmlMessage('Monthly expense reminder', $fields),
+                'expense-due:' . absint($expense['id'] ?? 0) . ':' . $today->format('Y-m'),
+                45 * DAY_IN_SECONDS,
+                self::telegramOptions('Open Money Management', admin_url('admin.php?page=wnq-clients&tab=finance'))
+            );
+            if (!empty($result['ok'])) {
+                $sent++;
+            }
+        }
+
+        return $sent;
+    }
+
     private static function checkOverdueTasks(): int
     {
         if (!self::eventEnabled('overdue_tasks')) {
@@ -770,6 +822,8 @@ final class NotificationManager
                 return $notifier->send(self::adsCommandMessage(), self::telegramOptions('Open portal', admin_url('admin.php?page=wnq-client-portal-dashboard')));
             case 'billing':
                 return $notifier->send(self::billingCommandMessage(), self::telegramOptions('Open clients', admin_url('admin.php?page=wnq-clients')));
+            case 'expenses':
+                return $notifier->send(self::expensesCommandMessage(), self::telegramOptions('Open Money Management', admin_url('admin.php?page=wnq-clients&tab=finance')));
             case 'requests':
                 return $notifier->send(self::requestsCommandMessage(), self::telegramOptions('Open portal', admin_url('admin.php?page=wnq-client-portal-dashboard')));
             case 'status':
@@ -951,6 +1005,30 @@ final class NotificationManager
         if (count($clients) > 15) {
             $lines[] = '';
             $lines[] = '+' . (count($clients) - 15) . ' more in WordPress';
+        }
+        return implode("\n", $lines);
+    }
+
+    private static function expensesCommandMessage(): string
+    {
+        if (!class_exists(FinanceEntry::class)) {
+            return '<b>Monthly expense reminders</b>' . "\n" . 'Money Management is not available.';
+        }
+        $expenses = FinanceEntry::getMonthlyExpenseReminders();
+        if ($expenses === []) {
+            return '<b>Monthly expense reminders</b>' . "\n" . 'No recurring expense notifications are configured.';
+        }
+
+        $total = array_sum(array_map(static fn(array $expense): float => (float)($expense['amount'] ?? 0), $expenses));
+        $lines = ['<b>Monthly expense reminders</b>', '<b>Monthly total:</b> ' . self::html(self::money($total)), ''];
+        foreach (array_slice($expenses, 0, 20) as $index => $expense) {
+            $day = FinanceEntry::normalizeReminderDay($expense['reminder_day'] ?? 0);
+            $lines[] = ($index + 1) . '. <b>' . self::html(self::clean((string)(($expense['category'] ?? '') ?: 'Monthly expense'))) . '</b>';
+            $lines[] = '   ' . self::html(self::money((float)($expense['amount'] ?? 0))) . ' · day ' . $day;
+        }
+        if (count($expenses) > 20) {
+            $lines[] = '';
+            $lines[] = '+' . (count($expenses) - 20) . ' more in Money Management';
         }
         return implode("\n", $lines);
     }

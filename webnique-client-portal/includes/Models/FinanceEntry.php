@@ -16,6 +16,7 @@ if (!defined('ABSPATH')) {
 final class FinanceEntry
 {
     private static string $table = 'wnq_finance_entries';
+    private static bool $schema_checked = false;
 
     public static function createTable(): void
     {
@@ -30,6 +31,8 @@ final class FinanceEntry
             amount decimal(10,2) NOT NULL DEFAULT 0.00,
             entry_date date NOT NULL,
             recurrence varchar(20) NOT NULL DEFAULT 'one_time',
+            reminder_day tinyint(3) UNSIGNED DEFAULT NULL,
+            notifications_enabled tinyint(1) NOT NULL DEFAULT 0,
             client_id bigint(20) UNSIGNED DEFAULT NULL,
             payment_method varchar(100) DEFAULT '',
             description text DEFAULT NULL,
@@ -49,6 +52,9 @@ final class FinanceEntry
 
     public static function ensureSchema(): void
     {
+        if (self::$schema_checked) {
+            return;
+        }
         global $wpdb;
         $table_name = $wpdb->prefix . self::$table;
         $columns = $wpdb->get_col("DESCRIBE $table_name", 0);
@@ -56,14 +62,22 @@ final class FinanceEntry
         if (empty($columns)) {
             return;
         }
+        self::$schema_checked = true;
 
         if (!in_array('recurrence', $columns, true)) {
             $wpdb->query("ALTER TABLE $table_name ADD COLUMN recurrence varchar(20) NOT NULL DEFAULT 'one_time' AFTER entry_date");
+        }
+        if (!in_array('reminder_day', $columns, true)) {
+            $wpdb->query("ALTER TABLE $table_name ADD COLUMN reminder_day tinyint(3) UNSIGNED DEFAULT NULL AFTER recurrence");
+        }
+        if (!in_array('notifications_enabled', $columns, true)) {
+            $wpdb->query("ALTER TABLE $table_name ADD COLUMN notifications_enabled tinyint(1) NOT NULL DEFAULT 0 AFTER reminder_day");
         }
     }
 
     public static function create(array $data): int|false
     {
+        self::ensureSchema();
         global $wpdb;
         $table_name = $wpdb->prefix . self::$table;
 
@@ -86,6 +100,11 @@ final class FinanceEntry
         if (!in_array($recurrence, ['one_time', 'monthly'], true)) {
             $recurrence = 'one_time';
         }
+        $reminder_day = self::normalizeReminderDay($data['reminder_day'] ?? 0);
+        $notifications_enabled = $type === 'expense'
+            && $recurrence === 'monthly'
+            && !empty($data['notifications_enabled'])
+            && $reminder_day > 0;
 
         $result = $wpdb->insert(
             $table_name,
@@ -95,11 +114,13 @@ final class FinanceEntry
                 'amount' => $amount,
                 'entry_date' => $entry_date,
                 'recurrence' => $recurrence,
+                'reminder_day' => $reminder_day > 0 ? $reminder_day : null,
+                'notifications_enabled' => $notifications_enabled ? 1 : 0,
                 'client_id' => !empty($data['client_id']) ? intval($data['client_id']) : null,
                 'payment_method' => sanitize_text_field($data['payment_method'] ?? ''),
                 'description' => sanitize_textarea_field($data['description'] ?? ''),
             ],
-            ['%s', '%s', '%f', '%s', '%s', '%d', '%s', '%s']
+            ['%s', '%s', '%f', '%s', '%s', '%d', '%d', '%d', '%s', '%s']
         );
 
         return $result === false ? false : (int) $wpdb->insert_id;
@@ -136,6 +157,67 @@ final class FinanceEntry
         );
 
         return $results ?: [];
+    }
+
+    public static function getMonthlyExpenseReminders(): array
+    {
+        self::ensureSchema();
+        global $wpdb;
+        $table_name = $wpdb->prefix . self::$table;
+        $clients_table = $wpdb->prefix . 'wnq_clients';
+
+        $results = $wpdb->get_results(
+            "SELECT e.*, c.name AS client_name, c.company AS client_company
+            FROM $table_name e
+            LEFT JOIN $clients_table c ON c.id = e.client_id
+            WHERE e.type = 'expense'
+                AND e.recurrence = 'monthly'
+                AND e.notifications_enabled = 1
+                AND e.reminder_day BETWEEN 1 AND 31
+            ORDER BY e.reminder_day ASC, e.category ASC, e.id ASC",
+            ARRAY_A
+        );
+
+        return $results ?: [];
+    }
+
+    public static function normalizeReminderDay(mixed $value): int
+    {
+        $day = absint($value);
+        return $day >= 1 && $day <= 31 ? $day : 0;
+    }
+
+    public static function effectiveReminderDay(int $reminder_day, ?\DateTimeInterface $date = null): int
+    {
+        $reminder_day = self::normalizeReminderDay($reminder_day);
+        if ($reminder_day === 0) {
+            return 0;
+        }
+
+        $date = $date ?: current_datetime();
+        return min($reminder_day, (int)$date->format('t'));
+    }
+
+    public static function nextReminderDate(int $reminder_day, ?\DateTimeImmutable $from = null): string
+    {
+        $reminder_day = self::normalizeReminderDay($reminder_day);
+        if ($reminder_day === 0) {
+            return '';
+        }
+
+        $from = ($from ?: current_datetime())->setTime(0, 0);
+        $effective_day = self::effectiveReminderDay($reminder_day, $from);
+        $candidate = $from->setDate((int)$from->format('Y'), (int)$from->format('n'), $effective_day);
+        if ($candidate < $from) {
+            $candidate = $from->modify('first day of next month');
+            $candidate = $candidate->setDate(
+                (int)$candidate->format('Y'),
+                (int)$candidate->format('n'),
+                self::effectiveReminderDay($reminder_day, $candidate)
+            );
+        }
+
+        return $candidate->format('Y-m-d');
     }
 
     public static function getSummary(): array

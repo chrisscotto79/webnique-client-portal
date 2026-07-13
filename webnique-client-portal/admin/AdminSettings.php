@@ -57,6 +57,7 @@ final class AdminSettings
             'learning_requests' => 'Learning center requests',
             'payments' => 'Payments and payment failures',
             'payment_due' => 'Client payment due-date reminders',
+            'expense_due' => 'Monthly expense reminders',
             'ads_spend' => 'Google Ads spend thresholds (set per client)',
             'ads_connection' => 'Google Ads connection problems',
             'overdue_tasks' => 'Daily overdue agency task summary',
