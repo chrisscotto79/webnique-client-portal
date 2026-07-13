@@ -486,16 +486,57 @@ final class NotificationManager
         if (!self::eventEnabled('ads_spend') && !self::eventEnabled('ads_connection')) {
             return 0;
         }
+
+        $linked_clients = array_values(array_filter(Client::getAll(), static function (array $client): bool {
+            $client_id = sanitize_text_field((string)($client['client_id'] ?? ''));
+            return $client_id !== '' && !empty(ClientPortal::getAdsPublicStatus($client_id)['has_linked_account']);
+        }));
+        if ($linked_clients === []) {
+            return 0;
+        }
+
         $state = get_option('wnq_telegram_ads_spend_state', []);
         $state = is_array($state) ? $state : [];
         $sent = 0;
         $notifier = new TelegramNotifier();
 
-        foreach (Client::getAll() as $client) {
-            $client_id = sanitize_text_field((string)($client['client_id'] ?? ''));
-            if ($client_id === '' || empty(ClientPortal::getAdsPublicStatus($client_id)['has_linked_account'])) {
-                continue;
+        // OAuth credentials are shared by every linked client. Test them once so
+        // one global failure does not generate a separate alert for each client.
+        $authentication = (new GoogleAdsClient([
+            'developer_token' => (string)get_option('wnq_google_ads_developer_token', ''),
+            'manager_customer_id' => (string)get_option('wnq_google_ads_manager_customer_id', ''),
+            'oauth_client_id' => (string)get_option('wnq_google_ads_oauth_client_id', ''),
+            'oauth_client_secret' => (string)get_option('wnq_google_ads_oauth_client_secret', ''),
+            'refresh_token' => (string)get_option('wnq_google_ads_refresh_token', ''),
+        ]))->authenticationTest();
+        update_option('wnq_google_ads_last_connection_check_at', current_time('mysql'), false);
+
+        if (empty($authentication['ok'])) {
+            $issue = self::clip((string)($authentication['message'] ?? 'Google OAuth authentication failed.'), 300);
+            update_option('wnq_google_ads_last_connection_error', $issue, false);
+            if (self::eventEnabled('ads_connection')) {
+                $result = $notifier->notify(
+                    'ads_connection',
+                    self::htmlMessage('Google Ads connection needs attention', [
+                        'Affected accounts' => sprintf('%d linked client%s', count($linked_clients), count($linked_clients) === 1 ? '' : 's'),
+                        'Issue' => $issue,
+                        'Next step' => 'Open Portal Settings, update the shared Google OAuth credentials, then run Save & Test Google Ads.',
+                    ]),
+                    'ads-global-error:' . md5($issue),
+                    7 * DAY_IN_SECONDS,
+                    self::telegramOptions('Open Ads settings', admin_url('admin.php?page=wnq-portal'))
+                );
+                if (!empty($result['ok'])) {
+                    $sent++;
+                }
             }
+            return $sent;
+        }
+
+        delete_option('wnq_google_ads_last_connection_error');
+
+        foreach ($linked_clients as $client) {
+            $client_id = sanitize_text_field((string)($client['client_id'] ?? ''));
             $ads = ClientPortal::getAdsSpendSnapshot($client_id, false);
             $threshold = max(0.0, (float)($ads['threshold'] ?? 0));
             $errors = array_values(array_filter(array_map('sanitize_text_field', (array)($ads['errors'] ?? []))));
@@ -507,7 +548,7 @@ final class NotificationManager
                         'Issue' => self::clip(implode(' ', $errors), 220),
                     ]),
                     'ads-error:' . md5($client_id . implode('|', $errors)),
-                    DAY_IN_SECONDS,
+                    7 * DAY_IN_SECONDS,
                     self::telegramOptions('Open client', self::adminUrl($client_id))
                 );
                 if (!empty($result['ok'])) {

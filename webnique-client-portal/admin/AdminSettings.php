@@ -38,6 +38,8 @@ final class AdminSettings
         $google_ads_has_oauth_client_id = (string)get_option('wnq_google_ads_oauth_client_id', '') !== '';
         $google_ads_has_oauth_client_secret = (string)get_option('wnq_google_ads_oauth_client_secret', '') !== '';
         $google_ads_has_refresh_token = (string)get_option('wnq_google_ads_refresh_token', '') !== '';
+        $google_ads_last_connection_check = (string)get_option('wnq_google_ads_last_connection_check_at', '');
+        $google_ads_last_connection_error = (string)get_option('wnq_google_ads_last_connection_error', '');
         $google_ads_test = get_transient('wnq_google_ads_test_' . get_current_user_id());
         if (is_array($google_ads_test)) {
             delete_transient('wnq_google_ads_test_' . get_current_user_id());
@@ -277,6 +279,19 @@ final class AdminSettings
                             <span>Developer token</span><span>Manager customer ID</span><span>OAuth client ID</span><span>OAuth client secret</span><span>OAuth refresh token</span>
                             <p>An API key and service account are not used by this OAuth reporting connection. The OAuth refresh token must be generated from a Google account that can view the manager account and its linked client accounts.</p>
                         </div>
+                        <?php if ($google_ads_last_connection_check !== ''): ?>
+                            <div class="notice inline <?php echo $google_ads_last_connection_error === '' ? 'notice-success' : 'notice-warning'; ?>">
+                                <p>
+                                    <strong>Last scheduled OAuth check:</strong>
+                                    <?php echo esc_html($google_ads_last_connection_check); ?>
+                                    <?php if ($google_ads_last_connection_error !== ''): ?>
+                                        <br><strong>Action needed:</strong> <?php echo esc_html($google_ads_last_connection_error); ?>
+                                    <?php else: ?>
+                                        <br>Google OAuth authentication succeeded.
+                                    <?php endif; ?>
+                                </p>
+                            </div>
+                        <?php endif; ?>
                     </div>
 
                     <div class="settings-panel">
@@ -769,7 +784,18 @@ final class AdminSettings
                 'oauth_client_secret' => (string)get_option('wnq_google_ads_oauth_client_secret', ''),
                 'refresh_token' => (string)get_option('wnq_google_ads_refresh_token', ''),
             ]);
-            set_transient('wnq_google_ads_test_' . get_current_user_id(), $ads->connectionTest(), 5 * MINUTE_IN_SECONDS);
+            $google_ads_result = $ads->connectionTest();
+            set_transient('wnq_google_ads_test_' . get_current_user_id(), $google_ads_result, 5 * MINUTE_IN_SECONDS);
+            update_option('wnq_google_ads_last_connection_check_at', current_time('mysql'), false);
+            if (!empty($google_ads_result['ok'])) {
+                delete_option('wnq_google_ads_last_connection_error');
+            } else {
+                update_option(
+                    'wnq_google_ads_last_connection_error',
+                    sanitize_text_field((string)($google_ads_result['message'] ?? 'Google Ads connection test failed.')),
+                    false
+                );
+            }
         }
 
         $telegram_tested = false;
