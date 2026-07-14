@@ -30,10 +30,11 @@ final class TelegramAssistant
         return trim((string)($matches[1] ?? ''));
     }
 
-    public static function answer(string $question): string
+    public static function answer(string $question, array $requester = []): string
     {
         $question = trim(sanitize_textarea_field($question));
         $question = self::clip($question, self::MAX_QUESTION_LENGTH);
+        $requester_assignee = self::requesterAssignee($requester);
         if ($question === '') {
             return "Ask me a read-only question after “Hey Golden:” or use /ask.\n\nExample: Hey Golden: when is Lucas's payment date?";
         }
@@ -63,14 +64,14 @@ final class TelegramAssistant
             KnowledgeBase::logQuery($question, $finance_answer, $client_id, ['Money Management', 'WordPress client billing records'], 'answered_direct');
             return $finance_answer;
         }
-        $task_answer = self::directTaskAnswer($question, $client);
+        $task_answer = self::directTaskAnswer($question, $client, $requester_assignee);
         if ($task_answer !== null) {
             KnowledgeBase::logQuery($question, $task_answer, $client_id, ['Agency tasks'], 'answered_direct');
             return $task_answer;
         }
         $knowledge = KnowledgeBase::search($question, 4);
         $sources = [];
-        $context = self::buildContext($question, $client, $knowledge, $sources);
+        $context = self::buildContext($question, $client, $knowledge, $sources, $requester);
         if ($sources === []) {
             $answer = self::missingSourceAnswer($question);
             KnowledgeBase::logQuery($question, $answer, $client_id, [], 'no_source');
@@ -104,12 +105,21 @@ final class TelegramAssistant
         return $answer;
     }
 
-    private static function buildContext(string $question, ?array $client, array $knowledge, array &$sources): array
+    private static function buildContext(string $question, ?array $client, array $knowledge, array &$sources, array $requester = []): array
     {
+        $requester_assignee = self::requesterAssignee($requester);
         $context = [
             'current_date' => current_time('F j, Y'),
             'access_mode' => 'read-only',
+            'portal_overview' => self::portalOverviewContext(),
         ];
+        $sources[] = 'WordPress portal overview';
+        if ($requester_assignee !== '' || !empty($requester['display_name'])) {
+            $context['requester'] = [
+                'display_name' => sanitize_text_field((string)($requester['display_name'] ?? 'Team member')),
+                'task_assignee' => $requester_assignee,
+            ];
+        }
 
         if (self::isMoneyManagementQuestion($question, $client)) {
             $context['money_management'] = self::moneyManagementContext();
@@ -177,6 +187,7 @@ final class TelegramAssistant
             }
             if (self::containsAny($question, ['task', 'overdue', 'due today', 'work'])) {
                 $tasks = array_values(array_filter(Task::getAll(), static fn(array $task): bool => ($task['status'] ?? '') !== 'done'));
+                $tasks = self::filterTasksForAssignee($tasks, $requester_assignee);
                 $context['agency_tasks'] = array_map([self::class, 'safeTask'], array_slice($tasks, 0, 20));
                 $sources[] = 'Agency tasks';
             }
@@ -441,7 +452,7 @@ final class TelegramAssistant
             . " in income this month.\n\nSource: Money Management and WordPress client billing records.";
     }
 
-    private static function directTaskAnswer(string $question, ?array $client): ?string
+    private static function directTaskAnswer(string $question, ?array $client, string $requester_assignee = ''): ?string
     {
         if ($client !== null || !self::containsAny($question, [
             'what task', 'which task', 'my tasks', 'open tasks', 'tasks do i', 'have to do',
@@ -451,11 +462,15 @@ final class TelegramAssistant
         }
 
         $tasks = array_values(array_filter(Task::getAll(), static fn(array $task): bool => ($task['status'] ?? '') !== 'done'));
+        $tasks = self::filterTasksForAssignee($tasks, $requester_assignee);
         if ($tasks === []) {
-            return "There are no open agency tasks in WordPress.\n\nSource: Agency tasks.";
+            $message = $requester_assignee !== ''
+                ? 'There are no open tasks assigned to you in WordPress.'
+                : 'There are no open agency tasks in WordPress.';
+            return $message . "\n\nSource: Agency tasks.";
         }
 
-        $lines = ['Here are the next open agency tasks:'];
+        $lines = [$requester_assignee !== '' ? 'Here are your next open agency tasks:' : 'Here are the next open agency tasks:'];
         foreach (array_slice($tasks, 0, 8) as $task) {
             $due = sanitize_text_field((string)($task['due_date'] ?? ''));
             $due_label = $due !== '' && strtotime($due) !== false ? wp_date('M j, Y', strtotime($due)) : 'No due date';
@@ -471,6 +486,117 @@ final class TelegramAssistant
         $lines[] = '';
         $lines[] = 'Source: Agency tasks.';
         return implode("\n", $lines);
+    }
+
+    private static function requesterAssignee(array $requester): string
+    {
+        $assignee = sanitize_key((string)($requester['assigned_to'] ?? ''));
+        return in_array($assignee, ['christopher-sanders', 'christopher-scotto', 'laurel-harris'], true)
+            ? $assignee
+            : '';
+    }
+
+    private static function filterTasksForAssignee(array $tasks, string $assignee): array
+    {
+        if ($assignee === '') {
+            return array_values($tasks);
+        }
+
+        return array_values(array_filter($tasks, static function (array $task) use ($assignee): bool {
+            return sanitize_key((string)($task['assigned_to'] ?? '')) === $assignee;
+        }));
+    }
+
+    private static function portalOverviewContext(): array
+    {
+        $clients = Client::getAll();
+        $client_statuses = [];
+        $packages = [];
+        $active_clients = 0;
+        $monthly_gross = 0.0;
+        $monthly_after_fees = 0.0;
+        foreach ($clients as $client) {
+            $status = sanitize_key((string)($client['status'] ?? '')) ?: 'unknown';
+            $client_statuses[$status] = ($client_statuses[$status] ?? 0) + 1;
+            $package = sanitize_text_field((string)($client['tier'] ?? '')) ?: 'Unassigned';
+            $packages[$package] = ($packages[$package] ?? 0) + 1;
+            if ($status === 'active') {
+                $active_clients++;
+                $monthly_gross += (float)($client['monthly_rate'] ?? 0);
+                $monthly_after_fees += (float)($client['after_fees'] ?? 0);
+            }
+        }
+
+        $tasks = Task::getAll();
+        $today = current_time('Y-m-d');
+        $task_statuses = [];
+        $open_by_assignee = [
+            'christopher-sanders' => 0,
+            'christopher-scotto' => 0,
+            'laurel-harris' => 0,
+            'unassigned' => 0,
+        ];
+        $open_tasks = [];
+        $due_today = 0;
+        foreach ($tasks as $task) {
+            $status = sanitize_key((string)($task['status'] ?? '')) ?: 'unknown';
+            $task_statuses[$status] = ($task_statuses[$status] ?? 0) + 1;
+            if ($status === 'done') {
+                continue;
+            }
+            $open_tasks[] = self::safeTask($task);
+            if ((string)($task['due_date'] ?? '') === $today) {
+                $due_today++;
+            }
+            $assignee = sanitize_key((string)($task['assigned_to'] ?? ''));
+            $key = array_key_exists($assignee, $open_by_assignee) ? $assignee : 'unassigned';
+            $open_by_assignee[$key]++;
+        }
+
+        $finance = FinanceEntry::getSummary();
+        return [
+            'available_read_only_areas' => [
+                'clients and billing schedules',
+                'Money Management income and expenses',
+                'agency tasks',
+                'client CRM summaries',
+                'SEO reports',
+                'Google Ads reporting',
+                'client requests and support tickets',
+                'AI Knowledge Base SOPs',
+            ],
+            'clients' => [
+                'total' => count($clients),
+                'active' => $active_clients,
+                'by_status' => $client_statuses,
+                'by_package' => $packages,
+                'active_monthly_gross' => round($monthly_gross, 2),
+                'active_monthly_after_fees' => round($monthly_after_fees, 2),
+            ],
+            'tasks' => [
+                'total' => count($tasks),
+                'open' => count($open_tasks),
+                'overdue' => count(Task::getOverdue()),
+                'due_today' => $due_today,
+                'by_status' => $task_statuses,
+                'open_by_assignee' => $open_by_assignee,
+                'next_open' => array_slice($open_tasks, 0, 8),
+            ],
+            'money_management' => [
+                'income' => round((float)($finance['income'] ?? 0), 2),
+                'expense' => round((float)($finance['expense'] ?? 0), 2),
+                'net' => round((float)($finance['net'] ?? 0), 2),
+                'month_income' => round((float)($finance['month_income'] ?? 0), 2),
+                'month_expense' => round((float)($finance['month_expense'] ?? 0), 2),
+                'month_net' => round((float)($finance['month_net'] ?? 0), 2),
+            ],
+            'open_client_requests' => ClientPortal::getOpenRequestCount(),
+            'security' => [
+                'read_only' => true,
+                'credentials_included' => false,
+                'raw_api_secrets_included' => false,
+            ],
+        ];
     }
 
     private static function moneyManagementContext(): array

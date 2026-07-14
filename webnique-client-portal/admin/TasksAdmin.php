@@ -40,9 +40,9 @@ final class TasksAdmin
     private static function teamMembers(): array
     {
         return [
-            'christopher-scotto' => ['name' => 'Christopher Scotto', 'initials' => 'CS', 'color' => '#667eea'],
-            'christopher-sanders' => ['name' => 'Christopher Sanders', 'initials' => 'CS', 'color' => '#f093fb'],
-            'laurel-harris' => ['name' => 'Laurel Harris', 'initials' => 'LH', 'color' => '#14b8a6'],
+            'christopher-scotto' => ['name' => 'Christopher Scotto', 'initials' => 'CS', 'color' => '#f4d03f'],
+            'christopher-sanders' => ['name' => 'Christopher Sanders', 'initials' => 'CS', 'color' => '#ff8a2a'],
+            'laurel-harris' => ['name' => 'Laurel Harris', 'initials' => 'LH', 'color' => '#2f80ed'],
         ];
     }
 
@@ -392,6 +392,9 @@ final class TasksAdmin
         $due_date = $task['due_date'] ?? null;
         $assignee_id = $task['assigned_to'] ?? '';
         $assignee = !empty($assignee_id) && isset($team_members[$assignee_id]) ? $team_members[$assignee_id] : null;
+        $assignee_glow_class = in_array($assignee_id, ['christopher-scotto', 'christopher-sanders', 'laurel-harris'], true)
+            ? ' task-assignee-glow-' . $assignee_id
+            : '';
 
         // Get client name
         $client_name = '';
@@ -442,7 +445,7 @@ final class TasksAdmin
         $priority_color = $priority_colors[$priority] ?? '#6b7280';
 
         ?>
-        <div class="task-card-premium" data-task-id="<?php echo esc_attr($task['id']); ?>" 
+        <div class="task-card-premium<?php echo esc_attr($assignee_glow_class); ?>" data-task-id="<?php echo esc_attr($task['id']); ?>"
              data-title="<?php echo esc_attr(strtolower($task['title'])); ?>"
              data-description="<?php echo esc_attr(strtolower($task['description'] ?? '')); ?>"
              data-priority="<?php echo esc_attr($priority); ?>"
@@ -1639,6 +1642,7 @@ final class TasksAdmin
             grid-template-columns: repeat(4, 1fr);
             gap: 20px;
             min-height: 600px;
+            align-items: stretch;
         }
         .kanban-column-premium {
             background: #f8fafc;
@@ -1646,6 +1650,8 @@ final class TasksAdmin
             padding: 16px;
             min-height: 500px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+            display: flex;
+            flex-direction: column;
         }
         .column-header-premium {
             display: flex;
@@ -1682,6 +1688,8 @@ final class TasksAdmin
         }
         .column-tasks-premium {
             min-height: 400px;
+            flex: 1 1 auto;
+            padding-bottom: 72px;
         }
         .column-tasks-premium.drag-over {
             background: rgba(102, 126, 234, 0.05);
@@ -1721,6 +1729,24 @@ final class TasksAdmin
         .task-card-premium:hover {
             box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
             transform: translateY(-2px);
+        }
+        .task-card-premium.task-assignee-glow-laurel-harris {
+            box-shadow: 0 5px 16px rgba(47, 128, 237, 0.48), 0 0 10px rgba(47, 128, 237, 0.24);
+        }
+        .task-card-premium.task-assignee-glow-christopher-sanders {
+            box-shadow: 0 5px 16px rgba(255, 138, 42, 0.5), 0 0 10px rgba(255, 138, 42, 0.24);
+        }
+        .task-card-premium.task-assignee-glow-christopher-scotto {
+            box-shadow: 0 5px 16px rgba(244, 208, 63, 0.52), 0 0 10px rgba(244, 208, 63, 0.28);
+        }
+        .task-card-premium.task-assignee-glow-laurel-harris:hover {
+            box-shadow: 0 8px 24px rgba(47, 128, 237, 0.62), 0 0 14px rgba(47, 128, 237, 0.3);
+        }
+        .task-card-premium.task-assignee-glow-christopher-sanders:hover {
+            box-shadow: 0 8px 24px rgba(255, 138, 42, 0.64), 0 0 14px rgba(255, 138, 42, 0.3);
+        }
+        .task-card-premium.task-assignee-glow-christopher-scotto:hover {
+            box-shadow: 0 8px 24px rgba(244, 208, 63, 0.64), 0 0 14px rgba(244, 208, 63, 0.32);
         }
         .task-card-premium.ui-draggable-dragging,
         .task-card-premium.is-sorting {
@@ -2263,6 +2289,7 @@ final class TasksAdmin
             $('.column-tasks-premium').sortable({
                 connectWith: '.column-tasks-premium',
                 items: '> .task-card-premium',
+                dropOnEmpty: true,
                 placeholder: 'task-drop-placeholder',
                 forcePlaceholderSize: true,
                 tolerance: 'pointer',

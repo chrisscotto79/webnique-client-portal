@@ -38,12 +38,13 @@ final class TelegramNotifier
         $html = !empty($options['html']);
         $message = $html
             ? trim(wp_kses($message, [
+                'a' => ['href' => []],
                 'b' => [],
                 'strong' => [],
                 'i' => [],
                 'em' => [],
                 'code' => [],
-            ]))
+            ], ['http', 'https', 'tg']))
             : trim(wp_strip_all_tags($message));
         if (!$this->isConfigured()) {
             return ['ok' => false, 'message' => 'Telegram bot token and group chat ID are required.'];
