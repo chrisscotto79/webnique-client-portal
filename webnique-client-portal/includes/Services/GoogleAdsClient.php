@@ -123,6 +123,34 @@ final class GoogleAdsClient
         ];
     }
 
+    /**
+     * Verify the shared OAuth credentials without querying a client account.
+     *
+     * @return array{ok: bool, message: string}
+     */
+    public function authenticationTest(bool $refresh = false): array
+    {
+        if (!$this->isConfigured()) {
+            return [
+                'ok' => false,
+                'message' => 'Google Ads OAuth credentials are incomplete.',
+            ];
+        }
+
+        if ($refresh) {
+            delete_transient($this->accessTokenCacheKey());
+        }
+
+        $token = $this->accessToken();
+        $errors = $this->errors();
+        return [
+            'ok' => $token !== '' && $errors === [],
+            'message' => $token !== '' && $errors === []
+                ? 'Google OAuth authentication succeeded.'
+                : (implode(' ', $errors) ?: 'Google OAuth authentication failed.'),
+        ];
+    }
+
     public function accountPerformance(string $customer_id, bool $refresh = false): array
     {
         $today = current_datetime()->setTime(0, 0);
@@ -414,7 +442,7 @@ final class GoogleAdsClient
 
     private function accessToken(): string
     {
-        $cache_key = 'wnq_google_ads_access_token_' . md5($this->setting('oauth_client_id') . $this->setting('refresh_token'));
+        $cache_key = $this->accessTokenCacheKey();
         $cached = get_transient($cache_key);
         if (is_string($cached) && $cached !== '') {
             return $cached;
@@ -436,19 +464,29 @@ final class GoogleAdsClient
         ]);
 
         if (is_wp_error($response)) {
-            $this->errors[] = $response->get_error_message();
+            $this->errors[] = 'Google OAuth could not be reached: ' . sanitize_text_field($response->get_error_message());
             return '';
         }
 
+        $status = (int)wp_remote_retrieve_response_code($response);
         $body = json_decode((string)wp_remote_retrieve_body($response), true);
         $token = (string)($body['access_token'] ?? '');
-        if ($token === '') {
+        if ($status < 200 || $status >= 300 || $token === '') {
             $this->errors[] = self::apiErrorMessage($body, 'Google OAuth token request failed.');
             return '';
         }
 
         set_transient($cache_key, $token, max(60, (int)($body['expires_in'] ?? 3600) - 120));
         return $token;
+    }
+
+    private function accessTokenCacheKey(): string
+    {
+        return 'wnq_google_ads_access_token_' . md5(implode('|', [
+            $this->setting('oauth_client_id'),
+            $this->setting('oauth_client_secret'),
+            $this->setting('refresh_token'),
+        ]));
     }
 
     private function similarityScore(string $left, string $right): int
@@ -494,11 +532,32 @@ final class GoogleAdsClient
     private static function apiErrorMessage($body, string $fallback): string
     {
         if (is_array($body)) {
-            if (!empty($body['error']['message'])) {
-                return sanitize_text_field((string)$body['error']['message']);
+            $error = $body['error'] ?? null;
+            $error_code = is_string($error)
+                ? sanitize_key($error)
+                : sanitize_key((string)(is_array($error) ? ($error['status'] ?? '') : ''));
+            $description = sanitize_text_field((string)($body['error_description'] ?? ''));
+
+            if ($error_code === 'invalid_grant') {
+                return 'Google OAuth refresh token expired or was revoked. Generate and save a new refresh token using the Google account that can access the Ads manager account.';
+            }
+            if ($error_code === 'invalid_client') {
+                return 'Google rejected the OAuth client ID or client secret. Confirm both values belong to the same active Web application OAuth client, then save them again.';
+            }
+            if ($error_code === 'unauthorized_client') {
+                return 'This OAuth client is not authorized for the requested Google access. Review the OAuth consent screen and generate a new refresh token.';
+            }
+            if ($description !== '') {
+                return $description;
+            }
+            if (is_array($error) && !empty($error['message'])) {
+                return sanitize_text_field((string)$error['message']);
             }
             if (!empty($body['message'])) {
                 return sanitize_text_field((string)$body['message']);
+            }
+            if ($error_code !== '') {
+                return 'Google OAuth error: ' . str_replace('_', ' ', $error_code) . '.';
             }
         }
         return $fallback;

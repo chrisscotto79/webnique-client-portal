@@ -486,16 +486,57 @@ final class NotificationManager
         if (!self::eventEnabled('ads_spend') && !self::eventEnabled('ads_connection')) {
             return 0;
         }
+
+        $linked_clients = array_values(array_filter(Client::getAll(), static function (array $client): bool {
+            $client_id = sanitize_text_field((string)($client['client_id'] ?? ''));
+            return $client_id !== '' && !empty(ClientPortal::getAdsPublicStatus($client_id)['has_linked_account']);
+        }));
+        if ($linked_clients === []) {
+            return 0;
+        }
+
         $state = get_option('wnq_telegram_ads_spend_state', []);
         $state = is_array($state) ? $state : [];
         $sent = 0;
         $notifier = new TelegramNotifier();
 
-        foreach (Client::getAll() as $client) {
-            $client_id = sanitize_text_field((string)($client['client_id'] ?? ''));
-            if ($client_id === '' || empty(ClientPortal::getAdsPublicStatus($client_id)['has_linked_account'])) {
-                continue;
+        // OAuth credentials are shared by every linked client. Test them once so
+        // one global failure does not generate a separate alert for each client.
+        $authentication = (new GoogleAdsClient([
+            'developer_token' => (string)get_option('wnq_google_ads_developer_token', ''),
+            'manager_customer_id' => (string)get_option('wnq_google_ads_manager_customer_id', ''),
+            'oauth_client_id' => (string)get_option('wnq_google_ads_oauth_client_id', ''),
+            'oauth_client_secret' => (string)get_option('wnq_google_ads_oauth_client_secret', ''),
+            'refresh_token' => (string)get_option('wnq_google_ads_refresh_token', ''),
+        ]))->authenticationTest();
+        update_option('wnq_google_ads_last_connection_check_at', current_time('mysql'), false);
+
+        if (empty($authentication['ok'])) {
+            $issue = self::clip((string)($authentication['message'] ?? 'Google OAuth authentication failed.'), 300);
+            update_option('wnq_google_ads_last_connection_error', $issue, false);
+            if (self::eventEnabled('ads_connection')) {
+                $result = $notifier->notify(
+                    'ads_connection',
+                    self::htmlMessage('Google Ads connection needs attention', [
+                        'Affected accounts' => sprintf('%d linked client%s', count($linked_clients), count($linked_clients) === 1 ? '' : 's'),
+                        'Issue' => $issue,
+                        'Next step' => 'Open Portal Settings, update the shared Google OAuth credentials, then run Save & Test Google Ads.',
+                    ]),
+                    'ads-global-error:' . md5($issue),
+                    7 * DAY_IN_SECONDS,
+                    self::telegramOptions('Open Ads settings', admin_url('admin.php?page=wnq-portal'))
+                );
+                if (!empty($result['ok'])) {
+                    $sent++;
+                }
             }
+            return $sent;
+        }
+
+        delete_option('wnq_google_ads_last_connection_error');
+
+        foreach ($linked_clients as $client) {
+            $client_id = sanitize_text_field((string)($client['client_id'] ?? ''));
             $ads = ClientPortal::getAdsSpendSnapshot($client_id, false);
             $threshold = max(0.0, (float)($ads['threshold'] ?? 0));
             $errors = array_values(array_filter(array_map('sanitize_text_field', (array)($ads['errors'] ?? []))));
@@ -507,7 +548,7 @@ final class NotificationManager
                         'Issue' => self::clip(implode(' ', $errors), 220),
                     ]),
                     'ads-error:' . md5($client_id . implode('|', $errors)),
-                    DAY_IN_SECONDS,
+                    7 * DAY_IN_SECONDS,
                     self::telegramOptions('Open client', self::adminUrl($client_id))
                 );
                 if (!empty($result['ok'])) {
@@ -735,11 +776,12 @@ final class NotificationManager
                 if ($chat_id !== $notifier->getChatId() || $text === '' || !empty($message['from']['is_bot'])) {
                     continue;
                 }
+                $actor = self::telegramActor($message);
                 if (isset($text[0]) && $text[0] === '/') {
                     $command_token = strtok($text, " \t\r\n") ?: '';
                     $command = strtolower((string)preg_replace('/@[^\s]+$/', '', $command_token));
                     $arguments = trim(substr($text, strlen($command_token)));
-                    self::recordTelegramDelivery(self::respondToCommand($notifier, ltrim($command, '/'), $arguments));
+                    self::recordTelegramDelivery(self::respondToCommand($notifier, ltrim($command, '/'), $arguments, $actor));
                     continue;
                 }
                 $question = class_exists(TelegramAssistant::class) ? TelegramAssistant::invocationQuestion($text) : null;
@@ -748,13 +790,25 @@ final class NotificationManager
                 }
                 if ($ai_questions >= self::MAX_AI_QUESTIONS_PER_POLL) {
                     if (!$limit_notified) {
-                        $notifier->send('Golden received several questions at once. Please resend any unanswered question in a minute.');
+                        self::recordTelegramDelivery(self::sendTelegramReply(
+                            $notifier,
+                            'Golden received several questions at once. Please resend any unanswered question in a minute.',
+                            $actor,
+                            [],
+                            false
+                        ));
                         $limit_notified = true;
                     }
                     continue;
                 }
                 $ai_questions++;
-                self::recordTelegramDelivery($notifier->send(TelegramAssistant::answer($question)));
+                self::recordTelegramDelivery(self::sendTelegramReply(
+                    $notifier,
+                    TelegramAssistant::answer($question, $actor),
+                    $actor,
+                    [],
+                    false
+                ));
             }
             update_option('wnq_telegram_last_command_check_at', current_time('mysql'), false);
         } finally {
@@ -769,18 +823,25 @@ final class NotificationManager
         if ($chat_id !== $notifier->getChatId() || $text === '' || !empty($message['from']['is_bot'])) {
             return false;
         }
+        $actor = self::telegramActor($message);
         if (isset($text[0]) && $text[0] === '/') {
             $command_token = strtok($text, " \t\r\n") ?: '';
             $command = strtolower((string)preg_replace('/@[^\s]+$/', '', $command_token));
             $arguments = trim(substr($text, strlen($command_token)));
-            self::recordTelegramDelivery(self::respondToCommand($notifier, ltrim($command, '/'), $arguments));
+            self::recordTelegramDelivery(self::respondToCommand($notifier, ltrim($command, '/'), $arguments, $actor));
             return true;
         }
         $question = class_exists(TelegramAssistant::class) ? TelegramAssistant::invocationQuestion($text) : null;
         if ($question === null) {
             return false;
         }
-        self::recordTelegramDelivery($notifier->send(TelegramAssistant::answer($question)));
+        self::recordTelegramDelivery(self::sendTelegramReply(
+            $notifier,
+            TelegramAssistant::answer($question, $actor),
+            $actor,
+            [],
+            false
+        ));
         return true;
     }
 
@@ -797,49 +858,141 @@ final class NotificationManager
         );
     }
 
-    private static function respondToCommand(TelegramNotifier $notifier, string $command, string $arguments = ''): array
+    /**
+     * Build a stable Telegram identity and the corresponding task assignee.
+     */
+    private static function telegramActor(array $message): array
+    {
+        $from = is_array($message['from'] ?? null) ? $message['from'] : [];
+        $first_name = sanitize_text_field((string)($from['first_name'] ?? ''));
+        $last_name = sanitize_text_field((string)($from['last_name'] ?? ''));
+        $username = sanitize_user((string)($from['username'] ?? ''), true);
+        $display_name = trim($first_name . ' ' . $last_name);
+        if ($display_name === '') {
+            $display_name = $username !== '' ? '@' . $username : 'Team member';
+        }
+        $telegram_id = preg_match('/^\d+$/', (string)($from['id'] ?? '')) === 1
+            ? (string)$from['id']
+            : '';
+
+        return [
+            'id' => $telegram_id,
+            'username' => $username,
+            'display_name' => $display_name,
+            'assigned_to' => self::telegramTaskAssignee($display_name),
+        ];
+    }
+
+    private static function telegramTaskAssignee(string $display_name): string
+    {
+        $normalized = strtolower(remove_accents(trim($display_name)));
+        $normalized = trim((string)preg_replace('/[^a-z0-9]+/', ' ', $normalized));
+        $map = (array)apply_filters('wnq_telegram_task_assignee_map', [
+            'christopher sanders' => 'christopher-sanders',
+            'christopher scotto' => 'christopher-scotto',
+            'stinky winky' => 'laurel-harris',
+        ]);
+        $assignee = sanitize_key((string)($map[$normalized] ?? ''));
+        return in_array($assignee, ['christopher-sanders', 'christopher-scotto', 'laurel-harris'], true)
+            ? $assignee
+            : '';
+    }
+
+    private static function telegramMention(array $actor): string
+    {
+        $display_name = trim((string)($actor['display_name'] ?? '')) ?: 'Team member';
+        $telegram_id = (string)($actor['id'] ?? '');
+        if (preg_match('/^\d+$/', $telegram_id) === 1) {
+            return '<a href="tg://user?id=' . self::html($telegram_id) . '">' . self::html($display_name) . '</a>';
+        }
+        $username = sanitize_user((string)($actor['username'] ?? ''), true);
+        return $username !== '' ? '@' . self::html($username) : self::html($display_name);
+    }
+
+    private static function sendTelegramReply(
+        TelegramNotifier $notifier,
+        string $message,
+        array $actor,
+        array $options = [],
+        bool $message_is_html = true
+    ): array {
+        $options['html'] = true;
+        $body = self::telegramMention($actor) . "\n";
+        $body .= $message_is_html ? $message : self::html($message);
+        return $notifier->send($body, $options);
+    }
+
+    private static function respondToCommand(
+        TelegramNotifier $notifier,
+        string $command,
+        string $arguments = '',
+        array $actor = []
+    ): array
     {
         switch ($command) {
             case 'tasks':
                 $tasks = array_values(array_filter(Task::getAll(), static fn(array $task): bool => ($task['status'] ?? '') !== 'done'));
+                $tasks = self::filterTasksForActor($tasks, $actor);
                 self::sortTasks($tasks);
-                return $notifier->send(self::taskListMessage('Open agency tasks', $tasks, 12), self::telegramOptions('Open tasks', self::tasksUrl()));
+                $title = !empty($actor['assigned_to']) ? 'Your open tasks' : 'Open agency tasks';
+                return self::sendTelegramReply($notifier, self::taskListMessage($title, $tasks, 12), $actor, self::telegramOptions('Open tasks', self::tasksUrl()));
             case 'today':
                 $today = current_time('Y-m-d');
                 $tasks = array_values(array_filter(Task::getAll(), static fn(array $task): bool => ($task['status'] ?? '') !== 'done' && ($task['due_date'] ?? '') === $today));
+                $tasks = self::filterTasksForActor($tasks, $actor);
                 self::sortTasks($tasks);
-                return $notifier->send(self::taskListMessage('Tasks due today', $tasks, 12), self::telegramOptions('Open tasks', self::tasksUrl()));
+                $title = !empty($actor['assigned_to']) ? 'Your tasks due today' : 'Tasks due today';
+                return self::sendTelegramReply($notifier, self::taskListMessage($title, $tasks, 12), $actor, self::telegramOptions('Open tasks', self::tasksUrl()));
             case 'overdue':
-                return $notifier->send(self::taskListMessage('Overdue agency tasks', Task::getOverdue(), 12), self::telegramOptions('Open tasks', self::tasksUrl()));
+                $tasks = self::filterTasksForActor(Task::getOverdue(), $actor);
+                self::sortTasks($tasks);
+                $title = !empty($actor['assigned_to']) ? 'Your overdue tasks' : 'Overdue agency tasks';
+                return self::sendTelegramReply($notifier, self::taskListMessage($title, $tasks, 12), $actor, self::telegramOptions('Open tasks', self::tasksUrl()));
             case 'addtask':
-                return $notifier->send(self::addTaskCommand($arguments), self::telegramOptions('Open tasks', self::tasksUrl()));
+                return self::sendTelegramReply($notifier, self::addTaskCommand($arguments, (string)($actor['assigned_to'] ?? '')), $actor, self::telegramOptions('Open tasks', self::tasksUrl()));
             case 'donetask':
-                return $notifier->send(self::doneTaskCommand($arguments), self::telegramOptions('Open tasks', self::tasksUrl()));
+                return self::sendTelegramReply($notifier, self::doneTaskCommand($arguments), $actor, self::telegramOptions('Open tasks', self::tasksUrl()));
             case 'idea':
             case 'ideanote':
-                return $notifier->send(self::ideaCommand($arguments), self::telegramOptions('Open tasks', self::tasksUrl()));
+                return self::sendTelegramReply($notifier, self::ideaCommand($arguments, (string)($actor['assigned_to'] ?? '')), $actor, self::telegramOptions('Open tasks', self::tasksUrl()));
             case 'ads':
-                return $notifier->send(self::adsCommandMessage(), self::telegramOptions('Open portal', admin_url('admin.php?page=wnq-client-portal-dashboard')));
+                return self::sendTelegramReply($notifier, self::adsCommandMessage(), $actor, self::telegramOptions('Open portal', admin_url('admin.php?page=wnq-client-portal-dashboard')));
             case 'billing':
-                return $notifier->send(self::billingCommandMessage(), self::telegramOptions('Open clients', admin_url('admin.php?page=wnq-clients')));
+                return self::sendTelegramReply($notifier, self::billingCommandMessage(), $actor, self::telegramOptions('Open clients', admin_url('admin.php?page=wnq-clients')));
             case 'expenses':
-                return $notifier->send(self::expensesCommandMessage(), self::telegramOptions('Open Money Management', admin_url('admin.php?page=wnq-clients&tab=finance')));
+                return self::sendTelegramReply($notifier, self::expensesCommandMessage(), $actor, self::telegramOptions('Open Money Management', admin_url('admin.php?page=wnq-clients&tab=finance')));
             case 'requests':
-                return $notifier->send(self::requestsCommandMessage(), self::telegramOptions('Open portal', admin_url('admin.php?page=wnq-client-portal-dashboard')));
+                return self::sendTelegramReply($notifier, self::requestsCommandMessage(), $actor, self::telegramOptions('Open portal', admin_url('admin.php?page=wnq-client-portal-dashboard')));
             case 'status':
-                return $notifier->send(self::statusCommandMessage(), self::telegramOptions('Open settings', admin_url('admin.php?page=wnq-portal')));
+                return self::sendTelegramReply($notifier, self::statusCommandMessage(), $actor, self::telegramOptions('Open settings', admin_url('admin.php?page=wnq-portal')));
             case 'ask':
-                return $notifier->send(class_exists(TelegramAssistant::class)
-                    ? TelegramAssistant::answer($arguments)
-                    : 'Golden AI is not available yet.');
+                return self::sendTelegramReply(
+                    $notifier,
+                    class_exists(TelegramAssistant::class) ? TelegramAssistant::answer($arguments, $actor) : 'Golden AI is not available yet.',
+                    $actor,
+                    [],
+                    false
+                );
             case 'start':
             case 'help':
             default:
-                return $notifier->send(self::helpCommandMessage(), self::telegramOptions('Open tasks', self::tasksUrl()));
+                return self::sendTelegramReply($notifier, self::helpCommandMessage(), $actor, self::telegramOptions('Open tasks', self::tasksUrl()));
         }
     }
 
-    private static function addTaskCommand(string $arguments): string
+    private static function filterTasksForActor(array $tasks, array $actor): array
+    {
+        $assignee = sanitize_key((string)($actor['assigned_to'] ?? ''));
+        if ($assignee === '') {
+            return array_values($tasks);
+        }
+
+        return array_values(array_filter($tasks, static function (array $task) use ($assignee): bool {
+            return sanitize_key((string)($task['assigned_to'] ?? '')) === $assignee;
+        }));
+    }
+
+    private static function addTaskCommand(string $arguments, string $assigned_to = ''): string
     {
         if (trim($arguments) === '') {
             return '<b>Add task</b>' . "\n" . 'Use <code>/addtask Task title | tomorrow | high</code>. The date and priority are optional.';
@@ -872,6 +1025,7 @@ final class NotificationManager
             'task_type' => 'general',
             'priority' => $priority,
             'due_date' => $due_date,
+            'assigned_to' => $assigned_to,
             'notes' => '[telegram-command] Created from Telegram.',
         ]);
         if (!$task_id) {
@@ -907,7 +1061,7 @@ final class NotificationManager
         ]);
     }
 
-    private static function ideaCommand(string $arguments): string
+    private static function ideaCommand(string $arguments, string $assigned_to = ''): string
     {
         if (trim($arguments) === '') {
             return '<b>Save idea</b>' . "\n" . 'Use <code>/ideanote Your idea or note</code>.';
@@ -919,6 +1073,7 @@ final class NotificationManager
             'status' => 'todo',
             'task_type' => 'general',
             'priority' => 'low',
+            'assigned_to' => $assigned_to,
             'notes' => '[telegram-command] Idea captured from Telegram.',
         ]);
         if (!$task_id) {

@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.62
+Stable tag: 2.4.64
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,20 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.64 - Telegram Team Tasks and Task Board UX
+
+- Maps Telegram members to backend task assignees and auto-assigns command-created tasks
+- Mentions command requesters and scopes task lists and AI task answers to their assignments
+- Makes task board columns full-height drop zones and adds assignee-specific neon card glows
+- Adds a compact read-only portal overview to Golden AI while excluding credentials and raw secrets
+
+2.4.63 - Google Ads OAuth Alert Diagnostics
+
+- Consolidated shared Google OAuth failures into one agency-level Telegram alert instead of one alert per linked client
+- Added actionable OAuth error details for expired refresh tokens and rejected OAuth clients
+- Limited unchanged Google Ads connection reminders to once every seven days
+- Added the latest scheduled Google Ads OAuth result to Portal Settings
+
 2.4.62 - Monthly Expense Notifications
 
 - Added a dedicated Money Management section for recurring monthly expense reminders
