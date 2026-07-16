@@ -62,81 +62,90 @@ final class ServiceCityPageGenerator
 
         ServiceCityPage::updateRow($row_id, ['status' => 'generating', 'error_message' => null]);
 
-        $client = Client::getByClientId($client_id) ?? [];
-        $profile = SEOHub::getProfile($client_id) ?? [];
-        $business_name = $client['company'] ?? $client['name'] ?? $client_id;
+        try {
+            $client = Client::getByClientId($client_id) ?? [];
+            $profile = SEOHub::getProfile($client_id) ?? [];
+            $business_name = $client['company'] ?? $client['name'] ?? $client_id;
 
-        $ai_vars = self::aiVarsForRow($row, $business_name, $profile, $client);
-        $ai = AIEngine::generate(
-            'service_city_page',
-            $ai_vars,
-            $client_id,
-            [
-                'max_tokens'  => AIEngine::maxTokensForBlogGeneration(),
-                'no_cache'    => true,
-                'temperature' => 0.82,
-            ]
-        );
+            $ai_vars = self::aiVarsForRow($row, $business_name, $profile, $client);
+            $ai = AIEngine::generate(
+                'service_city_page',
+                $ai_vars,
+                $client_id,
+                [
+                    'max_tokens'  => AIEngine::maxTokensForBlogGeneration(),
+                    'no_cache'    => true,
+                    'temperature' => 0.82,
+                ]
+            );
 
-        if (!$ai['success']) {
-            return self::fail($row_id, 'AI generation failed: ' . ($ai['error'] ?? 'unknown error'));
-        }
+            if (!$ai['success']) {
+                return self::fail($row_id, 'AI generation failed: ' . ($ai['error'] ?? 'unknown error'));
+            }
 
-        $body = self::parseGeneratedBody($ai['content'] ?? '');
-        if ($body === '') {
-            return self::fail($row_id, 'AI returned an empty page body. Try generating this row again.');
-        }
-        $tokens = self::tokensForRow($row, $body, $business_name);
-        $body = self::sanitizeGeneratedCopy($body, $tokens);
-        $body = self::ensureTargetWordCount($row, $body, $business_name, $profile, $client_id, $client);
+            $body = self::parseGeneratedBody($ai['content'] ?? '');
+            if ($body === '') {
+                return self::fail($row_id, 'AI returned an empty page body. Try generating this row again.');
+            }
+            $tokens = self::tokensForRow($row, $body, $business_name);
+            $body = self::sanitizeGeneratedCopy($body, $tokens);
+            $body = self::ensureTargetWordCount($row, $body, $business_name, $profile, $client_id, $client);
 
-        $tokens = self::tokensForRow($row, $body, $business_name);
-        $body = self::sanitizeGeneratedCopy($body, $tokens);
-        $tokens = self::tokensForRow($row, $body, $business_name);
-        $built = self::buildElementorFromTemplate($template, $tokens, $body);
+            $tokens = self::tokensForRow($row, $body, $business_name);
+            $body = self::sanitizeGeneratedCopy($body, $tokens);
+            $tokens = self::tokensForRow($row, $body, $business_name);
+            $built = self::buildElementorFromTemplate($template, $tokens, $body);
 
-        $push = self::pushToAgent($agent, [
-            'title'               => $row['page_title'] ?: $row['h1'] ?: $row['primary_keyword'],
-            'title_tag'           => $row['title_tag'] ?: $row['page_title'],
-            'meta_description'    => $row['meta_description'] ?? '',
-            'h1'                  => $row['h1'] ?: $row['page_title'],
-            'focus_keyword'       => $row['primary_keyword'] ?? '',
-            'slug'                => $row['slug'],
-            'parent_service_slug' => $row['parent_service_slug'],
-            'post_content'        => $built['post_content'],
-            'elementor_data'      => $built['elementor_data'],
-            'page_settings'       => $built['page_settings'],
-            'source_row_id'       => $row_id,
-        ]);
-
-        if (!$push['success']) {
-            return self::fail($row_id, 'Draft push failed: ' . ($push['message'] ?? 'unknown error'));
-        }
-
-        if (($push['status'] ?? '') === 'skipped') {
-            ServiceCityPage::updateRow($row_id, [
-                'status'        => 'skipped',
-                'generated_html'=> $body,
-                'elementor_json'=> $built['elementor_data'],
-                'error_message' => $push['message'] ?? 'Slug already exists on the client site.',
+            $push = self::pushToAgent($agent, [
+                'title'               => $row['page_title'] ?: $row['h1'] ?: $row['primary_keyword'],
+                'title_tag'           => $row['title_tag'] ?: $row['page_title'],
+                'meta_description'    => $row['meta_description'] ?? '',
+                'h1'                  => $row['h1'] ?: $row['page_title'],
+                'focus_keyword'       => $row['primary_keyword'] ?? '',
+                'slug'                => $row['slug'],
+                'parent_service_slug' => $row['parent_service_slug'],
+                'post_content'        => $built['post_content'],
+                'elementor_data'      => $built['elementor_data'],
+                'page_settings'       => $built['page_settings'],
+                'source_row_id'       => $row_id,
             ]);
-            return ['success' => true, 'message' => 'Skipped: slug already exists on the client site.'];
+
+            if (!$push['success']) {
+                return self::fail($row_id, 'Draft push failed: ' . ($push['message'] ?? 'unknown error'));
+            }
+
+            if (($push['status'] ?? '') === 'skipped') {
+                ServiceCityPage::updateRow($row_id, [
+                    'status'         => 'skipped',
+                    'generated_html' => $body,
+                    'elementor_json' => $built['elementor_data'],
+                    'error_message'  => $push['message'] ?? 'Slug already exists on the client site.',
+                ]);
+                return ['success' => true, 'message' => 'Skipped: slug already exists on the client site.'];
+            }
+
+            ServiceCityPage::updateRow($row_id, [
+                'status'         => 'draft_created',
+                'generated_html' => $body,
+                'elementor_json' => $built['elementor_data'],
+                'wp_page_id'     => $push['page_id'] ?? null,
+                'wp_page_url'    => $push['page_url'] ?? '',
+                'error_message'  => null,
+            ]);
+
+            return [
+                'success'  => true,
+                'message'  => 'Draft child page created.',
+                'page_url' => $push['page_url'] ?? '',
+            ];
+        } catch (\Throwable $exception) {
+            error_log(sprintf(
+                'Golden Web Marketing Service + City generation failed for row %d: %s',
+                $row_id,
+                $exception->getMessage()
+            ));
+            return self::fail($row_id, 'Draft generation stopped unexpectedly. The row is ready to retry.');
         }
-
-        ServiceCityPage::updateRow($row_id, [
-            'status'         => 'draft_created',
-            'generated_html' => $body,
-            'elementor_json' => $built['elementor_data'],
-            'wp_page_id'     => $push['page_id'] ?? null,
-            'wp_page_url'    => $push['page_url'] ?? '',
-            'error_message'  => null,
-        ]);
-
-        return [
-            'success'  => true,
-            'message'  => 'Draft child page created.',
-            'page_url' => $push['page_url'] ?? '',
-        ];
     }
 
     public static function deleteDraft(int $row_id): array

@@ -127,6 +127,47 @@ final class ServiceCityPage
         ) ?: [];
     }
 
+    public static function getRowsPage(
+        string $client_id,
+        int $page = 1,
+        int $per_page = 50,
+        string $status = '',
+        string $search = ''
+    ): array {
+        global $wpdb;
+
+        $page = max(1, $page);
+        $per_page = max(1, min(100, $per_page));
+        $offset = ($page - 1) * $per_page;
+        [$where, $params] = self::queueWhere($client_id, $status, $search);
+        $params[] = $per_page;
+        $params[] = $offset;
+
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM {$wpdb->prefix}wnq_service_city_pages
+                 WHERE {$where}
+                 ORDER BY FIELD(status, 'failed', 'imported', 'generating', 'draft_created', 'skipped'), created_at DESC, id DESC
+                 LIMIT %d OFFSET %d",
+                ...$params
+            ),
+            ARRAY_A
+        ) ?: [];
+    }
+
+    public static function countRows(string $client_id, string $status = '', string $search = ''): int
+    {
+        global $wpdb;
+        [$where, $params] = self::queueWhere($client_id, $status, $search);
+
+        return (int)$wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->prefix}wnq_service_city_pages WHERE {$where}",
+                ...$params
+            )
+        );
+    }
+
     public static function getAllRows(string $client_id): array
     {
         global $wpdb;
@@ -215,6 +256,42 @@ final class ServiceCityPage
     {
         global $wpdb;
         return $wpdb->update($wpdb->prefix . 'wnq_service_city_pages', $data, ['id' => $id]) !== false;
+    }
+
+    public static function recoverStaleGenerating(string $client_id, int $minutes = 30): int
+    {
+        global $wpdb;
+        $minutes = max(5, $minutes);
+        $cutoff = gmdate('Y-m-d H:i:s', time() - ($minutes * MINUTE_IN_SECONDS));
+
+        return (int)$wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$wpdb->prefix}wnq_service_city_pages
+                 SET status='failed', error_message=%s
+                 WHERE client_id=%s AND status='generating' AND updated_at < %s",
+                'The previous generation was interrupted or timed out. This row is ready to retry.',
+                $client_id,
+                $cutoff
+            )
+        );
+    }
+
+    public static function resetRowForRetry(int $id, string $client_id): bool
+    {
+        global $wpdb;
+
+        $updated = $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$wpdb->prefix}wnq_service_city_pages
+                 SET status='failed', error_message=%s
+                 WHERE id=%d AND client_id=%s AND status IN ('failed', 'generating')",
+                'Generation was reset and is ready to retry.',
+                $id,
+                $client_id
+            )
+        );
+
+        return is_int($updated) && $updated > 0;
     }
 
     public static function deleteRow(int $id): bool
@@ -308,7 +385,7 @@ final class ServiceCityPage
         $queued = $wpdb->get_var(
             $wpdb->prepare(
                 "SELECT id FROM {$wpdb->prefix}wnq_service_city_pages
-                 WHERE client_id=%s AND slug=%s AND status <> 'failed'
+                 WHERE client_id=%s AND slug=%s
                  LIMIT 1",
                 $client_id,
                 $slug
@@ -340,6 +417,30 @@ final class ServiceCityPage
         }
 
         return false;
+    }
+
+    private static function queueWhere(string $client_id, string $status, string $search): array
+    {
+        global $wpdb;
+
+        $where = 'client_id=%s';
+        $params = [$client_id];
+        $status = sanitize_key($status);
+        $allowed_statuses = ['imported', 'failed', 'generating', 'draft_created', 'skipped'];
+
+        if (in_array($status, $allowed_statuses, true)) {
+            $where .= ' AND status=%s';
+            $params[] = $status;
+        }
+
+        $search = trim($search);
+        if ($search !== '') {
+            $like = '%' . $wpdb->esc_like($search) . '%';
+            $where .= ' AND (slug LIKE %s OR service LIKE %s OR city LIKE %s OR state LIKE %s OR primary_keyword LIKE %s OR parent_service_slug LIKE %s)';
+            array_push($params, $like, $like, $like, $like, $like, $like);
+        }
+
+        return [$where, $params];
     }
 
     public static function normalizeSlug(string $slug): string

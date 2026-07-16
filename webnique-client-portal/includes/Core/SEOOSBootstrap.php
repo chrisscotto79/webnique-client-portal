@@ -250,6 +250,7 @@ final class SEOOSBootstrap
         add_action('admin_post_wnq_service_city_save_template', [self::class, 'handleServiceCitySaveTemplate']);
         add_action('admin_post_wnq_service_city_import_csv',    [self::class, 'handleServiceCityImportCsv']);
         add_action('admin_post_wnq_service_city_generate_page', [self::class, 'handleServiceCityGeneratePage']);
+        add_action('admin_post_wnq_service_city_reset_row',     [self::class, 'handleServiceCityResetRow']);
         add_action('admin_post_wnq_service_city_delete_draft',  [self::class, 'handleServiceCityDeleteDraft']);
         add_action('admin_post_wnq_service_city_delete_row',    [self::class, 'handleServiceCityDeleteRow']);
         add_action('admin_post_wnq_service_city_delete_all',    [self::class, 'handleServiceCityDeleteAll']);
@@ -1344,37 +1345,102 @@ final class SEOOSBootstrap
 
     public static function handleServiceCitySaveTemplate(): void
     {
-        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $client_id = sanitize_text_field(wp_unslash($_POST['client_id'] ?? ''));
         check_admin_referer('wnq_service_city_template_' . $client_id);
         self::requireCap();
 
-        if ($client_id === '') {
-            wp_die('Missing client_id');
+        if ($client_id === '' || !\WNQ\Models\Client::getByClientId($client_id)) {
+            wp_die('Invalid client');
         }
 
-        \WNQ\Models\ServiceCityPage::saveTemplate($client_id, stripslashes($_POST['elementor_template'] ?? ''));
+        $template = trim((string)wp_unslash($_POST['elementor_template'] ?? ''));
+        $error = '';
+        if (strlen($template) > (5 * MB_IN_BYTES)) {
+            $error = 'The Elementor template is larger than the 5 MB limit.';
+        } elseif ($template !== '' && in_array($template[0], ['{', '['], true)) {
+            json_decode($template, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                $error = 'The Elementor template is not valid JSON: ' . json_last_error_msg();
+            }
+        }
 
-        wp_redirect(admin_url('admin.php?page=wnq-seo-hub-content&client_id=' . urlencode($client_id) . '&notice=template_saved'));
+        if ($error !== '') {
+            wp_safe_redirect(add_query_arg([
+                'page'      => 'wnq-seo-hub-content',
+                'client_id' => $client_id,
+                'notice'    => 'template_error',
+                'message'   => $error,
+            ], admin_url('admin.php')));
+            exit;
+        }
+
+        \WNQ\Models\ServiceCityPage::saveTemplate($client_id, $template);
+
+        wp_safe_redirect(add_query_arg([
+            'page'      => 'wnq-seo-hub-content',
+            'client_id' => $client_id,
+            'notice'    => 'template_saved',
+        ], admin_url('admin.php')));
         exit;
     }
 
     public static function handleServiceCityImportCsv(): void
     {
-        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $client_id = sanitize_text_field(wp_unslash($_POST['client_id'] ?? ''));
         check_admin_referer('wnq_service_city_import_' . $client_id);
         self::requireCap();
 
-        if ($client_id === '') {
-            wp_die('Missing client_id');
+        if ($client_id === '' || !\WNQ\Models\Client::getByClientId($client_id)) {
+            wp_die('Invalid client');
         }
 
-        if (empty($_FILES['service_city_csv']['tmp_name']) || !empty($_FILES['service_city_csv']['error'])) {
-            wp_redirect(admin_url('admin.php?page=wnq-seo-hub-content&client_id=' . urlencode($client_id) . '&notice=import_error&message=' . urlencode('Upload a readable CSV file.')));
+        $file = $_FILES['service_city_csv'] ?? [];
+        $file_error = (int)($file['error'] ?? UPLOAD_ERR_NO_FILE);
+        $file_size = (int)($file['size'] ?? 0);
+        $file_name = sanitize_file_name((string)($file['name'] ?? ''));
+        $tmp_name = (string)($file['tmp_name'] ?? '');
+        $extension = strtolower((string)pathinfo($file_name, PATHINFO_EXTENSION));
+
+        if ($file_error !== UPLOAD_ERR_OK || $tmp_name === '' || !is_readable($tmp_name)) {
+            wp_safe_redirect(add_query_arg([
+                'page'      => 'wnq-seo-hub-content',
+                'client_id' => $client_id,
+                'notice'    => 'import_error',
+                'message'   => 'Upload a readable CSV file.',
+            ], admin_url('admin.php')));
+            exit;
+        }
+        if ($extension !== 'csv' || $file_size > (5 * MB_IN_BYTES)) {
+            wp_safe_redirect(add_query_arg([
+                'page'      => 'wnq-seo-hub-content',
+                'client_id' => $client_id,
+                'notice'    => 'import_error',
+                'message'   => $extension !== 'csv' ? 'Only .csv files are accepted.' : 'The CSV is larger than the 5 MB limit.',
+            ], admin_url('admin.php')));
             exit;
         }
 
         $agent_key_id = (int)($_POST['agent_key_id'] ?? 0);
-        $result = \WNQ\Models\ServiceCityPage::importCsvFile($client_id, $agent_key_id, $_FILES['service_city_csv']['tmp_name']);
+        if ($agent_key_id > 0) {
+            $valid_agent = false;
+            foreach (\WNQ\Models\BlogScheduler::getClientAgents($client_id) as $agent) {
+                if ((int)$agent['id'] === $agent_key_id) {
+                    $valid_agent = true;
+                    break;
+                }
+            }
+            if (!$valid_agent) {
+                wp_safe_redirect(add_query_arg([
+                    'page'      => 'wnq-seo-hub-content',
+                    'client_id' => $client_id,
+                    'notice'    => 'import_error',
+                    'message'   => 'The selected target site is not an active connection for this client.',
+                ], admin_url('admin.php')));
+                exit;
+            }
+        }
+
+        $result = \WNQ\Models\ServiceCityPage::importCsvFile($client_id, $agent_key_id, $tmp_name);
 
         $args = [
             'page'      => 'wnq-seo-hub-content',
@@ -1387,19 +1453,19 @@ final class SEOOSBootstrap
             $args['message'] = implode(' ', array_slice($result['errors'], 0, 3));
         }
 
-        wp_redirect(add_query_arg($args, admin_url('admin.php')));
+        wp_safe_redirect(add_query_arg($args, admin_url('admin.php')));
         exit;
     }
 
     public static function handleServiceCityGeneratePage(): void
     {
         $row_id = (int)($_POST['row_id'] ?? 0);
-        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $client_id = sanitize_text_field(wp_unslash($_POST['client_id'] ?? ''));
         check_admin_referer('wnq_service_city_generate_' . $row_id);
         self::requireCap();
 
         $row = $row_id ? \WNQ\Models\ServiceCityPage::getRow($row_id) : null;
-        if (!$row || $row['client_id'] !== $client_id) {
+        if (!$row || (string)$row['client_id'] !== $client_id) {
             wp_die('Invalid Service + City row');
         }
 
@@ -1411,19 +1477,41 @@ final class SEOOSBootstrap
             'message'   => $result['message'] ?? '',
         ];
 
-        wp_redirect(add_query_arg($args, admin_url('admin.php')));
+        wp_safe_redirect(add_query_arg($args, admin_url('admin.php')));
+        exit;
+    }
+
+    public static function handleServiceCityResetRow(): void
+    {
+        $row_id = (int)($_POST['row_id'] ?? 0);
+        $client_id = sanitize_text_field(wp_unslash($_POST['client_id'] ?? ''));
+        check_admin_referer('wnq_service_city_reset_' . $row_id);
+        self::requireCap();
+
+        $row = $row_id ? \WNQ\Models\ServiceCityPage::getRow($row_id) : null;
+        if (!$row || (string)$row['client_id'] !== $client_id) {
+            wp_die('Invalid Service + City row');
+        }
+
+        $reset = \WNQ\Models\ServiceCityPage::resetRowForRetry($row_id, $client_id);
+        wp_safe_redirect(add_query_arg([
+            'page'      => 'wnq-seo-hub-content',
+            'client_id' => $client_id,
+            'notice'    => $reset ? 'row_reset' : 'generate_error',
+            'message'   => $reset ? 'The row is ready to retry.' : 'The row could not be reset.',
+        ], admin_url('admin.php')));
         exit;
     }
 
     public static function handleServiceCityDeleteDraft(): void
     {
         $row_id = (int)($_POST['row_id'] ?? 0);
-        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $client_id = sanitize_text_field(wp_unslash($_POST['client_id'] ?? ''));
         check_admin_referer('wnq_service_city_delete_' . $row_id);
         self::requireCap();
 
         $row = $row_id ? \WNQ\Models\ServiceCityPage::getRow($row_id) : null;
-        if (!$row || $row['client_id'] !== $client_id) {
+        if (!$row || (string)$row['client_id'] !== $client_id) {
             wp_die('Invalid Service + City row');
         }
 
@@ -1435,19 +1523,19 @@ final class SEOOSBootstrap
             'message'   => $result['message'] ?? '',
         ];
 
-        wp_redirect(add_query_arg($args, admin_url('admin.php')));
+        wp_safe_redirect(add_query_arg($args, admin_url('admin.php')));
         exit;
     }
 
     public static function handleServiceCityDeleteRow(): void
     {
         $row_id = (int)($_POST['row_id'] ?? 0);
-        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $client_id = sanitize_text_field(wp_unslash($_POST['client_id'] ?? ''));
         check_admin_referer('wnq_service_city_delete_row_' . $row_id);
         self::requireCap();
 
         $row = $row_id ? \WNQ\Models\ServiceCityPage::getRow($row_id) : null;
-        if (!$row || $row['client_id'] !== $client_id) {
+        if (!$row || (string)$row['client_id'] !== $client_id) {
             wp_die('Invalid Service + City row');
         }
 
@@ -1459,18 +1547,18 @@ final class SEOOSBootstrap
             'message'   => $result['message'] ?? '',
         ];
 
-        wp_redirect(add_query_arg($args, admin_url('admin.php')));
+        wp_safe_redirect(add_query_arg($args, admin_url('admin.php')));
         exit;
     }
 
     public static function handleServiceCityDeleteAll(): void
     {
-        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        $client_id = sanitize_text_field(wp_unslash($_POST['client_id'] ?? ''));
         check_admin_referer('wnq_service_city_delete_all_' . $client_id);
         self::requireCap();
 
-        if ($client_id === '') {
-            wp_die('Missing client_id');
+        if ($client_id === '' || !\WNQ\Models\Client::getByClientId($client_id)) {
+            wp_die('Invalid client');
         }
 
         $result = \WNQ\Services\ServiceCityPageGenerator::deleteAllRows($client_id);
@@ -1482,7 +1570,7 @@ final class SEOOSBootstrap
             'deleted'   => (int)($result['deleted'] ?? 0),
         ];
 
-        wp_redirect(add_query_arg($args, admin_url('admin.php')));
+        wp_safe_redirect(add_query_arg($args, admin_url('admin.php')));
         exit;
     }
 

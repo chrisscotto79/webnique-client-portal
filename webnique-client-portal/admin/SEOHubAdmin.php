@@ -243,7 +243,7 @@ final class SEOHubAdmin
     public static function renderClients(): void
     {
         self::checkCap();
-        $client_id = sanitize_text_field($_GET['client_id'] ?? '');
+        $client_id = sanitize_text_field(wp_unslash($_GET['client_id'] ?? ''));
         $clients   = Client::getAll();
 
         self::renderHeader('SEO OS — Clients');
@@ -427,7 +427,7 @@ final class SEOHubAdmin
     public static function renderKeywords(): void
     {
         self::checkCap();
-        $client_id = sanitize_text_field($_GET['client_id'] ?? '');
+        $client_id = sanitize_text_field(wp_unslash($_GET['client_id'] ?? ''));
         $clients   = Client::getAll();
 
         self::renderHeader('SEO OS — Keywords');
@@ -542,15 +542,29 @@ final class SEOHubAdmin
         if ($client_id) {
             $required_columns = ServiceCityPage::requiredColumns();
             $template = ServiceCityPage::getTemplate($client_id);
-            $rows = ServiceCityPage::getRows($client_id, 150);
+            ServiceCityPage::recoverStaleGenerating($client_id);
+            $queue_status = sanitize_key(wp_unslash($_GET['queue_status'] ?? ''));
+            $queue_search = sanitize_text_field(wp_unslash($_GET['queue_search'] ?? ''));
+            $queue_page = max(1, absint($_GET['queue_page'] ?? 1));
+            $queue_per_page = 50;
+            $queue_total = ServiceCityPage::countRows($client_id, $queue_status, $queue_search);
+            $queue_pages = max(1, (int)ceil($queue_total / $queue_per_page));
+            $queue_page = min($queue_page, $queue_pages);
+            $rows = ServiceCityPage::getRowsPage(
+                $client_id,
+                $queue_page,
+                $queue_per_page,
+                $queue_status,
+                $queue_search
+            );
             $bulk_counts = ServiceCityPage::getBulkCounts($client_id);
             $agents = BlogScheduler::getClientAgents($client_id);
             $agents_need_update = array_filter($agents, static function ($agent) {
                 $version = trim((string)($agent['plugin_version'] ?? ''));
                 return $version !== '' && version_compare($version, ServiceCityPageGenerator::MIN_AGENT_VERSION, '<');
             });
-            $notice = sanitize_key($_GET['notice'] ?? '');
-            $message = sanitize_text_field($_GET['message'] ?? '');
+            $notice = sanitize_key(wp_unslash($_GET['notice'] ?? ''));
+            $message = sanitize_text_field(wp_unslash($_GET['message'] ?? ''));
 
             if ($notice) {
                 $notice_text = '';
@@ -573,9 +587,11 @@ final class SEOHubAdmin
                     $notice_text = $message ?: 'Draft deleted and row reset.';
                 } elseif ($notice === 'row_deleted') {
                     $notice_text = $message ?: 'Imported row deleted.';
+                } elseif ($notice === 'row_reset') {
+                    $notice_text = $message ?: 'The row is ready to retry.';
                 } elseif ($notice === 'rows_deleted') {
                     $notice_text = $message ?: 'Imported rows deleted.';
-                } elseif ($notice === 'generate_error' || $notice === 'import_error') {
+                } elseif ($notice === 'generate_error' || $notice === 'import_error' || $notice === 'template_error') {
                     $notice_text = $message ?: 'Something went wrong.';
                     $notice_class = 'error';
                 } elseif ($notice === 'delete_error') {
@@ -601,13 +617,17 @@ final class SEOHubAdmin
 
             echo '<div class="wnq-hub-form-grid" style="grid-template-columns:1fr 1fr;align-items:start;">';
             echo '<div class="wnq-hub-card" style="padding:18px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;">';
-            echo '<h3 style="margin-top:0;">Client Elementor Template</h3>';
+            echo '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">';
+            echo '<h3 style="margin:0;">Client Elementor Template</h3>';
+            echo '<span style="display:inline-flex;padding:5px 9px;border-radius:999px;background:' . ($template !== '' ? '#dcfce7' : '#fef3c7') . ';color:' . ($template !== '' ? '#166534' : '#92400e') . ';font-size:12px;font-weight:800;">' . ($template !== '' ? 'Template saved' : 'Template needed') . '</span>';
+            echo '</div>';
             echo '<p style="color:#6b7280;">Paste this client\'s Elementor JSON or HTML structure. Variable templates can use tokens like <code>{{h1}}</code>, <code>{{page_title}}</code>, <code>{{primary_keyword}}</code>, <code>{{service}}</code>, <code>{{city}}</code>, <code>{{commercial_intent}}</code>, <code>{{cta_title}}</code>, <code>{{cta_text}}</code>, <code>{{related_services}}</code>, and <code>{{nearby_cities}}</code>. Add <code>{{body}}</code> only if you want one exact body insertion point. If no tokens are found in Elementor JSON, the generator keeps all imported sections and distributes the AI content across the hero, content sections, and CTA section.</p>';
             echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
             echo '<input type="hidden" name="action" value="wnq_service_city_save_template">';
             echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
             wp_nonce_field('wnq_service_city_template_' . $client_id);
             echo '<textarea name="elementor_template" rows="12" style="width:100%;font-family:monospace;font-size:12px;border:1px solid #d1d5db;border-radius:8px;padding:10px;">' . esc_textarea($template) . '</textarea>';
+            echo '<p style="margin:8px 0 0;color:#64748b;font-size:12px;">Valid JSON is checked before saving. Maximum size: 5 MB.</p>';
             echo '<button type="submit" class="wnq-btn wnq-btn-primary" style="margin-top:10px;">Save Client Template</button>';
             echo '</form>';
             echo '</div>';
@@ -641,6 +661,7 @@ final class SEOHubAdmin
             echo '<strong>Drop or choose CSV</strong><br><span style="color:#64748b;font-size:12px;">Rows are queued only when the slug does not already exist.</span>';
             echo '<input type="file" name="service_city_csv" accept=".csv,text/csv" required style="display:block;margin:14px auto 0;">';
             echo '</label>';
+            echo '<p style="margin:8px 0 0;color:#64748b;font-size:12px;">CSV files only. Maximum size: 5 MB.</p>';
             echo '<button type="submit" class="wnq-btn wnq-btn-primary" style="margin-top:12px;">Import CSV</button>';
             echo '</form>';
             echo '</div>';
@@ -648,7 +669,24 @@ final class SEOHubAdmin
 
             echo '<div class="wnq-hub-section" style="margin-top:22px;">';
             echo '<h3>Imported Service + City Rows</h3>';
-            if (empty($rows)) {
+            $queue_summary = [
+                ['label' => 'Total', 'value' => (int)$bulk_counts['total'], 'color' => '#0f172a'],
+                ['label' => 'Ready', 'value' => (int)$bulk_counts['imported'], 'color' => '#1d4ed8'],
+                ['label' => 'Failed', 'value' => (int)$bulk_counts['failed'], 'color' => '#991b1b'],
+                ['label' => 'Generating', 'value' => (int)$bulk_counts['generating'], 'color' => '#6d28d9'],
+                ['label' => 'Drafts', 'value' => (int)$bulk_counts['draft_created'], 'color' => '#166534'],
+                ['label' => 'Skipped', 'value' => (int)$bulk_counts['skipped'], 'color' => '#92400e'],
+            ];
+            echo '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:14px 0 18px;">';
+            foreach ($queue_summary as $summary) {
+                echo '<div style="padding:13px 14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;">';
+                echo '<span style="display:block;color:#64748b;font-size:11px;font-weight:700;text-transform:uppercase;">' . esc_html($summary['label']) . '</span>';
+                echo '<strong style="display:block;margin-top:4px;color:' . esc_attr($summary['color']) . ';font-size:22px;line-height:1;">' . (int)$summary['value'] . '</strong>';
+                echo '</div>';
+            }
+            echo '</div>';
+
+            if ((int)$bulk_counts['total'] === 0) {
                 echo '<p style="color:#6b7280;">No imported rows yet. Save a template, import a CSV, then generate drafts one page at a time.</p>';
             } else {
                 echo '<div id="wnq-service-city-bulk" data-client-id="' . esc_attr($client_id) . '" data-total="' . (int)$bulk_counts['processable'] . '" style="margin:14px 0 18px;padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">';
@@ -670,62 +708,116 @@ final class SEOHubAdmin
                 echo '<div id="wnq-service-city-progress-log" style="margin-top:8px;color:#64748b;font-size:12px;max-height:90px;overflow:auto;"></div>';
                 echo '</div>';
 
-                echo '<div class="wnq-hub-table-wrap"><table class="wnq-hub-table">';
-                echo '<thead><tr><th>Slug</th><th>Service</th><th>City</th><th>Parent</th><th>Keyword</th><th>Status</th><th>Action</th></tr></thead><tbody>';
-                foreach ($rows as $row) {
-                    $status = $row['status'] ?? 'imported';
-                    $status_color = match ($status) {
-                        'draft_created' => '#166534',
-                        'skipped' => '#92400e',
-                        'failed' => '#991b1b',
-                        'generating' => '#1d4ed8',
-                        default => '#374151',
-                    };
-                    echo '<tr>';
-                    echo '<td><code>' . esc_html($row['slug']) . '</code></td>';
-                    echo '<td>' . esc_html($row['service'] ?: '—') . '</td>';
-                    echo '<td>' . esc_html(trim(($row['city'] ?? '') . ', ' . ($row['state'] ?? ''), ' ,') ?: '—') . '</td>';
-                    echo '<td><code>' . esc_html($row['parent_service_slug'] ?: '—') . '</code></td>';
-                    echo '<td>' . esc_html($row['primary_keyword'] ?: '—') . '</td>';
-                    echo '<td><strong style="color:' . esc_attr($status_color) . ';">' . esc_html(str_replace('_', ' ', $status)) . '</strong>';
-                    if (!empty($row['error_message'])) {
-                        echo '<br><small style="color:#991b1b;">' . esc_html(substr($row['error_message'], 0, 220)) . '</small>';
-                    }
-                    echo '</td>';
-                    echo '<td><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">';
-                    if (in_array($status, ['imported', 'failed'], true)) {
-                        echo '<form method="post" action="' . admin_url('admin-post.php') . '" style="display:inline;">';
-                        echo '<input type="hidden" name="action" value="wnq_service_city_generate_page">';
-                        echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
-                        echo '<input type="hidden" name="row_id" value="' . (int)$row['id'] . '">';
-                        wp_nonce_field('wnq_service_city_generate_' . (int)$row['id']);
-                        echo '<button type="submit" class="wnq-btn wnq-btn-sm wnq-btn-primary" onclick="return confirm(\'Generate this one Service + City draft page now?\')">Generate Draft</button>';
-                        echo '</form>';
-                    } elseif ($status === 'draft_created') {
-                        if (!empty($row['wp_page_url'])) {
-                            echo '<a class="wnq-btn wnq-btn-sm" href="' . esc_url($row['wp_page_url']) . '" target="_blank">View Draft URL</a> ';
-                        }
-                        echo '<form method="post" action="' . admin_url('admin-post.php') . '" style="display:inline;">';
-                        echo '<input type="hidden" name="action" value="wnq_service_city_delete_draft">';
-                        echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
-                        echo '<input type="hidden" name="row_id" value="' . (int)$row['id'] . '">';
-                        wp_nonce_field('wnq_service_city_delete_' . (int)$row['id']);
-                        echo '<button type="submit" class="wnq-btn wnq-btn-sm" style="background:#fee2e2;color:#991b1b;border-color:#fecaca;" onclick="return confirm(\'Delete this draft from the client site and reset the imported row?\')">Delete Draft</button>';
-                        echo '</form>';
-                    } else {
-                        echo '<span style="color:#6b7280;">—</span>';
-                    }
-                    echo '<form method="post" action="' . admin_url('admin-post.php') . '" style="display:inline;">';
-                    echo '<input type="hidden" name="action" value="wnq_service_city_delete_row">';
-                    echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
-                    echo '<input type="hidden" name="row_id" value="' . (int)$row['id'] . '">';
-                    wp_nonce_field('wnq_service_city_delete_row_' . (int)$row['id']);
-                    echo '<button type="submit" class="wnq-btn wnq-btn-sm" style="background:#fee2e2;color:#991b1b;border-color:#fecaca;" onclick="return confirm(\'Delete this imported row? If it has a generated draft page, the draft will be moved to trash first.\')">Delete</button>';
-                    echo '</form>';
-                    echo '</div></td>';
-                    echo '</tr>';
+                echo '<form method="get" action="' . esc_url(admin_url('admin.php')) . '" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;align-items:end;margin:0 0 14px;">';
+                echo '<input type="hidden" name="page" value="wnq-seo-hub-content">';
+                echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+                echo '<label><span style="display:block;margin-bottom:5px;color:#475569;font-size:12px;font-weight:700;">Search rows</span><input type="search" name="queue_search" value="' . esc_attr($queue_search) . '" placeholder="Slug, service, city, keyword..." style="width:100%;"></label>';
+                echo '<label><span style="display:block;margin-bottom:5px;color:#475569;font-size:12px;font-weight:700;">Status</span><select name="queue_status" style="width:100%;">';
+                echo '<option value="">All statuses</option>';
+                foreach (['imported' => 'Ready', 'failed' => 'Failed', 'generating' => 'Generating', 'draft_created' => 'Draft created', 'skipped' => 'Skipped'] as $status_value => $status_label) {
+                    echo '<option value="' . esc_attr($status_value) . '"' . selected($queue_status, $status_value, false) . '>' . esc_html($status_label) . '</option>';
                 }
-                echo '</tbody></table></div>';
+                echo '</select></label>';
+                echo '<button type="submit" class="wnq-btn wnq-btn-primary">Filter</button>';
+                echo '<a class="wnq-btn" href="' . esc_url(add_query_arg(['page' => 'wnq-seo-hub-content', 'client_id' => $client_id], admin_url('admin.php'))) . '">Clear</a>';
+                echo '</form>';
+
+                $range_start = $queue_total > 0 ? (($queue_page - 1) * $queue_per_page) + 1 : 0;
+                $range_end = min($queue_total, $queue_page * $queue_per_page);
+                echo '<p style="margin:0 0 10px;color:#64748b;font-size:12px;">Showing ' . (int)$range_start . '–' . (int)$range_end . ' of ' . (int)$queue_total . ' matching rows.</p>';
+
+                if (empty($rows)) {
+                    echo '<div style="padding:22px;text-align:center;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;color:#64748b;">No rows match the current search and status filters.</div>';
+                } else {
+                    echo '<div class="wnq-hub-table-wrap"><table class="wnq-hub-table">';
+                    echo '<thead><tr><th>Slug</th><th>Service</th><th>City</th><th>Parent</th><th>Keyword</th><th>Status</th><th>Action</th></tr></thead><tbody>';
+                    foreach ($rows as $row) {
+                        $status = $row['status'] ?? 'imported';
+                        $status_color = match ($status) {
+                            'draft_created' => '#166534',
+                            'skipped' => '#92400e',
+                            'failed' => '#991b1b',
+                            'generating' => '#6d28d9',
+                            default => '#1d4ed8',
+                        };
+                        echo '<tr>';
+                        echo '<td><code>' . esc_html($row['slug']) . '</code></td>';
+                        echo '<td>' . esc_html($row['service'] ?: '—') . '</td>';
+                        echo '<td>' . esc_html(trim(($row['city'] ?? '') . ', ' . ($row['state'] ?? ''), ' ,') ?: '—') . '</td>';
+                        echo '<td><code>' . esc_html($row['parent_service_slug'] ?: '—') . '</code></td>';
+                        echo '<td>' . esc_html($row['primary_keyword'] ?: '—') . '</td>';
+                        echo '<td><strong style="color:' . esc_attr($status_color) . ';text-transform:capitalize;">' . esc_html(str_replace('_', ' ', $status)) . '</strong>';
+                        if (!empty($row['error_message'])) {
+                            echo '<br><small style="color:#991b1b;">' . esc_html(substr($row['error_message'], 0, 220)) . '</small>';
+                        }
+                        echo '</td>';
+                        echo '<td><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">';
+                        if (in_array($status, ['imported', 'failed'], true)) {
+                            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:inline;">';
+                            echo '<input type="hidden" name="action" value="wnq_service_city_generate_page">';
+                            echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+                            echo '<input type="hidden" name="row_id" value="' . (int)$row['id'] . '">';
+                            wp_nonce_field('wnq_service_city_generate_' . (int)$row['id']);
+                            $generate_label = $status === 'failed' ? 'Retry Draft' : 'Generate Draft';
+                            echo '<button type="submit" class="wnq-btn wnq-btn-sm wnq-btn-primary" onclick="return confirm(\'Generate this one Service + City draft page now?\')">' . esc_html($generate_label) . '</button>';
+                            echo '</form>';
+                        } elseif ($status === 'generating') {
+                            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:inline;">';
+                            echo '<input type="hidden" name="action" value="wnq_service_city_reset_row">';
+                            echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+                            echo '<input type="hidden" name="row_id" value="' . (int)$row['id'] . '">';
+                            wp_nonce_field('wnq_service_city_reset_' . (int)$row['id']);
+                            echo '<button type="submit" class="wnq-btn wnq-btn-sm" onclick="return confirm(\'Reset this generating row so it can be retried?\')">Reset &amp; Retry</button>';
+                            echo '</form>';
+                        } elseif ($status === 'draft_created') {
+                            if (!empty($row['wp_page_url'])) {
+                                echo '<a class="wnq-btn wnq-btn-sm" href="' . esc_url($row['wp_page_url']) . '" target="_blank" rel="noopener noreferrer">View Draft</a> ';
+                            }
+                            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:inline;">';
+                            echo '<input type="hidden" name="action" value="wnq_service_city_delete_draft">';
+                            echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+                            echo '<input type="hidden" name="row_id" value="' . (int)$row['id'] . '">';
+                            wp_nonce_field('wnq_service_city_delete_' . (int)$row['id']);
+                            echo '<button type="submit" class="wnq-btn wnq-btn-sm" style="background:#fee2e2;color:#991b1b;border-color:#fecaca;" onclick="return confirm(\'Delete this draft from the client site and reset the imported row?\')">Delete Draft</button>';
+                            echo '</form>';
+                        } else {
+                            echo '<span style="color:#6b7280;">—</span>';
+                        }
+                        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:inline;">';
+                        echo '<input type="hidden" name="action" value="wnq_service_city_delete_row">';
+                        echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
+                        echo '<input type="hidden" name="row_id" value="' . (int)$row['id'] . '">';
+                        wp_nonce_field('wnq_service_city_delete_row_' . (int)$row['id']);
+                        echo '<button type="submit" class="wnq-btn wnq-btn-sm" style="background:#fee2e2;color:#991b1b;border-color:#fecaca;" onclick="return confirm(\'Delete this imported row? If it has a generated draft page, the draft will be moved to trash first.\')">Delete</button>';
+                        echo '</form>';
+                        echo '</div></td>';
+                        echo '</tr>';
+                    }
+                    echo '</tbody></table></div>';
+                }
+
+                if ($queue_pages > 1) {
+                    $pagination_args = ['page' => 'wnq-seo-hub-content', 'client_id' => $client_id];
+                    if ($queue_status !== '') {
+                        $pagination_args['queue_status'] = $queue_status;
+                    }
+                    if ($queue_search !== '') {
+                        $pagination_args['queue_search'] = $queue_search;
+                    }
+                    $pagination_base = add_query_arg($pagination_args, admin_url('admin.php'));
+                    $pagination_links = paginate_links([
+                        'base' => add_query_arg('queue_page', '%#%', $pagination_base),
+                        'format' => '',
+                        'current' => $queue_page,
+                        'total' => $queue_pages,
+                        'type' => 'list',
+                        'prev_text' => 'Previous',
+                        'next_text' => 'Next',
+                    ]);
+                    if (is_string($pagination_links) && $pagination_links !== '') {
+                        echo '<nav aria-label="Service and city queue pages" style="margin-top:16px;">' . wp_kses_post($pagination_links) . '</nav>';
+                    }
+                }
                 self::renderServiceCityBulkScript();
             }
             echo '</div>';
