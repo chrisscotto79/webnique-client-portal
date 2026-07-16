@@ -85,16 +85,26 @@ final class SEOAgentController
         $client_id  = $agent['client_id'];
         $body       = $request->get_json_params() ?? [];
 
-        // Update plugin version info
+        // Preserve an administrator's canonical URL override while still accepting
+        // version and URL updates from agents that have not been manually locked.
         global $wpdb;
+        $updates = [
+            'wp_version'     => sanitize_text_field($body['wp_version'] ?? ''),
+            'plugin_version' => sanitize_text_field($body['plugin_version'] ?? ''),
+        ];
+        $formats = ['%s', '%s'];
+        $reported_site_url = untrailingslashit(esc_url_raw((string)($body['site_url'] ?? ''), ['http', 'https']));
+        if (empty($agent['site_url_locked']) && $reported_site_url !== '') {
+            $updates['site_url'] = $reported_site_url;
+            $formats[] = '%s';
+        }
+
         $wpdb->update(
             $wpdb->prefix . 'wnq_seo_agent_keys',
-            [
-                'wp_version'     => sanitize_text_field($body['wp_version'] ?? ''),
-                'plugin_version' => sanitize_text_field($body['plugin_version'] ?? ''),
-                'site_url'       => esc_url_raw($body['site_url'] ?? $agent['site_url']),
-            ],
-            ['api_key' => $agent['api_key']]
+            $updates,
+            ['api_key' => $agent['api_key']],
+            $formats,
+            ['%s']
         );
 
         SEOHub::log('agent_ping', ['client_id' => $client_id, 'site_url' => $body['site_url'] ?? '']);

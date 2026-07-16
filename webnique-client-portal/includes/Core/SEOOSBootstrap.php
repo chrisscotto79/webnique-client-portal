@@ -224,6 +224,9 @@ final class SEOOSBootstrap
         // Revoke agent key
         add_action('admin_post_wnq_revoke_agent_key', [self::class, 'handleRevokeAgentKey']);
 
+        // Update the canonical client site used for agent API requests
+        add_action('admin_post_wnq_update_agent_site_url', [self::class, 'handleUpdateAgentSiteUrl']);
+
         // Save AI settings
         add_action('admin_post_wnq_save_ai_settings', [self::class, 'handleSaveAISettings']);
 
@@ -710,6 +713,47 @@ final class SEOOSBootstrap
         }
 
         wp_redirect(admin_url('admin.php?page=wnq-seo-hub-api&revoked=1'));
+        exit;
+    }
+
+    public static function handleUpdateAgentSiteUrl(): void
+    {
+        $key_id = absint($_POST['key_id'] ?? 0);
+        check_admin_referer('wnq_update_agent_site_url_' . $key_id);
+        self::requireCap();
+
+        $raw_site_url = trim((string)wp_unslash($_POST['site_url'] ?? ''));
+        $site_url = untrailingslashit(esc_url_raw($raw_site_url, ['https']));
+        $parts = $site_url !== '' ? wp_parse_url($site_url) : false;
+        $is_valid = $key_id > 0
+            && $site_url !== ''
+            && wp_http_validate_url($site_url)
+            && is_array($parts)
+            && ($parts['scheme'] ?? '') === 'https'
+            && !empty($parts['host'])
+            && empty($parts['user'])
+            && empty($parts['pass'])
+            && empty($parts['query'])
+            && empty($parts['fragment']);
+
+        if (!$is_valid) {
+            wp_safe_redirect(admin_url('admin.php?page=wnq-seo-hub-api&error=invalid_site_url'));
+            exit;
+        }
+
+        $updated = \WNQ\Models\SEOHub::updateAgentSiteUrl($key_id, $site_url);
+        if (!$updated) {
+            wp_safe_redirect(admin_url('admin.php?page=wnq-seo-hub-api&error=update_failed'));
+            exit;
+        }
+
+        \WNQ\Models\SEOHub::log(
+            'agent_site_url_updated',
+            ['key_id' => $key_id, 'site_url' => $site_url],
+            'success',
+            'manual'
+        );
+        wp_safe_redirect(admin_url('admin.php?page=wnq-seo-hub-api&updated=1'));
         exit;
     }
 

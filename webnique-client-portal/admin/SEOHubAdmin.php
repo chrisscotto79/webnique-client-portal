@@ -1520,6 +1520,15 @@ jQuery(function($) {
         if (!empty($_GET['revoked'])) {
             echo '<div class="wnq-hub-notice" style="background:#fef9c3;color:#92400e;border:1px solid #fde68a;padding:10px 14px;border-radius:6px;margin-bottom:16px;">⚠ Key revoked. The client plugin using this key will no longer be able to sync.</div>';
         }
+        if (!empty($_GET['updated'])) {
+            echo '<div class="wnq-hub-notice success" style="background:#dcfce7;color:#166534;border:1px solid #86efac;padding:10px 14px;border-radius:6px;margin-bottom:16px;">Site URL updated. Agent requests now use the new address, and future heartbeats will not replace it.</div>';
+        }
+        $api_error = sanitize_key($_GET['error'] ?? '');
+        if ($api_error === 'invalid_site_url') {
+            echo '<div class="wnq-hub-notice" style="background:#fef2f2;color:#991b1b;border:1px solid #fecaca;padding:10px 14px;border-radius:6px;margin-bottom:16px;">Enter a valid public HTTPS site URL without a query string or fragment.</div>';
+        } elseif ($api_error === 'update_failed') {
+            echo '<div class="wnq-hub-notice" style="background:#fef2f2;color:#991b1b;border:1px solid #fecaca;padding:10px 14px;border-radius:6px;margin-bottom:16px;">The site URL could not be updated. Please try again.</div>';
+        }
 
         // Generate key form
         echo '<form method="post" action="' . admin_url('admin-post.php') . '" style="background:#f0f9ff;padding:20px;border-radius:8px;margin:16px 0;border:1px solid #bae6fd;">';
@@ -1556,7 +1565,21 @@ jQuery(function($) {
             }
             echo '<tr>';
             echo '<td>' . esc_html($name) . '</td>';
-            echo '<td><a href="' . esc_url($key['site_url']) . '" target="_blank">' . esc_html($key['site_url']) . '</a></td>';
+            echo '<td style="min-width:310px;">';
+            if ($key['status'] === 'active') {
+                echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">';
+                wp_nonce_field('wnq_update_agent_site_url_' . (int)$key['id'], '_wpnonce', false);
+                echo '<input type="hidden" name="action" value="wnq_update_agent_site_url">';
+                echo '<input type="hidden" name="key_id" value="' . esc_attr((string)$key['id']) . '">';
+                echo '<input type="url" name="site_url" value="' . esc_attr((string)$key['site_url']) . '" required aria-label="Client site URL" style="width:min(100%,260px);">';
+                echo '<button type="submit" class="wnq-btn wnq-btn-sm">Save</button>';
+                echo '<a href="' . esc_url($key['site_url']) . '" target="_blank" rel="noopener noreferrer" aria-label="Open client site" title="Open client site" style="font-weight:700;text-decoration:none;">↗</a>';
+                echo '<div style="flex-basis:100%;font-size:11px;color:#6b7280;">Use the site root; API paths are added automatically.</div>';
+                echo '</form>';
+            } else {
+                echo '<a href="' . esc_url($key['site_url']) . '" target="_blank" rel="noopener noreferrer">' . esc_html($key['site_url']) . '</a>';
+            }
+            echo '</td>';
             echo '<td><code style="font-size:11px;background:#f3f4f6;padding:2px 6px;border-radius:4px;">' . esc_html($key['api_key']) . '</code></td>';
             echo '<td>' . $version_html . '</td>';
             echo '<td>' . esc_html($key['last_ping'] ?: 'Never') . '</td>';

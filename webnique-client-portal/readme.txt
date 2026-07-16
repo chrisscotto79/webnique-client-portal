@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.64
+Stable tag: 2.4.65
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,12 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.65 - Editable Agent Site URLs
+
+- Adds secure inline editing for connected client site URLs in SEO OS API Management
+- Locks administrator URL overrides so agent heartbeats cannot restore stale staging domains
+- Applies updated URLs immediately to scheduled blogger publishing, Elementor drafts, and other agent actions
+
 2.4.64 - Telegram Team Tasks and Task Board UX
 
 - Maps Telegram members to backend task assignees and auto-assigns command-created tasks
