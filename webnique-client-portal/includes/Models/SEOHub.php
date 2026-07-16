@@ -63,6 +63,7 @@ final class SEOHub
             client_id   varchar(100) NOT NULL,
             api_key     varchar(64) NOT NULL,
             site_url    varchar(500) NOT NULL,
+            site_url_locked tinyint(1) UNSIGNED NOT NULL DEFAULT 0,
             site_name   varchar(255) DEFAULT NULL,
             wp_version  varchar(20) DEFAULT NULL,
             plugin_version varchar(20) DEFAULT NULL,
@@ -467,6 +468,25 @@ final class SEOHub
             $wpdb->prefix . 'wnq_seo_agent_keys',
             ['status' => 'revoked'],
             ['id' => $key_id]
+        ) !== false;
+    }
+
+    public static function updateAgentSiteUrl(int $key_id, string $site_url): bool
+    {
+        if ($key_id <= 0 || $site_url === '') {
+            return false;
+        }
+
+        global $wpdb;
+        return $wpdb->update(
+            $wpdb->prefix . 'wnq_seo_agent_keys',
+            [
+                'site_url'        => untrailingslashit(esc_url_raw($site_url, ['https'])),
+                'site_url_locked' => 1,
+            ],
+            ['id' => $key_id],
+            ['%s', '%d'],
+            ['%d']
         ) !== false;
     }
 
