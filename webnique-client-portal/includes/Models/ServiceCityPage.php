@@ -115,9 +115,11 @@ final class ServiceCityPage
         return 'wnq_service_city_template_' . md5($client_id);
     }
 
-    public static function saveTemplate(string $client_id, string $template): void
+    public static function saveTemplate(string $client_id, string $template): bool
     {
         update_option(self::templateOptionKey($client_id), $template, false);
+
+        return self::getTemplate($client_id) === $template;
     }
 
     public static function getTemplate(string $client_id): string
