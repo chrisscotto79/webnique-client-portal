@@ -41,8 +41,22 @@ final class ServiceCityPage
             'commercial_intent',
             'page_type',
             'parent_service_slug',
+        ];
+    }
+
+    /**
+     * CSV columns the importer can use when present but does not require.
+     */
+    public static function optionalColumns(): array
+    {
+        return [
             'keyword_variants',
         ];
+    }
+
+    public static function csvColumns(): array
+    {
+        return array_merge(self::requiredColumns(), self::optionalColumns());
     }
 
     public static function createTables(): void
@@ -469,7 +483,7 @@ final class ServiceCityPage
             'error_message'   => null,
         ];
 
-        foreach (self::requiredColumns() as $column) {
+        foreach (self::csvColumns() as $column) {
             $value = (string)($row[$column] ?? '');
             if ($column === 'slug') {
                 $value = self::normalizeSlug($value);
