@@ -266,6 +266,7 @@ final class ServiceCityPageGenerator
             'geo_modifiers'       => $row['geo_modifiers'] ?? '',
             'commercial_intent'   => $row['commercial_intent'] ?? '',
             'page_type'           => $row['page_type'] ?? '',
+            'parent_service_slug' => $row['parent_service_slug'] ?? '',
             'keyword_variants'    => $row['keyword_variants'] ?? '',
             'tone'                => $profile['content_tone'] ?? 'professional',
         ];
@@ -336,7 +337,7 @@ final class ServiceCityPageGenerator
             '{{service_city_content}}' => $body,
         ];
 
-        foreach (ServiceCityPage::requiredColumns() as $column) {
+        foreach (ServiceCityPage::csvColumns() as $column) {
             $tokens['{{' . $column . '}}'] = (string)($row[$column] ?? '');
         }
 
