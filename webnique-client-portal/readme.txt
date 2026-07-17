@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.65
+Stable tag: 2.4.67
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,17 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.67 - Large Elementor Template Imports
+
+- Adds direct Elementor JSON file selection to the Service + City template editor
+- Saves large templates through authenticated chunks to avoid Apache request-size failures
+- Preserves the existing 5 MB validation limit and normal form fallback
+
+2.4.66 - Service + City CSV Alignment
+
+- Maps every supported Service + City CSV column into generated page data
+- Preserves navigation, intent, related-service, location, and parent-service values from imports
+
 2.4.65 - Editable Agent Site URLs
 
 - Adds secure inline editing for connected client site URLs in SEO OS API Management

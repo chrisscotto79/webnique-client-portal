@@ -622,14 +622,35 @@ final class SEOHubAdmin
             echo '<span style="display:inline-flex;padding:5px 9px;border-radius:999px;background:' . ($template !== '' ? '#dcfce7' : '#fef3c7') . ';color:' . ($template !== '' ? '#166534' : '#92400e') . ';font-size:12px;font-weight:800;">' . ($template !== '' ? 'Template saved' : 'Template needed') . '</span>';
             echo '</div>';
             echo '<p style="color:#6b7280;">Paste this client\'s Elementor JSON or HTML structure. Variable templates can use tokens like <code>{{h1}}</code>, <code>{{page_title}}</code>, <code>{{primary_keyword}}</code>, <code>{{service}}</code>, <code>{{city}}</code>, <code>{{commercial_intent}}</code>, <code>{{cta_title}}</code>, <code>{{cta_text}}</code>, <code>{{related_services}}</code>, and <code>{{nearby_cities}}</code>. Add <code>{{body}}</code> only if you want one exact body insertion point. If no tokens are found in Elementor JSON, the generator keeps all imported sections and distributes the AI content across the hero, content sections, and CTA section.</p>';
-            echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
+            $template_form_id = 'wnq-service-city-template-' . md5($client_id);
+            echo '<form id="' . esc_attr($template_form_id) . '" method="post" action="' . admin_url('admin-post.php') . '">';
             echo '<input type="hidden" name="action" value="wnq_service_city_save_template">';
             echo '<input type="hidden" name="client_id" value="' . esc_attr($client_id) . '">';
             wp_nonce_field('wnq_service_city_template_' . $client_id);
-            echo '<textarea name="elementor_template" rows="12" style="width:100%;font-family:monospace;font-size:12px;border:1px solid #d1d5db;border-radius:8px;padding:10px;">' . esc_textarea($template) . '</textarea>';
-            echo '<p style="margin:8px 0 0;color:#64748b;font-size:12px;">Valid JSON is checked before saving. Maximum size: 5 MB.</p>';
-            echo '<button type="submit" class="wnq-btn wnq-btn-primary" style="margin-top:10px;">Save Client Template</button>';
+            echo '<label style="display:block;margin:10px 0 8px;padding:12px;border:1px dashed #cbd5e1;border-radius:8px;background:#f8fafc;cursor:pointer;">';
+            echo '<strong>Choose Elementor JSON file</strong><br><span style="color:#64748b;font-size:12px;">The file loads into the editor below and is saved in secure chunks.</span>';
+            echo '<input type="file" class="wnq-service-city-template-file" accept=".json,application/json" style="display:block;margin-top:8px;">';
+            echo '</label>';
+            echo '<textarea name="elementor_template" class="wnq-service-city-template-editor" rows="12" style="width:100%;font-family:monospace;font-size:12px;border:1px solid #d1d5db;border-radius:8px;padding:10px;">' . esc_textarea($template) . '</textarea>';
+            echo '<p class="wnq-service-city-template-status" role="status" aria-live="polite" style="margin:8px 0 0;color:#64748b;font-size:12px;">Valid JSON is checked before saving. Large templates are saved in small chunks. Maximum size: 5 MB.</p>';
+            echo '<button type="submit" class="wnq-btn wnq-btn-primary wnq-service-city-template-save" style="margin-top:10px;">Save Client Template</button>';
             echo '</form>';
+            $template_ajax_url = admin_url('admin-ajax.php');
+            $template_saved_url = add_query_arg([
+                'page'      => 'wnq-seo-hub-content',
+                'client_id' => $client_id,
+                'notice'    => 'template_saved',
+            ], admin_url('admin.php'));
+            echo '<script>';
+            echo '(function(){';
+            echo 'const form=document.getElementById(' . wp_json_encode($template_form_id) . ');if(!form||!window.fetch){return;}';
+            echo 'const editor=form.querySelector(".wnq-service-city-template-editor"),fileInput=form.querySelector(".wnq-service-city-template-file"),status=form.querySelector(".wnq-service-city-template-status"),button=form.querySelector(".wnq-service-city-template-save"),nonce=form.querySelector("input[name=\"_wpnonce\"]");';
+            echo 'const maxBytes=5*1024*1024,chunkSize=48*1024;';
+            echo 'function setStatus(message,isError){status.textContent=message;status.style.color=isError?"#b91c1c":"#64748b";}';
+            echo 'fileInput.addEventListener("change",async function(){const file=this.files&&this.files[0];if(!file){return;}if(file.size>maxBytes){setStatus("The selected file is larger than the 5 MB limit.",true);this.value="";return;}try{editor.value=await file.text();setStatus("Loaded "+file.name+". Select Save Client Template to validate and save it.",false);}catch(error){setStatus("The selected JSON file could not be read.",true);}});';
+            echo 'form.addEventListener("submit",async function(event){event.preventDefault();const template=editor.value||"";if(new Blob([template]).size>maxBytes){setStatus("The Elementor template is larger than the 5 MB limit.",true);return;}button.disabled=true;button.textContent="Saving...";const total=Math.max(1,Math.ceil(template.length/chunkSize)),uploadId=Date.now().toString(36)+Math.random().toString(36).slice(2,12);try{for(let index=0;index<total;index++){setStatus("Saving template chunk "+(index+1)+" of "+total+"...",false);const body=new URLSearchParams({action:"wnq_service_city_save_template_chunk",client_id:' . wp_json_encode($client_id) . ',nonce:nonce?nonce.value:"",upload_id:uploadId,chunk_index:String(index),chunk_total:String(total),chunk:template.slice(index*chunkSize,(index+1)*chunkSize)});const response=await fetch(' . wp_json_encode($template_ajax_url) . ',{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/x-www-form-urlencoded; charset=UTF-8"},body:body.toString()});let payload;try{payload=await response.json();}catch(parseError){throw new Error("The server returned an invalid response while saving the template.");}if(!response.ok||!payload.success){const detail=payload&&payload.data&&(payload.data.message||payload.data);throw new Error(typeof detail==="string"?detail:"The template could not be saved.");}}setStatus("Elementor template saved. Reloading...",false);window.location.assign(' . wp_json_encode($template_saved_url) . ');}catch(error){setStatus(error&&error.message?error.message:"The template could not be saved.",true);button.disabled=false;button.textContent="Save Client Template";}});';
+            echo '})();';
+            echo '</script>';
             echo '</div>';
 
             echo '<div class="wnq-hub-card" style="padding:18px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;">';

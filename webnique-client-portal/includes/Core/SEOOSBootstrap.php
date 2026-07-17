@@ -248,6 +248,7 @@ final class SEOOSBootstrap
 
         // Service + City draft page workflow
         add_action('admin_post_wnq_service_city_save_template', [self::class, 'handleServiceCitySaveTemplate']);
+        add_action('wp_ajax_wnq_service_city_save_template_chunk', [self::class, 'ajaxServiceCitySaveTemplateChunk']);
         add_action('admin_post_wnq_service_city_import_csv',    [self::class, 'handleServiceCityImportCsv']);
         add_action('admin_post_wnq_service_city_generate_page', [self::class, 'handleServiceCityGeneratePage']);
         add_action('admin_post_wnq_service_city_reset_row',     [self::class, 'handleServiceCityResetRow']);
@@ -1354,15 +1355,7 @@ final class SEOOSBootstrap
         }
 
         $template = trim((string)wp_unslash($_POST['elementor_template'] ?? ''));
-        $error = '';
-        if (strlen($template) > (5 * MB_IN_BYTES)) {
-            $error = 'The Elementor template is larger than the 5 MB limit.';
-        } elseif ($template !== '' && in_array($template[0], ['{', '['], true)) {
-            json_decode($template, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                $error = 'The Elementor template is not valid JSON: ' . json_last_error_msg();
-            }
-        }
+        $error = self::validateServiceCityTemplate($template);
 
         if ($error !== '') {
             wp_safe_redirect(add_query_arg([
@@ -1374,7 +1367,15 @@ final class SEOOSBootstrap
             exit;
         }
 
-        \WNQ\Models\ServiceCityPage::saveTemplate($client_id, $template);
+        if (!\WNQ\Models\ServiceCityPage::saveTemplate($client_id, $template)) {
+            wp_safe_redirect(add_query_arg([
+                'page'      => 'wnq-seo-hub-content',
+                'client_id' => $client_id,
+                'notice'    => 'template_error',
+                'message'   => 'WordPress could not store the complete Elementor template. Please try again.',
+            ], admin_url('admin.php')));
+            exit;
+        }
 
         wp_safe_redirect(add_query_arg([
             'page'      => 'wnq-seo-hub-content',
@@ -1382,6 +1383,104 @@ final class SEOOSBootstrap
             'notice'    => 'template_saved',
         ], admin_url('admin.php')));
         exit;
+    }
+
+    /**
+     * Saves large Elementor exports without exceeding the web server's POST limit.
+     */
+    public static function ajaxServiceCitySaveTemplateChunk(): void
+    {
+        $client_id = sanitize_text_field(wp_unslash($_POST['client_id'] ?? ''));
+        check_ajax_referer('wnq_service_city_template_' . $client_id, 'nonce');
+        self::requireCap();
+
+        if ($client_id === '' || !\WNQ\Models\Client::getByClientId($client_id)) {
+            wp_send_json_error(['message' => 'Invalid client.'], 400);
+        }
+
+        $upload_id = sanitize_key(wp_unslash($_POST['upload_id'] ?? ''));
+        $chunk_index = isset($_POST['chunk_index']) ? absint($_POST['chunk_index']) : -1;
+        $chunk_total = isset($_POST['chunk_total']) ? absint($_POST['chunk_total']) : 0;
+        $chunk = (string)wp_unslash($_POST['chunk'] ?? '');
+
+        if ($upload_id === '' || strlen($upload_id) > 64) {
+            wp_send_json_error(['message' => 'The template upload ID is invalid.'], 400);
+        }
+        if ($chunk_index < 0 || $chunk_total < 1 || $chunk_total > 128 || $chunk_index >= $chunk_total) {
+            wp_send_json_error(['message' => 'The template chunk sequence is invalid.'], 400);
+        }
+        if (strlen($chunk) > (256 * KB_IN_BYTES)) {
+            wp_send_json_error(['message' => 'A template chunk exceeded the safe upload size.'], 413);
+        }
+
+        $chunk_key = self::serviceCityTemplateChunkKey($client_id, $upload_id, $chunk_index);
+        if (!set_transient($chunk_key, $chunk, 15 * MINUTE_IN_SECONDS)) {
+            self::deleteServiceCityTemplateChunks($client_id, $upload_id, $chunk_total);
+            wp_send_json_error(['message' => 'The server could not store a template chunk. Please try again.'], 500);
+        }
+
+        if ($chunk_index < ($chunk_total - 1)) {
+            wp_send_json_success([
+                'complete' => false,
+                'received' => $chunk_index + 1,
+                'total'    => $chunk_total,
+            ]);
+        }
+
+        $template = '';
+        for ($index = 0; $index < $chunk_total; $index++) {
+            $stored_chunk = get_transient(self::serviceCityTemplateChunkKey($client_id, $upload_id, $index));
+            if ($stored_chunk === false) {
+                self::deleteServiceCityTemplateChunks($client_id, $upload_id, $chunk_total);
+                wp_send_json_error(['message' => 'A template chunk was not received. Please try the save again.'], 409);
+            }
+            $template .= (string)$stored_chunk;
+            if (strlen($template) > (5 * MB_IN_BYTES)) {
+                self::deleteServiceCityTemplateChunks($client_id, $upload_id, $chunk_total);
+                wp_send_json_error(['message' => 'The Elementor template is larger than the 5 MB limit.'], 413);
+            }
+        }
+
+        self::deleteServiceCityTemplateChunks($client_id, $upload_id, $chunk_total);
+        $template = trim($template);
+        $error = self::validateServiceCityTemplate($template);
+        if ($error !== '') {
+            wp_send_json_error(['message' => $error], 400);
+        }
+
+        if (!\WNQ\Models\ServiceCityPage::saveTemplate($client_id, $template)) {
+            wp_send_json_error(['message' => 'WordPress could not store the complete Elementor template. Please try again.'], 500);
+        }
+        wp_send_json_success([
+            'complete' => true,
+            'message'  => 'Elementor template saved.',
+        ]);
+    }
+
+    private static function validateServiceCityTemplate(string $template): string
+    {
+        if (strlen($template) > (5 * MB_IN_BYTES)) {
+            return 'The Elementor template is larger than the 5 MB limit.';
+        }
+        if ($template !== '' && in_array($template[0], ['{', '['], true)) {
+            json_decode($template, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                return 'The Elementor template is not valid JSON: ' . json_last_error_msg();
+            }
+        }
+        return '';
+    }
+
+    private static function serviceCityTemplateChunkKey(string $client_id, string $upload_id, int $chunk_index): string
+    {
+        return 'wnq_sct_' . md5(get_current_user_id() . '|' . $client_id . '|' . $upload_id . '|' . $chunk_index);
+    }
+
+    private static function deleteServiceCityTemplateChunks(string $client_id, string $upload_id, int $chunk_total): void
+    {
+        for ($index = 0; $index < $chunk_total; $index++) {
+            delete_transient(self::serviceCityTemplateChunkKey($client_id, $upload_id, $index));
+        }
     }
 
     public static function handleServiceCityImportCsv(): void
