@@ -14,6 +14,8 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+use WNQ\Services\ServiceCityPageBlueprint;
+
 final class ServiceCityPage
 {
     public static function requiredColumns(): array
@@ -348,8 +350,10 @@ final class ServiceCityPage
         $skipped = 0;
         $errors = [];
         $seen = [];
+        $line_number = 1;
 
         while (($raw = fgetcsv($handle)) !== false) {
+            ++$line_number;
             if (count(array_filter($raw, static fn($v) => trim((string)$v) !== '')) === 0) {
                 continue;
             }
@@ -359,13 +363,23 @@ final class ServiceCityPage
                 $row[$key] = isset($raw[$i]) ? trim((string)$raw[$i]) : '';
             }
 
+            $validation = ServiceCityPageBlueprint::validateRow($row);
+            if (!($validation['valid'] ?? false)) {
+                $skipped++;
+                $errors[] = 'CSV row ' . $line_number . ': ' . implode(
+                    ' ',
+                    $validation['errors'] ?? ['Invalid Service + City row.']
+                );
+                continue;
+            }
+
             $slug = self::normalizeSlug($row['slug'] ?? '');
             if ($slug === '') {
                 $slug = self::normalizeSlug($row['page_title'] ?? $row['h1'] ?? '');
             }
             if ($slug === '') {
                 $skipped++;
-                $errors[] = 'Skipped a row with no usable slug or title.';
+                $errors[] = 'CSV row ' . $line_number . ': no usable slug or title.';
                 continue;
             }
 
@@ -381,7 +395,7 @@ final class ServiceCityPage
                 $imported++;
             } else {
                 $skipped++;
-                $errors[] = 'Could not import row for slug: ' . $slug;
+                $errors[] = 'CSV row ' . $line_number . ': could not import slug ' . $slug . '.';
             }
         }
 

@@ -42,6 +42,14 @@ final class ServiceCityPageGenerator
             return self::fail($row_id, 'Paste and save an Elementor template for this client first.');
         }
 
+        $validation = ServiceCityPageBlueprint::validateRow($row);
+        if (!($validation['valid'] ?? false)) {
+            return self::fail(
+                $row_id,
+                implode(' ', $validation['errors'] ?? ['Invalid Service + City row.'])
+            );
+        }
+
         if (empty($row['parent_service_slug'])) {
             return self::fail($row_id, 'parent_service_slug is required because Service + City pages are created as child pages.');
         }
@@ -67,34 +75,54 @@ final class ServiceCityPageGenerator
             $profile = SEOHub::getProfile($client_id) ?? [];
             $business_name = $client['company'] ?? $client['name'] ?? $client_id;
 
-            $ai_vars = self::aiVarsForRow($row, $business_name, $profile, $client);
-            $ai = AIEngine::generate(
-                'service_city_page',
-                $ai_vars,
-                $client_id,
-                [
-                    'max_tokens'  => AIEngine::maxTokensForBlogGeneration(),
-                    'no_cache'    => true,
-                    'temperature' => 0.82,
-                ]
+            $blueprint = ServiceCityPageBlueprint::compose(
+                $template,
+                $row,
+                (string)$business_name,
+                $profile,
+                $client
             );
 
-            if (!$ai['success']) {
-                return self::fail($row_id, 'AI generation failed: ' . ($ai['error'] ?? 'unknown error'));
-            }
+            if (($blueprint['recognized'] ?? false) === true) {
+                if (($blueprint['success'] ?? false) !== true) {
+                    return self::fail(
+                        $row_id,
+                        (string)($blueprint['message'] ?? 'The approved Service + City template could not be composed.')
+                    );
+                }
 
-            $body = self::parseGeneratedBody($ai['content'] ?? '');
-            if ($body === '') {
-                return self::fail($row_id, 'AI returned an empty page body. Try generating this row again.');
-            }
-            $tokens = self::tokensForRow($row, $body, $business_name);
-            $body = self::sanitizeGeneratedCopy($body, $tokens);
-            $body = self::ensureTargetWordCount($row, $body, $business_name, $profile, $client_id, $client);
+                $body = (string)$blueprint['body'];
+                $built = $blueprint['built'];
+            } else {
+                $ai_vars = self::aiVarsForRow($row, $business_name, $profile, $client);
+                $ai = AIEngine::generate(
+                    'service_city_page',
+                    $ai_vars,
+                    $client_id,
+                    [
+                        'max_tokens'  => AIEngine::maxTokensForBlogGeneration(),
+                        'no_cache'    => true,
+                        'temperature' => 0.82,
+                    ]
+                );
 
-            $tokens = self::tokensForRow($row, $body, $business_name);
-            $body = self::sanitizeGeneratedCopy($body, $tokens);
-            $tokens = self::tokensForRow($row, $body, $business_name);
-            $built = self::buildElementorFromTemplate($template, $tokens, $body);
+                if (!$ai['success']) {
+                    return self::fail($row_id, 'AI generation failed: ' . ($ai['error'] ?? 'unknown error'));
+                }
+
+                $body = self::parseGeneratedBody($ai['content'] ?? '');
+                if ($body === '') {
+                    return self::fail($row_id, 'AI returned an empty page body. Try generating this row again.');
+                }
+                $tokens = self::tokensForRow($row, $body, $business_name);
+                $body = self::sanitizeGeneratedCopy($body, $tokens);
+                $body = self::ensureTargetWordCount($row, $body, $business_name, $profile, $client_id, $client);
+
+                $tokens = self::tokensForRow($row, $body, $business_name);
+                $body = self::sanitizeGeneratedCopy($body, $tokens);
+                $tokens = self::tokensForRow($row, $body, $business_name);
+                $built = self::buildElementorFromTemplate($template, $tokens, $body);
+            }
 
             $push = self::pushToAgent($agent, [
                 'title'               => $row['page_title'] ?: $row['h1'] ?: $row['primary_keyword'],
