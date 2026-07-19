@@ -55,6 +55,30 @@ final class ServiceCityPageBlueprint
         '2d7cc19b',
     ];
 
+    /**
+     * Bring older Service + City CSV exports up to the current import contract.
+     *
+     * This only upgrades rows that already prove they contain both a service and
+     * a city. Genuine city-only rows continue to fail validation.
+     */
+    public static function normalizeImportRow(array $row): array
+    {
+        $page_type = self::normalizePageType((string)($row['page_type'] ?? ''));
+        if ($page_type === 'page' && self::hasServiceCityIntent($row)) {
+            $row['page_type'] = 'service_city';
+        }
+
+        $navigation_links = trim((string)($row['navigation_menu_related_services'] ?? ''));
+        if ($navigation_links === '' || strtolower($navigation_links) === 'navigation_menu_related_services') {
+            $derived_links = self::deriveRelatedServiceLinks($row);
+            $row['navigation_menu_related_services'] = empty($derived_links)
+                ? ''
+                : implode(';', $derived_links);
+        }
+
+        return $row;
+    }
+
     public static function validateRow(array $row): array
     {
         $errors = [];
@@ -66,8 +90,7 @@ final class ServiceCityPageBlueprint
             }
         }
 
-        $page_type = strtolower(trim((string)($row['page_type'] ?? '')));
-        $page_type = trim((string)preg_replace('/[^a-z0-9]+/', '_', $page_type), '_');
+        $page_type = self::normalizePageType((string)($row['page_type'] ?? ''));
         if ($page_type !== '' && !in_array($page_type, ['service_city', 'service_city_page'], true)) {
             $errors[] = 'page_type must be service_city or service_city_page; city-only rows are not supported.';
         }
@@ -196,8 +219,105 @@ final class ServiceCityPageBlueprint
         $labels = self::splitList((string)($row[$labels_key] ?? ''));
         $links = self::splitList((string)($row[$links_key] ?? ''));
         if (count($labels) !== count($links)) {
-            $errors[] = $labels_key . ' and ' . $links_key . ' must contain the same number of items.';
+            $errors[] = sprintf(
+                '%s and %s must contain the same number of items (%d labels, %d links).',
+                $labels_key,
+                $links_key,
+                count($labels),
+                count($links)
+            );
         }
+    }
+
+    private static function normalizePageType(string $page_type): string
+    {
+        $page_type = strtolower(trim($page_type));
+        return trim((string)preg_replace('/[^a-z0-9]+/', '_', $page_type), '_');
+    }
+
+    private static function hasServiceCityIntent(array $row): bool
+    {
+        foreach (['service', 'city', 'state', 'h1', 'parent_service_slug'] as $key) {
+            if (trim((string)($row[$key] ?? '')) === '') {
+                return false;
+            }
+        }
+
+        $h1 = (string)$row['h1'];
+        return stripos($h1, (string)$row['service']) !== false
+            && stripos($h1, (string)$row['city']) !== false;
+    }
+
+    private static function deriveRelatedServiceLinks(array $row): array
+    {
+        $labels = self::splitList((string)($row['related_services'] ?? ''));
+        $internal_links = self::splitList((string)($row['internal_links'] ?? ''));
+        if (empty($labels) || empty($internal_links)) {
+            return [];
+        }
+
+        $links_by_slug = [];
+        foreach ($internal_links as $link) {
+            $path_slug = self::urlPathSlug($link);
+            if ($path_slug !== '') {
+                $links_by_slug[$path_slug] = $link;
+            }
+        }
+
+        $city_slug = self::slugify((string)($row['city'] ?? ''));
+        $state_slug = self::slugify((string)($row['state'] ?? ''));
+        $city_service_area_slug = trim($city_slug . '-' . $state_slug, '-');
+        $derived = [];
+
+        foreach ($labels as $label) {
+            $label_slug = self::slugify($label);
+            if ($label_slug !== '' && isset($links_by_slug[$label_slug])) {
+                $derived[] = $links_by_slug[$label_slug];
+                continue;
+            }
+
+            if ($label_slug === 'junk-removal' && $city_service_area_slug !== '') {
+                $city_root = self::findServiceAreaRoot($internal_links, $city_service_area_slug);
+                if ($city_root !== '') {
+                    $derived[] = $city_root;
+                    continue;
+                }
+            }
+
+            return [];
+        }
+
+        return $derived;
+    }
+
+    private static function findServiceAreaRoot(array $links, string $city_service_area_slug): string
+    {
+        foreach ($links as $link) {
+            $path = (string)(parse_url($link, PHP_URL_PATH) ?? '');
+            $parts = array_values(array_filter(explode('/', trim($path, '/')), 'strlen'));
+            $count = count($parts);
+            if ($count >= 2
+                && self::slugify($parts[$count - 2]) === 'service-areas'
+                && self::slugify($parts[$count - 1]) === $city_service_area_slug
+            ) {
+                return $link;
+            }
+        }
+
+        return '';
+    }
+
+    private static function urlPathSlug(string $url): string
+    {
+        $path = (string)(parse_url($url, PHP_URL_PATH) ?? '');
+        $parts = array_values(array_filter(explode('/', trim($path, '/')), 'strlen'));
+        return empty($parts) ? '' : self::slugify((string)end($parts));
+    }
+
+    private static function slugify(string $value): string
+    {
+        $value = strtolower(trim($value));
+        return trim((string)preg_replace('/[^a-z0-9]+/', '-', $value), '-');
     }
 
     private static function context(array $row, string $business_name, array $profile, array $client): array

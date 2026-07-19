@@ -363,6 +363,7 @@ final class ServiceCityPage
                 $row[$key] = isset($raw[$i]) ? trim((string)$raw[$i]) : '';
             }
 
+            $row = ServiceCityPageBlueprint::normalizeImportRow($row);
             $validation = ServiceCityPageBlueprint::validateRow($row);
             if (!($validation['valid'] ?? false)) {
                 $skipped++;
