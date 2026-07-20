@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.4.69
+Stable tag: 2.4.70
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,10 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.4.70 - Preserve Service + City Rows During Import
+- Builds a unique service-city-state slug before duplicate detection.
+- Preserves every valid service and city combination from legacy path-based CSV exports.
+
 2.4.69 - Legacy Service + City CSV Compatibility
 - Safely upgrades legacy Service + City rows marked as generic pages.
 - Reconstructs missing related-service navigation links from exact internal-link matches.

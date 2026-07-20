@@ -63,9 +63,16 @@ final class ServiceCityPageBlueprint
      */
     public static function normalizeImportRow(array $row): array
     {
+        $has_service_city_intent = self::hasServiceCityIntent($row);
         $page_type = self::normalizePageType((string)($row['page_type'] ?? ''));
-        if ($page_type === 'page' && self::hasServiceCityIntent($row)) {
+        if ($page_type === 'page' && $has_service_city_intent) {
             $row['page_type'] = 'service_city';
+        }
+
+        // Legacy exports often use city paths or service-only path segments. Build
+        // the unique child-page slug before duplicate detection collapses rows.
+        if ($has_service_city_intent) {
+            $row['slug'] = self::canonicalServiceCitySlug($row);
         }
 
         $navigation_links = trim((string)($row['navigation_menu_related_services'] ?? ''));
@@ -77,6 +84,17 @@ final class ServiceCityPageBlueprint
         }
 
         return $row;
+    }
+
+    private static function canonicalServiceCitySlug(array $row): string
+    {
+        return implode('-', array_filter([
+            self::slugify((string)($row['service'] ?? '')),
+            self::slugify((string)($row['city'] ?? '')),
+            self::slugify((string)($row['state'] ?? '')),
+        ], static function (string $part): bool {
+            return $part !== '';
+        }));
     }
 
     public static function validateRow(array $row): array

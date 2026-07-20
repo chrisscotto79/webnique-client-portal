@@ -257,11 +257,29 @@ $legacy_row['navigation_menu_related_services'] = '';
 $legacy_row['internal_links'] = '/service-areas/pine-island-fl/;/dumpster-rentals/;/furniture-removal/';
 $normalized_legacy_row = ServiceCityPageBlueprint::normalizeImportRow($legacy_row);
 assertTest($normalized_legacy_row['page_type'] === 'service_city', 'Legacy Service + City page type was not normalized.');
+assertTest($normalized_legacy_row['slug'] === 'junk-removal-pine-island-fl', 'Legacy city path did not receive a unique service-city-state slug.');
 assertTest(
     $normalized_legacy_row['navigation_menu_related_services'] === '/service-areas/pine-island-fl/;/dumpster-rentals/;/furniture-removal/',
     'Legacy related-service links were not reconstructed in label order.'
 );
 assertTest(ServiceCityPageBlueprint::validateRow($normalized_legacy_row)['valid'] === true, 'Normalized legacy row did not pass validation.');
+
+$path_slug_row = $legacy_row;
+$path_slug_row['service'] = 'Dumpster Rentals';
+$path_slug_row['city'] = 'Fort Myers';
+$path_slug_row['state'] = 'FL';
+$path_slug_row['h1'] = 'Dumpster Rentals in Fort Myers, FL';
+$path_slug_row['slug'] = '/service-areas/fort-myers-fl/dumpster-rentals/';
+$path_slug_row['parent_service_slug'] = 'dumpster-rentals';
+$path_slug_row['related_services'] = 'Junk Removal;Furniture Removal;Appliance Removal';
+$path_slug_row['navigation_menu_related_services'] = '/junk-removal/;/furniture-removal/;/appliance-removal/';
+$normalized_path_slug_row = ServiceCityPageBlueprint::normalizeImportRow($path_slug_row);
+assertTest($normalized_path_slug_row['slug'] === 'dumpster-rentals-fort-myers-fl', 'Nested service path did not receive a unique service-city-state slug.');
+$path_slug_validation = ServiceCityPageBlueprint::validateRow($normalized_path_slug_row);
+assertTest(
+    $path_slug_validation['valid'] === true,
+    'Normalized nested service path did not pass validation: ' . implode(' ', $path_slug_validation['errors'])
+);
 
 $header_value_row = $legacy_row;
 $header_value_row['navigation_menu_related_services'] = 'navigation_menu_related_services';
