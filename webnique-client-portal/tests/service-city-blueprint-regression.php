@@ -250,6 +250,42 @@ $bad_related_links = $row;
 $bad_related_links['navigation_menu_related_services'] = '/dumpster-rentals/;/furniture-removal/';
 assertTest(ServiceCityPageBlueprint::validateRow($bad_related_links)['valid'] === false, 'Mismatched related-service labels and links were accepted.');
 
+$legacy_row = $row;
+$legacy_row['page_type'] = 'page';
+$legacy_row['related_services'] = 'Junk Removal;Dumpster Rentals;Furniture Removal';
+$legacy_row['navigation_menu_related_services'] = '';
+$legacy_row['internal_links'] = '/service-areas/pine-island-fl/;/dumpster-rentals/;/furniture-removal/';
+$normalized_legacy_row = ServiceCityPageBlueprint::normalizeImportRow($legacy_row);
+assertTest($normalized_legacy_row['page_type'] === 'service_city', 'Legacy Service + City page type was not normalized.');
+assertTest(
+    $normalized_legacy_row['navigation_menu_related_services'] === '/service-areas/pine-island-fl/;/dumpster-rentals/;/furniture-removal/',
+    'Legacy related-service links were not reconstructed in label order.'
+);
+assertTest(ServiceCityPageBlueprint::validateRow($normalized_legacy_row)['valid'] === true, 'Normalized legacy row did not pass validation.');
+
+$header_value_row = $legacy_row;
+$header_value_row['navigation_menu_related_services'] = 'navigation_menu_related_services';
+$normalized_header_value_row = ServiceCityPageBlueprint::normalizeImportRow($header_value_row);
+assertTest(
+    $normalized_header_value_row['navigation_menu_related_services'] === '/service-areas/pine-island-fl/;/dumpster-rentals/;/furniture-removal/',
+    'Accidental header value was not repaired.'
+);
+
+$legacy_city_only = $legacy_row;
+$legacy_city_only['page_type'] = 'city';
+assertTest(
+    ServiceCityPageBlueprint::validateRow(ServiceCityPageBlueprint::normalizeImportRow($legacy_city_only))['valid'] === false,
+    'A genuine city-only row was normalized and accepted.'
+);
+
+$unresolvable_legacy_row = $legacy_row;
+$unresolvable_legacy_row['internal_links'] = '/service-areas/pine-island-fl/;/dumpster-rentals/';
+$normalized_unresolvable_row = ServiceCityPageBlueprint::normalizeImportRow($unresolvable_legacy_row);
+assertTest(
+    ServiceCityPageBlueprint::validateRow($normalized_unresolvable_row)['valid'] === false,
+    'A legacy row with an unresolved related-service link was accepted.'
+);
+
 $sample_pages = [
     ['Junk Removal', 'Fort Myers', 'junk-removal-fort-myers-fl'],
     ['Appliance Removal', 'Fort Myers', 'appliance-removal-fort-myers-fl'],
