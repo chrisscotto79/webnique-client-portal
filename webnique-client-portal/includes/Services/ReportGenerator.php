@@ -62,7 +62,7 @@ final class ReportGenerator
             ]
             : self::resolveAnalyticsContext($client_id, $client, $profile);
         $report_client_id = (string)($analytics_context['client_id'] ?? $client_id);
-        $ads_client_id = self::resolveAdsClientId($client_id, $client, $analytics_config);
+        $ads_client_id = ClientPortal::resolveAdsClientId($client_id, $analytics_config);
 
         // Gather all report data
         $report_data = [
@@ -1845,23 +1845,6 @@ final class ReportGenerator
             'google_analytics_property_id' => (string)($analytics_config['ga4_property_id'] ?? ''),
             'google_search_console_site_url' => (string)($analytics_config['search_console_url'] ?? ''),
         ];
-    }
-
-    private static function resolveAdsClientId(string $client_id, array $client, ?array $analytics_config): string
-    {
-        $direct_client = Client::getByClientId($client_id);
-        if ($direct_client && !empty($direct_client['client_id'])) {
-            return (string)$direct_client['client_id'];
-        }
-
-        if ($analytics_config) {
-            $matched_client = self::findPortalClientForAnalyticsConfig($analytics_config);
-            if ($matched_client && !empty($matched_client['client_id'])) {
-                return (string)$matched_client['client_id'];
-            }
-        }
-
-        return (string)($client['client_id'] ?? $client_id);
     }
 
     private static function resolveReportProfile(string $client_id, array $client, ?array $analytics_config): array

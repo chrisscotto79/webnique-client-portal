@@ -334,6 +334,7 @@ final class AnalyticsAdmin
                 }
 
                 const ads = provider.data || {};
+                html += '<p class="wnq-account-match">Linked account: <strong>' + escapeHtml(ads.account_name || 'Google Ads account') + '</strong></p>';
                 html += '<div class="wnq-overview-grid">';
                 html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">Clicks</span><span class="metric-value">' + formatNumber(ads.clicks) + '</span></div></div>';
                 html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">Impressions</span><span class="metric-value">' + formatNumber(ads.impressions) + '</span></div></div>';
@@ -547,6 +548,8 @@ final class AnalyticsAdmin
         .wnq-provider-state { background: #fff; border: 1px solid #e2e8f0; border-left: 3px solid #a0aec0; border-radius: 8px; padding: 18px 20px; display: flex; flex-direction: column; gap: 4px; color: #718096; }
         .wnq-provider-state strong { color: #4a5568; font-size: 15px; }
         .wnq-provider-state span { font-size: 13px; }
+        .wnq-account-match { margin: -4px 0 12px; color: #718096; font-size: 12px; }
+        .wnq-account-match strong { color: #2d3748; }
         .wnq-overview-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
         .wnq-metric { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; display: flex; align-items: center; gap: 12px; }
         .wnq-metric:hover { border-color: #cbd5e0; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
@@ -1198,7 +1201,8 @@ final class AnalyticsAdmin
             }
 
             try {
-                $ads_report = ClientPortal::getAdsReportData($client_id, $start_date, $end_date, $refresh);
+                $ads_client_id = ClientPortal::resolveAdsClientId($client_id, $config);
+                $ads_report = ClientPortal::getAdsReportData($ads_client_id, $start_date, $end_date, $refresh);
 
                 if (empty($ads_report['has_linked_account'])) {
                     $data['google_ads'] = [
@@ -1228,6 +1232,7 @@ final class AnalyticsAdmin
                     $data['google_ads'] = [
                         'status' => 'available',
                         'data'   => [
+                            'account_name' => sanitize_text_field((string)($ads_report['account_name'] ?? '')),
                             'clicks'      => absint($ads_summary['clicks'] ?? 0),
                             'impressions' => absint($ads_summary['impressions'] ?? 0),
                             'ctr'         => (float)($ads_summary['ctr'] ?? 0),

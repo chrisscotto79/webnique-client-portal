@@ -621,6 +621,60 @@ final class ClientPortal
         return $result;
     }
 
+    /**
+     * Resolve an Analytics client to the canonical portal client that owns the
+     * saved Google Ads account mapping.
+     */
+    public static function resolveAdsClientId(string $client_id, ?array $analytics_config = null): string
+    {
+        $client_id = sanitize_text_field($client_id);
+        $direct_client = Client::getByClientId($client_id);
+        if ($direct_client && !empty($direct_client['client_id'])) {
+            return (string)$direct_client['client_id'];
+        }
+
+        if ($analytics_config === null && class_exists(AnalyticsConfig::class)) {
+            $analytics_config = AnalyticsConfig::getClientConfig($client_id);
+        }
+        if (!$analytics_config) {
+            return $client_id;
+        }
+
+        $target_id = self::normalizeClientMatchToken((string)($analytics_config['client_id'] ?? $client_id));
+        $target_name = self::normalizeClientMatchToken((string)($analytics_config['client_name'] ?? ''));
+        $target_domains = array_filter(array_unique([
+            self::normalizeClientDomain((string)($analytics_config['website_url'] ?? '')),
+            self::normalizeClientDomain((string)($analytics_config['search_console_url'] ?? '')),
+        ]));
+
+        foreach (Client::getAll() as $portal_client) {
+            $portal_client_id = (string)($portal_client['client_id'] ?? '');
+            if ($portal_client_id === '') {
+                continue;
+            }
+
+            $client_tokens = array_filter(array_unique([
+                self::normalizeClientMatchToken($portal_client_id),
+                self::normalizeClientMatchToken((string)($portal_client['company'] ?? '')),
+                self::normalizeClientMatchToken((string)($portal_client['name'] ?? '')),
+            ]));
+            $client_domains = array_filter(array_unique([
+                self::normalizeClientDomain((string)($portal_client['website'] ?? '')),
+                self::normalizeClientDomain((string)($portal_client['google_search_console_site_url'] ?? '')),
+            ]));
+
+            if (
+                ($target_id !== '' && in_array($target_id, $client_tokens, true))
+                || ($target_name !== '' && in_array($target_name, $client_tokens, true))
+                || ($target_domains && array_intersect($target_domains, $client_domains))
+            ) {
+                return $portal_client_id;
+            }
+        }
+
+        return $client_id;
+    }
+
     public static function getAdsResource(string $client_id, bool $include_financial = true, bool $refresh = false): array
     {
         $settings = self::adsSettings($client_id);
@@ -876,6 +930,33 @@ final class ClientPortal
     private static function adsOptionKey(string $client_id): string
     {
         return 'wnq_google_ads_settings_' . md5($client_id);
+    }
+
+    private static function normalizeClientMatchToken(string $value): string
+    {
+        return preg_replace('/[^a-z0-9]+/', '', strtolower(trim($value))) ?: '';
+    }
+
+    private static function normalizeClientDomain(string $value): string
+    {
+        $value = strtolower(trim($value));
+        if ($value === '') {
+            return '';
+        }
+
+        if (str_starts_with($value, 'sc-domain:')) {
+            $value = substr($value, strlen('sc-domain:'));
+        }
+
+        if (str_contains($value, '://')) {
+            $host = parse_url($value, PHP_URL_HOST);
+            $value = is_string($host) ? $host : $value;
+        } else {
+            $value = preg_replace('/\/.*$/', '', $value) ?: $value;
+        }
+
+        $value = preg_replace('/^www\./', '', $value) ?: $value;
+        return trim($value, " \t\n\r\0\x0B/");
     }
 
     public static function getMonthlyPerformance(string $client_id, int $months = 6, bool $include_private = true): array
