@@ -179,6 +179,121 @@ final class AnalyticsAdmin
                 return '<div class="wnq-provider-state"><strong>' + escapeHtml(message) + '</strong><span>' + detail + '</span></div>';
             }
 
+            function formatEventDate(value) {
+                const parts = String(value || '').split('-');
+                return parts.length === 3 ? parts[1] + '/' + parts[2] + '/' + parts[0] : 'Unknown date';
+            }
+
+            function formatEventTime(value) {
+                const parts = String(value || '').split(':');
+                if (parts.length !== 2) return 'Unknown time';
+                const hour = Number(parts[0]);
+                const suffix = hour >= 12 ? 'PM' : 'AM';
+                const displayHour = hour % 12 || 12;
+                return displayHour + ':' + parts[1] + ' ' + suffix;
+            }
+
+            function deviceIcon(device) {
+                const normalized = String(device || '').toLowerCase();
+                if (normalized === 'mobile') return '📱';
+                if (normalized === 'tablet') return '▣';
+                if (normalized === 'desktop') return '🖥️';
+                return '◉';
+            }
+
+            function renderKeyEventActivity(provider) {
+                let html = '<div id="wnq-key-event-activity" class="wnq-event-activity">';
+                html += '<div class="wnq-activity-heading"><div><h3>Key Event Activity</h3><p>Minute-level GA4 activity grouped by device, location, page, and traffic channel.</p></div>';
+
+                if (!provider || provider.status !== 'available') {
+                    html += '</div><div class="wnq-provider-state"><strong>Unavailable</strong><span>Detailed key event activity could not be loaded. Key event totals remain available above.</span></div>';
+                    return html + '</div>';
+                }
+
+                const rows = Array.isArray(provider.rows) ? provider.rows : [];
+                const timezone = provider.timezone ? 'Times shown in ' + escapeHtml(provider.timezone) + '.' : 'Times use the GA4 property timezone.';
+                html += '<span class="wnq-activity-timezone">' + timezone + '</span></div>';
+
+                if (!rows.length) {
+                    return html + '<div class="wnq-table-section"><p class="wnq-empty-copy">No detailed key event activity was reported for this period.</p></div></div>';
+                }
+
+                const events = [...new Set(rows.map(row => row.display_name).filter(Boolean))].sort();
+                const devices = [...new Set(rows.map(row => row.device).filter(Boolean))].sort();
+
+                html += '<div class="wnq-activity-controls">';
+                html += '<label><span class="screen-reader-text">Search key event activity</span><input type="search" id="wnq-event-search" placeholder="Search events, pages, locations…"></label>';
+                html += '<label><span class="screen-reader-text">Filter by event</span><select id="wnq-event-filter"><option value="">All events</option>';
+                events.forEach(event => { html += '<option value="' + escapeHtml(event) + '">' + escapeHtml(event) + '</option>'; });
+                html += '</select></label>';
+                html += '<label><span class="screen-reader-text">Filter by device</span><select id="wnq-device-filter"><option value="">All devices</option>';
+                devices.forEach(device => { html += '<option value="' + escapeHtml(device) + '">' + escapeHtml(device) + '</option>'; });
+                html += '</select></label>';
+                html += '</div>';
+
+                html += '<div class="wnq-table-section wnq-activity-table-section"><div class="wnq-table-scroll"><table class="wnq-compact-table wnq-activity-table">';
+                html += '<thead><tr><th>When</th><th>Event</th><th>Device</th><th>Browser / OS</th><th>Location</th><th>Page</th><th>Channel</th><th>Count</th></tr></thead><tbody>';
+
+                rows.forEach((row, index) => {
+                    const location = [row.city, row.country].filter(value => value && value !== '(not set)').join(', ') || 'Not available';
+                    const browserOs = [row.browser, row.operating_system].filter(value => value && value !== '(not set)').join(' / ') || 'Not available';
+                    const page = row.page_path && row.page_path !== '(not set)' ? row.page_path : 'Not available';
+                    const channel = row.channel && row.channel !== '(not set)' ? row.channel : 'Not available';
+                    const searchValue = [row.display_name, row.device, browserOs, location, page, channel].join(' ').toLowerCase();
+                    html += '<tr class="wnq-activity-row" data-event="' + escapeHtml(row.display_name) + '" data-device="' + escapeHtml(row.device) + '" data-search="' + escapeHtml(searchValue) + '"' + (index >= 25 ? ' style="display:none;"' : '') + '>';
+                    html += '<td><strong>' + escapeHtml(formatEventDate(row.date)) + '</strong><span class="wnq-cell-detail">' + escapeHtml(formatEventTime(row.time)) + '</span></td>';
+                    html += '<td><strong>' + escapeHtml(row.display_name) + '</strong></td>';
+                    html += '<td><span class="wnq-device-label">' + deviceIcon(row.device) + ' ' + escapeHtml(row.device || 'Unknown') + '</span></td>';
+                    html += '<td>' + escapeHtml(browserOs) + '</td>';
+                    html += '<td>' + escapeHtml(location) + '</td>';
+                    html += '<td><code title="' + escapeHtml(page) + '">' + escapeHtml(page.length > 34 ? page.substring(0, 34) + '…' : page) + '</code></td>';
+                    html += '<td>' + escapeHtml(channel) + '</td>';
+                    html += '<td><strong>' + formatNumber(row.count) + '</strong></td></tr>';
+                });
+
+                html += '</tbody></table></div>';
+                html += '<div class="wnq-activity-footer"><span id="wnq-activity-count"></span><button type="button" id="wnq-activity-more" class="button">Show more</button></div>';
+                return html + '</div></div>';
+            }
+
+            function bindKeyEventActivityFilters() {
+                const section = $('#wnq-key-event-activity');
+                if (!section.length || !section.find('.wnq-activity-row').length) return;
+
+                let visibleLimit = 25;
+                const rows = section.find('.wnq-activity-row');
+                const search = section.find('#wnq-event-search');
+                const eventFilter = section.find('#wnq-event-filter');
+                const deviceFilter = section.find('#wnq-device-filter');
+                const moreButton = section.find('#wnq-activity-more');
+
+                function applyFilters(resetLimit) {
+                    if (resetLimit) visibleLimit = 25;
+                    const term = String(search.val() || '').trim().toLowerCase();
+                    const selectedEvent = String(eventFilter.val() || '');
+                    const selectedDevice = String(deviceFilter.val() || '');
+                    const matches = rows.filter(function() {
+                        const row = $(this);
+                        return (!term || String(row.data('search') || '').includes(term))
+                            && (!selectedEvent || row.attr('data-event') === selectedEvent)
+                            && (!selectedDevice || row.attr('data-device') === selectedDevice);
+                    });
+
+                    rows.hide();
+                    matches.slice(0, visibleLimit).show();
+                    section.find('#wnq-activity-count').text('Showing ' + Math.min(visibleLimit, matches.length) + ' of ' + matches.length + ' grouped rows');
+                    moreButton.toggle(matches.length > visibleLimit);
+                }
+
+                search.on('input', function() { applyFilters(true); });
+                eventFilter.add(deviceFilter).on('change', function() { applyFilters(true); });
+                moreButton.on('click', function() {
+                    visibleLimit += 25;
+                    applyFilters(false);
+                });
+                applyFilters(false);
+            }
+
             function renderSearchConsole(provider) {
                 let html = '<section class="wnq-provider-section">';
                 html += '<div class="wnq-section-header"><h2>🔎 Google Search Console</h2></div>';
@@ -295,6 +410,8 @@ final class AnalyticsAdmin
                     html += '</div>';
                 }
 
+                html += renderKeyEventActivity(gaData.key_event_activity);
+
                 // Visitors Chart
                 if (gaData.visitors_over_time && gaData.visitors_over_time.length > 0) {
                     html += '<div class="wnq-chart-section">';
@@ -342,6 +459,7 @@ final class AnalyticsAdmin
 
                 $('#wnq-analytics-content').html(html).show();
                 $('#wnq-analytics-loading').hide();
+                bindKeyEventActivityFilters();
 
                 // Render chart
                 if (gaData && gaData.visitors_over_time && gaData.visitors_over_time.length > 0 && typeof Chart !== 'undefined') {
@@ -451,6 +569,19 @@ final class AnalyticsAdmin
         .wnq-event-card.contact { border-left: 3px solid #ed8936; }
         .wnq-event-card.form { border-left: 3px solid #48bb78; }
         .wnq-event-card.purchase { border-left: 3px solid #f56565; }
+        .wnq-event-activity { margin: 20px 0; }
+        .wnq-activity-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+        .wnq-activity-heading h3 { margin: 0 0 4px; font-size: 16px; color: #1a202c; }
+        .wnq-activity-heading p { margin: 0; color: #718096; font-size: 12px; }
+        .wnq-activity-timezone { color: #718096; font-size: 11px; white-space: nowrap; }
+        .wnq-activity-controls { display: grid; grid-template-columns: minmax(220px, 2fr) minmax(150px, 1fr) minmax(150px, 1fr); gap: 8px; margin-bottom: 10px; }
+        .wnq-activity-controls input, .wnq-activity-controls select { width: 100%; min-height: 36px; border-color: #cbd5e0; border-radius: 6px; }
+        .wnq-activity-table-section { padding: 0; overflow: hidden; }
+        .wnq-activity-table { min-width: 1050px; }
+        .wnq-activity-table tbody td { vertical-align: top; }
+        .wnq-cell-detail { display: block; color: #718096; font-size: 11px; margin-top: 2px; white-space: nowrap; }
+        .wnq-device-label { white-space: nowrap; }
+        .wnq-activity-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 15px; border-top: 1px solid #edf2f7; color: #718096; font-size: 12px; }
         .wnq-chart-section { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
         .wnq-chart-section h3 { margin: 0 0 15px; font-size: 16px; color: #1a202c; }
         .wnq-tables-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -477,6 +608,10 @@ final class AnalyticsAdmin
             .wnq-top-bar { flex-direction: column; gap: 12px; align-items: stretch; }
             .wnq-controls { flex-wrap: wrap; }
             .wnq-table-section { padding: 15px; }
+            .wnq-activity-heading { align-items: flex-start; flex-direction: column; }
+            .wnq-activity-timezone { white-space: normal; }
+            .wnq-activity-controls { grid-template-columns: 1fr; }
+            .wnq-activity-table-section { padding: 0; }
         }
         </style>
         <?php
@@ -997,6 +1132,21 @@ final class AnalyticsAdmin
             if ($config && $credentials && !empty($config['ga4_property_id'])) {
                 try {
                     $token = self::getGoogleAccessToken($credentials['credentials']);
+                    $key_event_activity = [
+                        'status'  => 'unavailable',
+                        'message' => 'Detailed event activity is unavailable',
+                    ];
+
+                    try {
+                        $key_event_activity = [
+                            'status'   => 'available',
+                            'timezone' => sanitize_text_field((string)($config['timezone'] ?? '')),
+                            'rows'     => self::fetchKeyEventActivity($token, $config['ga4_property_id'], $start_date, $end_date),
+                        ];
+                    } catch (\Throwable $e) {
+                        error_log('[WNQ Analytics] GA4 key event activity fetch error: ' . $e->getMessage());
+                    }
+
                     $data['ga4'] = [
                         'status' => 'available',
                         'data'   => [
@@ -1005,6 +1155,7 @@ final class AnalyticsAdmin
                             'traffic_sources'    => self::fetchTrafficSources($token, $config['ga4_property_id'], $start_date, $end_date),
                             'top_pages'          => self::fetchTopPages($token, $config['ga4_property_id'], $start_date, $end_date),
                             'key_events'         => self::fetchKeyEvents($token, $config['ga4_property_id'], $start_date, $end_date),
+                            'key_event_activity' => $key_event_activity,
                         ],
                     ];
                 } catch (\Throwable $e) {
@@ -1087,6 +1238,12 @@ final class AnalyticsAdmin
                 }
             } catch (\Throwable $e) {
                 error_log('[WNQ Analytics] Google Ads fetch error: ' . $e->getMessage());
+            }
+
+            // Preserve the established client-portal response keys while the
+            // admin dashboard uses the provider-isolated payload above.
+            if (($data['ga4']['status'] ?? '') === 'available' && is_array($data['ga4']['data'] ?? null)) {
+                $data += $data['ga4']['data'];
             }
 
             wp_send_json_success($data);
@@ -1443,6 +1600,81 @@ final class AnalyticsAdmin
             }
         }
         return $events;
+    }
+
+    private static function fetchKeyEventActivity(string $token, string $property_id, string $start, string $end): array
+    {
+        $data = self::makeGARequest($token, $property_id, [
+            'dateRanges' => [['startDate' => $start, 'endDate' => $end]],
+            'dimensions' => [
+                ['name' => 'dateHourMinute'],
+                ['name' => 'eventName'],
+                ['name' => 'deviceCategory'],
+                ['name' => 'browser'],
+                ['name' => 'operatingSystem'],
+                ['name' => 'city'],
+                ['name' => 'country'],
+                ['name' => 'pagePath'],
+                ['name' => 'sessionDefaultChannelGroup'],
+            ],
+            'metrics' => [['name' => 'eventCount']],
+            'dimensionFilter' => [
+                'filter' => [
+                    'fieldName'    => 'eventName',
+                    'inListFilter' => [
+                        'values' => [
+                            'phone_click',
+                            'email_click',
+                            'social_click',
+                            'contact_page_visit',
+                            'generate_lead',
+                            'purchase',
+                        ],
+                    ],
+                ],
+            ],
+            'orderBys' => [
+                ['dimension' => ['dimensionName' => 'dateHourMinute'], 'desc' => true],
+            ],
+            'limit' => 100,
+        ]);
+
+        $display_names = [
+            'phone_click'        => 'Phone Click',
+            'email_click'        => 'Email Click',
+            'social_click'       => 'Social Click',
+            'contact_page_visit' => 'Contact Page Visit',
+            'generate_lead'      => 'Form Submission',
+            'purchase'           => 'Purchase',
+        ];
+
+        $activity = [];
+        foreach (($data['rows'] ?? []) as $row) {
+            $dimensions = $row['dimensionValues'] ?? [];
+            $date_time  = preg_replace('/\D+/', '', (string)($dimensions[0]['value'] ?? ''));
+            $event_name = sanitize_key((string)($dimensions[1]['value'] ?? ''));
+
+            $activity[] = [
+                'date'             => strlen($date_time) >= 8
+                    ? substr($date_time, 0, 4) . '-' . substr($date_time, 4, 2) . '-' . substr($date_time, 6, 2)
+                    : '',
+                'time'             => strlen($date_time) >= 12
+                    ? substr($date_time, 8, 2) . ':' . substr($date_time, 10, 2)
+                    : '',
+                'event_name'       => $event_name,
+                'display_name'     => $display_names[$event_name] ?? ucwords(str_replace('_', ' ', $event_name)),
+                'device'          => sanitize_text_field((string)($dimensions[2]['value'] ?? 'Unknown')),
+                'browser'         => sanitize_text_field((string)($dimensions[3]['value'] ?? 'Unknown')),
+                'operating_system' => sanitize_text_field((string)($dimensions[4]['value'] ?? 'Unknown')),
+                'city'            => sanitize_text_field((string)($dimensions[5]['value'] ?? '')),
+                'country'         => sanitize_text_field((string)($dimensions[6]['value'] ?? '')),
+                'page_path'       => sanitize_text_field((string)($dimensions[7]['value'] ?? '')),
+                'channel'         => sanitize_text_field((string)($dimensions[8]['value'] ?? '')),
+                'count'           => absint($row['metricValues'][0]['value'] ?? 0),
+            ];
+        }
+
+        return $activity;
     }
 
     private static function fetchOverviewStats(string $token, string $property_id, string $start, string $end): array
