@@ -5,7 +5,9 @@
 
 namespace WNQ\Admin;
 
+use WNQ\API\GoogleSearchConsole;
 use WNQ\Models\AnalyticsConfig;
+use WNQ\Models\ClientPortal;
 
 if (!defined('ABSPATH')) exit;
 
@@ -71,9 +73,11 @@ final class AnalyticsAdmin
 
             <?php if (empty($all_clients)): ?>
                 <div class="notice notice-warning"><p><strong>No clients configured.</strong> <a href="<?php echo admin_url('admin.php?page=wnq-analytics&view=clients'); ?>">Add your first client →</a></p></div>
-            <?php elseif (!$credentials): ?>
-                <div class="notice notice-error"><p><strong>⚠️ Service account not configured.</strong> <a href="<?php echo admin_url('admin.php?page=wnq-analytics&view=settings'); ?>">Configure now →</a></p></div>
             <?php else: ?>
+
+            <?php if (!$credentials): ?>
+                <div class="notice notice-warning"><p><strong>⚠️ Google Analytics and Search Console are not configured.</strong> Google Ads will still load when this client has a linked account. <a href="<?php echo admin_url('admin.php?page=wnq-analytics&view=settings'); ?>">Configure Google services →</a></p></div>
+            <?php endif; ?>
 
             <div class="wnq-top-bar">
                 <div class="wnq-client-info">
@@ -125,7 +129,7 @@ final class AnalyticsAdmin
                 window.location.href = '<?php echo admin_url('admin.php?page=wnq-analytics'); ?>&client=' + $(this).val();
             });
 
-            function loadData(days) {
+            function loadData(days, refresh) {
                 $('#wnq-analytics-loading').show();
                 $('#wnq-analytics-content').hide();
                 $('#wnq-refresh-data').prop('disabled', true).text('⏳ Loading...');
@@ -137,22 +141,17 @@ final class AnalyticsAdmin
                         action: 'wnq_get_analytics_data',
                         nonce: wnqAnalytics.nonce,
                         client_id: wnqAnalytics.clientId,
-                        date_range: days
+                        date_range: days,
+                        refresh: refresh ? 1 : 0
                     },
                     success: function(resp) {
-                        console.log('Response:', resp);
                         if (resp.success) {
-                            if (resp.data && resp.data.error) {
-                                showError('Google Analytics error: ' + resp.data.error);
-                            } else {
-                                renderData(resp.data);
-                            }
+                            renderData(resp.data);
                         } else {
                             showError(resp.data?.message || 'Failed to load data');
                         }
                     },
                     error: function(xhr) {
-                        console.error('Error:', xhr);
                         showError('Error loading data');
                     },
                     complete: function() {
@@ -161,23 +160,113 @@ final class AnalyticsAdmin
                 });
             }
 
+            function escapeHtml(value) {
+                return $('<div>').text(value == null ? '' : String(value)).html();
+            }
+
+            function formatNumber(value, maximumFractionDigits) {
+                const number = Number(value);
+                return Number.isFinite(number)
+                    ? number.toLocaleString(undefined, { maximumFractionDigits: maximumFractionDigits || 0 })
+                    : '0';
+            }
+
+            function renderProviderState(provider) {
+                const message = provider && provider.message ? provider.message : 'Unavailable';
+                const detail = provider && provider.status === 'not_linked'
+                    ? 'Link a Google Ads account to this client to display campaign performance.'
+                    : 'This provider could not be loaded. Other analytics remain available.';
+                return '<div class="wnq-provider-state"><strong>' + escapeHtml(message) + '</strong><span>' + detail + '</span></div>';
+            }
+
+            function renderSearchConsole(provider) {
+                let html = '<section class="wnq-provider-section">';
+                html += '<div class="wnq-section-header"><h2>🔎 Google Search Console</h2></div>';
+
+                if (!provider || provider.status !== 'available') {
+                    html += renderProviderState(provider);
+                    return html + '</section>';
+                }
+
+                const search = provider.data || {};
+                html += '<div class="wnq-overview-grid">';
+                html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">Clicks</span><span class="metric-value">' + formatNumber(search.clicks) + '</span></div></div>';
+                html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">Impressions</span><span class="metric-value">' + formatNumber(search.impressions) + '</span></div></div>';
+                html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">CTR</span><span class="metric-value">' + formatNumber(search.ctr, 2) + '%</span></div></div>';
+                html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">Average Position</span><span class="metric-value">' + formatNumber(search.position, 1) + '</span></div></div>';
+                html += '</div>';
+
+                html += '<div class="wnq-table-section"><h3>Top Search Queries</h3>';
+                if (Array.isArray(search.queries) && search.queries.length) {
+                    html += '<div class="wnq-table-scroll"><table class="wnq-compact-table"><thead><tr><th>Query</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Position</th></tr></thead><tbody>';
+                    search.queries.forEach(query => {
+                        html += '<tr><td><strong>' + escapeHtml(query.query) + '</strong></td><td>' + formatNumber(query.clicks) + '</td><td>' + formatNumber(query.impressions) + '</td><td>' + formatNumber(query.ctr, 2) + '%</td><td>' + formatNumber(query.position, 1) + '</td></tr>';
+                    });
+                    html += '</tbody></table></div>';
+                } else {
+                    html += '<p class="wnq-empty-copy">No search queries were reported for this period.</p>';
+                }
+                return html + '</div></section>';
+            }
+
+            function renderGoogleAds(provider) {
+                let html = '<section class="wnq-provider-section">';
+                html += '<div class="wnq-section-header"><h2>📣 Google Ads</h2></div>';
+
+                if (!provider || provider.status !== 'available') {
+                    html += renderProviderState(provider);
+                    return html + '</section>';
+                }
+
+                const ads = provider.data || {};
+                html += '<div class="wnq-overview-grid">';
+                html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">Clicks</span><span class="metric-value">' + formatNumber(ads.clicks) + '</span></div></div>';
+                html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">Impressions</span><span class="metric-value">' + formatNumber(ads.impressions) + '</span></div></div>';
+                html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">CTR</span><span class="metric-value">' + formatNumber(Number(ads.ctr) * 100, 2) + '%</span></div></div>';
+                html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">Conversions</span><span class="metric-value">' + formatNumber(ads.conversions, 2) + '</span></div></div>';
+                html += '</div>';
+
+                html += '<div class="wnq-table-section"><h3>Campaign Status &amp; Performance</h3>';
+                if (Array.isArray(ads.campaigns) && ads.campaigns.length) {
+                    html += '<div class="wnq-table-scroll"><table class="wnq-compact-table"><thead><tr><th>Campaign</th><th>Status</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Conversions</th></tr></thead><tbody>';
+                    ads.campaigns.forEach(campaign => {
+                        const status = campaign.status || 'unknown';
+                        html += '<tr><td><strong>' + escapeHtml(campaign.name) + '</strong></td><td><span class="wnq-status-pill status-' + escapeHtml(status) + '">' + escapeHtml(status.replace(/_/g, ' ')) + '</span></td><td>' + formatNumber(campaign.clicks) + '</td><td>' + formatNumber(campaign.impressions) + '</td><td>' + formatNumber(Number(campaign.ctr) * 100, 2) + '%</td><td>' + formatNumber(campaign.conversions, 2) + '</td></tr>';
+                    });
+                    html += '</tbody></table></div>';
+                } else {
+                    html += '<p class="wnq-empty-copy">No campaign activity was reported for this period.</p>';
+                }
+                return html + '</div></section>';
+            }
+
             function renderData(data) {
                 let html = '<div class="wnq-analytics-dashboard">';
+                const ga4 = data && data.ga4 ? data.ga4 : null;
+                let gaData = null;
 
-                // Traffic Overview - Compact Grid
-                html += '<div class="wnq-overview-grid">';
-                html += '<div class="wnq-metric"><span class="metric-icon">👥</span><div class="metric-content"><span class="metric-label">Visitors</span><span class="metric-value">' + (data.overview.total_users || 0).toLocaleString() + '</span></div></div>';
-                html += '<div class="wnq-metric"><span class="metric-icon">📄</span><div class="metric-content"><span class="metric-label">Page Views</span><span class="metric-value">' + (data.overview.page_views || 0).toLocaleString() + '</span></div></div>';
-                html += '<div class="wnq-metric"><span class="metric-icon">🔄</span><div class="metric-content"><span class="metric-label">Sessions</span><span class="metric-value">' + (data.overview.sessions || 0).toLocaleString() + '</span></div></div>';
-                html += '<div class="wnq-metric"><span class="metric-icon">📊</span><div class="metric-content"><span class="metric-label">Bounce Rate</span><span class="metric-value">' + (data.overview.bounce_rate || 0).toFixed(1) + '%</span></div></div>';
+                html += '<section class="wnq-provider-section">';
+                html += '<div class="wnq-section-header"><h2>📊 Google Analytics 4</h2></div>';
+
+                if (!ga4 || ga4.status !== 'available') {
+                    html += renderProviderState(ga4);
+                } else {
+                    gaData = ga4.data || {};
+
+                    // Traffic Overview - Compact Grid
+                    html += '<div class="wnq-overview-grid">';
+                html += '<div class="wnq-metric"><span class="metric-icon">👥</span><div class="metric-content"><span class="metric-label">Visitors</span><span class="metric-value">' + formatNumber(gaData.overview.total_users) + '</span></div></div>';
+                html += '<div class="wnq-metric"><span class="metric-icon">📄</span><div class="metric-content"><span class="metric-label">Page Views</span><span class="metric-value">' + formatNumber(gaData.overview.page_views) + '</span></div></div>';
+                html += '<div class="wnq-metric"><span class="metric-icon">🔄</span><div class="metric-content"><span class="metric-label">Sessions</span><span class="metric-value">' + formatNumber(gaData.overview.sessions) + '</span></div></div>';
+                html += '<div class="wnq-metric"><span class="metric-icon">📊</span><div class="metric-content"><span class="metric-label">Bounce Rate</span><span class="metric-value">' + formatNumber(gaData.overview.bounce_rate, 1) + '%</span></div></div>';
                 html += '</div>';
 
                 // KEY EVENTS - Compact Cards
-                if (data.key_events && data.key_events.length > 0) {
+                if (gaData.key_events && gaData.key_events.length > 0) {
                     html += '<div class="wnq-section-header"><h2>🎯 Key Events</h2></div>';
                     html += '<div class="wnq-events-grid">';
 
-                    data.key_events.forEach(event => {
+                    gaData.key_events.forEach(event => {
                         let icon = '📊';
                         let colorClass = 'default';
 
@@ -198,8 +287,8 @@ final class AnalyticsAdmin
                         html += '<div class="wnq-event-card ' + colorClass + '">';
                         html += '<span class="event-icon">' + icon + '</span>';
                         html += '<div class="event-content">';
-                        html += '<span class="event-label">' + event.display_name + '</span>';
-                        html += '<span class="event-count">' + event.count.toLocaleString() + '</span>';
+                        html += '<span class="event-label">' + escapeHtml(event.display_name) + '</span>';
+                        html += '<span class="event-count">' + formatNumber(event.count) + '</span>';
                         html += '</div></div>';
                     });
 
@@ -207,7 +296,7 @@ final class AnalyticsAdmin
                 }
 
                 // Visitors Chart
-                if (data.visitors_over_time && data.visitors_over_time.length > 0) {
+                if (gaData.visitors_over_time && gaData.visitors_over_time.length > 0) {
                     html += '<div class="wnq-chart-section">';
                     html += '<h3>📈 Visitors Over Time</h3>';
                     html += '<canvas id="visitors-chart"></canvas>';
@@ -217,51 +306,55 @@ final class AnalyticsAdmin
                 // Traffic Sources & Top Pages - Side by Side
                 html += '<div class="wnq-tables-grid">';
 
-                if (data.traffic_sources && data.traffic_sources.length > 0) {
+                if (gaData.traffic_sources && gaData.traffic_sources.length > 0) {
                     html += '<div class="wnq-table-section">';
                     html += '<h3>🚀 Traffic Sources</h3>';
                     html += '<table class="wnq-compact-table">';
                     html += '<thead><tr><th>Channel</th><th>Sessions</th><th>%</th></tr></thead>';
                     html += '<tbody>';
-                    data.traffic_sources.slice(0, 5).forEach(s => {
-                        html += '<tr><td>' + s.channel + '</td><td>' + s.sessions.toLocaleString() + '</td><td><strong>' + s.percentage + '%</strong></td></tr>';
+                    gaData.traffic_sources.slice(0, 5).forEach(s => {
+                        html += '<tr><td>' + escapeHtml(s.channel) + '</td><td>' + formatNumber(s.sessions) + '</td><td><strong>' + formatNumber(s.percentage, 1) + '%</strong></td></tr>';
                     });
                     html += '</tbody></table>';
                     html += '</div>';
                 }
 
-                if (data.top_pages && data.top_pages.length > 0) {
+                if (gaData.top_pages && gaData.top_pages.length > 0) {
                     html += '<div class="wnq-table-section">';
                     html += '<h3>📄 Top Pages</h3>';
                     html += '<table class="wnq-compact-table">';
                     html += '<thead><tr><th>Page</th><th>Views</th></tr></thead>';
                     html += '<tbody>';
-                    data.top_pages.slice(0, 5).forEach(p => {
+                    gaData.top_pages.slice(0, 5).forEach(p => {
                         const displayPath = p.path.length > 35 ? p.path.substring(0, 35) + '...' : p.path;
-                        html += '<tr><td><code>' + displayPath + '</code></td><td><strong>' + p.views.toLocaleString() + '</strong></td></tr>';
+                        html += '<tr><td><code>' + escapeHtml(displayPath) + '</code></td><td><strong>' + formatNumber(p.views) + '</strong></td></tr>';
                     });
                     html += '</tbody></table>';
                     html += '</div>';
                 }
 
-                html += '</div>';
+                    html += '</div>';
+                }
+                html += '</section>';
+                html += renderSearchConsole(data ? data.search_console : null);
+                html += renderGoogleAds(data ? data.google_ads : null);
                 html += '</div>';
 
                 $('#wnq-analytics-content').html(html).show();
                 $('#wnq-analytics-loading').hide();
 
                 // Render chart
-                if (data.visitors_over_time && data.visitors_over_time.length > 0 && typeof Chart !== 'undefined') {
+                if (gaData && gaData.visitors_over_time && gaData.visitors_over_time.length > 0 && typeof Chart !== 'undefined') {
                     const ctx = document.getElementById('visitors-chart');
                     if (ctx) {
                         if (currentChart) currentChart.destroy();
                         currentChart = new Chart(ctx, {
                             type: 'line',
                             data: {
-                                labels: data.visitors_over_time.map(d => d.date),
+                                labels: gaData.visitors_over_time.map(d => d.date),
                                 datasets: [{
                                     label: 'Visitors',
-                                    data: data.visitors_over_time.map(d => d.users),
+                                    data: gaData.visitors_over_time.map(d => d.users),
                                     borderColor: '#667eea',
                                     backgroundColor: 'rgba(102, 126, 234, 0.1)',
                                     tension: 0.4,
@@ -310,15 +403,15 @@ final class AnalyticsAdmin
             }
 
             $('#wnq-refresh-data').on('click', function() {
-                loadData(parseInt($('#wnq-date-range').val()));
+                loadData(parseInt($('#wnq-date-range').val()), true);
             });
 
             $('#wnq-date-range').on('change', function() {
-                loadData(parseInt($(this).val()));
+                loadData(parseInt($(this).val()), false);
             });
 
             $(document).ready(function() {
-                if (wnqAnalytics.clientId) loadData(30);
+                if (wnqAnalytics.clientId) loadData(30, false);
             });
         })(jQuery);
         </script>
@@ -332,6 +425,10 @@ final class AnalyticsAdmin
         .wnq-controls { display: flex; gap: 8px; }
         .wnq-controls select { padding: 8px 12px; border-radius: 6px; border: 1px solid #cbd5e0; font-size: 13px; }
         .wnq-loading { background: #fff; padding: 40px; text-align: center; border-radius: 8px; border: 1px solid #e2e8f0; }
+        .wnq-provider-section { margin-bottom: 24px; }
+        .wnq-provider-state { background: #fff; border: 1px solid #e2e8f0; border-left: 3px solid #a0aec0; border-radius: 8px; padding: 18px 20px; display: flex; flex-direction: column; gap: 4px; color: #718096; }
+        .wnq-provider-state strong { color: #4a5568; font-size: 15px; }
+        .wnq-provider-state span { font-size: 13px; }
         .wnq-overview-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
         .wnq-metric { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; display: flex; align-items: center; gap: 12px; }
         .wnq-metric:hover { border-color: #cbd5e0; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
@@ -364,6 +461,12 @@ final class AnalyticsAdmin
         .wnq-compact-table tbody td { padding: 10px; font-size: 13px; color: #4a5568; border-bottom: 1px solid #f7fafc; }
         .wnq-compact-table tbody tr:hover { background: #f7fafc; }
         .wnq-compact-table code { background: #f7fafc; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+        .wnq-table-scroll { overflow-x: auto; }
+        .wnq-empty-copy { color: #718096; margin: 0; font-size: 13px; }
+        .wnq-status-pill { display: inline-block; border-radius: 999px; padding: 3px 8px; background: #edf2f7; color: #4a5568; font-size: 10px; font-weight: 700; line-height: 1.4; text-transform: uppercase; white-space: nowrap; }
+        .wnq-status-pill.status-enabled { background: #c6f6d5; color: #276749; }
+        .wnq-status-pill.status-paused { background: #fefcbf; color: #975a16; }
+        .wnq-status-pill.status-removed { background: #fed7d7; color: #9b2c2c; }
         @media (max-width: 1200px) {
             .wnq-overview-grid { grid-template-columns: repeat(2, 1fr); }
             .wnq-tables-grid { grid-template-columns: 1fr; }
@@ -373,6 +476,7 @@ final class AnalyticsAdmin
             .wnq-events-grid { grid-template-columns: 1fr; }
             .wnq-top-bar { flex-direction: column; gap: 12px; align-items: stretch; }
             .wnq-controls { flex-wrap: wrap; }
+            .wnq-table-section { padding: 15px; }
         }
         </style>
         <?php
@@ -865,43 +969,131 @@ final class AnalyticsAdmin
             }
 
             $date_range = intval($_POST['date_range'] ?? 30);
+            $date_range = in_array($date_range, [7, 30, 90, 180, 365, 730], true) ? $date_range : 30;
+            $refresh    = !empty($_POST['refresh']);
 
             $config      = AnalyticsConfig::getClientConfig($client_id);
             $credentials = AnalyticsConfig::getCredentials();
 
-            if (!$config || !$credentials) {
-                wp_send_json_error(['message' => 'Analytics not configured for this client']);
-                return;
+            $today      = current_datetime()->setTime(0, 0);
+            $end_date   = $today->format('Y-m-d');
+            $start_date = $today->modify("-{$date_range} days")->format('Y-m-d');
+
+            $data = [
+                'ga4' => [
+                    'status'  => 'unavailable',
+                    'message' => 'Unavailable',
+                ],
+                'search_console' => [
+                    'status'  => 'unavailable',
+                    'message' => 'Unavailable',
+                ],
+                'google_ads' => [
+                    'status'  => 'unavailable',
+                    'message' => 'Unavailable',
+                ],
+            ];
+
+            if ($config && $credentials && !empty($config['ga4_property_id'])) {
+                try {
+                    $token = self::getGoogleAccessToken($credentials['credentials']);
+                    $data['ga4'] = [
+                        'status' => 'available',
+                        'data'   => [
+                            'overview'           => self::fetchOverviewStats($token, $config['ga4_property_id'], $start_date, $end_date),
+                            'visitors_over_time' => self::fetchVisitorsOverTime($token, $config['ga4_property_id'], $start_date, $end_date),
+                            'traffic_sources'    => self::fetchTrafficSources($token, $config['ga4_property_id'], $start_date, $end_date),
+                            'top_pages'          => self::fetchTopPages($token, $config['ga4_property_id'], $start_date, $end_date),
+                            'key_events'         => self::fetchKeyEvents($token, $config['ga4_property_id'], $start_date, $end_date),
+                        ],
+                    ];
+                } catch (\Throwable $e) {
+                    error_log('[WNQ Analytics] GA4 fetch error: ' . $e->getMessage());
+                    delete_transient('wnq_ga_access_token');
+                }
             }
 
-            $token      = self::getGoogleAccessToken($credentials['credentials']);
-            $end_date   = date('Y-m-d');
-            $start_date = date('Y-m-d', strtotime("-{$date_range} days"));
+            if ($config && $credentials && !empty($config['search_console_url'])) {
+                try {
+                    $search_console = new GoogleSearchConsole($client_id);
+                    $overview       = $search_console->getOverviewStats($start_date, $end_date);
+                    $queries        = $search_console->getKeywordRankings($start_date, $end_date, 5);
 
-            $data = [];
+                    if ($search_console->hasErrors()) {
+                        error_log('[WNQ Analytics] Search Console fetch error: ' . wp_json_encode($search_console->getErrors()));
+                    } else {
+                        $data['search_console'] = [
+                            'status' => 'available',
+                            'data'   => [
+                                'clicks'      => absint($overview['clicks']['value'] ?? 0),
+                                'impressions' => absint($overview['impressions']['value'] ?? 0),
+                                'ctr'         => (float)($overview['ctr']['value'] ?? 0),
+                                'position'    => (float)($overview['position']['value'] ?? 0),
+                                'queries'     => array_map(static function (array $query): array {
+                                    return [
+                                        'query'       => sanitize_text_field((string)($query['keyword'] ?? '')),
+                                        'clicks'      => absint($query['clicks'] ?? 0),
+                                        'impressions' => absint($query['impressions'] ?? 0),
+                                        'ctr'         => (float)($query['ctr'] ?? 0),
+                                        'position'    => (float)($query['position'] ?? 0),
+                                    ];
+                                }, $queries),
+                            ],
+                        ];
+                    }
+                } catch (\Throwable $e) {
+                    error_log('[WNQ Analytics] Search Console fetch error: ' . $e->getMessage());
+                }
+            }
 
             try {
-                $data['overview']           = self::fetchOverviewStats($token, $config['ga4_property_id'], $start_date, $end_date);
-                $data['visitors_over_time'] = self::fetchVisitorsOverTime($token, $config['ga4_property_id'], $start_date, $end_date);
-                $data['traffic_sources']    = self::fetchTrafficSources($token, $config['ga4_property_id'], $start_date, $end_date);
-                $data['top_pages']          = self::fetchTopPages($token, $config['ga4_property_id'], $start_date, $end_date);
-                $data['key_events']         = self::fetchKeyEvents($token, $config['ga4_property_id'], $start_date, $end_date);
-            } catch (\Exception $e) {
-                error_log('[WNQ Analytics] Fetch error: ' . $e->getMessage());
-                // Clear cached token in case it expired or is invalid
-                delete_transient('wnq_ga_access_token');
-                $data['overview']           = ['total_users' => 0, 'page_views' => 0, 'sessions' => 0, 'bounce_rate' => 0];
-                $data['visitors_over_time'] = [];
-                $data['traffic_sources']    = [];
-                $data['top_pages']          = [];
-                $data['key_events']         = [];
-                $data['error']              = $e->getMessage();
+                $ads_report = ClientPortal::getAdsReportData($client_id, $start_date, $end_date, $refresh);
+
+                if (empty($ads_report['has_linked_account'])) {
+                    $data['google_ads'] = [
+                        'status'  => 'not_linked',
+                        'message' => 'No linked account',
+                    ];
+                } elseif (!empty($ads_report['errors']) || empty($ads_report['configured'])) {
+                    error_log('[WNQ Analytics] Google Ads fetch error: ' . wp_json_encode($ads_report['errors'] ?? []));
+                } else {
+                    $ads_summary   = is_array($ads_report['summary'] ?? null) ? $ads_report['summary'] : [];
+                    $ads_campaigns = is_array($ads_report['campaigns'] ?? null) ? $ads_report['campaigns'] : [];
+                    $safe_campaigns = array_map(static function (array $campaign): array {
+                        return [
+                            'name'        => sanitize_text_field((string)($campaign['name'] ?? 'Campaign')),
+                            'status'      => sanitize_key((string)($campaign['status'] ?? 'unknown')),
+                            'clicks'      => absint($campaign['clicks'] ?? 0),
+                            'impressions' => absint($campaign['impressions'] ?? 0),
+                            'ctr'         => (float)($campaign['ctr'] ?? 0),
+                            'conversions' => (float)($campaign['conversions'] ?? 0),
+                        ];
+                    }, $ads_campaigns);
+
+                    usort($safe_campaigns, static function (array $a, array $b): int {
+                        return $b['clicks'] <=> $a['clicks'];
+                    });
+
+                    $data['google_ads'] = [
+                        'status' => 'available',
+                        'data'   => [
+                            'clicks'      => absint($ads_summary['clicks'] ?? 0),
+                            'impressions' => absint($ads_summary['impressions'] ?? 0),
+                            'ctr'         => (float)($ads_summary['ctr'] ?? 0),
+                            'conversions' => (float)($ads_summary['conversions'] ?? 0),
+                            'campaigns'   => array_slice($safe_campaigns, 0, 5),
+                        ],
+                    ];
+                }
+            } catch (\Throwable $e) {
+                error_log('[WNQ Analytics] Google Ads fetch error: ' . $e->getMessage());
             }
 
             wp_send_json_success($data);
 
-        } catch (\Exception $e) {
-            wp_send_json_error(['message' => $e->getMessage()]);
+        } catch (\Throwable $e) {
+            error_log('[WNQ Analytics] Dashboard request error: ' . $e->getMessage());
+            wp_send_json_error(['message' => 'Analytics data could not be loaded. Please try again.']);
         }
     }
 
