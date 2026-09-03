@@ -8,17 +8,7 @@ This file records planned work that must remain visible as PPC Intelligence evol
 - Phase 2: account, conversion, change-history, impression-share, and budget diagnostics.
 - Phase 3: search-query classification, geographic review, and local negative-keyword proposal decisions.
 - Phase 4: RSA structure, policy, destination, asset-performance, and website-backed claim verification.
-
-## Phase 5 — Investigation and prioritization
-
-- Non-serving keyword analysis.
-- Negative-keyword conflict detection.
-- Search-term keyword opportunities.
-- Structured problem → hypothesis → evidence → root-cause → recommendation reasoning.
-- Separate data confidence from recommendation confidence.
-- Minimum-data safeguards before performance recommendations.
-- Shared-budget-aware campaign and budget reasoning.
-- Agency-wide portfolio prioritization.
+- Phase 5: structured investigations, confidence separation, keyword hygiene/conflicts, shared-budget awareness, minimum-data safeguards, and cached portfolio priority tiers.
 
 ## Phase 6 — GA4 lead quality
 

@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.8.0
+Stable tag: 2.9.0
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,12 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.9.0 - PPC Intelligence Phase 5
+- Adds evidence-first investigations with explicit problems, hypotheses, root-cause status, recommendations, and separate data/recommendation confidence.
+- Adds 180-day non-serving keyword review, campaign/ad-group negative-conflict detection, and minimum-data safeguards.
+- Adds shared-budget warnings and cached agency-wide client priority tiers to PPC Management.
+- Remains strictly read-only; no keyword, negative, budget, or campaign mutations are available.
+
 2.8.0 - PPC Intelligence Phase 4
 - Adds a read-only Responsive Search Ad audit with policy, serving status, structure, destinations, and 30-day performance evidence.
 - Adds current Google Ads asset-performance labels, duplicate/DKI/seasonal checks, and conservative structural recommendations.
