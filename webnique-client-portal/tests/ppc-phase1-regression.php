@@ -45,6 +45,16 @@ function wp_json_encode($value): string
     return (string)json_encode($value);
 }
 
+function wp_strip_all_tags(string $value, bool $remove_breaks = false): string
+{
+    return strip_tags($value);
+}
+
+function esc_url_raw(string $value): string
+{
+    return filter_var($value, FILTER_SANITIZE_URL) ?: '';
+}
+
 function wp_salt(string $scheme = 'auth'): string
 {
     return 'phase-one-test-site-salt';
@@ -55,11 +65,13 @@ require_once dirname(__DIR__) . '/includes/Services/GoogleAdsCredentials.php';
 require_once dirname(__DIR__) . '/includes/Services/GoogleAdsQueryService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcDiagnosticService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcSearchTermService.php';
+require_once dirname(__DIR__) . '/includes/Services/PpcAdAuditService.php';
 
 use WNQ\Services\GoogleAdsCredentials;
 use WNQ\Services\GoogleAdsQueryService;
 use WNQ\Services\PpcDiagnosticService;
 use WNQ\Services\PpcSearchTermService;
+use WNQ\Services\PpcAdAuditService;
 
 function assertPpc(bool $condition, string $message): void
 {
@@ -106,6 +118,15 @@ assertPpc(PpcSearchTermService::classify('junk removal reviews', $geo_config)['c
 assertPpc(PpcSearchTermService::classify('rival hauling lakeland', $geo_config)['classification'] === 'competitor', 'Competitor intent must not be hidden by a target-area match.');
 $priority = PpcDiagnosticService::prioritize(['conversion_health' => ['available' => true, 'actions' => [], 'counts' => []]]);
 assertPpc(($priority[0]['severity'] ?? '') === 'critical', 'Zero active primary conversions must be a critical finding.');
+$rsa = ['status' => 'enabled', 'campaign_status' => 'enabled', 'ad_group_status' => 'enabled', 'approval_status' => 'approved', 'ad_strength' => 'good', 'headlines' => [['text' => 'Licensed & Insured', 'pinned_field' => '']], 'descriptions' => [['text' => 'Request Service Today', 'pinned_field' => '']], 'final_urls' => ['https://example.com'], 'url_health' => ['https://example.com' => ['status' => 'healthy']], 'assets' => []];
+$verified_rsa = PpcAdAuditService::auditAd($rsa, [], ['pages' => [['url' => 'https://example.com/about', 'text' => 'licensed insured local contractor']]], ['Example Company']);
+assertPpc(!empty($verified_rsa['claims'][0]['verified']), 'An exact normalized website claim must be marked verified with its source.');
+$unverified_rsa = PpcAdAuditService::auditAd($rsa, [], ['pages' => []], ['Example Company']);
+assertPpc(empty($unverified_rsa['claims'][0]['verified']), 'A factual claim without website evidence must require verification.');
+$rsa['approval_status'] = 'disapproved';
+assertPpc(PpcAdAuditService::auditAd($rsa)['severity'] === 'critical', 'A disapproved fully enabled RSA must be critical.');
+$rsa['campaign_status'] = 'paused';
+assertPpc(PpcAdAuditService::auditAd($rsa)['severity'] !== 'critical', 'A paused campaign ad must not receive serving-level critical urgency.');
 
 $client_portal_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Models/ClientPortal.php');
 $ppc_admin_source = (string)file_get_contents(dirname(__DIR__) . '/admin/PpcIntelligenceAdmin.php');
@@ -118,5 +139,8 @@ assertPpc(str_contains($dashboard_source, 'Permissions::currentUserCanManagePpc(
 assertPpc(!preg_match('/WP_REST_Response\s*\(\s*GoogleAdsCredentials::get/s', $dashboard_source), 'REST responses must not return shared Google Ads credentials.');
 $proposal_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Models/PpcProposal.php');
 assertPpc(!preg_match('/googleAds:(?:mutate|update)|GoogleAdsClient/i', $proposal_source), 'Proposal review must not call Google Ads mutations.');
+$ad_audit_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Services/PpcAdAuditService.php');
+assertPpc(!preg_match('/googleAds:(?:mutate|update)|mutateCampaign|mutateAdGroup|setAmountMicros/i', $ad_audit_source), 'Phase 4 ad auditing must not call Google Ads mutations.');
+assertPpc(str_contains($ad_audit_source, 'wp_safe_remote_get') && str_contains($ad_audit_source, 'wp_safe_remote_head'), 'Destination and claim-source checks must use WordPress safe HTTP requests.');
 
 echo "PPC regression checks passed.\n";

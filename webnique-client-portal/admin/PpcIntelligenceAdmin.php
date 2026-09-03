@@ -16,6 +16,7 @@ use WNQ\Services\GoogleAdsCredentials;
 use WNQ\Services\GoogleAdsQueryService;
 use WNQ\Services\PpcDiagnosticService;
 use WNQ\Services\PpcSearchTermService;
+use WNQ\Services\PpcAdAuditService;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -34,6 +35,7 @@ final class PpcIntelligenceAdmin
         add_action('admin_post_wnq_ppc_disconnect_account', [self::class, 'handleDisconnect']);
         add_action('admin_post_wnq_ppc_save_search_config', [self::class, 'handleSaveSearchConfig']);
         add_action('admin_post_wnq_ppc_review_proposals', [self::class, 'handleReviewProposals']);
+        add_action('admin_post_wnq_ppc_save_claim_sources', [self::class, 'handleSaveClaimSources']);
     }
 
     public static function addSubmenu(): void
@@ -119,6 +121,7 @@ final class PpcIntelligenceAdmin
         $discovery_error = '';
         $diagnostics = null;
         $search_terms = null;
+        $ad_audit = null;
 
         if (!empty($credential_status['configured'])) {
             $query = new GoogleAdsQueryService();
@@ -131,6 +134,11 @@ final class PpcIntelligenceAdmin
                 !empty($_GET['refresh_ppc'])
             );
             $search_terms = (new PpcSearchTermService())->report($client_id, (string)$connection['customer_id'], $client, !empty($_GET['refresh_ppc']));
+            try {
+                $ad_audit = (new PpcAdAuditService())->report($client_id, (string)$connection['customer_id'], $client, !empty($_GET['refresh_ppc']));
+            } catch (\Throwable $error) {
+                $ad_audit = ['available' => false, 'status' => 'unavailable', 'message' => 'The RSA audit is temporarily unavailable.', 'ads' => [], 'findings' => [], 'claim_config' => PpcAdAuditService::claimConfig($client_id)];
+            }
             if (!empty($_GET['refresh_ppc'])) {
                 $available_modules = array_filter($diagnostics, static fn($module): bool => is_array($module) && !empty($module['available']));
                 if ($available_modules) {
@@ -167,7 +175,7 @@ final class PpcIntelligenceAdmin
             </div>
 
             <?php if ($connection && !empty($connection['customer_id'])): ?>
-                <?php self::renderDiagnostics($diagnostics, $search_terms, $client_id); ?>
+                <?php self::renderDiagnostics($diagnostics, $search_terms, $ad_audit, $client_id); ?>
             <?php endif; ?>
 
             <div class="wnq-ppc-layout">
@@ -366,6 +374,17 @@ final class PpcIntelligenceAdmin
         self::finish($client_id, $updated > 0, $updated > 0 ? "{$updated} proposal(s) reviewed internally. No Google Ads changes were made." : 'Select at least one proposal and a review action.');
     }
 
+    public static function handleSaveClaimSources(): void
+    {
+        $client_id = self::requestClientId();
+        self::authorize('wnq_ppc_save_claim_sources_' . $client_id);
+        $client = Client::getByClientId($client_id) ?: [];
+        $raw = (string)wp_unslash($_POST['claim_sources'] ?? '');
+        $saved = PpcAdAuditService::saveClaimConfig($client_id, (string)($client['website'] ?? ''), $raw);
+        self::clearAdCache($client_id);
+        self::finish($client_id, $saved, $saved ? 'Verified PPC claim sources saved. No Google Ads changes were made.' : 'Claim sources could not be saved. Use a source URL on the client website for every claim.');
+    }
+
     private static function authorize(string $nonce_action): void
     {
         if (!self::canManage()) {
@@ -402,20 +421,20 @@ final class PpcIntelligenceAdmin
         ?><div class="wnq-ppc-status <?php echo $ok ? 'is-ok' : 'is-pending'; ?>"><span><?php echo esc_html($label); ?></span><strong><?php echo esc_html($value); ?></strong></div><?php
     }
 
-    private static function renderDiagnostics(?array $dashboard, ?array $search_terms, string $client_id): void
+    private static function renderDiagnostics(?array $dashboard, ?array $search_terms, ?array $ad_audit, string $client_id): void
     {
         $dashboard = is_array($dashboard) ? $dashboard : [];
         ?>
         <section class="wnq-diagnostics-shell">
             <div class="wnq-diagnostics-head">
-                <div><span class="wnq-ppc-eyebrow">Phases 2 + 3</span><h2>Account intelligence</h2><p>Live, read-only Google Ads diagnostics. Each module loads independently.</p></div>
+                <div><span class="wnq-ppc-eyebrow">Phases 2–4</span><h2>Account intelligence</h2><p>Live, read-only Google Ads diagnostics. Each module loads independently.</p></div>
                 <a class="button" href="<?php echo esc_url(add_query_arg('refresh_ppc', '1')); ?>">Refresh diagnostics</a>
             </div>
             <nav class="wnq-module-nav">
-                <a href="#ppc-attention">Attention</a><a href="#ppc-account">Account</a><a href="#ppc-conversions">Conversions</a><a href="#ppc-changes">Changes</a><a href="#ppc-share">Impression share</a><a href="#ppc-budgets">Budgets</a><a href="#ppc-search-terms">Search terms</a>
+                <a href="#ppc-attention">Attention</a><a href="#ppc-account">Account</a><a href="#ppc-conversions">Conversions</a><a href="#ppc-changes">Changes</a><a href="#ppc-share">Impression share</a><a href="#ppc-budgets">Budgets</a><a href="#ppc-search-terms">Search terms</a><a href="#ppc-ads">Ads &amp; claims</a>
             </nav>
             <?php
-            $findings = array_merge((array)($dashboard['findings'] ?? []), (array)($search_terms['findings'] ?? []));
+            $findings = array_merge((array)($dashboard['findings'] ?? []), (array)($search_terms['findings'] ?? []), (array)($ad_audit['findings'] ?? []));
             $has_actionable_finding = count(array_filter($findings, static function (array $finding): bool {
                 return ($finding['severity'] ?? '') !== 'healthy';
             })) > 0;
@@ -432,6 +451,7 @@ final class PpcIntelligenceAdmin
             <?php self::renderImpressionShare((array)($dashboard['impression_share'] ?? [])); ?>
             <?php self::renderBudgetAnalysis((array)($dashboard['budget_analysis'] ?? [])); ?>
             <?php self::renderSearchTerms((array)($search_terms ?? []), $client_id); ?>
+            <?php self::renderAdAudit((array)($ad_audit ?? []), $client_id); ?>
         </section>
         <?php
     }
@@ -449,7 +469,7 @@ final class PpcIntelligenceAdmin
                     <p><b>Evidence — <?php echo esc_html((string)$finding['period']); ?>:</b> <?php echo esc_html((string)$finding['evidence']); ?></p>
                     <p><b>Recommended action:</b> <?php echo esc_html((string)$finding['action']); ?></p>
                     <small>Confidence: <?php echo esc_html(number_format_i18n((float)$finding['confidence'] * 100, 0)); ?>%</small>
-                    <?php if (!empty($finding['campaign_id'])): ?><a class="button" href="<?php echo esc_url(self::campaignUrl((string)$finding['campaign_id'])); ?>">Investigate campaign</a><?php endif; ?>
+                    <?php if (!empty($finding['campaign_id'])): ?><a class="button" href="<?php echo esc_url(($finding['section'] ?? '') === 'ppc-ads' ? self::adCampaignUrl((string)$finding['campaign_id']) : self::campaignUrl((string)$finding['campaign_id'])); ?>">Investigate campaign</a><?php endif; ?>
                 </div>
             <?php endforeach; ?>
             </div>
@@ -496,6 +516,81 @@ final class PpcIntelligenceAdmin
                     <tr><td><input type="checkbox" name="proposal_ids[]" value="<?php echo esc_attr((string)$term['id']); ?>" <?php disabled((int)$term['id'] === 0); ?>></td><td><strong><?php echo esc_html((string)$term['query']); ?></strong><br><small><?php echo esc_html((string)$term['reason']); ?></small></td><td><a href="<?php echo esc_url(self::campaignUrl((string)$term['campaign_id'])); ?>"><?php echo esc_html((string)$term['campaign']); ?></a><br><small><?php echo esc_html((string)$term['ad_group']); ?></small></td><td><?php echo esc_html((string)($term['keyword'] ?: 'Unknown')); ?><br><small><?php echo esc_html(self::label((string)$term['match_type'])); ?></small></td><td><?php self::pill((string)$term['classification']); ?></td><td><?php echo esc_html(number_format_i18n((int)$term['impressions'])); ?></td><td><?php echo esc_html(number_format_i18n((int)$term['clicks'])); ?></td><td><?php echo esc_html(self::money((float)$term['cost'])); ?></td><td><?php echo esc_html(number_format_i18n((float)$term['conversions'], 2)); ?></td><td><?php echo esc_html(self::money((float)$term['cpa'])); ?></td><td><?php echo esc_html(number_format_i18n((float)$term['confidence'] * 100, 0)); ?>%</td><td><?php self::pill((string)$term['recommended_action']); ?></td><td><?php self::pill((string)$term['status']); ?></td></tr>
                 <?php endforeach; endif; ?></tbody></table></div>
             </form></details>
+        <?php endif; ?></article>
+        <?php
+    }
+
+    private static function renderAdAudit(array $report, string $client_id): void
+    {
+        $campaign_id = preg_replace('/\D+/', '', (string)($_GET['investigate_campaign'] ?? '')) ?: '';
+        $ads = (array)($report['ads'] ?? []);
+        if ($campaign_id !== '') $ads = array_values(array_filter($ads, static fn(array $ad): bool => (string)$ad['campaign_id'] === $campaign_id));
+        $claims = [];
+        $assets = [];
+        foreach ($ads as $ad) {
+            foreach ((array)($ad['claims'] ?? []) as $claim) $claims[] = $claim + ['campaign' => $ad['campaign'], 'ad_group' => $ad['ad_group'], 'ad_id' => $ad['id']];
+            foreach ((array)($ad['assets'] ?? []) as $asset) $assets[] = $asset + ['campaign' => $ad['campaign'], 'ad_group' => $ad['ad_group'], 'ad_id' => $ad['id']];
+        }
+        $claim_config = (array)($report['claim_config'] ?? PpcAdAuditService::claimConfig($client_id));
+        $claim_lines = [];
+        foreach ($claim_config as $claim) $claim_lines[] = (string)($claim['claim'] ?? '') . ' | ' . (string)($claim['source'] ?? '');
+        $counts = (array)($report['counts'] ?? []);
+        if ($campaign_id !== '') {
+            $counts = ['total' => count($ads), 'enabled' => 0, 'critical' => 0, 'warning' => 0, 'opportunity' => 0, 'healthy' => 0, 'unverified_claims' => 0];
+            foreach ($ads as $ad) {
+                if (($ad['status'] ?? '') === 'enabled' && ($ad['campaign_status'] ?? '') === 'enabled' && ($ad['ad_group_status'] ?? '') === 'enabled') $counts['enabled']++;
+                $severity = (string)($ad['severity'] ?? 'healthy');
+                $counts[$severity] = ($counts[$severity] ?? 0) + 1;
+                $counts['unverified_claims'] += count(array_filter((array)($ad['claims'] ?? []), static fn(array $claim): bool => empty($claim['verified'])));
+            }
+        }
+        ?>
+        <article class="wnq-module" id="ppc-ads"><div class="wnq-module-title"><div><h3>Ads, RSAs &amp; Claim Verification</h3><p>Creative structure, policy status, destinations, asset labels, and website-backed factual claims.</p></div><?php self::moduleStatus($report); ?></div>
+            <details class="wnq-detail wnq-claim-config"><summary>Verified Claim Sources — Current Configuration</summary>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <?php wp_nonce_field('wnq_ppc_save_claim_sources_' . $client_id); ?><input type="hidden" name="action" value="wnq_ppc_save_claim_sources"><input type="hidden" name="client_id" value="<?php echo esc_attr($client_id); ?>">
+                    <label><span>One verified claim and source per line: <code>Claim | https://client-site.com/source-page</code></span><textarea name="claim_sources" rows="6"><?php echo esc_textarea(implode("\n", $claim_lines)); ?></textarea></label>
+                    <p class="description">Only URLs on the client’s saved website domain are accepted. Saved sources verify claims locally; they never update Google Ads.</p>
+                    <button class="button button-primary">Save verified sources</button>
+                </form>
+            </details>
+        <?php if (empty($report['available'])): self::unavailable($report); else: ?>
+            <?php if (!empty($report['message'])): ?><p class="wnq-module-note"><?php echo esc_html((string)$report['message']); ?></p><?php endif; ?>
+            <div class="wnq-health-grid">
+                <div><span>RSAs — Current</span><strong><?php echo esc_html((string)($counts['total'] ?? 0)); ?></strong></div>
+                <div><span>Fully Enabled — Current</span><strong><?php echo esc_html((string)($counts['enabled'] ?? 0)); ?></strong></div>
+                <div><span>Critical — Current</span><strong><?php echo esc_html((string)($counts['critical'] ?? 0)); ?></strong></div>
+                <div><span>Warnings — Current</span><strong><?php echo esc_html((string)($counts['warning'] ?? 0)); ?></strong></div>
+                <div><span>Opportunities — Current</span><strong><?php echo esc_html((string)($counts['opportunity'] ?? 0)); ?></strong></div>
+                <div><span>Claims Needing Verification — Current</span><strong><?php echo esc_html((string)($counts['unverified_claims'] ?? 0)); ?></strong></div>
+            </div>
+            <p class="wnq-module-note"><strong>Website evidence — Current snapshot:</strong> <?php echo esc_html((string)count((array)($report['website_evidence']['pages'] ?? []))); ?> client-domain page(s) read. “Needs verification” means evidence was not found; it does not mean the claim is false.</p>
+            <?php if ($campaign_id): ?><p><a class="button" href="<?php echo esc_url(remove_query_arg('investigate_campaign')); ?>#ppc-ads">Clear campaign investigation</a></p><?php endif; ?>
+            <details class="wnq-detail"><summary>RSA Audit — Current Configuration and Last 30 Days (<?php echo esc_html((string)count($ads)); ?> ads)</summary>
+                <div class="wnq-table-scroll"><table><thead><tr><th>Campaign / ad group</th><th>Serving status — Current</th><th>Policy — Current</th><th>RSA structure — Current</th><th>Performance — Last 30 Days</th><th>Findings — Current</th><th>Evidence</th></tr></thead><tbody>
+                <?php if (!$ads): ?><tr><td colspan="7">No Responsive Search Ads match this view.</td></tr><?php else: foreach ($ads as $ad): ?>
+                    <tr><td><a href="<?php echo esc_url(self::adCampaignUrl((string)$ad['campaign_id'])); ?>"><strong><?php echo esc_html((string)$ad['campaign']); ?></strong></a><br><small><?php echo esc_html((string)$ad['ad_group']); ?> · Ad <?php echo esc_html((string)$ad['id']); ?></small></td>
+                    <td><?php self::pill((string)$ad['status']); ?><br><small>Campaign: <?php echo esc_html(self::label((string)$ad['campaign_status'])); ?> · Group: <?php echo esc_html(self::label((string)$ad['ad_group_status'])); ?></small></td>
+                    <td><?php self::pill((string)$ad['approval_status']); ?><br><small><?php echo esc_html(implode(', ', (array)$ad['policy_topics']) ?: self::label((string)$ad['review_status'])); ?></small></td>
+                    <td><?php echo esc_html((string)count((array)$ad['headlines'])); ?>/15 headlines<br><?php echo esc_html((string)count((array)$ad['descriptions'])); ?>/4 descriptions<br><small>Ad strength: <?php echo esc_html(self::label((string)$ad['ad_strength'])); ?></small></td>
+                    <td><?php echo esc_html(number_format_i18n((int)$ad['impressions'])); ?> impressions<br><?php echo esc_html(number_format_i18n((int)$ad['clicks'])); ?> clicks<br><?php echo esc_html(number_format_i18n((float)$ad['conversions'], 2)); ?> conversions</td>
+                    <td><?php self::pill((string)$ad['severity']); ?><br><small><?php echo esc_html(implode(' ', array_map(static fn(array $issue): string => (string)$issue['message'], array_slice((array)$ad['issues'], 0, 3))) ?: 'No issue detected by available checks.'); ?></small></td>
+                    <td><details><summary>View copy and destinations</summary><div class="wnq-ad-copy"><b>Headlines</b><ol><?php foreach ((array)$ad['headlines'] as $asset): ?><li><?php echo esc_html((string)$asset['text']); ?><?php if (!empty($asset['pinned_field'])): ?> <small>(<?php echo esc_html(self::label((string)$asset['pinned_field'])); ?>)</small><?php endif; ?></li><?php endforeach; ?></ol><b>Descriptions</b><ol><?php foreach ((array)$ad['descriptions'] as $asset): ?><li><?php echo esc_html((string)$asset['text']); ?><?php if (!empty($asset['pinned_field'])): ?> <small>(<?php echo esc_html(self::label((string)$asset['pinned_field'])); ?>)</small><?php endif; ?></li><?php endforeach; ?></ol><b>Final URLs</b><?php foreach ((array)$ad['final_urls'] as $url): $health = (array)($ad['url_health'][$url] ?? []); ?><p><a href="<?php echo esc_url($url); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html($url); ?></a> <?php self::pill((string)($health['status'] ?? 'not_sampled')); ?><?php if (isset($health['http_code'])): ?> <small>HTTP <?php echo esc_html((string)$health['http_code']); ?></small><?php endif; ?></p><?php endforeach; ?></div></details></td></tr>
+                <?php endforeach; endif; ?></tbody></table></div>
+            </details>
+            <details class="wnq-detail"><summary>Factual Claim Evidence — Current Configuration (<?php echo esc_html((string)count($claims)); ?> claims)</summary>
+                <div class="wnq-table-scroll"><table><thead><tr><th>Claim</th><th>Category</th><th>Verification</th><th>Source</th><th>Campaign / ad group</th></tr></thead><tbody>
+                <?php if (!$claims): ?><tr><td colspan="5">No factual-claim patterns were detected in the selected RSA copy.</td></tr><?php else: foreach ($claims as $claim): ?>
+                    <tr><td><strong><?php echo esc_html((string)$claim['text']); ?></strong></td><td><?php echo esc_html(self::label((string)$claim['category'])); ?></td><td><?php self::pill(!empty($claim['verified']) ? 'verified' : 'needs_verification'); ?></td><td><?php if (!empty($claim['source'])): ?><a href="<?php echo esc_url((string)$claim['source']); ?>" target="_blank" rel="noopener noreferrer">Open source</a><?php else: ?>No source found<?php endif; ?></td><td><?php echo esc_html((string)$claim['campaign']); ?><br><small><?php echo esc_html((string)$claim['ad_group']); ?></small></td></tr>
+                <?php endforeach; endif; ?></tbody></table></div>
+            </details>
+            <details class="wnq-detail"><summary>RSA Asset Performance — Current Google Ads Labels (<?php echo esc_html((string)count($assets)); ?> assets)</summary>
+                <div class="wnq-table-scroll"><table><thead><tr><th>Asset</th><th>Field</th><th>Google performance label — Current</th><th>Source</th><th>Pinned field</th><th>Campaign / ad group</th></tr></thead><tbody>
+                <?php if (!$assets): ?><tr><td colspan="6">Google Ads did not return asset-level labels for this view.</td></tr><?php else: foreach ($assets as $asset): ?>
+                    <tr><td><?php echo esc_html((string)($asset['text'] ?: 'Asset ' . $asset['id'])); ?></td><td><?php echo esc_html(self::label((string)$asset['field_type'])); ?></td><td><?php self::pill((string)$asset['performance_label']); ?></td><td><?php echo esc_html(self::label((string)$asset['source'])); ?></td><td><?php echo esc_html(!empty($asset['pinned_field']) ? self::label((string)$asset['pinned_field']) : 'Not pinned'); ?></td><td><?php echo esc_html((string)$asset['campaign']); ?><br><small><?php echo esc_html((string)$asset['ad_group']); ?></small></td></tr>
+                <?php endforeach; endif; ?></tbody></table></div>
+            </details>
+            <p class="wnq-read-only-note"><strong>Read-only:</strong> Phase 4 audits evidence and recommends review. It cannot create, edit, pause, approve, or replace an ad.</p>
         <?php endif; ?></article>
         <?php
     }
@@ -627,10 +722,21 @@ final class PpcIntelligenceAdmin
         return add_query_arg('investigate_campaign', preg_replace('/\D+/', '', $campaign_id) ?: '') . '#ppc-search-terms';
     }
 
+    private static function adCampaignUrl(string $campaign_id): string
+    {
+        return add_query_arg('investigate_campaign', preg_replace('/\D+/', '', $campaign_id) ?: '') . '#ppc-ads';
+    }
+
     private static function clearSearchCache(string $client_id): void
     {
         $connection = PpcAccount::getByClientId($client_id);
         delete_transient('wnq_ppc_sqr_' . md5($client_id . '|' . (string)($connection['customer_id'] ?? '')));
+    }
+
+    private static function clearAdCache(string $client_id): void
+    {
+        $connection = PpcAccount::getByClientId($client_id);
+        delete_transient('wnq_ppc_ads_' . md5($client_id . '|' . (string)($connection['customer_id'] ?? '')));
     }
 
     private static function secretField(string $label, string $name, bool $saved): void
@@ -655,7 +761,7 @@ final class PpcIntelligenceAdmin
         ?>
         <style>
         .wnq-ppc-intelligence{max-width:1200px}.wnq-ppc-hero{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;background:linear-gradient(135deg,#07131c,#0d539e);color:#fff;padding:26px;border-radius:12px;margin:18px 0}.wnq-ppc-hero h2{color:#fff;font-size:26px;margin:3px 0 7px}.wnq-ppc-hero p{margin:0;color:#dbeafe}.wnq-ppc-eyebrow{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#f3cf55}.wnq-read-only-badge{background:#f3cf55;color:#07131c;border-radius:999px;padding:6px 11px;font-size:11px;font-weight:800;text-transform:uppercase;white-space:nowrap}.wnq-ppc-status-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}.wnq-ppc-status{background:#fff;border:1px solid #dcdcde;border-left:4px solid #dba617;border-radius:8px;padding:14px}.wnq-ppc-status.is-ok{border-left-color:#1f9d55}.wnq-ppc-status span{display:block;color:#646970;font-size:11px;text-transform:uppercase;font-weight:700;margin-bottom:5px}.wnq-ppc-status strong{display:block;color:#1d2327;font-size:14px;overflow-wrap:anywhere}.wnq-ppc-layout{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}.wnq-ppc-card,.wnq-module{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:22px}.wnq-ppc-card h3,.wnq-module h3{font-size:17px;margin:0 0 5px}.wnq-ppc-card label{display:block;margin:14px 0}.wnq-ppc-card label>span{display:block;font-weight:600;margin-bottom:5px}.wnq-ppc-card input,.wnq-ppc-card select{width:100%;max-width:none}.wnq-ppc-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}.wnq-ppc-actions-separated{border-top:1px solid #eee;padding-top:16px;justify-content:space-between}.wnq-ppc-actions form{margin:0}.wnq-ppc-test-form{margin-top:12px}.wnq-account-details{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid #e5e7eb;border-radius:8px;margin:16px 0}.wnq-account-details div{padding:12px;border-bottom:1px solid #e5e7eb}.wnq-account-details div:nth-last-child(-n+2){border-bottom:0}.wnq-account-details dt{font-size:11px;color:#646970;text-transform:uppercase;font-weight:700}.wnq-account-details dd{margin:4px 0 0;font-weight:600}.wnq-ppc-card .notice.inline{margin:14px 0;padding:1px 12px}.wnq-ppc-card .button-link-delete{color:#b32d2e}.wnq-diagnostics-shell{margin:18px 0}.wnq-diagnostics-head,.wnq-module-title{display:flex;justify-content:space-between;align-items:flex-start;gap:18px}.wnq-diagnostics-head{background:#07131c;color:#fff;padding:22px;border-radius:10px 10px 0 0}.wnq-diagnostics-head h2{color:#fff;margin:3px 0}.wnq-diagnostics-head p,.wnq-module-title p{margin:0;color:#646970}.wnq-diagnostics-head p{color:#cbd5e1}.wnq-module-nav{display:flex;gap:4px;flex-wrap:wrap;background:#fff;border:1px solid #dcdcde;padding:9px}.wnq-module-nav a{padding:7px 11px;text-decoration:none;font-weight:600}.wnq-module{margin-top:14px;scroll-margin-top:42px}.wnq-pill{display:inline-block;border-radius:999px;padding:4px 8px;background:#e5e7eb;color:#374151;font-size:11px;font-weight:700;white-space:nowrap}.wnq-pill.is-ready,.wnq-pill.is-enabled,.wnq-pill.is-healthy,.wnq-pill.is-on_track{background:#dcfce7;color:#166534}.wnq-pill.is-unavailable,.wnq-pill.is-configuration_issue,.wnq-pill.is-over{background:#fee2e2;color:#991b1b}.wnq-pill.is-partial,.wnq-pill.is-warning,.wnq-pill.is-stale,.wnq-pill.is-under{background:#fef3c7;color:#92400e}.wnq-period-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:18px 0}.wnq-period-card{border:1px solid #e5e7eb;border-radius:8px;padding:13px}.wnq-period-card>*{display:block}.wnq-period-card>strong{font-size:11px;text-transform:uppercase;color:#646970}.wnq-period-card span{margin-top:8px}.wnq-period-card b{font-size:16px;margin:4px 0}.wnq-period-card small{color:#646970}.wnq-module-summary,.wnq-module-note{color:#646970}.wnq-table-scroll{overflow:auto;margin-top:14px}.wnq-module table{width:100%;border-collapse:collapse;min-width:760px}.wnq-module th,.wnq-module td{text-align:left;padding:10px;border-bottom:1px solid #e5e7eb;vertical-align:top}.wnq-module th{font-size:11px;text-transform:uppercase;color:#646970}.wnq-health-grid{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.wnq-health-grid div{min-width:120px;background:#f8fafc;border-radius:8px;padding:10px}.wnq-health-grid span{display:block;font-size:11px;text-transform:uppercase;color:#646970}.wnq-health-grid strong{font-size:20px}.wnq-split-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:18px 0}.wnq-bars>div{display:grid;grid-template-columns:110px 1fr 110px;align-items:center;gap:8px;margin:7px 0}.wnq-bars i{height:8px;background:#e5e7eb;border-radius:99px;overflow:hidden}.wnq-bars i b{display:block;height:100%;background:#0d539e}.wnq-bars strong{font-size:11px}.wnq-unavailable{display:flex;gap:10px;align-items:center;background:#f8fafc;border-left:4px solid #94a3b8;padding:14px;margin-top:14px}.wnq-detail{margin-top:14px}.wnq-detail summary{cursor:pointer;font-weight:600}.wnq-timeline{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}.wnq-timeline span{display:flex;justify-content:space-between;background:#f8fafc;padding:8px}.wnq-timeline b{font-size:11px}@media(max-width:1000px){.wnq-period-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:900px){.wnq-ppc-status-grid{grid-template-columns:repeat(2,1fr)}.wnq-ppc-layout,.wnq-split-grid{grid-template-columns:1fr}}@media(max-width:600px){.wnq-ppc-hero,.wnq-diagnostics-head{flex-direction:column}.wnq-ppc-status-grid,.wnq-account-details,.wnq-period-grid,.wnq-timeline{grid-template-columns:1fr}.wnq-account-details div:nth-last-child(2){border-bottom:1px solid #e5e7eb}.wnq-bars>div{grid-template-columns:85px 1fr}.wnq-bars strong{grid-column:2}}
-        .wnq-findings{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:16px}.wnq-finding{border-left:5px solid #64748b;background:#f8fafc;padding:14px;border-radius:6px}.wnq-finding.is-critical{border-color:#b91c1c;background:#fff1f2}.wnq-finding.is-warning{border-color:#d97706;background:#fffbeb}.wnq-finding.is-opportunity{border-color:#2563eb;background:#eff6ff}.wnq-finding.is-healthy{border-color:#15803d;background:#f0fdf4}.wnq-finding>div{display:flex;align-items:center;gap:10px}.wnq-finding>div strong{font-size:15px}.wnq-severity{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}.wnq-finding p{margin:8px 0}.wnq-finding .button{float:right}.wnq-detail>summary,.wnq-sqr-controls summary{cursor:pointer;padding:11px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;font-weight:700}.wnq-sqr-controls{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin:15px 0}.wnq-sqr-controls>form{display:flex;gap:8px;align-items:center}.wnq-sqr-controls>details{min-width:300px}.wnq-sqr-controls>details form{padding:14px;border:1px solid #e5e7eb}.wnq-config-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.wnq-config-grid label>span{display:block;font-weight:600}.wnq-config-grid textarea{width:100%}.wnq-bulk{display:flex;align-items:center;gap:8px;margin:12px 0}.wnq-bulk small{color:#991b1b;font-weight:600}@media(max-width:782px){.wnq-findings,.wnq-config-grid{grid-template-columns:1fr}.wnq-sqr-controls{display:block}.wnq-sqr-controls>details{margin-top:10px;min-width:0}}
+        .wnq-findings{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:16px}.wnq-finding{border-left:5px solid #64748b;background:#f8fafc;padding:14px;border-radius:6px}.wnq-finding.is-critical{border-color:#b91c1c;background:#fff1f2}.wnq-finding.is-warning{border-color:#d97706;background:#fffbeb}.wnq-finding.is-opportunity{border-color:#2563eb;background:#eff6ff}.wnq-finding.is-healthy{border-color:#15803d;background:#f0fdf4}.wnq-finding>div{display:flex;align-items:center;gap:10px}.wnq-finding>div strong{font-size:15px}.wnq-severity{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}.wnq-finding p{margin:8px 0}.wnq-finding .button{float:right}.wnq-detail>summary,.wnq-sqr-controls summary{cursor:pointer;padding:11px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;font-weight:700}.wnq-sqr-controls{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin:15px 0}.wnq-sqr-controls>form{display:flex;gap:8px;align-items:center}.wnq-sqr-controls>details{min-width:300px}.wnq-sqr-controls>details form{padding:14px;border:1px solid #e5e7eb}.wnq-config-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.wnq-config-grid label>span{display:block;font-weight:600}.wnq-config-grid textarea{width:100%}.wnq-bulk{display:flex;align-items:center;gap:8px;margin:12px 0}.wnq-bulk small{color:#991b1b;font-weight:600}.wnq-claim-config form{padding:14px;border:1px solid #e5e7eb}.wnq-claim-config label span{display:block;font-weight:600;margin-bottom:6px}.wnq-claim-config textarea{width:100%;font-family:monospace}.wnq-ad-copy{min-width:360px;max-width:560px}.wnq-ad-copy ol{margin-top:5px}.wnq-ad-copy p{overflow-wrap:anywhere}.wnq-read-only-note{border-left:4px solid #0d539e;background:#eff6ff;padding:12px;margin-top:16px}@media(max-width:782px){.wnq-findings,.wnq-config-grid{grid-template-columns:1fr}.wnq-sqr-controls{display:block}.wnq-sqr-controls>details{margin-top:10px;min-width:0}.wnq-ad-copy{min-width:260px}}
         </style>
         <?php
     }
