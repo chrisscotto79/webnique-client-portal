@@ -66,12 +66,14 @@ require_once dirname(__DIR__) . '/includes/Services/GoogleAdsQueryService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcDiagnosticService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcSearchTermService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcAdAuditService.php';
+require_once dirname(__DIR__) . '/includes/Services/PpcKeywordIntelligenceService.php';
 
 use WNQ\Services\GoogleAdsCredentials;
 use WNQ\Services\GoogleAdsQueryService;
 use WNQ\Services\PpcDiagnosticService;
 use WNQ\Services\PpcSearchTermService;
 use WNQ\Services\PpcAdAuditService;
+use WNQ\Services\PpcKeywordIntelligenceService;
 
 function assertPpc(bool $condition, string $message): void
 {
@@ -127,6 +129,11 @@ $rsa['approval_status'] = 'disapproved';
 assertPpc(PpcAdAuditService::auditAd($rsa)['severity'] === 'critical', 'A disapproved fully enabled RSA must be critical.');
 $rsa['campaign_status'] = 'paused';
 assertPpc(PpcAdAuditService::auditAd($rsa)['severity'] !== 'critical', 'A paused campaign ad must not receive serving-level critical urgency.');
+$positives=[['keyword'=>'junk removal lakeland','match_type'=>'exact','campaign_id'=>'1','campaign'=>'Search','ad_group_id'=>'2','ad_group'=>'Junk']];
+$negatives=[['negative'=>'junk removal','match_type'=>'phrase','level'=>'campaign','campaign_id'=>'1','ad_group_id'=>'']];
+assertPpc(count(PpcKeywordIntelligenceService::conflicts($positives,$negatives))===1,'Phrase negatives must detect contiguous whole-word conflicts.');
+$negatives[0]['negative']='junk rem';
+assertPpc(count(PpcKeywordIntelligenceService::conflicts($positives,$negatives))===0,'Phrase conflict matching must respect whole words.');
 
 $client_portal_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Models/ClientPortal.php');
 $ppc_admin_source = (string)file_get_contents(dirname(__DIR__) . '/admin/PpcIntelligenceAdmin.php');
