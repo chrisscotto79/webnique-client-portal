@@ -22,12 +22,67 @@ final class PpcIntelligenceAdmin
 {
     public static function register(): void
     {
+        add_action('admin_menu', [self::class, 'addSubmenu'], 20);
         add_action('admin_init', [self::class, 'maybeUpgrade']);
         add_action('admin_post_wnq_ppc_save_credentials', [self::class, 'handleSaveCredentials']);
         add_action('admin_post_wnq_ppc_test_credentials', [self::class, 'handleTestCredentials']);
         add_action('admin_post_wnq_ppc_save_mapping', [self::class, 'handleSaveMapping']);
         add_action('admin_post_wnq_ppc_test_account', [self::class, 'handleTestAccount']);
         add_action('admin_post_wnq_ppc_disconnect_account', [self::class, 'handleDisconnect']);
+    }
+
+    public static function addSubmenu(): void
+    {
+        add_submenu_page(
+            'wnq-portal',
+            'PPC Management',
+            'PPC Management',
+            'gwm_manage_ppc',
+            'wnq-ppc-management',
+            [self::class, 'renderManagementPage']
+        );
+    }
+
+    public static function renderManagementPage(): void
+    {
+        if (!self::canManage()) {
+            wp_die(__('You do not have permission to manage PPC Intelligence.', 'webnique-portal'), '', ['response' => 403]);
+        }
+
+        $clients = Client::getAll();
+        $credential_status = GoogleAdsCredentials::status();
+        ?>
+        <div class="wrap wnq-ppc-management">
+            <h1>PPC Management</h1>
+            <p>Manage each client’s exact Google Ads account connection. This internal section is read-only and is never shown to clients.</p>
+
+            <?php if (empty($credential_status['configured'])): ?>
+                <div class="notice notice-warning inline"><p><strong>Google Ads credentials need attention.</strong> Open any client below to securely configure and test the shared MCC connection.</p></div>
+            <?php endif; ?>
+
+            <?php if (!$clients): ?>
+                <div class="notice notice-info inline"><p>No clients are available yet.</p></div>
+            <?php else: ?>
+                <table class="wp-list-table widefat fixed striped">
+                    <thead><tr><th>Client</th><th>Google Ads account</th><th>Customer ID</th><th>Status</th><th>Last sync</th><th>Action</th></tr></thead>
+                    <tbody>
+                    <?php foreach ($clients as $client): ?>
+                        <?php $connection = PpcAccount::getByClientId((string)$client['client_id']); ?>
+                        <tr>
+                            <td><strong><?php echo esc_html((string)($client['company'] ?: $client['name'])); ?></strong><br><small><?php echo esc_html((string)$client['client_id']); ?></small></td>
+                            <td><?php echo esc_html((string)($connection['account_name'] ?? 'Not connected')); ?></td>
+                            <td><?php echo esc_html(!empty($connection['customer_id']) ? self::formatCustomerId((string)$connection['customer_id']) : '—'); ?></td>
+                            <td><?php echo esc_html(ucfirst((string)($connection['connection_status'] ?? 'not connected'))); ?></td>
+                            <td><?php echo esc_html(!empty($connection['last_sync_at']) ? self::displayDate((string)$connection['last_sync_at']) : 'Never'); ?></td>
+                            <td><a class="button button-primary" href="<?php echo esc_url(admin_url('admin.php?page=wnq-clients&action=edit&id=' . (int)$client['id'] . '&client_tab=ppc')); ?>">Manage PPC</a></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+        <style>.wnq-ppc-management{max-width:1200px}.wnq-ppc-management>p{font-size:14px;color:#50575e;margin-bottom:18px}.wnq-ppc-management .notice.inline{margin:12px 0 18px}.wnq-ppc-management table{margin-top:18px}.wnq-ppc-management th,.wnq-ppc-management td{vertical-align:middle}@media(max-width:782px){.wnq-ppc-management table{display:block;overflow-x:auto}}</style>
+        <?php
     }
 
     public static function maybeUpgrade(): void

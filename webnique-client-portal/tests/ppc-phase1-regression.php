@@ -96,6 +96,7 @@ $dashboard_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Cont
 assertPpc(!str_contains($client_portal_source, '$ads->matchClient('), 'Reports must not automatically fuzzy-match client accounts.');
 assertPpc(str_contains($ppc_admin_source, 'hash_equals'), 'PPC mapping must verify an exact discovered customer ID.');
 assertPpc(str_contains($ppc_admin_source, 'gwm_manage_ppc') || str_contains($ppc_admin_source, 'currentUserCanManagePpc'), 'PPC admin actions must use the dedicated capability.');
+assertPpc(str_contains($ppc_admin_source, "'wnq-ppc-management'"), 'PPC Management must be registered in the WordPress admin menu.');
 assertPpc(str_contains($dashboard_source, 'Permissions::currentUserCanManagePpc()'), 'Google Ads mapping endpoint must require the dedicated PPC capability.');
 assertPpc(!preg_match('/WP_REST_Response\s*\(\s*GoogleAdsCredentials::get/s', $dashboard_source), 'REST responses must not return shared Google Ads credentials.');
 
