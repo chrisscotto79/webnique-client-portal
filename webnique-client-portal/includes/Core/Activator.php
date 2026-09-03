@@ -15,6 +15,7 @@ final class Activator
     if ($admin) {
       $admin->add_cap('wnq_manage_portal');
       $admin->add_cap('wnq_view_all_clients');
+      $admin->add_cap('gwm_manage_ppc');
     }
 
     ClientPortalUsers::ensureRole();

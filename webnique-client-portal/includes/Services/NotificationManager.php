@@ -502,13 +502,7 @@ final class NotificationManager
 
         // OAuth credentials are shared by every linked client. Test them once so
         // one global failure does not generate a separate alert for each client.
-        $authentication = (new GoogleAdsClient([
-            'developer_token' => (string)get_option('wnq_google_ads_developer_token', ''),
-            'manager_customer_id' => (string)get_option('wnq_google_ads_manager_customer_id', ''),
-            'oauth_client_id' => (string)get_option('wnq_google_ads_oauth_client_id', ''),
-            'oauth_client_secret' => (string)get_option('wnq_google_ads_oauth_client_secret', ''),
-            'refresh_token' => (string)get_option('wnq_google_ads_refresh_token', ''),
-        ]))->authenticationTest();
+        $authentication = (new GoogleAdsClient(GoogleAdsCredentials::get()))->authenticationTest();
         update_option('wnq_google_ads_last_connection_check_at', current_time('mysql'), false);
 
         if (empty($authentication['ok'])) {

@@ -45,6 +45,7 @@ final class Plugin
       add_action('admin_menu', [\WNQ\Admin\AdminMenu::class, 'register']);
       \WNQ\Admin\ClientPortalAdmin::register();
       \WNQ\Admin\KnowledgeBaseAdmin::register();
+      \WNQ\Admin\PpcIntelligenceAdmin::register();
     }
   }
 
@@ -56,6 +57,7 @@ final class Plugin
     self::includes();
     \WNQ\Models\ClientPortal::createTables();
     \WNQ\Models\KnowledgeBase::createTables();
+    \WNQ\Models\PpcAccount::createTable();
     Activator::run();
   }
 
@@ -79,6 +81,7 @@ final class Plugin
     require_once WNQ_PORTAL_PATH . 'includes/Models/ClientPortal.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/FinanceEntry.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/KnowledgeBase.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Models/PpcAccount.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/Task.php';
 
     /**
@@ -96,6 +99,8 @@ final class Plugin
      */
     require_once WNQ_PORTAL_PATH . 'includes/Services/FirebaseStore.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/GoogleAdsClient.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Services/GoogleAdsCredentials.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Services/GoogleAdsQueryService.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/AIEngine.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramNotifier.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramAssistant.php';
@@ -118,5 +123,6 @@ final class Plugin
     require_once WNQ_PORTAL_PATH . 'admin/AdminSettings.php';
     require_once WNQ_PORTAL_PATH . 'admin/ClientPortalAdmin.php';
     require_once WNQ_PORTAL_PATH . 'admin/KnowledgeBaseAdmin.php';
+    require_once WNQ_PORTAL_PATH . 'admin/PpcIntelligenceAdmin.php';
   }
 }

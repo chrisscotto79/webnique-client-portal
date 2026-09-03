@@ -5,7 +5,10 @@ namespace WNQ\Controllers;
 use WNQ\Core\Permissions;
 use WNQ\Models\Client;
 use WNQ\Models\ClientPortal;
+use WNQ\Models\PpcAccount;
 use WNQ\Services\FirebaseStore;
+use WNQ\Services\GoogleAdsCredentials;
+use WNQ\Services\GoogleAdsQueryService;
 
 if (!defined('ABSPATH')) {
   exit;
@@ -374,12 +377,35 @@ final class DashboardController
 
   public static function saveAdsSettings(\WP_REST_Request $request): \WP_REST_Response
   {
-    if (!Permissions::currentUserCanManagePortal()) {
-      return new \WP_REST_Response(['ok' => false, 'error' => 'Only admins can update Google Ads settings.'], 403);
+    if (!Permissions::currentUserCanManagePpc()) {
+      return new \WP_REST_Response(['ok' => false, 'error' => 'PPC Intelligence permission is required to update Google Ads settings.'], 403);
     }
     $client_id = self::requestClientId($request);
     $body = self::requestBody($request);
-    $saved = $client_id !== '' && is_array($body) && ClientPortal::saveAdsSettings($client_id, $body);
+    $saved = $client_id !== '' && is_array($body);
+    if ($saved && array_key_exists('customer_id', $body)) {
+      $customer_id = preg_replace('/\D+/', '', (string)$body['customer_id']) ?: '';
+      if ($customer_id === '') {
+        $saved = PpcAccount::disconnect($client_id);
+      } else {
+        $query = new GoogleAdsQueryService();
+        $account = null;
+        foreach ($query->discoverAccounts(true) as $candidate) {
+          if (hash_equals((string)($candidate['customer_id'] ?? ''), $customer_id)) {
+            $account = $candidate;
+            break;
+          }
+        }
+        $linked_client_id = PpcAccount::clientIdForCustomerId($customer_id);
+        $saved = is_array($account)
+          && ($linked_client_id === '' || hash_equals($linked_client_id, $client_id))
+          && PpcAccount::saveConnection($client_id, $account, (string)(GoogleAdsCredentials::get()['manager_customer_id'] ?? ''));
+      }
+      unset($body['customer_id'], $body['matched_account_name']);
+    }
+    if ($saved) {
+      $saved = ClientPortal::saveAdsSettings($client_id, $body);
+    }
     return $saved
       ? new \WP_REST_Response(['ok' => true, 'data' => ClientPortal::getAdsResource($client_id, true, true)], 200)
       : new \WP_REST_Response(['ok' => false, 'error' => 'Google Ads settings could not be saved.'], 400);

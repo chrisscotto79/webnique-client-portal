@@ -284,6 +284,11 @@ final class ClientsAdmin
                                         <a href="<?php echo admin_url('admin.php?page=wnq-clients&action=edit&id=' . $client['id']); ?>" class="button button-small">
                                             Edit
                                         </a>
+                                        <?php if (PpcIntelligenceAdmin::canManage()): ?>
+                                            <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-clients&action=edit&id=' . $client['id'] . '&client_tab=ppc')); ?>" class="button button-small" title="Manage this client's Google Ads connection">
+                                                PPC
+                                            </a>
+                                        <?php endif; ?>
                                         <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-clients&action=edit&id=' . $client['id'] . '#wnq-client-portal-login')); ?>" class="button button-small" title="Create or manage this client's portal login">
                                             Portal Login
                                         </a>
@@ -1197,14 +1202,28 @@ final class ClientsAdmin
         if (!$client) {
             wp_die('Client not found.');
         }
+        $client_tab = sanitize_key((string)($_GET['client_tab'] ?? 'details'));
+        if ($client_tab === 'ppc' && !PpcIntelligenceAdmin::canManage()) {
+            wp_die(__('You do not have permission to manage PPC Intelligence.', 'webnique-portal'), '', ['response' => 403]);
+        }
         ?>
         <div class="wrap">
             <h1>Edit Client: <?php echo esc_html($client['name']); ?></h1>
+            <nav class="nav-tab-wrapper">
+                <a class="nav-tab <?php echo $client_tab !== 'ppc' ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url(admin_url('admin.php?page=wnq-clients&action=edit&id=' . $id)); ?>">Client details</a>
+                <?php if (PpcIntelligenceAdmin::canManage()): ?>
+                    <a class="nav-tab <?php echo $client_tab === 'ppc' ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url(admin_url('admin.php?page=wnq-clients&action=edit&id=' . $id . '&client_tab=ppc')); ?>">PPC Intelligence</a>
+                <?php endif; ?>
+            </nav>
+            <?php if ($client_tab === 'ppc'): ?>
+                <?php PpcIntelligenceAdmin::renderClientPanel($client); ?>
+            <?php else: ?>
             <?php if (isset($_GET['portal_user'])): ?>
                 <div class="notice notice-success is-dismissible"><p>Client portal login <?php echo esc_html(sanitize_key(wp_unslash($_GET['portal_user']))); ?> successfully.</p></div>
             <?php endif; ?>
             <?php self::renderPortalUsers($client); ?>
             <?php self::renderClientForm($client); ?>
+            <?php endif; ?>
         </div>
         <?php
     }

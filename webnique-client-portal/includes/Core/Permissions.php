@@ -40,6 +40,14 @@ final class Permissions
   }
 
   /**
+   * PPC Intelligence is an internal agency tool with its own capability.
+   */
+  public static function currentUserCanManagePpc(): bool
+  {
+    return current_user_can('gwm_manage_ppc') || current_user_can('manage_options');
+  }
+
+  /**
    * True if the current user is allowed to access the given client_id.
    * v1: user must match that client_id OR be an admin with view_all.
    */

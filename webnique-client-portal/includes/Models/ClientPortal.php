@@ -8,6 +8,7 @@
 namespace WNQ\Models;
 
 use WNQ\Services\GoogleAdsClient;
+use WNQ\Services\GoogleAdsCredentials;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -631,7 +632,6 @@ final class ClientPortal
         $has_oauth_client_secret = !empty($raw_settings['oauth_client_secret']);
         $has_refresh_token = !empty($raw_settings['refresh_token']);
         $has_oauth = $has_oauth_client_id && $has_oauth_client_secret && $has_refresh_token;
-        $client = Client::getByClientId($client_id) ?: [];
         $match = null;
         $ads_errors = [];
         $diagnostics = [];
@@ -651,23 +651,13 @@ final class ClientPortal
         $billing = [];
         $account = [];
         $available_accounts = [];
-        $access_level = (string)get_option('wnq_google_ads_access_level', 'test');
+        $access_level = (string)(GoogleAdsCredentials::get()['access_level'] ?? 'test');
         $api_connection_verified = false;
 
         if (class_exists(GoogleAdsClient::class)) {
             $ads = new GoogleAdsClient($raw_settings);
             if ($ads->isConfigured()) {
                 if ((string)($raw_settings['customer_id'] ?? '') === '') {
-                    $match = $ads->matchClient($client, $refresh);
-                    if ($match && (int)($match['match_score'] ?? 0) >= 70) {
-                        $raw_settings['customer_id'] = (string)$match['customer_id'];
-                        $settings['customer_id'] = (string)$match['customer_id'];
-                        $settings['matched_account_name'] = (string)$match['name'];
-                        self::saveAdsSettings($client_id, [
-                            'customer_id' => (string)$match['customer_id'],
-                            'matched_account_name' => (string)$match['name'],
-                        ]);
-                    }
                     $available_accounts = $ads->listManagerAccounts(false);
                 } else {
                     $available_accounts = $ads->listManagerAccounts($refresh);
@@ -690,10 +680,8 @@ final class ClientPortal
                 }
                 $ads_errors = $ads->errors();
                 $api_connection_verified = !empty($available_accounts) && empty($ads_errors);
-                if ((string)($raw_settings['customer_id'] ?? '') === '' && !$match && empty($ads_errors)) {
-                    $diagnostics[] = 'No linked client Google Ads account was returned from the manager account. Confirm the client account accepted the manager invitation and that the OAuth user can view it.';
-                } elseif ((string)($raw_settings['customer_id'] ?? '') === '' && $match) {
-                    $diagnostics[] = 'A possible Google Ads account match was found, but the name match was below the automatic connection threshold. Enter the customer ID manually or update the Ads account name to match the client more closely.';
+                if ((string)($raw_settings['customer_id'] ?? '') === '' && empty($ads_errors)) {
+                    $diagnostics[] = 'No Google Ads account is mapped to this client. Select the exact account in the client\'s PPC Intelligence tab.';
                 }
             } else {
                 if (!$has_developer_token) {
@@ -842,8 +830,9 @@ final class ClientPortal
             }
         }
         update_option(self::adsOptionKey($client_id), $settings, false);
-        delete_transient('wnq_google_ads_accounts_' . md5((string)($settings['manager_customer_id'] ?? get_option('wnq_google_ads_manager_customer_id', ''))));
-        delete_transient('wnq_google_ads_accounts_' . md5((string)get_option('wnq_google_ads_manager_customer_id', '')));
+        $credentials = GoogleAdsCredentials::get();
+        delete_transient('wnq_google_ads_accounts_' . md5((string)($settings['manager_customer_id'] ?? $credentials['manager_customer_id'] ?? '')));
+        delete_transient('wnq_google_ads_accounts_' . md5((string)($credentials['manager_customer_id'] ?? '')));
         return true;
     }
 
@@ -852,13 +841,14 @@ final class ClientPortal
         $settings = get_option(self::adsOptionKey($client_id), []);
         $settings = is_array($settings) ? $settings : [];
         $settings = array_intersect_key($settings, array_flip(['customer_id', 'matched_account_name', 'spend_alert_threshold']));
+        $credentials = GoogleAdsCredentials::get();
         $defaults = [
-            'developer_token' => (string)get_option('wnq_google_ads_developer_token', ''),
+            'developer_token' => (string)($credentials['developer_token'] ?? ''),
             'customer_id' => '',
-            'manager_customer_id' => (string)get_option('wnq_google_ads_manager_customer_id', ''),
-            'oauth_client_id' => (string)get_option('wnq_google_ads_oauth_client_id', ''),
-            'oauth_client_secret' => (string)get_option('wnq_google_ads_oauth_client_secret', ''),
-            'refresh_token' => (string)get_option('wnq_google_ads_refresh_token', ''),
+            'manager_customer_id' => (string)($credentials['manager_customer_id'] ?? ''),
+            'oauth_client_id' => (string)($credentials['oauth_client_id'] ?? ''),
+            'oauth_client_secret' => (string)($credentials['oauth_client_secret'] ?? ''),
+            'refresh_token' => (string)($credentials['refresh_token'] ?? ''),
             'matched_account_name' => '',
             'spend_alert_threshold' => 0,
         ];
