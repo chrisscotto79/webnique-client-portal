@@ -67,6 +67,7 @@ require_once dirname(__DIR__) . '/includes/Services/PpcDiagnosticService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcSearchTermService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcAdAuditService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcKeywordIntelligenceService.php';
+require_once dirname(__DIR__) . '/includes/Services/PpcLeadQualityService.php';
 
 use WNQ\Services\GoogleAdsCredentials;
 use WNQ\Services\GoogleAdsQueryService;
@@ -74,6 +75,7 @@ use WNQ\Services\PpcDiagnosticService;
 use WNQ\Services\PpcSearchTermService;
 use WNQ\Services\PpcAdAuditService;
 use WNQ\Services\PpcKeywordIntelligenceService;
+use WNQ\Services\PpcLeadQualityService;
 
 function assertPpc(bool $condition, string $message): void
 {
@@ -134,6 +136,14 @@ $negatives=[['negative'=>'junk removal','match_type'=>'phrase','level'=>'campaig
 assertPpc(count(PpcKeywordIntelligenceService::conflicts($positives,$negatives))===1,'Phrase negatives must detect contiguous whole-word conflicts.');
 $negatives[0]['negative']='junk rem';
 assertPpc(count(PpcKeywordIntelligenceService::conflicts($positives,$negatives))===0,'Phrase conflict matching must respect whole words.');
+assertPpc(PpcLeadQualityService::saveConfig('phase-six-client', ['engagement' => "phone_click\nemail_click", 'raw_lead' => 'generate_lead', 'qualified_lead' => 'qualified_lead']), 'Lead-quality event mapping should save per client.');
+$quality_config = PpcLeadQualityService::config('phase-six-client');
+assertPpc($quality_config['engagement'] === ['phone_click', 'email_click'], 'Lead-quality event names should be normalized and deduplicated.');
+assertPpc($quality_config['qualified_lead'] === ['qualified_lead'], 'Qualified leads must remain a distinct quality stage.');
+assertPpc($quality_config['booked_work'] === [], 'An unmapped quality stage must remain distinct from a configured zero count.');
+assertPpc(PpcLeadQualityService::normalizeEventName('Qualified_Lead') === 'Qualified_Lead', 'Exact GA4 event-name case must be preserved.');
+assertPpc(PpcLeadQualityService::matchesCustomerId('123-456-7890', '1234567890'), 'GA4 lead evidence should accept the exact linked Google Ads customer ID.');
+assertPpc(!PpcLeadQualityService::matchesCustomerId('9999999999', '1234567890'), 'GA4 lead evidence must reject another Google Ads customer ID.');
 
 $client_portal_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Models/ClientPortal.php');
 $ppc_admin_source = (string)file_get_contents(dirname(__DIR__) . '/admin/PpcIntelligenceAdmin.php');
@@ -149,5 +159,10 @@ assertPpc(!preg_match('/googleAds:(?:mutate|update)|GoogleAdsClient/i', $proposa
 $ad_audit_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Services/PpcAdAuditService.php');
 assertPpc(!preg_match('/googleAds:(?:mutate|update)|mutateCampaign|mutateAdGroup|setAmountMicros/i', $ad_audit_source), 'Phase 4 ad auditing must not call Google Ads mutations.');
 assertPpc(str_contains($ad_audit_source, 'wp_safe_remote_get') && str_contains($ad_audit_source, 'wp_safe_remote_head'), 'Destination and claim-source checks must use WordPress safe HTTP requests.');
+$analytics_source = (string)file_get_contents(dirname(__DIR__) . '/includes/API/GoogleAnalytics.php');
+assertPpc(str_contains($analytics_source, 'getLeadQualityRows'), 'Phase 6 must use the existing GA4 service for lead-quality evidence.');
+assertPpc(str_contains($analytics_source, "'sessionGoogleAdsCustomerId'"), 'GA4 lead-quality evidence must filter by the exact linked Google Ads customer ID.');
+assertPpc(!str_contains($analytics_source, 'landingPagePlusQueryString'), 'Lead-quality evidence must not request landing-page query strings.');
+assertPpc(!preg_match('/[\'\"](?:userId|userPseudoId|clientId|gclid)[\'\"]/', $analytics_source), 'GA4 reports must not request person-level or advertising identifiers.');
 
 echo "PPC regression checks passed.\n";

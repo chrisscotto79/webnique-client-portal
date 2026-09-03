@@ -108,6 +108,7 @@ final class Plugin
     require_once WNQ_PORTAL_PATH . 'includes/Services/PpcAdAuditService.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/PpcKeywordIntelligenceService.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/PpcInvestigationService.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Services/PpcLeadQualityService.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/AIEngine.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramNotifier.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramAssistant.php';
