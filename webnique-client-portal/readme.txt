@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.6.0
+Stable tag: 2.7.0
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,12 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.7.0 - PPC Intelligence Phase 3
+- Prioritizes Critical, Warning, Opportunity, and Healthy findings above collapsible evidence tables with explicit reporting periods.
+- Adds campaign investigation links and a 30-day Search Query Engine with intent, confidence, cost, conversions, CPA, and recommendations.
+- Adds client-specific service/geo classification, conservative geographic-conflict handling, filters, and bulk negative-proposal review.
+- Stores review decisions locally with reviewer and timestamp; no approved proposal is sent to Google Ads.
+
 2.6.0 - PPC Intelligence Phase 2
 - Adds independent Account Diagnostic, Conversion Health, Change History, Impression Share, and Budget Analysis modules.
 - Adds campaign and reporting-period performance, conversion dates and device/hour breakdowns, budget pacing, and evidence-based status classifications.
