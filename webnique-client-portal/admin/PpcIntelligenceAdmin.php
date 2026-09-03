@@ -13,6 +13,7 @@ use WNQ\Models\PpcAccount;
 use WNQ\Services\GoogleAdsClient;
 use WNQ\Services\GoogleAdsCredentials;
 use WNQ\Services\GoogleAdsQueryService;
+use WNQ\Services\PpcDiagnosticService;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -111,11 +112,24 @@ final class PpcIntelligenceAdmin
         $credential_status = GoogleAdsCredentials::status();
         $accounts = [];
         $discovery_error = '';
+        $diagnostics = null;
 
         if (!empty($credential_status['configured'])) {
             $query = new GoogleAdsQueryService();
             $accounts = $query->discoverAccounts(!empty($_GET['refresh_accounts']));
             $discovery_error = implode(' ', $query->errors());
+        }
+        if (!empty($connection['customer_id']) && !empty($credential_status['configured'])) {
+            $diagnostics = (new PpcDiagnosticService())->dashboard(
+                (string)$connection['customer_id'],
+                !empty($_GET['refresh_ppc'])
+            );
+            if (!empty($_GET['refresh_ppc'])) {
+                $available_modules = array_filter($diagnostics, static fn($module): bool => is_array($module) && !empty($module['available']));
+                if ($available_modules) {
+                    PpcAccount::recordTest($client_id, true);
+                }
+            }
         }
 
         $notice = get_transient('wnq_ppc_notice_' . get_current_user_id());
@@ -144,6 +158,10 @@ final class PpcIntelligenceAdmin
                 <?php self::statusCard('API status', ($connection['connection_status'] ?? '') === 'connected', ucfirst((string)($connection['connection_status'] ?? 'not tested'))); ?>
                 <?php self::statusCard('Last successful sync', !empty($connection['last_connected_at']), !empty($connection['last_connected_at']) ? self::displayDate((string)$connection['last_connected_at']) : 'Never'); ?>
             </div>
+
+            <?php if ($connection && !empty($connection['customer_id'])): ?>
+                <?php self::renderDiagnostics($diagnostics); ?>
+            <?php endif; ?>
 
             <div class="wnq-ppc-layout">
                 <section class="wnq-ppc-card">
@@ -357,6 +375,149 @@ final class PpcIntelligenceAdmin
         ?><div class="wnq-ppc-status <?php echo $ok ? 'is-ok' : 'is-pending'; ?>"><span><?php echo esc_html($label); ?></span><strong><?php echo esc_html($value); ?></strong></div><?php
     }
 
+    private static function renderDiagnostics(?array $dashboard): void
+    {
+        $dashboard = is_array($dashboard) ? $dashboard : [];
+        ?>
+        <section class="wnq-diagnostics-shell">
+            <div class="wnq-diagnostics-head">
+                <div><span class="wnq-ppc-eyebrow">Phase 2</span><h2>Account intelligence</h2><p>Live, read-only Google Ads diagnostics. Each module loads independently.</p></div>
+                <a class="button" href="<?php echo esc_url(add_query_arg('refresh_ppc', '1')); ?>">Refresh diagnostics</a>
+            </div>
+            <nav class="wnq-module-nav">
+                <a href="#ppc-account">Account</a><a href="#ppc-conversions">Conversions</a><a href="#ppc-changes">Changes</a><a href="#ppc-share">Impression share</a><a href="#ppc-budgets">Budgets</a>
+            </nav>
+            <?php self::renderAccountDiagnostic((array)($dashboard['account_diagnostic'] ?? [])); ?>
+            <?php self::renderConversionHealth((array)($dashboard['conversion_health'] ?? [])); ?>
+            <?php self::renderChangeHistory((array)($dashboard['change_history'] ?? [])); ?>
+            <?php self::renderImpressionShare((array)($dashboard['impression_share'] ?? [])); ?>
+            <?php self::renderBudgetAnalysis((array)($dashboard['budget_analysis'] ?? [])); ?>
+        </section>
+        <?php
+    }
+
+    private static function renderAccountDiagnostic(array $module): void
+    {
+        ?>
+        <article class="wnq-module" id="ppc-account"><div class="wnq-module-title"><div><h3>Account Diagnostic</h3><p>Performance by reporting window and campaign.</p></div><?php self::moduleStatus($module); ?></div>
+        <?php if (empty($module['available'])): self::unavailable($module); else: ?>
+            <?php if (!empty($module['message'])): ?><p class="wnq-module-note"><?php echo esc_html((string)$module['message']); ?></p><?php endif; ?>
+            <div class="wnq-period-grid">
+            <?php foreach (['today' => 'Today', 'last_7_days' => 'Last 7 days', 'last_30_days' => 'Last 30 days', 'current_month' => 'Current month', 'previous_month' => 'Previous month'] as $key => $label): $m = (array)($module['periods'][$key] ?? []); ?>
+                <div class="wnq-period-card"><strong><?php echo esc_html($label); ?></strong><span><?php echo esc_html(self::money((float)($m['spend'] ?? 0))); ?> spend</span><b><?php echo esc_html(number_format_i18n((float)($m['conversions'] ?? 0), 2)); ?> conversions</b><small><?php echo esc_html(number_format_i18n((int)($m['clicks'] ?? 0))); ?> clicks · <?php echo esc_html(self::percent((float)($m['ctr'] ?? 0))); ?> CTR · <?php echo esc_html(self::money((float)($m['cpa'] ?? 0))); ?> CPA</small></div>
+            <?php endforeach; ?>
+            </div>
+            <?php $counts = (array)($module['campaign_counts'] ?? []); ?><p class="wnq-module-summary"><strong><?php echo esc_html((string)($counts['enabled'] ?? 0)); ?> enabled</strong> · <?php echo esc_html((string)($counts['paused'] ?? 0)); ?> paused · <?php echo esc_html((string)($counts['total'] ?? 0)); ?> campaigns returned</p>
+            <div class="wnq-table-scroll"><table><thead><tr><th>Campaign</th><th>Status</th><th>Type</th><th>Daily budget</th><th>Spend</th><th>Clicks</th><th>CTR</th><th>Conversions</th><th>CPA</th></tr></thead><tbody>
+            <?php if (empty($module['campaigns'])): ?><tr><td colspan="9">No campaign activity returned for the last 30 days.</td></tr><?php else: foreach ($module['campaigns'] as $row): ?>
+                <tr><td><strong><?php echo esc_html((string)$row['name']); ?></strong></td><td><?php self::pill((string)$row['status']); ?></td><td><?php echo esc_html(self::label((string)$row['type'])); ?></td><td><?php echo esc_html(self::money((float)$row['daily_budget'])); ?></td><td><?php echo esc_html(self::money((float)$row['spend'])); ?></td><td><?php echo esc_html(number_format_i18n((int)$row['clicks'])); ?></td><td><?php echo esc_html(self::percent((float)$row['ctr'])); ?></td><td><?php echo esc_html(number_format_i18n((float)$row['conversions'], 2)); ?></td><td><?php echo esc_html(self::money((float)$row['cpa'])); ?></td></tr>
+            <?php endforeach; endif; ?></tbody></table></div>
+        <?php endif; ?></article>
+        <?php
+    }
+
+    private static function renderConversionHealth(array $module): void
+    {
+        ?>
+        <article class="wnq-module" id="ppc-conversions"><div class="wnq-module-title"><div><h3>Conversion Tracking Health</h3><p>Conversion configuration, recent activity, dates, devices, and hours.</p></div><?php self::moduleStatus($module); ?></div>
+        <?php if (empty($module['available'])): self::unavailable($module); else: ?>
+            <p class="wnq-module-note"><?php echo esc_html((string)($module['message'] ?? '')); ?></p>
+            <div class="wnq-health-grid"><?php foreach ((array)($module['counts'] ?? []) as $key => $count): ?><div><span><?php echo esc_html(self::label((string)$key)); ?></span><strong><?php echo esc_html((string)$count); ?></strong></div><?php endforeach; ?></div>
+            <div class="wnq-split-grid">
+                <div><h4>Conversions by device</h4><?php self::barList((array)($module['devices'] ?? []), 'conversion'); ?></div>
+                <div><h4>Conversions by hour</h4><?php $hours = []; foreach ((array)($module['hours'] ?? []) as $hour => $value) $hours[self::hourLabel((int)$hour)] = $value; self::barList($hours, 'conversion'); ?></div>
+            </div>
+            <div class="wnq-table-scroll"><table><thead><tr><th>Conversion action</th><th>Health</th><th>Type</th><th>Goal</th><th>Status</th><th>Attribution</th><th>Last conversion</th><th>7 days</th><th>30 days</th></tr></thead><tbody>
+            <?php if (empty($module['actions'])): ?><tr><td colspan="9">No conversion actions were returned.</td></tr><?php else: foreach ($module['actions'] as $row): ?>
+                <tr><td><strong><?php echo esc_html((string)$row['name']); ?></strong><br><small><?php echo esc_html(self::label((string)$row['category'])); ?><?php if (!empty($row['campaigns'])): ?> · <?php echo esc_html(implode(', ', array_slice((array)$row['campaigns'], 0, 3))); ?><?php endif; ?></small></td><td><?php self::pill((string)$row['classification']); ?></td><td><?php echo esc_html(self::label((string)$row['type'])); ?></td><td><?php echo !empty($row['primary']) ? 'Primary' : 'Secondary'; ?></td><td><?php echo esc_html(self::label((string)$row['status'])); ?><br><small><?php echo !empty($row['included_in_conversions']) ? 'Included in Conversions' : 'Not included'; ?></small></td><td><?php echo esc_html(self::label((string)$row['attribution_model'])); ?></td><td><?php echo esc_html((string)($row['last_conversion_date'] ?: 'No data in 90 days')); ?></td><td><?php echo esc_html(number_format_i18n((float)$row['conversions_7'], 2)); ?></td><td><?php echo esc_html(number_format_i18n((float)$row['conversions_30'], 2)); ?></td></tr>
+            <?php endforeach; endif; ?></tbody></table></div>
+            <details class="wnq-detail" open><summary>Key-event activity by date, time, and device</summary><div class="wnq-table-scroll"><table><thead><tr><th>Date</th><th>Hour</th><th>Device</th><th>Key event</th><th>Conversions</th></tr></thead><tbody>
+            <?php if (empty($module['activity'])): ?><tr><td colspan="5">No conversion activity was returned for the last 90 days.</td></tr><?php else: foreach ($module['activity'] as $row): ?>
+                <tr><td><?php echo esc_html((string)$row['date']); ?></td><td><?php echo esc_html(self::hourLabel((int)$row['hour'])); ?></td><td><?php echo esc_html(self::label((string)$row['device'])); ?></td><td><strong><?php echo esc_html((string)$row['action_name']); ?></strong></td><td><?php echo esc_html(number_format_i18n((float)$row['conversions'], 2)); ?></td></tr>
+            <?php endforeach; endif; ?></tbody></table></div></details>
+            <?php if (!empty($module['timeline'])): ?><details class="wnq-detail"><summary>Daily conversion timeline</summary><div class="wnq-timeline"><?php foreach (array_reverse((array)$module['timeline'], true) as $date => $value): ?><span><b><?php echo esc_html((string)$date); ?></b><?php echo esc_html(number_format_i18n((float)$value, 2)); ?></span><?php endforeach; ?></div></details><?php endif; ?>
+        <?php endif; ?></article>
+        <?php
+    }
+
+    private static function renderChangeHistory(array $module): void
+    {
+        ?>
+        <article class="wnq-module" id="ppc-changes"><div class="wnq-module-title"><div><h3>Change History</h3><p>Recent account changes reported by Google Ads.</p></div><?php self::moduleStatus($module); ?></div>
+        <?php if (empty($module['available'])): self::unavailable($module); else: ?>
+            <div class="wnq-table-scroll"><table><thead><tr><th>Date and time</th><th>Resource</th><th>Operation</th><th>Campaign / ad group</th><th>Changed fields</th><th>Changed by</th></tr></thead><tbody>
+            <?php if (empty($module['changes'])): ?><tr><td colspan="6">No changes were returned for the last 30 days.</td></tr><?php else: foreach ($module['changes'] as $row): ?>
+                <tr><td><?php echo esc_html((string)$row['date_time']); ?></td><td><?php echo esc_html(self::label((string)$row['resource_type'])); ?></td><td><?php self::pill((string)$row['operation']); ?></td><td><?php echo esc_html((string)($row['campaign'] ?: $row['ad_group'] ?: '—')); ?></td><td><?php echo esc_html(implode(', ', array_slice((array)$row['fields'], 0, 8)) ?: 'Not specified'); ?></td><td><?php echo esc_html((string)($row['user_email'] ?: self::label((string)$row['client_type']))); ?></td></tr>
+            <?php endforeach; endif; ?></tbody></table></div>
+        <?php endif; ?></article>
+        <?php
+    }
+
+    private static function renderImpressionShare(array $module): void
+    {
+        ?>
+        <article class="wnq-module" id="ppc-share"><div class="wnq-module-title"><div><h3>Impression Share</h3><p>Search visibility lost to budget or ad rank during the last 30 days.</p></div><?php self::moduleStatus($module); ?></div>
+        <?php if (empty($module['available'])): self::unavailable($module); else: ?>
+            <p class="wnq-module-note"><?php echo esc_html((string)$module['message']); ?></p><div class="wnq-table-scroll"><table><thead><tr><th>Campaign</th><th>Status</th><th>Impressions</th><th>Search impression share</th><th>Lost to budget</th><th>Lost to rank</th></tr></thead><tbody>
+            <?php if (empty($module['campaigns'])): ?><tr><td colspan="6">No eligible Search campaign impression-share data was returned.</td></tr><?php else: foreach ($module['campaigns'] as $row): ?>
+                <tr><td><strong><?php echo esc_html((string)$row['name']); ?></strong></td><td><?php self::pill((string)$row['status']); ?></td><td><?php echo esc_html(number_format_i18n((int)$row['impressions'])); ?></td><td><?php echo esc_html(self::nullablePercent($row['impression_share'])); ?></td><td><?php echo esc_html(self::nullablePercent($row['lost_budget'])); ?></td><td><?php echo esc_html(self::nullablePercent($row['lost_rank'])); ?></td></tr>
+            <?php endforeach; endif; ?></tbody></table></div>
+        <?php endif; ?></article>
+        <?php
+    }
+
+    private static function renderBudgetAnalysis(array $module): void
+    {
+        ?>
+        <article class="wnq-module" id="ppc-budgets"><div class="wnq-module-title"><div><h3>Budget Analysis</h3><p>Current-month pacing and projections. No budgets can be changed here.</p></div><?php self::moduleStatus($module); ?></div>
+        <?php if (empty($module['available'])): self::unavailable($module); else: ?>
+            <p class="wnq-module-note"><?php echo esc_html((string)$module['message']); ?></p><div class="wnq-table-scroll"><table><thead><tr><th>Campaign</th><th>Status</th><th>Daily budget</th><th>Monthly capacity</th><th>Month spend</th><th>Projected spend</th><th>Pacing</th><th>Conversions</th></tr></thead><tbody>
+            <?php if (empty($module['campaigns'])): ?><tr><td colspan="8">No campaign budget data was returned.</td></tr><?php else: foreach ($module['campaigns'] as $row): ?>
+                <tr><td><strong><?php echo esc_html((string)$row['name']); ?></strong><?php if (!empty($row['shared_budget'])): ?><br><small>Shared budget</small><?php endif; ?></td><td><?php self::pill((string)$row['status']); ?></td><td><?php echo esc_html(self::money((float)$row['daily_budget'])); ?></td><td><?php echo esc_html(self::money((float)$row['monthly_capacity'])); ?></td><td><?php echo esc_html(self::money((float)$row['month_spend'])); ?></td><td><?php echo esc_html(self::money((float)$row['projected_spend'])); ?></td><td><?php self::pill((string)$row['pace_status']); ?><br><small><?php echo esc_html(self::percent((float)$row['pace'])); ?> of capacity</small></td><td><?php echo esc_html(number_format_i18n((float)$row['conversions'], 2)); ?><br><small><?php echo esc_html((string)$row['recommendation']); ?></small></td></tr>
+            <?php endforeach; endif; ?></tbody></table></div>
+        <?php endif; ?></article>
+        <?php
+    }
+
+    private static function moduleStatus(array $module): void
+    {
+        $status = !empty($module['available']) ? (string)($module['status'] ?? 'ready') : 'unavailable';
+        self::pill($status);
+    }
+
+    private static function unavailable(array $module): void
+    {
+        ?><div class="wnq-unavailable"><strong>Unavailable</strong><span><?php echo esc_html((string)($module['message'] ?? 'Google Ads did not return this report.')); ?></span></div><?php
+    }
+
+    private static function barList(array $values, string $noun): void
+    {
+        if (!$values) { echo '<p class="description">No recent data.</p>'; return; }
+        $max = max(array_map('floatval', $values)) ?: 1;
+        echo '<div class="wnq-bars">';
+        foreach (array_slice($values, 0, 12, true) as $label => $value) {
+            $width = min(100, ((float)$value / $max) * 100);
+            echo '<div><span>' . esc_html(self::label((string)$label)) . '</span><i><b style="width:' . esc_attr((string)$width) . '%"></b></i><strong>' . esc_html(number_format_i18n((float)$value, 2)) . ' ' . esc_html($noun) . (1.0 === (float)$value ? '' : 's') . '</strong></div>';
+        }
+        echo '</div>';
+    }
+
+    private static function pill(string $value): void
+    {
+        $key = sanitize_key($value);
+        echo '<span class="wnq-pill is-' . esc_attr($key) . '">' . esc_html(self::label($value)) . '</span>';
+    }
+
+    private static function money(float $value): string { return '$' . number_format_i18n($value, 2); }
+    private static function percent(float $value): string { return number_format_i18n($value * 100, 1) . '%'; }
+    private static function nullablePercent($value): string { return is_numeric($value) ? self::percent((float)$value) : 'Not available'; }
+    private static function label(string $value): string { return ucwords(str_replace(['_', '-'], ' ', $value)); }
+    private static function hourLabel(int $hour): string
+    {
+        $date = \DateTimeImmutable::createFromFormat('!H', (string)max(0, min(23, $hour)));
+        return $date ? $date->format('g a') : (string)$hour;
+    }
+
     private static function secretField(string $label, string $name, bool $saved): void
     {
         ?><label><span><?php echo esc_html($label); ?></span><input type="password" name="<?php echo esc_attr($name); ?>" value="" placeholder="<?php echo esc_attr($saved ? 'Saved — leave blank to keep current value' : 'Required'); ?>" autocomplete="new-password"></label><?php
@@ -378,7 +539,7 @@ final class PpcIntelligenceAdmin
     {
         ?>
         <style>
-        .wnq-ppc-intelligence{max-width:1200px}.wnq-ppc-hero{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;background:linear-gradient(135deg,#07131c,#0d539e);color:#fff;padding:26px;border-radius:12px;margin:18px 0}.wnq-ppc-hero h2{color:#fff;font-size:26px;margin:3px 0 7px}.wnq-ppc-hero p{margin:0;color:#dbeafe}.wnq-ppc-eyebrow{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#f3cf55}.wnq-read-only-badge{background:#f3cf55;color:#07131c;border-radius:999px;padding:6px 11px;font-size:11px;font-weight:800;text-transform:uppercase;white-space:nowrap}.wnq-ppc-status-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}.wnq-ppc-status{background:#fff;border:1px solid #dcdcde;border-left:4px solid #dba617;border-radius:8px;padding:14px}.wnq-ppc-status.is-ok{border-left-color:#1f9d55}.wnq-ppc-status span{display:block;color:#646970;font-size:11px;text-transform:uppercase;font-weight:700;margin-bottom:5px}.wnq-ppc-status strong{display:block;color:#1d2327;font-size:14px;overflow-wrap:anywhere}.wnq-ppc-layout{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}.wnq-ppc-card{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:22px}.wnq-ppc-card h3{font-size:17px;margin:0 0 5px}.wnq-ppc-card label{display:block;margin:14px 0}.wnq-ppc-card label>span{display:block;font-weight:600;margin-bottom:5px}.wnq-ppc-card input,.wnq-ppc-card select{width:100%;max-width:none}.wnq-ppc-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}.wnq-ppc-actions-separated{border-top:1px solid #eee;padding-top:16px;justify-content:space-between}.wnq-ppc-actions form{margin:0}.wnq-ppc-test-form{margin-top:12px}.wnq-account-details{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid #e5e7eb;border-radius:8px;margin:16px 0}.wnq-account-details div{padding:12px;border-bottom:1px solid #e5e7eb}.wnq-account-details div:nth-last-child(-n+2){border-bottom:0}.wnq-account-details dt{font-size:11px;color:#646970;text-transform:uppercase;font-weight:700}.wnq-account-details dd{margin:4px 0 0;font-weight:600}.wnq-ppc-card .notice.inline{margin:14px 0;padding:1px 12px}.wnq-ppc-card .button-link-delete{color:#b32d2e}@media(max-width:900px){.wnq-ppc-status-grid{grid-template-columns:repeat(2,1fr)}.wnq-ppc-layout{grid-template-columns:1fr}}@media(max-width:600px){.wnq-ppc-hero{flex-direction:column}.wnq-ppc-status-grid,.wnq-account-details{grid-template-columns:1fr}.wnq-account-details div:nth-last-child(2){border-bottom:1px solid #e5e7eb}}
+        .wnq-ppc-intelligence{max-width:1200px}.wnq-ppc-hero{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;background:linear-gradient(135deg,#07131c,#0d539e);color:#fff;padding:26px;border-radius:12px;margin:18px 0}.wnq-ppc-hero h2{color:#fff;font-size:26px;margin:3px 0 7px}.wnq-ppc-hero p{margin:0;color:#dbeafe}.wnq-ppc-eyebrow{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#f3cf55}.wnq-read-only-badge{background:#f3cf55;color:#07131c;border-radius:999px;padding:6px 11px;font-size:11px;font-weight:800;text-transform:uppercase;white-space:nowrap}.wnq-ppc-status-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}.wnq-ppc-status{background:#fff;border:1px solid #dcdcde;border-left:4px solid #dba617;border-radius:8px;padding:14px}.wnq-ppc-status.is-ok{border-left-color:#1f9d55}.wnq-ppc-status span{display:block;color:#646970;font-size:11px;text-transform:uppercase;font-weight:700;margin-bottom:5px}.wnq-ppc-status strong{display:block;color:#1d2327;font-size:14px;overflow-wrap:anywhere}.wnq-ppc-layout{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}.wnq-ppc-card,.wnq-module{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:22px}.wnq-ppc-card h3,.wnq-module h3{font-size:17px;margin:0 0 5px}.wnq-ppc-card label{display:block;margin:14px 0}.wnq-ppc-card label>span{display:block;font-weight:600;margin-bottom:5px}.wnq-ppc-card input,.wnq-ppc-card select{width:100%;max-width:none}.wnq-ppc-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}.wnq-ppc-actions-separated{border-top:1px solid #eee;padding-top:16px;justify-content:space-between}.wnq-ppc-actions form{margin:0}.wnq-ppc-test-form{margin-top:12px}.wnq-account-details{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid #e5e7eb;border-radius:8px;margin:16px 0}.wnq-account-details div{padding:12px;border-bottom:1px solid #e5e7eb}.wnq-account-details div:nth-last-child(-n+2){border-bottom:0}.wnq-account-details dt{font-size:11px;color:#646970;text-transform:uppercase;font-weight:700}.wnq-account-details dd{margin:4px 0 0;font-weight:600}.wnq-ppc-card .notice.inline{margin:14px 0;padding:1px 12px}.wnq-ppc-card .button-link-delete{color:#b32d2e}.wnq-diagnostics-shell{margin:18px 0}.wnq-diagnostics-head,.wnq-module-title{display:flex;justify-content:space-between;align-items:flex-start;gap:18px}.wnq-diagnostics-head{background:#07131c;color:#fff;padding:22px;border-radius:10px 10px 0 0}.wnq-diagnostics-head h2{color:#fff;margin:3px 0}.wnq-diagnostics-head p,.wnq-module-title p{margin:0;color:#646970}.wnq-diagnostics-head p{color:#cbd5e1}.wnq-module-nav{display:flex;gap:4px;flex-wrap:wrap;background:#fff;border:1px solid #dcdcde;padding:9px}.wnq-module-nav a{padding:7px 11px;text-decoration:none;font-weight:600}.wnq-module{margin-top:14px;scroll-margin-top:42px}.wnq-pill{display:inline-block;border-radius:999px;padding:4px 8px;background:#e5e7eb;color:#374151;font-size:11px;font-weight:700;white-space:nowrap}.wnq-pill.is-ready,.wnq-pill.is-enabled,.wnq-pill.is-healthy,.wnq-pill.is-on_track{background:#dcfce7;color:#166534}.wnq-pill.is-unavailable,.wnq-pill.is-configuration_issue,.wnq-pill.is-over{background:#fee2e2;color:#991b1b}.wnq-pill.is-partial,.wnq-pill.is-warning,.wnq-pill.is-stale,.wnq-pill.is-under{background:#fef3c7;color:#92400e}.wnq-period-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:18px 0}.wnq-period-card{border:1px solid #e5e7eb;border-radius:8px;padding:13px}.wnq-period-card>*{display:block}.wnq-period-card>strong{font-size:11px;text-transform:uppercase;color:#646970}.wnq-period-card span{margin-top:8px}.wnq-period-card b{font-size:16px;margin:4px 0}.wnq-period-card small{color:#646970}.wnq-module-summary,.wnq-module-note{color:#646970}.wnq-table-scroll{overflow:auto;margin-top:14px}.wnq-module table{width:100%;border-collapse:collapse;min-width:760px}.wnq-module th,.wnq-module td{text-align:left;padding:10px;border-bottom:1px solid #e5e7eb;vertical-align:top}.wnq-module th{font-size:11px;text-transform:uppercase;color:#646970}.wnq-health-grid{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.wnq-health-grid div{min-width:120px;background:#f8fafc;border-radius:8px;padding:10px}.wnq-health-grid span{display:block;font-size:11px;text-transform:uppercase;color:#646970}.wnq-health-grid strong{font-size:20px}.wnq-split-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:18px 0}.wnq-bars>div{display:grid;grid-template-columns:110px 1fr 110px;align-items:center;gap:8px;margin:7px 0}.wnq-bars i{height:8px;background:#e5e7eb;border-radius:99px;overflow:hidden}.wnq-bars i b{display:block;height:100%;background:#0d539e}.wnq-bars strong{font-size:11px}.wnq-unavailable{display:flex;gap:10px;align-items:center;background:#f8fafc;border-left:4px solid #94a3b8;padding:14px;margin-top:14px}.wnq-detail{margin-top:14px}.wnq-detail summary{cursor:pointer;font-weight:600}.wnq-timeline{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}.wnq-timeline span{display:flex;justify-content:space-between;background:#f8fafc;padding:8px}.wnq-timeline b{font-size:11px}@media(max-width:1000px){.wnq-period-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:900px){.wnq-ppc-status-grid{grid-template-columns:repeat(2,1fr)}.wnq-ppc-layout,.wnq-split-grid{grid-template-columns:1fr}}@media(max-width:600px){.wnq-ppc-hero,.wnq-diagnostics-head{flex-direction:column}.wnq-ppc-status-grid,.wnq-account-details,.wnq-period-grid,.wnq-timeline{grid-template-columns:1fr}.wnq-account-details div:nth-last-child(2){border-bottom:1px solid #e5e7eb}.wnq-bars>div{grid-template-columns:85px 1fr}.wnq-bars strong{grid-column:2}}
         </style>
         <?php
     }

@@ -53,9 +53,11 @@ function wp_salt(string $scheme = 'auth'): string
 require_once dirname(__DIR__) . '/includes/Services/GoogleAdsClient.php';
 require_once dirname(__DIR__) . '/includes/Services/GoogleAdsCredentials.php';
 require_once dirname(__DIR__) . '/includes/Services/GoogleAdsQueryService.php';
+require_once dirname(__DIR__) . '/includes/Services/PpcDiagnosticService.php';
 
 use WNQ\Services\GoogleAdsCredentials;
 use WNQ\Services\GoogleAdsQueryService;
+use WNQ\Services\PpcDiagnosticService;
 
 function assertPpc(bool $condition, string $message): void
 {
@@ -89,6 +91,9 @@ $restored = GoogleAdsCredentials::get();
 assertPpc($restored['developer_token'] === $credentials['developer_token'], 'Encrypted credentials should decrypt correctly.');
 assertPpc($restored['manager_customer_id'] === '1234567890', 'Customer IDs should be normalized to ten digits.');
 assertPpc(GoogleAdsCredentials::isConfigured($restored), 'Complete credentials should report configured.');
+assertPpc(PpcDiagnosticService::classifyConversion(['status' => 'ENABLED', 'primaryForGoal' => true, 'includeInConversionsMetric' => true], ['conversions_7' => 2]) === 'healthy', 'Recent enabled conversions should classify as healthy.');
+assertPpc(PpcDiagnosticService::classifyConversion(['status' => 'ENABLED'], ['conversions_7' => 0, 'conversions_30' => 0, 'last_date' => '2026-01-01']) === 'stale', 'Previously active conversions without recent volume should classify as stale.');
+assertPpc(PpcDiagnosticService::classifyConversion(['status' => 'HIDDEN'], []) === 'configuration_issue', 'Disabled conversion actions should flag a configuration issue.');
 
 $client_portal_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Models/ClientPortal.php');
 $ppc_admin_source = (string)file_get_contents(dirname(__DIR__) . '/admin/PpcIntelligenceAdmin.php');

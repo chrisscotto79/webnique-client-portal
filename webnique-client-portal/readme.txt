@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.5.1
+Stable tag: 2.6.0
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,11 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+2.6.0 - PPC Intelligence Phase 2
+- Adds independent Account Diagnostic, Conversion Health, Change History, Impression Share, and Budget Analysis modules.
+- Adds campaign and reporting-period performance, conversion dates and device/hour breakdowns, budget pacing, and evidence-based status classifications.
+- Keeps every diagnostic read-only, privately permissioned, and independently recoverable when a Google Ads report is unavailable.
+
 2.5.1 - PPC Management Admin Menu
 - Adds PPC Management directly to the Golden Web Marketing Portal admin menu.
 - Provides a client connection overview with direct access to each client’s PPC workspace.
