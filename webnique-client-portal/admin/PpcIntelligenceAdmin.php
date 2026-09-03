@@ -21,6 +21,7 @@ use WNQ\Services\PpcAdAuditService;
 use WNQ\Services\PpcKeywordIntelligenceService;
 use WNQ\Services\PpcInvestigationService;
 use WNQ\Services\PpcLeadQualityService;
+use WNQ\Services\PpcRecommendationPreviewService;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -43,6 +44,7 @@ final class PpcIntelligenceAdmin
         add_action('admin_post_wnq_ppc_save_quality_events', [self::class, 'handleSaveQualityEvents']);
         add_action('admin_post_wnq_ppc_create_mutation_plan', [self::class, 'handleCreateMutationPlan']);
         add_action('admin_post_wnq_ppc_review_mutation_plan', [self::class, 'handleReviewMutationPlan']);
+        add_action('admin_post_wnq_ppc_prepare_recommendation', [self::class, 'handlePrepareRecommendation']);
     }
 
     public static function addSubmenu(): void
@@ -136,6 +138,7 @@ final class PpcIntelligenceAdmin
         $investigations = null;
         $lead_quality = (new PpcLeadQualityService())->report($client_id, (string)($connection['customer_id'] ?? ''));
         $mutation_plans = PpcMutationPlan::forClient($client_id);
+        $preview_candidates = ['available' => false, 'status' => 'unavailable', 'candidates' => [], 'counts' => [], 'summary' => 'Recommendation evidence has not loaded.'];
 
         if (!empty($credential_status['configured'])) {
             $query = new GoogleAdsQueryService();
@@ -159,6 +162,7 @@ final class PpcIntelligenceAdmin
                 $keyword_intelligence = ['available'=>false,'status'=>'unavailable','message'=>'Keyword intelligence is temporarily unavailable.','non_serving'=>[],'conflicts'=>[],'findings'=>[]];
             }
             $investigations = PpcInvestigationService::build($client_id,(string)$connection['customer_id'],(array)$diagnostics,(array)$search_terms,(array)$ad_audit,(array)$keyword_intelligence);
+            $preview_candidates = PpcRecommendationPreviewService::candidates((array)$diagnostics, (array)$search_terms, (array)$keyword_intelligence);
             if (!empty($_GET['refresh_ppc'])) {
                 $available_modules = array_filter($diagnostics, static fn($module): bool => is_array($module) && !empty($module['available']));
                 if ($available_modules) {
@@ -195,7 +199,7 @@ final class PpcIntelligenceAdmin
             </div>
 
             <?php if ($connection && !empty($connection['customer_id'])): ?>
-                <?php self::renderDiagnostics($diagnostics, $search_terms, $ad_audit, $keyword_intelligence, $investigations, $lead_quality, $mutation_plans, $connection, $client_id); ?>
+                <?php self::renderDiagnostics($diagnostics, $search_terms, $ad_audit, $keyword_intelligence, $investigations, $lead_quality, $preview_candidates, $mutation_plans, $connection, $client_id); ?>
             <?php endif; ?>
 
             <div class="wnq-ppc-layout">
@@ -441,6 +445,19 @@ final class PpcIntelligenceAdmin
         self::finish($client_id, !empty($result['ok']), (string)($result['message'] ?? 'The mutation preview could not be reviewed.'));
     }
 
+    public static function handlePrepareRecommendation(): void
+    {
+        $client_id = self::requestClientId();
+        $proposal_id = absint($_POST['proposal_id'] ?? 0);
+        self::authorize('wnq_ppc_prepare_recommendation_' . $client_id . '_' . $proposal_id);
+        $result = PpcRecommendationPreviewService::createApprovedNegativePlan(
+            $client_id,
+            $proposal_id,
+            sanitize_key((string)wp_unslash($_POST['negative_scope'] ?? ''))
+        );
+        self::finish($client_id, !empty($result['ok']), (string)($result['message'] ?? 'The recommendation preview could not be created.'));
+    }
+
     private static function authorize(string $nonce_action): void
     {
         if (!self::canManage()) {
@@ -477,13 +494,13 @@ final class PpcIntelligenceAdmin
         ?><div class="wnq-ppc-status <?php echo $ok ? 'is-ok' : 'is-pending'; ?>"><span><?php echo esc_html($label); ?></span><strong><?php echo esc_html($value); ?></strong></div><?php
     }
 
-    private static function renderDiagnostics(?array $dashboard, ?array $search_terms, ?array $ad_audit, ?array $keywords, ?array $investigations, ?array $lead_quality, array $mutation_plans, array $connection, string $client_id): void
+    private static function renderDiagnostics(?array $dashboard, ?array $search_terms, ?array $ad_audit, ?array $keywords, ?array $investigations, ?array $lead_quality, array $preview_candidates, array $mutation_plans, array $connection, string $client_id): void
     {
         $dashboard = is_array($dashboard) ? $dashboard : [];
         ?>
         <section class="wnq-diagnostics-shell">
             <div class="wnq-diagnostics-head">
-                <div><span class="wnq-ppc-eyebrow">Phases 2–7</span><h2>Account intelligence</h2><p>Read-only diagnostics, investigations, lead-quality evidence, and approval-gated change planning.</p></div>
+                <div><span class="wnq-ppc-eyebrow">Phases 2–8</span><h2>Account intelligence</h2><p>Read-only diagnostics, investigations, lead quality, recommendation safeguards, and approval-gated planning.</p></div>
                 <a class="button" href="<?php echo esc_url(add_query_arg('refresh_ppc', '1')); ?>">Refresh diagnostics</a>
             </div>
             <nav class="wnq-module-nav">
@@ -511,7 +528,7 @@ final class PpcIntelligenceAdmin
             <?php self::renderSearchTerms((array)($search_terms ?? []), $client_id); ?>
             <?php self::renderAdAudit((array)($ad_audit ?? []), $client_id); ?>
             <?php self::renderLeadQuality((array)($lead_quality ?? []), $client_id); ?>
-            <?php self::renderMutationSafety($mutation_plans, $connection, $client_id); ?>
+            <?php self::renderMutationSafety($preview_candidates, $mutation_plans, $connection, $client_id); ?>
         </section>
         <?php
     }
@@ -748,17 +765,51 @@ final class PpcIntelligenceAdmin
         <?php
     }
 
-    private static function renderMutationSafety(array $plans, array $connection, string $client_id): void
+    private static function renderMutationSafety(array $candidate_report, array $plans, array $connection, string $client_id): void
     {
         $account_name = (string)($connection['account_name'] ?? 'Linked Google Ads account');
         $customer_id = (string)($connection['customer_id'] ?? '');
+        $candidates = (array)($candidate_report['candidates'] ?? []);
+        $ready_candidates = array_values(array_filter($candidates, static fn(array $candidate): bool => ($candidate['readiness'] ?? '') === 'ready'));
+        $guarded_candidates = array_values(array_filter($candidates, static fn(array $candidate): bool => ($candidate['readiness'] ?? '') !== 'ready'));
         ?>
         <article class="wnq-module" id="ppc-mutation-safety">
             <div class="wnq-module-title">
                 <div><h3>Mutation Safety</h3><p>Exact-target dry runs, human approval, rollback planning, and tamper-evident audit history.</p></div>
                 <?php self::pill('execution_disabled'); ?>
             </div>
-            <div class="wnq-safety-banner"><strong>Nothing on this screen can modify Google Ads.</strong><span>An approval records human authorization for the exact preview only. Phase 7 intentionally provides no execution endpoint.</span></div>
+            <div class="wnq-safety-banner"><strong>Nothing on this screen can modify Google Ads.</strong><span>An approval records human authorization for the exact preview only. This release intentionally provides no execution endpoint.</span></div>
+
+            <section class="wnq-recommendation-bridge">
+                <div class="wnq-module-title"><div><h4>Recommendation Readiness</h4><p><?php echo esc_html((string)($candidate_report['summary'] ?? 'Recommendation safeguards are unavailable.')); ?></p></div><?php self::pill(!empty($candidate_report['available']) ? 'ready' : 'unavailable'); ?></div>
+                <?php if (!empty($candidate_report['available'])): ?>
+                    <div class="wnq-readiness-grid">
+                        <?php foreach (['ready' => 'Ready for preview', 'needs_internal_review' => 'Needs internal review', 'needs_routing_review' => 'Needs routing review', 'needs_keyword_coverage' => 'Needs coverage check', 'shared_budget_review' => 'Shared-budget review', 'needs_investigation' => 'Needs investigation', 'insufficient_data' => 'Insufficient data', 'missing_identifier' => 'Missing identifier'] as $key => $label): ?>
+                            <div><span><?php echo esc_html($label); ?></span><strong><?php echo esc_html((string)($candidate_report['counts'][$key] ?? 0)); ?></strong></div>
+                        <?php endforeach; ?>
+                    </div>
+
+                    <?php if ($ready_candidates): ?>
+                        <div class="wnq-ready-previews"><h4>Internally Approved Recommendations</h4>
+                            <?php foreach ($ready_candidates as $candidate): ?>
+                                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                                    <?php wp_nonce_field('wnq_ppc_prepare_recommendation_' . $client_id . '_' . (int)$candidate['proposal_id']); ?>
+                                    <input type="hidden" name="action" value="wnq_ppc_prepare_recommendation"><input type="hidden" name="client_id" value="<?php echo esc_attr($client_id); ?>"><input type="hidden" name="proposal_id" value="<?php echo esc_attr((string)$candidate['proposal_id']); ?>">
+                                    <div><strong><?php echo esc_html((string)$candidate['title']); ?></strong><small><?php echo esc_html((string)$candidate['campaign']); ?><?php if (!empty($candidate['ad_group'])): ?> · <?php echo esc_html((string)$candidate['ad_group']); ?><?php endif; ?> · <?php echo esc_html((string)$candidate['period']); ?></small><p><?php echo esc_html((string)$candidate['reason']); ?></p></div>
+                                    <label><span>Exact negative scope</span><select name="negative_scope" required><option value="">Choose scope</option><option value="campaign">Campaign ID <?php echo esc_html((string)$candidate['campaign_id']); ?></option><?php if (!empty($candidate['ad_group_id'])): ?><option value="ad_group">Ad group ID <?php echo esc_html((string)$candidate['ad_group_id']); ?></option><?php endif; ?></select></label>
+                                    <button class="button button-primary">Reverify and create preview</button>
+                                </form>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+
+                    <details class="wnq-detail"><summary>Guarded Recommendations — Current Evidence (<?php echo esc_html((string)count($guarded_candidates)); ?>)</summary><div class="wnq-table-scroll"><table><thead><tr><th>Recommendation</th><th>Readiness</th><th>Reporting period</th><th>Campaign / ad group</th><th>Why preview creation is blocked</th></tr></thead><tbody>
+                    <?php if (!$guarded_candidates): ?><tr><td colspan="5">No guarded recommendations are waiting.</td></tr><?php else: foreach ($guarded_candidates as $candidate): ?><tr><td><strong><?php echo esc_html((string)$candidate['title']); ?></strong></td><td><?php self::pill((string)$candidate['readiness']); ?></td><td><?php echo esc_html((string)$candidate['period']); ?></td><td><?php echo esc_html((string)($candidate['campaign'] ?: '—')); ?><?php if (!empty($candidate['ad_group'])): ?><br><small><?php echo esc_html((string)$candidate['ad_group']); ?></small><?php endif; ?></td><td><?php echo esc_html((string)$candidate['reason']); ?></td></tr><?php endforeach; endif; ?>
+                    </tbody></table></div></details>
+                <?php else: ?>
+                    <div class="wnq-unavailable"><strong>Unavailable</strong><span>Refresh Google Ads diagnostics before preparing a recommendation preview.</span></div>
+                <?php endif; ?>
+            </section>
 
             <details class="wnq-detail wnq-mutation-create">
                 <summary>Create Mutation Preview — Current Account State</summary>
@@ -1011,7 +1062,7 @@ final class PpcIntelligenceAdmin
         <style>
         .wnq-ppc-intelligence{max-width:1200px}.wnq-ppc-hero{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;background:linear-gradient(135deg,#07131c,#0d539e);color:#fff;padding:26px;border-radius:12px;margin:18px 0}.wnq-ppc-hero h2{color:#fff;font-size:26px;margin:3px 0 7px}.wnq-ppc-hero p{margin:0;color:#dbeafe}.wnq-ppc-eyebrow{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#f3cf55}.wnq-read-only-badge{background:#f3cf55;color:#07131c;border-radius:999px;padding:6px 11px;font-size:11px;font-weight:800;text-transform:uppercase;white-space:nowrap}.wnq-ppc-status-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}.wnq-ppc-status{background:#fff;border:1px solid #dcdcde;border-left:4px solid #dba617;border-radius:8px;padding:14px}.wnq-ppc-status.is-ok{border-left-color:#1f9d55}.wnq-ppc-status span{display:block;color:#646970;font-size:11px;text-transform:uppercase;font-weight:700;margin-bottom:5px}.wnq-ppc-status strong{display:block;color:#1d2327;font-size:14px;overflow-wrap:anywhere}.wnq-ppc-layout{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}.wnq-ppc-card,.wnq-module{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:22px}.wnq-ppc-card h3,.wnq-module h3{font-size:17px;margin:0 0 5px}.wnq-ppc-card label{display:block;margin:14px 0}.wnq-ppc-card label>span{display:block;font-weight:600;margin-bottom:5px}.wnq-ppc-card input,.wnq-ppc-card select{width:100%;max-width:none}.wnq-ppc-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}.wnq-ppc-actions-separated{border-top:1px solid #eee;padding-top:16px;justify-content:space-between}.wnq-ppc-actions form{margin:0}.wnq-ppc-test-form{margin-top:12px}.wnq-account-details{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid #e5e7eb;border-radius:8px;margin:16px 0}.wnq-account-details div{padding:12px;border-bottom:1px solid #e5e7eb}.wnq-account-details div:nth-last-child(-n+2){border-bottom:0}.wnq-account-details dt{font-size:11px;color:#646970;text-transform:uppercase;font-weight:700}.wnq-account-details dd{margin:4px 0 0;font-weight:600}.wnq-ppc-card .notice.inline{margin:14px 0;padding:1px 12px}.wnq-ppc-card .button-link-delete{color:#b32d2e}.wnq-diagnostics-shell{margin:18px 0}.wnq-diagnostics-head,.wnq-module-title{display:flex;justify-content:space-between;align-items:flex-start;gap:18px}.wnq-diagnostics-head{background:#07131c;color:#fff;padding:22px;border-radius:10px 10px 0 0}.wnq-diagnostics-head h2{color:#fff;margin:3px 0}.wnq-diagnostics-head p,.wnq-module-title p{margin:0;color:#646970}.wnq-diagnostics-head p{color:#cbd5e1}.wnq-module-nav{display:flex;gap:4px;flex-wrap:wrap;background:#fff;border:1px solid #dcdcde;padding:9px}.wnq-module-nav a{padding:7px 11px;text-decoration:none;font-weight:600}.wnq-module{margin-top:14px;scroll-margin-top:42px}.wnq-pill{display:inline-block;border-radius:999px;padding:4px 8px;background:#e5e7eb;color:#374151;font-size:11px;font-weight:700;white-space:nowrap}.wnq-pill.is-ready,.wnq-pill.is-enabled,.wnq-pill.is-healthy,.wnq-pill.is-on_track{background:#dcfce7;color:#166534}.wnq-pill.is-unavailable,.wnq-pill.is-configuration_issue,.wnq-pill.is-over{background:#fee2e2;color:#991b1b}.wnq-pill.is-partial,.wnq-pill.is-warning,.wnq-pill.is-stale,.wnq-pill.is-under{background:#fef3c7;color:#92400e}.wnq-period-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:18px 0}.wnq-period-card{border:1px solid #e5e7eb;border-radius:8px;padding:13px}.wnq-period-card>*{display:block}.wnq-period-card>strong{font-size:11px;text-transform:uppercase;color:#646970}.wnq-period-card span{margin-top:8px}.wnq-period-card b{font-size:16px;margin:4px 0}.wnq-period-card small{color:#646970}.wnq-module-summary,.wnq-module-note{color:#646970}.wnq-table-scroll{overflow:auto;margin-top:14px}.wnq-module table{width:100%;border-collapse:collapse;min-width:760px}.wnq-module th,.wnq-module td{text-align:left;padding:10px;border-bottom:1px solid #e5e7eb;vertical-align:top}.wnq-module th{font-size:11px;text-transform:uppercase;color:#646970}.wnq-health-grid{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.wnq-health-grid div{min-width:120px;background:#f8fafc;border-radius:8px;padding:10px}.wnq-health-grid span{display:block;font-size:11px;text-transform:uppercase;color:#646970}.wnq-health-grid strong{font-size:20px}.wnq-split-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:18px 0}.wnq-bars>div{display:grid;grid-template-columns:110px 1fr 110px;align-items:center;gap:8px;margin:7px 0}.wnq-bars i{height:8px;background:#e5e7eb;border-radius:99px;overflow:hidden}.wnq-bars i b{display:block;height:100%;background:#0d539e}.wnq-bars strong{font-size:11px}.wnq-unavailable{display:flex;gap:10px;align-items:center;background:#f8fafc;border-left:4px solid #94a3b8;padding:14px;margin-top:14px}.wnq-detail{margin-top:14px}.wnq-detail summary{cursor:pointer;font-weight:600}.wnq-timeline{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}.wnq-timeline span{display:flex;justify-content:space-between;background:#f8fafc;padding:8px}.wnq-timeline b{font-size:11px}@media(max-width:1000px){.wnq-period-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:900px){.wnq-ppc-status-grid{grid-template-columns:repeat(2,1fr)}.wnq-ppc-layout,.wnq-split-grid{grid-template-columns:1fr}}@media(max-width:600px){.wnq-ppc-hero,.wnq-diagnostics-head{flex-direction:column}.wnq-ppc-status-grid,.wnq-account-details,.wnq-period-grid,.wnq-timeline{grid-template-columns:1fr}.wnq-account-details div:nth-last-child(2){border-bottom:1px solid #e5e7eb}.wnq-bars>div{grid-template-columns:85px 1fr}.wnq-bars strong{grid-column:2}}
         .wnq-findings{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:16px}.wnq-finding{border-left:5px solid #64748b;background:#f8fafc;padding:14px;border-radius:6px}.wnq-finding.is-critical{border-color:#b91c1c;background:#fff1f2}.wnq-finding.is-warning{border-color:#d97706;background:#fffbeb}.wnq-finding.is-opportunity{border-color:#2563eb;background:#eff6ff}.wnq-finding.is-healthy{border-color:#15803d;background:#f0fdf4}.wnq-finding>div{display:flex;align-items:center;gap:10px}.wnq-finding>div strong{font-size:15px}.wnq-severity{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}.wnq-finding p{margin:8px 0}.wnq-finding .button{float:right}.wnq-detail>summary,.wnq-sqr-controls summary{cursor:pointer;padding:11px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;font-weight:700}.wnq-sqr-controls{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin:15px 0}.wnq-sqr-controls>form{display:flex;gap:8px;align-items:center}.wnq-sqr-controls>details{min-width:300px}.wnq-sqr-controls>details form{padding:14px;border:1px solid #e5e7eb}.wnq-config-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.wnq-config-grid label>span{display:block;font-weight:600}.wnq-config-grid textarea{width:100%}.wnq-bulk{display:flex;align-items:center;gap:8px;margin:12px 0}.wnq-bulk small{color:#991b1b;font-weight:600}.wnq-claim-config form,.wnq-quality-config form{padding:14px;border:1px solid #e5e7eb}.wnq-claim-config label span,.wnq-quality-config label span{display:block;font-weight:600;margin-bottom:6px}.wnq-claim-config textarea,.wnq-quality-config textarea{width:100%;font-family:monospace}.wnq-quality-config-grid{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:10px}.wnq-quality-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:16px 0}.wnq-quality-grid>div{border:1px solid #bfdbfe;border-top:4px solid #0d539e;border-radius:8px;padding:13px;background:#eff6ff}.wnq-quality-grid>div.is-unmapped{border-color:#dcdcde;background:#f8fafc}.wnq-quality-grid span,.wnq-quality-grid strong,.wnq-quality-grid small{display:block}.wnq-quality-grid span{font-size:11px;font-weight:700;text-transform:uppercase;color:#50575e}.wnq-quality-grid strong{font-size:20px;margin:6px 0}.wnq-quality-grid small{color:#646970}.wnq-ad-copy{min-width:360px;max-width:560px}.wnq-ad-copy ol{margin-top:5px}.wnq-ad-copy p{overflow-wrap:anywhere}.wnq-read-only-note{border-left:4px solid #0d539e;background:#eff6ff;padding:12px;margin-top:16px}.wnq-investigation{border:1px solid #e5e7eb;border-radius:8px;margin-top:10px}.wnq-investigation>summary{cursor:pointer;padding:12px;font-weight:700}.wnq-investigation>div{padding:0 14px 14px}.wnq-confidence{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}.wnq-confidence span{background:#eef2ff;padding:6px 9px;border-radius:999px;font-size:11px;font-weight:700}@media(max-width:1000px){.wnq-quality-config-grid,.wnq-quality-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:782px){.wnq-findings,.wnq-config-grid,.wnq-quality-config-grid,.wnq-quality-grid{grid-template-columns:1fr}.wnq-sqr-controls{display:block}.wnq-sqr-controls>details{margin-top:10px;min-width:0}.wnq-ad-copy{min-width:260px}}
-        .wnq-pill.is-execution_disabled{background:#e5e7eb;color:#374151}.wnq-safety-banner{display:flex;gap:10px;align-items:flex-start;border-left:4px solid #b91c1c;background:#fff1f2;padding:13px;margin:15px 0}.wnq-safety-banner span{color:#50575e}.wnq-mutation-create form{border:1px solid #e5e7eb;padding:15px}.wnq-exact-target{background:#eff6ff;padding:10px;border-radius:6px}.wnq-mutation-form-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.wnq-mutation-values{display:grid;grid-template-columns:1fr 1fr;gap:12px}.wnq-mutation-create label>span,.wnq-approval-form label>span{display:block;font-weight:600;margin:11px 0 5px}.wnq-mutation-create input[type=text],.wnq-mutation-create select,.wnq-mutation-create textarea,.wnq-approval-form input,.wnq-approval-form select{width:100%;max-width:none}.wnq-mutation-create textarea{font-family:monospace}.wnq-mutation-create .wnq-checkbox{display:block;margin:12px 0}.wnq-mutation-plan{border:1px solid #dcdcde;border-radius:8px;margin-top:12px}.wnq-mutation-plan>summary{cursor:pointer;padding:13px;font-weight:700}.wnq-mutation-plan-body{padding:0 15px 15px}.wnq-preview-heading{display:flex;justify-content:space-between;gap:12px;border-bottom:2px solid #07131c;padding-bottom:8px}.wnq-preview-heading small{color:#646970}.wnq-preview-meta{display:grid;grid-template-columns:repeat(2,1fr);border:1px solid #e5e7eb;margin:14px 0}.wnq-preview-meta div{padding:10px;border-bottom:1px solid #e5e7eb}.wnq-preview-meta dt{font-size:11px;text-transform:uppercase;color:#646970;font-weight:700}.wnq-preview-meta dd{margin:4px 0 0;overflow-wrap:anywhere}.wnq-preview-meta code,.wnq-mutation-plan table code{font-size:10px;overflow-wrap:anywhere}.wnq-current-proposed{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px}.wnq-current-proposed>div{border:1px solid #e5e7eb;border-radius:7px;padding:10px;min-width:0}.wnq-current-proposed span{font-size:11px;text-transform:uppercase;font-weight:800}.wnq-current-proposed pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0}.wnq-approval-form{display:grid;grid-template-columns:1fr 1fr auto;align-items:end;gap:10px;border:2px solid #dba617;background:#fffbeb;padding:12px;margin:14px 0}.wnq-approval-form small{grid-column:1/-1}.wnq-approved-only{border-left:4px solid #15803d;background:#f0fdf4;padding:12px}.wnq-pill.is-approved{background:#dcfce7;color:#166534}.wnq-pill.is-rejected,.wnq-pill.is-cancelled,.wnq-pill.is-expired{background:#fee2e2;color:#991b1b}.wnq-pill.is-awaiting_approval{background:#fef3c7;color:#92400e}@media(max-width:900px){.wnq-mutation-form-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:782px){.wnq-mutation-form-grid,.wnq-mutation-values,.wnq-preview-meta,.wnq-current-proposed,.wnq-approval-form{grid-template-columns:1fr}.wnq-current-proposed>b{transform:rotate(90deg);text-align:center}.wnq-preview-heading{display:block}.wnq-approval-form small{grid-column:auto}}
+        .wnq-pill.is-execution_disabled{background:#e5e7eb;color:#374151}.wnq-safety-banner{display:flex;gap:10px;align-items:flex-start;border-left:4px solid #b91c1c;background:#fff1f2;padding:13px;margin:15px 0}.wnq-safety-banner span{color:#50575e}.wnq-recommendation-bridge{border:1px solid #bfdbfe;background:#f8fbff;border-radius:8px;padding:15px;margin:15px 0}.wnq-readiness-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}.wnq-readiness-grid>div{background:#fff;border:1px solid #dbeafe;border-radius:6px;padding:9px}.wnq-readiness-grid span,.wnq-readiness-grid strong{display:block}.wnq-readiness-grid span{font-size:10px;text-transform:uppercase;color:#646970;font-weight:700}.wnq-readiness-grid strong{font-size:18px;margin-top:4px}.wnq-ready-previews>form{display:grid;grid-template-columns:1fr 230px auto;align-items:end;gap:10px;background:#fff;border-left:4px solid #15803d;padding:11px;margin-top:8px}.wnq-ready-previews form small{display:block;color:#646970;margin-top:3px}.wnq-ready-previews form p{margin:5px 0 0}.wnq-ready-previews label span{display:block;font-weight:600;margin-bottom:5px}.wnq-ready-previews select{width:100%}.wnq-pill.is-needs_internal_review,.wnq-pill.is-needs_routing_review,.wnq-pill.is-needs_keyword_coverage,.wnq-pill.is-shared_budget_review,.wnq-pill.is-needs_investigation,.wnq-pill.is-insufficient_data,.wnq-pill.is-missing_identifier{background:#fef3c7;color:#92400e}.wnq-mutation-create form{border:1px solid #e5e7eb;padding:15px}.wnq-exact-target{background:#eff6ff;padding:10px;border-radius:6px}.wnq-mutation-form-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.wnq-mutation-values{display:grid;grid-template-columns:1fr 1fr;gap:12px}.wnq-mutation-create label>span,.wnq-approval-form label>span{display:block;font-weight:600;margin:11px 0 5px}.wnq-mutation-create input[type=text],.wnq-mutation-create select,.wnq-mutation-create textarea,.wnq-approval-form input,.wnq-approval-form select{width:100%;max-width:none}.wnq-mutation-create textarea{font-family:monospace}.wnq-mutation-create .wnq-checkbox{display:block;margin:12px 0}.wnq-mutation-plan{border:1px solid #dcdcde;border-radius:8px;margin-top:12px}.wnq-mutation-plan>summary{cursor:pointer;padding:13px;font-weight:700}.wnq-mutation-plan-body{padding:0 15px 15px}.wnq-preview-heading{display:flex;justify-content:space-between;gap:12px;border-bottom:2px solid #07131c;padding-bottom:8px}.wnq-preview-heading small{color:#646970}.wnq-preview-meta{display:grid;grid-template-columns:repeat(2,1fr);border:1px solid #e5e7eb;margin:14px 0}.wnq-preview-meta div{padding:10px;border-bottom:1px solid #e5e7eb}.wnq-preview-meta dt{font-size:11px;text-transform:uppercase;color:#646970;font-weight:700}.wnq-preview-meta dd{margin:4px 0 0;overflow-wrap:anywhere}.wnq-preview-meta code,.wnq-mutation-plan table code{font-size:10px;overflow-wrap:anywhere}.wnq-current-proposed{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px}.wnq-current-proposed>div{border:1px solid #e5e7eb;border-radius:7px;padding:10px;min-width:0}.wnq-current-proposed span{font-size:11px;text-transform:uppercase;font-weight:800}.wnq-current-proposed pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0}.wnq-approval-form{display:grid;grid-template-columns:1fr 1fr auto;align-items:end;gap:10px;border:2px solid #dba617;background:#fffbeb;padding:12px;margin:14px 0}.wnq-approval-form small{grid-column:1/-1}.wnq-approved-only{border-left:4px solid #15803d;background:#f0fdf4;padding:12px}.wnq-pill.is-approved{background:#dcfce7;color:#166534}.wnq-pill.is-rejected,.wnq-pill.is-cancelled,.wnq-pill.is-expired{background:#fee2e2;color:#991b1b}.wnq-pill.is-awaiting_approval{background:#fef3c7;color:#92400e}@media(max-width:1000px){.wnq-readiness-grid{grid-template-columns:repeat(2,1fr)}.wnq-ready-previews>form{grid-template-columns:1fr}}@media(max-width:900px){.wnq-mutation-form-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:782px){.wnq-readiness-grid,.wnq-mutation-form-grid,.wnq-mutation-values,.wnq-preview-meta,.wnq-current-proposed,.wnq-approval-form{grid-template-columns:1fr}.wnq-current-proposed>b{transform:rotate(90deg);text-align:center}.wnq-preview-heading{display:block}.wnq-approval-form small{grid-column:auto}}
         </style>
         <?php
     }

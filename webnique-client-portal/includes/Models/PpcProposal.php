@@ -89,6 +89,24 @@ final class PpcProposal
         return $result;
     }
 
+    public static function getByIdForClient(int $id, string $client_id): ?array
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . self::TABLE;
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$table} WHERE id = %d AND client_id = %s LIMIT 1",
+            $id,
+            sanitize_text_field($client_id)
+        ), ARRAY_A);
+        if (!$row) {
+            return null;
+        }
+        $evidence = json_decode((string)($row['evidence_json'] ?? ''), true);
+        $row['evidence'] = is_array($evidence) ? $evidence : [];
+        unset($row['evidence_json']);
+        return $row;
+    }
+
     public static function review(string $client_id, array $ids, string $status): int
     {
         global $wpdb;

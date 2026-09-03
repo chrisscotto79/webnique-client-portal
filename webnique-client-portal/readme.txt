@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 3.1.0
+Stable tag: 3.2.0
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,14 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+3.2.0 - PPC Intelligence Phase 8
+
+- Connects internally approved negative-keyword recommendations to exact Mutation Safety previews.
+- Requires the operator to choose campaign or ad-group scope, then re-reads that exact scope before creating the preview.
+- Blocks already-resolved negatives and isolates live-read failures without creating a plan.
+- Labels pending negatives, keyword opportunities, conflicts, non-serving keywords, pacing findings, and shared budgets with explicit readiness safeguards.
+- Does not approve or execute recommendations and adds no Google Ads mutation endpoint.
+
 3.1.0 - PPC Intelligence Phase 7
 
 - Adds exact-account, exact-entity mutation previews with current and proposed values, evidence, reversibility, and rollback plans.
