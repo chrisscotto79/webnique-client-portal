@@ -200,5 +200,10 @@ assertPpc(!preg_match('/GoogleAdsClient|GoogleAdsQueryService|function\s+(?:exec
 $preview_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Services/PpcRecommendationPreviewService.php');
 assertPpc(str_contains($preview_source, 'negativeSnapshot') && str_contains($preview_source, 'SELECT campaign_criterion.criterion_id'), 'Phase 8 must re-read negative-keyword state before creating a preview.');
 assertPpc(!preg_match('/googleAds:mutate|customers\/.+:mutate|->mutate/i', $preview_source), 'Recommendation preparation must remain SELECT-only.');
+$workspace_script = (string)file_get_contents(dirname(__DIR__) . '/assets/admin/ppc-intelligence.js');
+$workspace_styles = (string)file_get_contents(dirname(__DIR__) . '/assets/admin/ppc-intelligence.css');
+assertPpc(str_contains($ppc_admin_source, 'data-wnq-workspace-tab') && str_contains($workspace_script, 'activateWorkspace'), 'Phase 9 must provide focused, accessible operations workspaces.');
+assertPpc(str_contains($workspace_script, "event.key === 'ArrowRight'") && str_contains($workspace_styles, 'prefers-reduced-motion'), 'Phase 9 navigation must include keyboard and reduced-motion support.');
+assertPpc(!preg_match('/googleAds:mutate|customers\/.+:mutate|->mutate/i', $workspace_script), 'The Phase 9 interface must not add Google Ads mutation behavior.');
 
 echo "PPC regression checks passed.\n";
