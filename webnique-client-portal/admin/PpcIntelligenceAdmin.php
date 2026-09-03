@@ -10,10 +10,12 @@ namespace WNQ\Admin;
 use WNQ\Core\Permissions;
 use WNQ\Models\Client;
 use WNQ\Models\PpcAccount;
+use WNQ\Models\PpcProposal;
 use WNQ\Services\GoogleAdsClient;
 use WNQ\Services\GoogleAdsCredentials;
 use WNQ\Services\GoogleAdsQueryService;
 use WNQ\Services\PpcDiagnosticService;
+use WNQ\Services\PpcSearchTermService;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -30,6 +32,8 @@ final class PpcIntelligenceAdmin
         add_action('admin_post_wnq_ppc_save_mapping', [self::class, 'handleSaveMapping']);
         add_action('admin_post_wnq_ppc_test_account', [self::class, 'handleTestAccount']);
         add_action('admin_post_wnq_ppc_disconnect_account', [self::class, 'handleDisconnect']);
+        add_action('admin_post_wnq_ppc_save_search_config', [self::class, 'handleSaveSearchConfig']);
+        add_action('admin_post_wnq_ppc_review_proposals', [self::class, 'handleReviewProposals']);
     }
 
     public static function addSubmenu(): void
@@ -89,6 +93,7 @@ final class PpcIntelligenceAdmin
     public static function maybeUpgrade(): void
     {
         PpcAccount::maybeUpgrade();
+        PpcProposal::maybeUpgrade();
         GoogleAdsCredentials::migrateLegacy();
         $admin = get_role('administrator');
         if ($admin && !$admin->has_cap('gwm_manage_ppc')) {
@@ -113,6 +118,7 @@ final class PpcIntelligenceAdmin
         $accounts = [];
         $discovery_error = '';
         $diagnostics = null;
+        $search_terms = null;
 
         if (!empty($credential_status['configured'])) {
             $query = new GoogleAdsQueryService();
@@ -124,6 +130,7 @@ final class PpcIntelligenceAdmin
                 (string)$connection['customer_id'],
                 !empty($_GET['refresh_ppc'])
             );
+            $search_terms = (new PpcSearchTermService())->report($client_id, (string)$connection['customer_id'], $client, !empty($_GET['refresh_ppc']));
             if (!empty($_GET['refresh_ppc'])) {
                 $available_modules = array_filter($diagnostics, static fn($module): bool => is_array($module) && !empty($module['available']));
                 if ($available_modules) {
@@ -147,7 +154,7 @@ final class PpcIntelligenceAdmin
                 <div>
                     <span class="wnq-ppc-eyebrow">Internal agency workspace</span>
                     <h2>PPC Intelligence</h2>
-                    <p>Google Ads connection foundation for <?php echo esc_html((string)($client['company'] ?: $client['name'])); ?>. Phase 1 is strictly read-only.</p>
+                    <p>Read-only Google Ads intelligence for <?php echo esc_html((string)($client['company'] ?: $client['name'])); ?>.</p>
                 </div>
                 <span class="wnq-read-only-badge">Read only</span>
             </div>
@@ -160,7 +167,7 @@ final class PpcIntelligenceAdmin
             </div>
 
             <?php if ($connection && !empty($connection['customer_id'])): ?>
-                <?php self::renderDiagnostics($diagnostics); ?>
+                <?php self::renderDiagnostics($diagnostics, $search_terms, $client_id); ?>
             <?php endif; ?>
 
             <div class="wnq-ppc-layout">
@@ -339,6 +346,26 @@ final class PpcIntelligenceAdmin
         self::finish($client_id, $disconnected, $disconnected ? 'Google Ads account disconnected. No Google Ads data was changed.' : 'The account connection could not be removed.');
     }
 
+    public static function handleSaveSearchConfig(): void
+    {
+        $client_id = self::requestClientId();
+        self::authorize('wnq_ppc_save_search_config_' . $client_id);
+        $saved = PpcSearchTermService::saveConfig($client_id, (array)wp_unslash($_POST));
+        self::clearSearchCache($client_id);
+        self::finish($client_id, $saved, $saved ? 'PPC service-area and classification settings saved.' : 'The PPC search settings could not be saved.');
+    }
+
+    public static function handleReviewProposals(): void
+    {
+        $client_id = self::requestClientId();
+        self::authorize('wnq_ppc_review_proposals_' . $client_id);
+        $ids = is_array($_POST['proposal_ids'] ?? null) ? wp_unslash($_POST['proposal_ids']) : [];
+        $status = sanitize_key((string)wp_unslash($_POST['review_action'] ?? ''));
+        $updated = PpcProposal::review($client_id, $ids, $status);
+        self::clearSearchCache($client_id);
+        self::finish($client_id, $updated > 0, $updated > 0 ? "{$updated} proposal(s) reviewed internally. No Google Ads changes were made." : 'Select at least one proposal and a review action.');
+    }
+
     private static function authorize(string $nonce_action): void
     {
         if (!self::canManage()) {
@@ -375,24 +402,101 @@ final class PpcIntelligenceAdmin
         ?><div class="wnq-ppc-status <?php echo $ok ? 'is-ok' : 'is-pending'; ?>"><span><?php echo esc_html($label); ?></span><strong><?php echo esc_html($value); ?></strong></div><?php
     }
 
-    private static function renderDiagnostics(?array $dashboard): void
+    private static function renderDiagnostics(?array $dashboard, ?array $search_terms, string $client_id): void
     {
         $dashboard = is_array($dashboard) ? $dashboard : [];
         ?>
         <section class="wnq-diagnostics-shell">
             <div class="wnq-diagnostics-head">
-                <div><span class="wnq-ppc-eyebrow">Phase 2</span><h2>Account intelligence</h2><p>Live, read-only Google Ads diagnostics. Each module loads independently.</p></div>
+                <div><span class="wnq-ppc-eyebrow">Phases 2 + 3</span><h2>Account intelligence</h2><p>Live, read-only Google Ads diagnostics. Each module loads independently.</p></div>
                 <a class="button" href="<?php echo esc_url(add_query_arg('refresh_ppc', '1')); ?>">Refresh diagnostics</a>
             </div>
             <nav class="wnq-module-nav">
-                <a href="#ppc-account">Account</a><a href="#ppc-conversions">Conversions</a><a href="#ppc-changes">Changes</a><a href="#ppc-share">Impression share</a><a href="#ppc-budgets">Budgets</a>
+                <a href="#ppc-attention">Attention</a><a href="#ppc-account">Account</a><a href="#ppc-conversions">Conversions</a><a href="#ppc-changes">Changes</a><a href="#ppc-share">Impression share</a><a href="#ppc-budgets">Budgets</a><a href="#ppc-search-terms">Search terms</a>
             </nav>
+            <?php
+            $findings = array_merge((array)($dashboard['findings'] ?? []), (array)($search_terms['findings'] ?? []));
+            $has_actionable_finding = count(array_filter($findings, static function (array $finding): bool {
+                return ($finding['severity'] ?? '') !== 'healthy';
+            })) > 0;
+            if ($has_actionable_finding) {
+                $findings = array_values(array_filter($findings, static function (array $finding): bool {
+                    return ($finding['severity'] ?? '') !== 'healthy';
+                }));
+            }
+            self::renderAttention($findings);
+            ?>
             <?php self::renderAccountDiagnostic((array)($dashboard['account_diagnostic'] ?? [])); ?>
             <?php self::renderConversionHealth((array)($dashboard['conversion_health'] ?? [])); ?>
             <?php self::renderChangeHistory((array)($dashboard['change_history'] ?? [])); ?>
             <?php self::renderImpressionShare((array)($dashboard['impression_share'] ?? [])); ?>
             <?php self::renderBudgetAnalysis((array)($dashboard['budget_analysis'] ?? [])); ?>
+            <?php self::renderSearchTerms((array)($search_terms ?? []), $client_id); ?>
         </section>
+        <?php
+    }
+
+    private static function renderAttention(array $findings): void
+    {
+        $order = ['critical' => 0, 'warning' => 1, 'opportunity' => 2, 'healthy' => 3];
+        usort($findings, static fn(array $a, array $b): int => ($order[$a['severity'] ?? ''] ?? 9) <=> ($order[$b['severity'] ?? ''] ?? 9));
+        ?>
+        <article class="wnq-module wnq-attention" id="ppc-attention"><div class="wnq-module-title"><div><h3>What needs my attention?</h3><p>Prioritized decisions from the available PPC evidence.</p></div></div>
+            <div class="wnq-findings">
+            <?php foreach ($findings as $finding): ?>
+                <div class="wnq-finding is-<?php echo esc_attr(sanitize_key((string)$finding['severity'])); ?>">
+                    <div><span class="wnq-severity"><?php echo esc_html(self::label((string)$finding['severity'])); ?></span><strong><?php echo esc_html((string)$finding['title']); ?></strong></div>
+                    <p><b>Evidence — <?php echo esc_html((string)$finding['period']); ?>:</b> <?php echo esc_html((string)$finding['evidence']); ?></p>
+                    <p><b>Recommended action:</b> <?php echo esc_html((string)$finding['action']); ?></p>
+                    <small>Confidence: <?php echo esc_html(number_format_i18n((float)$finding['confidence'] * 100, 0)); ?>%</small>
+                    <?php if (!empty($finding['campaign_id'])): ?><a class="button" href="<?php echo esc_url(self::campaignUrl((string)$finding['campaign_id'])); ?>">Investigate campaign</a><?php endif; ?>
+                </div>
+            <?php endforeach; ?>
+            </div>
+        </article>
+        <?php
+    }
+
+    private static function renderSearchTerms(array $report, string $client_id): void
+    {
+        $filter = sanitize_key((string)($_GET['sqr_filter'] ?? 'all'));
+        $campaign_id = preg_replace('/\D+/', '', (string)($_GET['investigate_campaign'] ?? '')) ?: '';
+        $terms = (array)($report['terms'] ?? []);
+        if ($campaign_id !== '') $terms = array_values(array_filter($terms, static fn(array $term): bool => (string)$term['campaign_id'] === $campaign_id));
+        if ($filter !== 'all') {
+            $terms = array_values(array_filter($terms, static function (array $term) use ($filter): bool {
+                if ($filter === 'high_spend') return (float)$term['cost'] >= 50;
+                if ($filter === 'no_conversion') return (float)$term['conversions'] <= 0 && (int)$term['clicks'] > 0;
+                if ($filter === 'converted') return (float)$term['conversions'] > 0;
+                return (string)$term['classification'] === $filter;
+            }));
+        }
+        $config = (array)($report['config'] ?? PpcSearchTermService::config($client_id));
+        ?>
+        <article class="wnq-module" id="ppc-search-terms"><div class="wnq-module-title"><div><h3>Search Query Engine</h3><p>Search terms, intent and geographic-analysis evidence — Last 30 Days.</p></div><?php self::moduleStatus($report); ?></div>
+        <?php if (empty($report['available'])): self::unavailable($report); else: ?>
+            <div class="wnq-sqr-controls">
+                <form method="get"><input type="hidden" name="page" value="wnq-clients"><input type="hidden" name="action" value="edit"><input type="hidden" name="id" value="<?php echo esc_attr((string)($_GET['id'] ?? '')); ?>"><input type="hidden" name="client_tab" value="ppc">
+                    <?php if ($campaign_id): ?><input type="hidden" name="investigate_campaign" value="<?php echo esc_attr($campaign_id); ?>"><?php endif; ?>
+                    <label>Filter <select name="sqr_filter"><option value="all">All search terms</option><?php foreach (['high_spend','no_conversion','high_intent','relevant','low_intent','informational','competitor','employment','diy','unrelated','geographic_conflict','requires_human_review','converted'] as $option): ?><option value="<?php echo esc_attr($option); ?>" <?php selected($filter, $option); ?>><?php echo esc_html(self::label($option)); ?></option><?php endforeach; ?></select></label><button class="button">Apply</button>
+                    <?php if ($campaign_id): ?><a class="button" href="<?php echo esc_url(remove_query_arg('investigate_campaign')); ?>">Clear campaign filter</a><?php endif; ?>
+                </form>
+                <details><summary>Service and geographic configuration</summary><form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <?php wp_nonce_field('wnq_ppc_save_search_config_' . $client_id); ?><input type="hidden" name="action" value="wnq_ppc_save_search_config"><input type="hidden" name="client_id" value="<?php echo esc_attr($client_id); ?>">
+                    <div class="wnq-config-grid"><?php foreach (['services'=>'Primary PPC services','target_areas'=>'Target areas','excluded_areas'=>'Excluded areas','competitors'=>'Competitors','excluded_terms'=>'Confirmed excluded terms'] as $key=>$label): ?><label><span><?php echo esc_html($label); ?></span><textarea name="<?php echo esc_attr($key); ?>" rows="4"><?php echo esc_textarea(implode("\n", (array)($config[$key] ?? []))); ?></textarea></label><?php endforeach; ?></div>
+                    <p class="description">One entry per line. Target areas are checked before excluded areas. An unconfigured city is never automatically treated as a negative.</p><button class="button button-primary">Save classification settings</button>
+                </form></details>
+            </div>
+            <details class="wnq-detail"><summary>Search-Term Review — Last 30 Days (<?php echo esc_html((string)count($terms)); ?> rows)</summary>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                <?php wp_nonce_field('wnq_ppc_review_proposals_' . $client_id); ?><input type="hidden" name="action" value="wnq_ppc_review_proposals"><input type="hidden" name="client_id" value="<?php echo esc_attr($client_id); ?>">
+                <div class="wnq-bulk"><select name="review_action" required><option value="">Bulk review action</option><option value="approved_exact">Approve Negative Exact (internal)</option><option value="approved_phrase">Approve Negative Phrase (internal)</option><option value="relevant">Mark Relevant</option><option value="ignored">Ignore</option><option value="rejected">Reject Proposal</option></select><button class="button button-primary">Apply Review</button><small>Review-only. No Google Ads changes are sent.</small></div>
+                <div class="wnq-table-scroll"><table><thead><tr><th>Check</th><th>Search term</th><th>Campaign / ad group</th><th>Keyword</th><th>Intent</th><th>Impressions — Last 30 Days</th><th>Clicks — Last 30 Days</th><th>Cost — Last 30 Days</th><th>Conversions — Last 30 Days</th><th>CPA — Last 30 Days</th><th>Confidence</th><th>Recommendation</th><th>Review status</th></tr></thead><tbody>
+                <?php if (!$terms): ?><tr><td colspan="13">No search terms match the selected filter.</td></tr><?php else: foreach ($terms as $term): ?>
+                    <tr><td><input type="checkbox" name="proposal_ids[]" value="<?php echo esc_attr((string)$term['id']); ?>" <?php disabled((int)$term['id'] === 0); ?>></td><td><strong><?php echo esc_html((string)$term['query']); ?></strong><br><small><?php echo esc_html((string)$term['reason']); ?></small></td><td><a href="<?php echo esc_url(self::campaignUrl((string)$term['campaign_id'])); ?>"><?php echo esc_html((string)$term['campaign']); ?></a><br><small><?php echo esc_html((string)$term['ad_group']); ?></small></td><td><?php echo esc_html((string)($term['keyword'] ?: 'Unknown')); ?><br><small><?php echo esc_html(self::label((string)$term['match_type'])); ?></small></td><td><?php self::pill((string)$term['classification']); ?></td><td><?php echo esc_html(number_format_i18n((int)$term['impressions'])); ?></td><td><?php echo esc_html(number_format_i18n((int)$term['clicks'])); ?></td><td><?php echo esc_html(self::money((float)$term['cost'])); ?></td><td><?php echo esc_html(number_format_i18n((float)$term['conversions'], 2)); ?></td><td><?php echo esc_html(self::money((float)$term['cpa'])); ?></td><td><?php echo esc_html(number_format_i18n((float)$term['confidence'] * 100, 0)); ?>%</td><td><?php self::pill((string)$term['recommended_action']); ?></td><td><?php self::pill((string)$term['status']); ?></td></tr>
+                <?php endforeach; endif; ?></tbody></table></div>
+            </form></details>
+        <?php endif; ?></article>
         <?php
     }
 
@@ -407,11 +511,11 @@ final class PpcIntelligenceAdmin
                 <div class="wnq-period-card"><strong><?php echo esc_html($label); ?></strong><span><?php echo esc_html(self::money((float)($m['spend'] ?? 0))); ?> spend</span><b><?php echo esc_html(number_format_i18n((float)($m['conversions'] ?? 0), 2)); ?> conversions</b><small><?php echo esc_html(number_format_i18n((int)($m['clicks'] ?? 0))); ?> clicks · <?php echo esc_html(self::percent((float)($m['ctr'] ?? 0))); ?> CTR · <?php echo esc_html(self::money((float)($m['cpa'] ?? 0))); ?> CPA</small></div>
             <?php endforeach; ?>
             </div>
-            <?php $counts = (array)($module['campaign_counts'] ?? []); ?><p class="wnq-module-summary"><strong><?php echo esc_html((string)($counts['enabled'] ?? 0)); ?> enabled</strong> · <?php echo esc_html((string)($counts['paused'] ?? 0)); ?> paused · <?php echo esc_html((string)($counts['total'] ?? 0)); ?> campaigns returned</p>
-            <div class="wnq-table-scroll"><table><thead><tr><th>Campaign</th><th>Status</th><th>Type</th><th>Daily budget</th><th>Spend</th><th>Clicks</th><th>CTR</th><th>Conversions</th><th>CPA</th></tr></thead><tbody>
+            <?php $counts = (array)($module['campaign_counts'] ?? []); ?><p class="wnq-module-summary"><strong>Campaign status — Last 30 Days:</strong> <?php echo esc_html((string)($counts['enabled'] ?? 0)); ?> enabled · <?php echo esc_html((string)($counts['paused'] ?? 0)); ?> paused · <?php echo esc_html((string)($counts['total'] ?? 0)); ?> campaigns returned</p>
+            <details class="wnq-detail"><summary>Campaign Performance — Last 30 Days</summary><div class="wnq-table-scroll"><table><thead><tr><th>Campaign</th><th>Status</th><th>Type</th><th>Daily budget</th><th>Spend — Last 30 Days</th><th>Clicks — Last 30 Days</th><th>CTR — Last 30 Days</th><th>Conversions — Last 30 Days</th><th>CPA — Last 30 Days</th></tr></thead><tbody>
             <?php if (empty($module['campaigns'])): ?><tr><td colspan="9">No campaign activity returned for the last 30 days.</td></tr><?php else: foreach ($module['campaigns'] as $row): ?>
-                <tr><td><strong><?php echo esc_html((string)$row['name']); ?></strong></td><td><?php self::pill((string)$row['status']); ?></td><td><?php echo esc_html(self::label((string)$row['type'])); ?></td><td><?php echo esc_html(self::money((float)$row['daily_budget'])); ?></td><td><?php echo esc_html(self::money((float)$row['spend'])); ?></td><td><?php echo esc_html(number_format_i18n((int)$row['clicks'])); ?></td><td><?php echo esc_html(self::percent((float)$row['ctr'])); ?></td><td><?php echo esc_html(number_format_i18n((float)$row['conversions'], 2)); ?></td><td><?php echo esc_html(self::money((float)$row['cpa'])); ?></td></tr>
-            <?php endforeach; endif; ?></tbody></table></div>
+                <tr id="ppc-campaign-<?php echo esc_attr((string)$row['id']); ?>"><td><a href="<?php echo esc_url(self::campaignUrl((string)$row['id'])); ?>"><strong><?php echo esc_html((string)$row['name']); ?></strong></a></td><td><?php self::pill((string)$row['status']); ?></td><td><?php echo esc_html(self::label((string)$row['type'])); ?></td><td><?php echo esc_html(self::money((float)$row['daily_budget'])); ?></td><td><?php echo esc_html(self::money((float)$row['spend'])); ?></td><td><?php echo esc_html(number_format_i18n((int)$row['clicks'])); ?></td><td><?php echo esc_html(self::percent((float)$row['ctr'])); ?></td><td><?php echo esc_html(number_format_i18n((float)$row['conversions'], 2)); ?></td><td><?php echo esc_html(self::money((float)$row['cpa'])); ?></td></tr>
+            <?php endforeach; endif; ?></tbody></table></div></details>
         <?php endif; ?></article>
         <?php
     }
@@ -422,20 +526,20 @@ final class PpcIntelligenceAdmin
         <article class="wnq-module" id="ppc-conversions"><div class="wnq-module-title"><div><h3>Conversion Tracking Health</h3><p>Conversion configuration, recent activity, dates, devices, and hours.</p></div><?php self::moduleStatus($module); ?></div>
         <?php if (empty($module['available'])): self::unavailable($module); else: ?>
             <p class="wnq-module-note"><?php echo esc_html((string)($module['message'] ?? '')); ?></p>
-            <div class="wnq-health-grid"><?php foreach ((array)($module['counts'] ?? []) as $key => $count): ?><div><span><?php echo esc_html(self::label((string)$key)); ?></span><strong><?php echo esc_html((string)$count); ?></strong></div><?php endforeach; ?></div>
+            <h4>Conversion action health — Current Configuration</h4><div class="wnq-health-grid"><?php foreach ((array)($module['counts'] ?? []) as $key => $count): ?><div><span><?php echo esc_html(self::label((string)$key)); ?></span><strong><?php echo esc_html((string)$count); ?></strong></div><?php endforeach; ?></div>
             <div class="wnq-split-grid">
-                <div><h4>Conversions by device</h4><?php self::barList((array)($module['devices'] ?? []), 'conversion'); ?></div>
-                <div><h4>Conversions by hour</h4><?php $hours = []; foreach ((array)($module['hours'] ?? []) as $hour => $value) $hours[self::hourLabel((int)$hour)] = $value; self::barList($hours, 'conversion'); ?></div>
+                <div><h4>Conversions by device — Last 90 Days</h4><?php self::barList((array)($module['devices'] ?? []), 'conversion'); ?></div>
+                <div><h4>Conversions by hour — Last 90 Days</h4><?php $hours = []; foreach ((array)($module['hours'] ?? []) as $hour => $value) $hours[self::hourLabel((int)$hour)] = $value; self::barList($hours, 'conversion'); ?></div>
             </div>
-            <div class="wnq-table-scroll"><table><thead><tr><th>Conversion action</th><th>Health</th><th>Type</th><th>Goal</th><th>Status</th><th>Attribution</th><th>Last conversion</th><th>7 days</th><th>30 days</th></tr></thead><tbody>
+            <details class="wnq-detail"><summary>Conversions — Configuration and Evidence</summary><div class="wnq-table-scroll"><table><thead><tr><th>Conversion action</th><th>Health</th><th>Type</th><th>Goal</th><th>Status — Current</th><th>Attribution — Current</th><th>Last conversion — Last 90 Days</th><th>Conversions — Last 7 Days</th><th>Conversions — Last 30 Days</th></tr></thead><tbody>
             <?php if (empty($module['actions'])): ?><tr><td colspan="9">No conversion actions were returned.</td></tr><?php else: foreach ($module['actions'] as $row): ?>
                 <tr><td><strong><?php echo esc_html((string)$row['name']); ?></strong><br><small><?php echo esc_html(self::label((string)$row['category'])); ?><?php if (!empty($row['campaigns'])): ?> · <?php echo esc_html(implode(', ', array_slice((array)$row['campaigns'], 0, 3))); ?><?php endif; ?></small></td><td><?php self::pill((string)$row['classification']); ?></td><td><?php echo esc_html(self::label((string)$row['type'])); ?></td><td><?php echo !empty($row['primary']) ? 'Primary' : 'Secondary'; ?></td><td><?php echo esc_html(self::label((string)$row['status'])); ?><br><small><?php echo !empty($row['included_in_conversions']) ? 'Included in Conversions' : 'Not included'; ?></small></td><td><?php echo esc_html(self::label((string)$row['attribution_model'])); ?></td><td><?php echo esc_html((string)($row['last_conversion_date'] ?: 'No data in 90 days')); ?></td><td><?php echo esc_html(number_format_i18n((float)$row['conversions_7'], 2)); ?></td><td><?php echo esc_html(number_format_i18n((float)$row['conversions_30'], 2)); ?></td></tr>
-            <?php endforeach; endif; ?></tbody></table></div>
-            <details class="wnq-detail" open><summary>Key-event activity by date, time, and device</summary><div class="wnq-table-scroll"><table><thead><tr><th>Date</th><th>Hour</th><th>Device</th><th>Key event</th><th>Conversions</th></tr></thead><tbody>
+            <?php endforeach; endif; ?></tbody></table></div></details>
+            <details class="wnq-detail"><summary>Key-event activity by date, time, and device — Last 90 Days</summary><div class="wnq-table-scroll"><table><thead><tr><th>Date</th><th>Hour</th><th>Device</th><th>Key event</th><th>Conversions — Last 90 Days</th></tr></thead><tbody>
             <?php if (empty($module['activity'])): ?><tr><td colspan="5">No conversion activity was returned for the last 90 days.</td></tr><?php else: foreach ($module['activity'] as $row): ?>
                 <tr><td><?php echo esc_html((string)$row['date']); ?></td><td><?php echo esc_html(self::hourLabel((int)$row['hour'])); ?></td><td><?php echo esc_html(self::label((string)$row['device'])); ?></td><td><strong><?php echo esc_html((string)$row['action_name']); ?></strong></td><td><?php echo esc_html(number_format_i18n((float)$row['conversions'], 2)); ?></td></tr>
             <?php endforeach; endif; ?></tbody></table></div></details>
-            <?php if (!empty($module['timeline'])): ?><details class="wnq-detail"><summary>Daily conversion timeline</summary><div class="wnq-timeline"><?php foreach (array_reverse((array)$module['timeline'], true) as $date => $value): ?><span><b><?php echo esc_html((string)$date); ?></b><?php echo esc_html(number_format_i18n((float)$value, 2)); ?></span><?php endforeach; ?></div></details><?php endif; ?>
+            <?php if (!empty($module['timeline'])): ?><details class="wnq-detail"><summary>Daily Conversion Timeline — Last 90 Days</summary><div class="wnq-timeline"><?php foreach (array_reverse((array)$module['timeline'], true) as $date => $value): ?><span><b><?php echo esc_html((string)$date); ?></b><?php echo esc_html(number_format_i18n((float)$value, 2)); ?></span><?php endforeach; ?></div></details><?php endif; ?>
         <?php endif; ?></article>
         <?php
     }
@@ -445,10 +549,10 @@ final class PpcIntelligenceAdmin
         ?>
         <article class="wnq-module" id="ppc-changes"><div class="wnq-module-title"><div><h3>Change History</h3><p>Recent account changes reported by Google Ads.</p></div><?php self::moduleStatus($module); ?></div>
         <?php if (empty($module['available'])): self::unavailable($module); else: ?>
-            <div class="wnq-table-scroll"><table><thead><tr><th>Date and time</th><th>Resource</th><th>Operation</th><th>Campaign / ad group</th><th>Changed fields</th><th>Changed by</th></tr></thead><tbody>
+            <details class="wnq-detail"><summary>Change History — Last 30 Days</summary><div class="wnq-table-scroll"><table><thead><tr><th>Date and time</th><th>Resource</th><th>Operation</th><th>Campaign / ad group</th><th>Changed fields</th><th>Changed by</th></tr></thead><tbody>
             <?php if (empty($module['changes'])): ?><tr><td colspan="6">No changes were returned for the last 30 days.</td></tr><?php else: foreach ($module['changes'] as $row): ?>
                 <tr><td><?php echo esc_html((string)$row['date_time']); ?></td><td><?php echo esc_html(self::label((string)$row['resource_type'])); ?></td><td><?php self::pill((string)$row['operation']); ?></td><td><?php echo esc_html((string)($row['campaign'] ?: $row['ad_group'] ?: '—')); ?></td><td><?php echo esc_html(implode(', ', array_slice((array)$row['fields'], 0, 8)) ?: 'Not specified'); ?></td><td><?php echo esc_html((string)($row['user_email'] ?: self::label((string)$row['client_type']))); ?></td></tr>
-            <?php endforeach; endif; ?></tbody></table></div>
+            <?php endforeach; endif; ?></tbody></table></div></details>
         <?php endif; ?></article>
         <?php
     }
@@ -458,10 +562,10 @@ final class PpcIntelligenceAdmin
         ?>
         <article class="wnq-module" id="ppc-share"><div class="wnq-module-title"><div><h3>Impression Share</h3><p>Search visibility lost to budget or ad rank during the last 30 days.</p></div><?php self::moduleStatus($module); ?></div>
         <?php if (empty($module['available'])): self::unavailable($module); else: ?>
-            <p class="wnq-module-note"><?php echo esc_html((string)$module['message']); ?></p><div class="wnq-table-scroll"><table><thead><tr><th>Campaign</th><th>Status</th><th>Impressions</th><th>Search impression share</th><th>Lost to budget</th><th>Lost to rank</th></tr></thead><tbody>
+            <p class="wnq-module-note"><?php echo esc_html((string)$module['message']); ?></p><details class="wnq-detail"><summary>Impression Share Evidence — Last 30 Days</summary><div class="wnq-table-scroll"><table><thead><tr><th>Campaign</th><th>Status</th><th>Impressions — Last 30 Days</th><th>Search impression share — Last 30 Days</th><th>Lost to budget — Last 30 Days</th><th>Lost to rank — Last 30 Days</th></tr></thead><tbody>
             <?php if (empty($module['campaigns'])): ?><tr><td colspan="6">No eligible Search campaign impression-share data was returned.</td></tr><?php else: foreach ($module['campaigns'] as $row): ?>
                 <tr><td><strong><?php echo esc_html((string)$row['name']); ?></strong></td><td><?php self::pill((string)$row['status']); ?></td><td><?php echo esc_html(number_format_i18n((int)$row['impressions'])); ?></td><td><?php echo esc_html(self::nullablePercent($row['impression_share'])); ?></td><td><?php echo esc_html(self::nullablePercent($row['lost_budget'])); ?></td><td><?php echo esc_html(self::nullablePercent($row['lost_rank'])); ?></td></tr>
-            <?php endforeach; endif; ?></tbody></table></div>
+            <?php endforeach; endif; ?></tbody></table></div></details>
         <?php endif; ?></article>
         <?php
     }
@@ -471,10 +575,10 @@ final class PpcIntelligenceAdmin
         ?>
         <article class="wnq-module" id="ppc-budgets"><div class="wnq-module-title"><div><h3>Budget Analysis</h3><p>Current-month pacing and projections. No budgets can be changed here.</p></div><?php self::moduleStatus($module); ?></div>
         <?php if (empty($module['available'])): self::unavailable($module); else: ?>
-            <p class="wnq-module-note"><?php echo esc_html((string)$module['message']); ?></p><div class="wnq-table-scroll"><table><thead><tr><th>Campaign</th><th>Status</th><th>Daily budget</th><th>Monthly capacity</th><th>Month spend</th><th>Projected spend</th><th>Pacing</th><th>Conversions</th></tr></thead><tbody>
+            <p class="wnq-module-note"><?php echo esc_html((string)$module['message']); ?></p><details class="wnq-detail"><summary>Budget Evidence — Current Month</summary><div class="wnq-table-scroll"><table><thead><tr><th>Campaign</th><th>Status</th><th>Daily budget — Current</th><th>Monthly capacity — Current</th><th>Spend — Month to Date</th><th>Projected spend — Current Month</th><th>Pacing — Current Month</th><th>Conversions — Month to Date</th></tr></thead><tbody>
             <?php if (empty($module['campaigns'])): ?><tr><td colspan="8">No campaign budget data was returned.</td></tr><?php else: foreach ($module['campaigns'] as $row): ?>
                 <tr><td><strong><?php echo esc_html((string)$row['name']); ?></strong><?php if (!empty($row['shared_budget'])): ?><br><small>Shared budget</small><?php endif; ?></td><td><?php self::pill((string)$row['status']); ?></td><td><?php echo esc_html(self::money((float)$row['daily_budget'])); ?></td><td><?php echo esc_html(self::money((float)$row['monthly_capacity'])); ?></td><td><?php echo esc_html(self::money((float)$row['month_spend'])); ?></td><td><?php echo esc_html(self::money((float)$row['projected_spend'])); ?></td><td><?php self::pill((string)$row['pace_status']); ?><br><small><?php echo esc_html(self::percent((float)$row['pace'])); ?> of capacity</small></td><td><?php echo esc_html(number_format_i18n((float)$row['conversions'], 2)); ?><br><small><?php echo esc_html((string)$row['recommendation']); ?></small></td></tr>
-            <?php endforeach; endif; ?></tbody></table></div>
+            <?php endforeach; endif; ?></tbody></table></div></details>
         <?php endif; ?></article>
         <?php
     }
@@ -518,6 +622,17 @@ final class PpcIntelligenceAdmin
         return $date ? $date->format('g a') : (string)$hour;
     }
 
+    private static function campaignUrl(string $campaign_id): string
+    {
+        return add_query_arg('investigate_campaign', preg_replace('/\D+/', '', $campaign_id) ?: '') . '#ppc-search-terms';
+    }
+
+    private static function clearSearchCache(string $client_id): void
+    {
+        $connection = PpcAccount::getByClientId($client_id);
+        delete_transient('wnq_ppc_sqr_' . md5($client_id . '|' . (string)($connection['customer_id'] ?? '')));
+    }
+
     private static function secretField(string $label, string $name, bool $saved): void
     {
         ?><label><span><?php echo esc_html($label); ?></span><input type="password" name="<?php echo esc_attr($name); ?>" value="" placeholder="<?php echo esc_attr($saved ? 'Saved — leave blank to keep current value' : 'Required'); ?>" autocomplete="new-password"></label><?php
@@ -540,6 +655,7 @@ final class PpcIntelligenceAdmin
         ?>
         <style>
         .wnq-ppc-intelligence{max-width:1200px}.wnq-ppc-hero{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;background:linear-gradient(135deg,#07131c,#0d539e);color:#fff;padding:26px;border-radius:12px;margin:18px 0}.wnq-ppc-hero h2{color:#fff;font-size:26px;margin:3px 0 7px}.wnq-ppc-hero p{margin:0;color:#dbeafe}.wnq-ppc-eyebrow{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#f3cf55}.wnq-read-only-badge{background:#f3cf55;color:#07131c;border-radius:999px;padding:6px 11px;font-size:11px;font-weight:800;text-transform:uppercase;white-space:nowrap}.wnq-ppc-status-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}.wnq-ppc-status{background:#fff;border:1px solid #dcdcde;border-left:4px solid #dba617;border-radius:8px;padding:14px}.wnq-ppc-status.is-ok{border-left-color:#1f9d55}.wnq-ppc-status span{display:block;color:#646970;font-size:11px;text-transform:uppercase;font-weight:700;margin-bottom:5px}.wnq-ppc-status strong{display:block;color:#1d2327;font-size:14px;overflow-wrap:anywhere}.wnq-ppc-layout{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}.wnq-ppc-card,.wnq-module{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:22px}.wnq-ppc-card h3,.wnq-module h3{font-size:17px;margin:0 0 5px}.wnq-ppc-card label{display:block;margin:14px 0}.wnq-ppc-card label>span{display:block;font-weight:600;margin-bottom:5px}.wnq-ppc-card input,.wnq-ppc-card select{width:100%;max-width:none}.wnq-ppc-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}.wnq-ppc-actions-separated{border-top:1px solid #eee;padding-top:16px;justify-content:space-between}.wnq-ppc-actions form{margin:0}.wnq-ppc-test-form{margin-top:12px}.wnq-account-details{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid #e5e7eb;border-radius:8px;margin:16px 0}.wnq-account-details div{padding:12px;border-bottom:1px solid #e5e7eb}.wnq-account-details div:nth-last-child(-n+2){border-bottom:0}.wnq-account-details dt{font-size:11px;color:#646970;text-transform:uppercase;font-weight:700}.wnq-account-details dd{margin:4px 0 0;font-weight:600}.wnq-ppc-card .notice.inline{margin:14px 0;padding:1px 12px}.wnq-ppc-card .button-link-delete{color:#b32d2e}.wnq-diagnostics-shell{margin:18px 0}.wnq-diagnostics-head,.wnq-module-title{display:flex;justify-content:space-between;align-items:flex-start;gap:18px}.wnq-diagnostics-head{background:#07131c;color:#fff;padding:22px;border-radius:10px 10px 0 0}.wnq-diagnostics-head h2{color:#fff;margin:3px 0}.wnq-diagnostics-head p,.wnq-module-title p{margin:0;color:#646970}.wnq-diagnostics-head p{color:#cbd5e1}.wnq-module-nav{display:flex;gap:4px;flex-wrap:wrap;background:#fff;border:1px solid #dcdcde;padding:9px}.wnq-module-nav a{padding:7px 11px;text-decoration:none;font-weight:600}.wnq-module{margin-top:14px;scroll-margin-top:42px}.wnq-pill{display:inline-block;border-radius:999px;padding:4px 8px;background:#e5e7eb;color:#374151;font-size:11px;font-weight:700;white-space:nowrap}.wnq-pill.is-ready,.wnq-pill.is-enabled,.wnq-pill.is-healthy,.wnq-pill.is-on_track{background:#dcfce7;color:#166534}.wnq-pill.is-unavailable,.wnq-pill.is-configuration_issue,.wnq-pill.is-over{background:#fee2e2;color:#991b1b}.wnq-pill.is-partial,.wnq-pill.is-warning,.wnq-pill.is-stale,.wnq-pill.is-under{background:#fef3c7;color:#92400e}.wnq-period-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:18px 0}.wnq-period-card{border:1px solid #e5e7eb;border-radius:8px;padding:13px}.wnq-period-card>*{display:block}.wnq-period-card>strong{font-size:11px;text-transform:uppercase;color:#646970}.wnq-period-card span{margin-top:8px}.wnq-period-card b{font-size:16px;margin:4px 0}.wnq-period-card small{color:#646970}.wnq-module-summary,.wnq-module-note{color:#646970}.wnq-table-scroll{overflow:auto;margin-top:14px}.wnq-module table{width:100%;border-collapse:collapse;min-width:760px}.wnq-module th,.wnq-module td{text-align:left;padding:10px;border-bottom:1px solid #e5e7eb;vertical-align:top}.wnq-module th{font-size:11px;text-transform:uppercase;color:#646970}.wnq-health-grid{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.wnq-health-grid div{min-width:120px;background:#f8fafc;border-radius:8px;padding:10px}.wnq-health-grid span{display:block;font-size:11px;text-transform:uppercase;color:#646970}.wnq-health-grid strong{font-size:20px}.wnq-split-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:18px 0}.wnq-bars>div{display:grid;grid-template-columns:110px 1fr 110px;align-items:center;gap:8px;margin:7px 0}.wnq-bars i{height:8px;background:#e5e7eb;border-radius:99px;overflow:hidden}.wnq-bars i b{display:block;height:100%;background:#0d539e}.wnq-bars strong{font-size:11px}.wnq-unavailable{display:flex;gap:10px;align-items:center;background:#f8fafc;border-left:4px solid #94a3b8;padding:14px;margin-top:14px}.wnq-detail{margin-top:14px}.wnq-detail summary{cursor:pointer;font-weight:600}.wnq-timeline{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}.wnq-timeline span{display:flex;justify-content:space-between;background:#f8fafc;padding:8px}.wnq-timeline b{font-size:11px}@media(max-width:1000px){.wnq-period-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:900px){.wnq-ppc-status-grid{grid-template-columns:repeat(2,1fr)}.wnq-ppc-layout,.wnq-split-grid{grid-template-columns:1fr}}@media(max-width:600px){.wnq-ppc-hero,.wnq-diagnostics-head{flex-direction:column}.wnq-ppc-status-grid,.wnq-account-details,.wnq-period-grid,.wnq-timeline{grid-template-columns:1fr}.wnq-account-details div:nth-last-child(2){border-bottom:1px solid #e5e7eb}.wnq-bars>div{grid-template-columns:85px 1fr}.wnq-bars strong{grid-column:2}}
+        .wnq-findings{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:16px}.wnq-finding{border-left:5px solid #64748b;background:#f8fafc;padding:14px;border-radius:6px}.wnq-finding.is-critical{border-color:#b91c1c;background:#fff1f2}.wnq-finding.is-warning{border-color:#d97706;background:#fffbeb}.wnq-finding.is-opportunity{border-color:#2563eb;background:#eff6ff}.wnq-finding.is-healthy{border-color:#15803d;background:#f0fdf4}.wnq-finding>div{display:flex;align-items:center;gap:10px}.wnq-finding>div strong{font-size:15px}.wnq-severity{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}.wnq-finding p{margin:8px 0}.wnq-finding .button{float:right}.wnq-detail>summary,.wnq-sqr-controls summary{cursor:pointer;padding:11px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;font-weight:700}.wnq-sqr-controls{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin:15px 0}.wnq-sqr-controls>form{display:flex;gap:8px;align-items:center}.wnq-sqr-controls>details{min-width:300px}.wnq-sqr-controls>details form{padding:14px;border:1px solid #e5e7eb}.wnq-config-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.wnq-config-grid label>span{display:block;font-weight:600}.wnq-config-grid textarea{width:100%}.wnq-bulk{display:flex;align-items:center;gap:8px;margin:12px 0}.wnq-bulk small{color:#991b1b;font-weight:600}@media(max-width:782px){.wnq-findings,.wnq-config-grid{grid-template-columns:1fr}.wnq-sqr-controls{display:block}.wnq-sqr-controls>details{margin-top:10px;min-width:0}}
         </style>
         <?php
     }

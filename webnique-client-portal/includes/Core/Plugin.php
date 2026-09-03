@@ -58,6 +58,7 @@ final class Plugin
     \WNQ\Models\ClientPortal::createTables();
     \WNQ\Models\KnowledgeBase::createTables();
     \WNQ\Models\PpcAccount::createTable();
+    \WNQ\Models\PpcProposal::createTable();
     Activator::run();
   }
 
@@ -82,6 +83,7 @@ final class Plugin
     require_once WNQ_PORTAL_PATH . 'includes/Models/FinanceEntry.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/KnowledgeBase.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/PpcAccount.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Models/PpcProposal.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/Task.php';
 
     /**
@@ -102,6 +104,7 @@ final class Plugin
     require_once WNQ_PORTAL_PATH . 'includes/Services/GoogleAdsCredentials.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/GoogleAdsQueryService.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/PpcDiagnosticService.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Services/PpcSearchTermService.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/AIEngine.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramNotifier.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramAssistant.php';

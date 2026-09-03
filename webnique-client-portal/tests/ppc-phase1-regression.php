@@ -54,10 +54,12 @@ require_once dirname(__DIR__) . '/includes/Services/GoogleAdsClient.php';
 require_once dirname(__DIR__) . '/includes/Services/GoogleAdsCredentials.php';
 require_once dirname(__DIR__) . '/includes/Services/GoogleAdsQueryService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcDiagnosticService.php';
+require_once dirname(__DIR__) . '/includes/Services/PpcSearchTermService.php';
 
 use WNQ\Services\GoogleAdsCredentials;
 use WNQ\Services\GoogleAdsQueryService;
 use WNQ\Services\PpcDiagnosticService;
+use WNQ\Services\PpcSearchTermService;
 
 function assertPpc(bool $condition, string $message): void
 {
@@ -94,6 +96,16 @@ assertPpc(GoogleAdsCredentials::isConfigured($restored), 'Complete credentials s
 assertPpc(PpcDiagnosticService::classifyConversion(['status' => 'ENABLED', 'primaryForGoal' => true, 'includeInConversionsMetric' => true], ['conversions_7' => 2]) === 'healthy', 'Recent enabled conversions should classify as healthy.');
 assertPpc(PpcDiagnosticService::classifyConversion(['status' => 'ENABLED'], ['conversions_7' => 0, 'conversions_30' => 0, 'last_date' => '2026-01-01']) === 'stale', 'Previously active conversions without recent volume should classify as stale.');
 assertPpc(PpcDiagnosticService::classifyConversion(['status' => 'HIDDEN'], []) === 'configuration_issue', 'Disabled conversion actions should flag a configuration issue.');
+$geo_config = ['brand_names' => ['sns hauling'], 'services' => ['junk removal'], 'target_areas' => ['lakeland'], 'excluded_areas' => ['tampa'], 'competitors' => ['rival hauling'], 'excluded_terms' => []];
+assertPpc(PpcSearchTermService::classify('SNS Hauling', $geo_config)['classification'] === 'high_intent', 'The client’s own brand must classify as high intent.');
+assertPpc(PpcSearchTermService::classify('junk removal lakeland', $geo_config)['classification'] === 'relevant', 'Configured target areas must remain relevant.');
+assertPpc(PpcSearchTermService::classify('junk removal tampa', $geo_config)['recommended_action'] === 'human_review', 'Excluded geography must still require human review.');
+assertPpc(PpcSearchTermService::classify('junk removal orlando', $geo_config)['classification'] === 'relevant', 'An unconfigured city must not automatically become a geo negative.');
+assertPpc(PpcSearchTermService::classify('junk removal jobs', $geo_config)['recommended_action'] === 'negative_phrase', 'Employment intent should produce a reviewable negative proposal.');
+assertPpc(PpcSearchTermService::classify('junk removal reviews', $geo_config)['classification'] === 'low_intent', 'Review intent should remain a watchable low-intent query.');
+assertPpc(PpcSearchTermService::classify('rival hauling lakeland', $geo_config)['classification'] === 'competitor', 'Competitor intent must not be hidden by a target-area match.');
+$priority = PpcDiagnosticService::prioritize(['conversion_health' => ['available' => true, 'actions' => [], 'counts' => []]]);
+assertPpc(($priority[0]['severity'] ?? '') === 'critical', 'Zero active primary conversions must be a critical finding.');
 
 $client_portal_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Models/ClientPortal.php');
 $ppc_admin_source = (string)file_get_contents(dirname(__DIR__) . '/admin/PpcIntelligenceAdmin.php');
@@ -104,5 +116,7 @@ assertPpc(str_contains($ppc_admin_source, 'gwm_manage_ppc') || str_contains($ppc
 assertPpc(str_contains($ppc_admin_source, "'wnq-ppc-management'"), 'PPC Management must be registered in the WordPress admin menu.');
 assertPpc(str_contains($dashboard_source, 'Permissions::currentUserCanManagePpc()'), 'Google Ads mapping endpoint must require the dedicated PPC capability.');
 assertPpc(!preg_match('/WP_REST_Response\s*\(\s*GoogleAdsCredentials::get/s', $dashboard_source), 'REST responses must not return shared Google Ads credentials.');
+$proposal_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Models/PpcProposal.php');
+assertPpc(!preg_match('/googleAds:(?:mutate|update)|GoogleAdsClient/i', $proposal_source), 'Proposal review must not call Google Ads mutations.');
 
-echo "PPC Phase 1 regression checks passed.\n";
+echo "PPC regression checks passed.\n";

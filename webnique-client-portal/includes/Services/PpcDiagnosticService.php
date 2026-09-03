@@ -27,7 +27,7 @@ final class PpcDiagnosticService
             return $this->unavailableDashboard('Connect and test this client’s Google Ads account to load PPC diagnostics.');
         }
 
-        return [
+        $dashboard = [
             'account_diagnostic' => $this->module($customer_id, 'account', $refresh, fn() => $this->accountDiagnostic($customer_id)),
             'conversion_health'  => $this->module($customer_id, 'conversions', $refresh, fn() => $this->conversionHealth($customer_id)),
             'change_history'     => $this->module($customer_id, 'changes', $refresh, fn() => $this->changeHistory($customer_id)),
@@ -35,6 +35,48 @@ final class PpcDiagnosticService
             'budget_analysis'    => $this->module($customer_id, 'budgets', $refresh, fn() => $this->budgetAnalysis($customer_id)),
             'generated_at'       => current_time('mysql'),
         ];
+        $dashboard['findings'] = self::prioritize($dashboard);
+        return $dashboard;
+    }
+
+    public static function prioritize(array $dashboard): array
+    {
+        $findings = [];
+        $conversions = (array)($dashboard['conversion_health'] ?? []);
+        if (!empty($conversions['available'])) {
+            $active_primary = array_filter((array)($conversions['actions'] ?? []), static fn(array $action): bool => !empty($action['primary']) && !empty($action['included_in_conversions']) && ($action['status'] ?? '') === 'enabled');
+            if (!$active_primary) $findings[] = self::finding('critical', 'No active primary conversions', 'Google Ads returned zero enabled primary conversion actions included in Conversions.', 'Current configuration', 'Review conversion goals before optimizing campaigns.', 0.98);
+            $stale = (int)($conversions['counts']['stale'] ?? 0);
+            if ($stale > 0) $findings[] = self::finding('warning', 'Stale conversion actions', "{$stale} conversion action(s) had prior activity but none during the last 30 days.", 'Last 90 days', 'Confirm whether these actions are still expected to receive leads.', 0.9);
+        }
+        $budgets = (array)($dashboard['budget_analysis'] ?? []);
+        if (!empty($budgets['available'])) {
+            foreach ((array)($budgets['campaigns'] ?? []) as $campaign) {
+                if (($campaign['status'] ?? '') !== 'enabled') continue;
+                if (($campaign['pace_status'] ?? '') !== 'on_track') $findings[] = self::finding('warning', 'Campaign budget pacing is significantly off', (string)$campaign['name'] . ' is projected at ' . round((float)$campaign['pace'] * 100) . '% of its monthly budget capacity.', 'Current month', (string)$campaign['recommendation'], 0.86, (string)$campaign['id']);
+            }
+        }
+        $share = (array)($dashboard['impression_share'] ?? []);
+        if (!empty($share['available'])) {
+            foreach ((array)($share['campaigns'] ?? []) as $campaign) {
+                if (($campaign['status'] ?? '') !== 'enabled') continue;
+                $lost_budget = (float)($campaign['lost_budget'] ?? 0);
+                $lost_rank = (float)($campaign['lost_rank'] ?? 0);
+                if (max($lost_budget, $lost_rank) >= 0.25) $findings[] = self::finding('warning', 'High lost search impression share', (string)$campaign['name'] . ' lost ' . round(max($lost_budget, $lost_rank) * 100, 1) . '% to ' . ($lost_budget >= $lost_rank ? 'budget' : 'rank') . '.', 'Last 30 days', 'Investigate performance, demand, rank, and budget before making changes.', 0.9, (string)$campaign['id']);
+                elseif ($lost_budget >= 0.15) $findings[] = self::finding('opportunity', 'Potential campaign growth opportunity', (string)$campaign['name'] . ' lost ' . round($lost_budget * 100, 1) . '% search impression share to budget.', 'Last 30 days', 'Review CPA and lead quality before considering a conservative staged increase.', 0.75, (string)$campaign['id']);
+            }
+        }
+        $available = array_filter(['account_diagnostic', 'conversion_health', 'change_history', 'impression_share', 'budget_analysis'], static fn(string $key): bool => !empty($dashboard[$key]['available']));
+        if (!$findings && !$available) $findings[] = self::finding('warning', 'Diagnostics unavailable', 'Google Ads did not return any Phase 2 diagnostic modules.', 'Current refresh', 'Test the linked account and review the individual module errors.', 1.0);
+        elseif (!$findings) $findings[] = self::finding('healthy', 'No urgent PPC issues detected', 'The available Phase 2 checks did not identify a critical issue, warning, or clear opportunity.', 'Current diagnostic windows', 'Continue monitoring; healthy does not guarantee every account setting is optimal.', 0.8);
+        $order = ['critical' => 0, 'warning' => 1, 'opportunity' => 2, 'healthy' => 3];
+        usort($findings, static fn(array $a, array $b): int => ($order[$a['severity']] ?? 9) <=> ($order[$b['severity']] ?? 9));
+        return $findings;
+    }
+
+    private static function finding(string $severity, string $title, string $evidence, string $period, string $action, float $confidence, string $campaign_id = ''): array
+    {
+        return compact('severity', 'title', 'evidence', 'period', 'action', 'confidence', 'campaign_id');
     }
 
     private function module(string $customer_id, string $name, bool $refresh, callable $loader): array
