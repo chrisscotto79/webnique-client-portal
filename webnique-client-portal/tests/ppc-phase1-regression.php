@@ -68,6 +68,7 @@ require_once dirname(__DIR__) . '/includes/Services/PpcSearchTermService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcAdAuditService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcKeywordIntelligenceService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcLeadQualityService.php';
+require_once dirname(__DIR__) . '/includes/Models/PpcMutationPlan.php';
 
 use WNQ\Services\GoogleAdsCredentials;
 use WNQ\Services\GoogleAdsQueryService;
@@ -76,6 +77,7 @@ use WNQ\Services\PpcSearchTermService;
 use WNQ\Services\PpcAdAuditService;
 use WNQ\Services\PpcKeywordIntelligenceService;
 use WNQ\Services\PpcLeadQualityService;
+use WNQ\Models\PpcMutationPlan;
 
 function assertPpc(bool $condition, string $message): void
 {
@@ -144,6 +146,16 @@ assertPpc($quality_config['booked_work'] === [], 'An unmapped quality stage must
 assertPpc(PpcLeadQualityService::normalizeEventName('Qualified_Lead') === 'Qualified_Lead', 'Exact GA4 event-name case must be preserved.');
 assertPpc(PpcLeadQualityService::matchesCustomerId('123-456-7890', '1234567890'), 'GA4 lead evidence should accept the exact linked Google Ads customer ID.');
 assertPpc(!PpcLeadQualityService::matchesCustomerId('9999999999', '1234567890'), 'GA4 lead evidence must reject another Google Ads customer ID.');
+$plan_content = ['client_id' => 'client-a', 'customer_id' => '1234567890', 'entity_id' => 'campaigns/42', 'current_value' => 'PAUSED', 'proposed_value' => 'ENABLED'];
+assertPpc(hash_equals(PpcMutationPlan::contentHash($plan_content), PpcMutationPlan::contentHash(array_reverse($plan_content, true))), 'Mutation preview fingerprints must be deterministic regardless of field order.');
+assertPpc(PpcMutationPlan::confirmationMatches('approved', 'APPROVE'), 'Mutation approval should accept the exact human confirmation word.');
+assertPpc(!PpcMutationPlan::confirmationMatches('approved', 'approve'), 'Mutation approval must reject inferred or case-insensitive confirmation.');
+$audit_details = wp_json_encode(['status' => 'awaiting_approval']);
+$audit_hash = hash('sha256', implode('|', ['', 7, 'preview_created', 12, '2026-09-03 13:00:00', $audit_details]));
+$audit_events = [['plan_id' => 7, 'event_type' => 'preview_created', 'actor_id' => 12, 'created_at' => '2026-09-03 13:00:00', 'details_json' => $audit_details, 'previous_event_hash' => '', 'event_hash' => $audit_hash]];
+assertPpc(PpcMutationPlan::verifyEventChain($audit_events), 'An intact mutation audit hash chain should validate.');
+$audit_events[0]['details_json'] = wp_json_encode(['status' => 'approved']);
+assertPpc(!PpcMutationPlan::verifyEventChain($audit_events), 'A modified mutation audit event must invalidate the chain.');
 
 $client_portal_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Models/ClientPortal.php');
 $ppc_admin_source = (string)file_get_contents(dirname(__DIR__) . '/admin/PpcIntelligenceAdmin.php');
@@ -164,5 +176,8 @@ assertPpc(str_contains($analytics_source, 'getLeadQualityRows'), 'Phase 6 must u
 assertPpc(str_contains($analytics_source, "'sessionGoogleAdsCustomerId'"), 'GA4 lead-quality evidence must filter by the exact linked Google Ads customer ID.');
 assertPpc(!str_contains($analytics_source, 'landingPagePlusQueryString'), 'Lead-quality evidence must not request landing-page query strings.');
 assertPpc(!preg_match('/[\'\"](?:userId|userPseudoId|clientId|gclid)[\'\"]/', $analytics_source), 'GA4 reports must not request person-level or advertising identifiers.');
+$mutation_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Models/PpcMutationPlan.php');
+assertPpc(str_contains($mutation_source, "'APPROVE'") && str_contains($mutation_source, 'hash_equals'), 'Mutation approval must require an exact human confirmation and content fingerprint.');
+assertPpc(!preg_match('/GoogleAdsClient|GoogleAdsQueryService|function\s+(?:execute|rollback)|->mutate/i', $mutation_source), 'Phase 7 must not contain a Google Ads execution or rollback endpoint.');
 
 echo "PPC regression checks passed.\n";

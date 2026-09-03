@@ -11,6 +11,7 @@ use WNQ\Core\Permissions;
 use WNQ\Models\Client;
 use WNQ\Models\PpcAccount;
 use WNQ\Models\PpcProposal;
+use WNQ\Models\PpcMutationPlan;
 use WNQ\Services\GoogleAdsClient;
 use WNQ\Services\GoogleAdsCredentials;
 use WNQ\Services\GoogleAdsQueryService;
@@ -40,6 +41,8 @@ final class PpcIntelligenceAdmin
         add_action('admin_post_wnq_ppc_review_proposals', [self::class, 'handleReviewProposals']);
         add_action('admin_post_wnq_ppc_save_claim_sources', [self::class, 'handleSaveClaimSources']);
         add_action('admin_post_wnq_ppc_save_quality_events', [self::class, 'handleSaveQualityEvents']);
+        add_action('admin_post_wnq_ppc_create_mutation_plan', [self::class, 'handleCreateMutationPlan']);
+        add_action('admin_post_wnq_ppc_review_mutation_plan', [self::class, 'handleReviewMutationPlan']);
     }
 
     public static function addSubmenu(): void
@@ -102,6 +105,7 @@ final class PpcIntelligenceAdmin
     {
         PpcAccount::maybeUpgrade();
         PpcProposal::maybeUpgrade();
+        PpcMutationPlan::maybeUpgrade();
         GoogleAdsCredentials::migrateLegacy();
         $admin = get_role('administrator');
         if ($admin && !$admin->has_cap('gwm_manage_ppc')) {
@@ -131,6 +135,7 @@ final class PpcIntelligenceAdmin
         $keyword_intelligence = null;
         $investigations = null;
         $lead_quality = (new PpcLeadQualityService())->report($client_id, (string)($connection['customer_id'] ?? ''));
+        $mutation_plans = PpcMutationPlan::forClient($client_id);
 
         if (!empty($credential_status['configured'])) {
             $query = new GoogleAdsQueryService();
@@ -190,7 +195,7 @@ final class PpcIntelligenceAdmin
             </div>
 
             <?php if ($connection && !empty($connection['customer_id'])): ?>
-                <?php self::renderDiagnostics($diagnostics, $search_terms, $ad_audit, $keyword_intelligence, $investigations, $lead_quality, $client_id); ?>
+                <?php self::renderDiagnostics($diagnostics, $search_terms, $ad_audit, $keyword_intelligence, $investigations, $lead_quality, $mutation_plans, $connection, $client_id); ?>
             <?php endif; ?>
 
             <div class="wnq-ppc-layout">
@@ -412,6 +417,30 @@ final class PpcIntelligenceAdmin
         );
     }
 
+    public static function handleCreateMutationPlan(): void
+    {
+        $client_id = self::requestClientId();
+        self::authorize('wnq_ppc_create_mutation_plan_' . $client_id);
+        $connection = PpcAccount::getByClientId($client_id) ?: [];
+        $result = PpcMutationPlan::create($client_id, $connection, (array)wp_unslash($_POST));
+        self::finish($client_id, !empty($result['ok']), (string)($result['message'] ?? 'The mutation preview could not be created.'));
+    }
+
+    public static function handleReviewMutationPlan(): void
+    {
+        $client_id = self::requestClientId();
+        $plan_id = absint($_POST['plan_id'] ?? 0);
+        self::authorize('wnq_ppc_review_mutation_plan_' . $client_id . '_' . $plan_id);
+        $result = PpcMutationPlan::review(
+            $client_id,
+            $plan_id,
+            sanitize_key((string)wp_unslash($_POST['decision'] ?? '')),
+            sanitize_text_field((string)wp_unslash($_POST['confirmation'] ?? '')),
+            sanitize_text_field((string)wp_unslash($_POST['expected_hash'] ?? ''))
+        );
+        self::finish($client_id, !empty($result['ok']), (string)($result['message'] ?? 'The mutation preview could not be reviewed.'));
+    }
+
     private static function authorize(string $nonce_action): void
     {
         if (!self::canManage()) {
@@ -448,17 +477,17 @@ final class PpcIntelligenceAdmin
         ?><div class="wnq-ppc-status <?php echo $ok ? 'is-ok' : 'is-pending'; ?>"><span><?php echo esc_html($label); ?></span><strong><?php echo esc_html($value); ?></strong></div><?php
     }
 
-    private static function renderDiagnostics(?array $dashboard, ?array $search_terms, ?array $ad_audit, ?array $keywords, ?array $investigations, ?array $lead_quality, string $client_id): void
+    private static function renderDiagnostics(?array $dashboard, ?array $search_terms, ?array $ad_audit, ?array $keywords, ?array $investigations, ?array $lead_quality, array $mutation_plans, array $connection, string $client_id): void
     {
         $dashboard = is_array($dashboard) ? $dashboard : [];
         ?>
         <section class="wnq-diagnostics-shell">
             <div class="wnq-diagnostics-head">
-                <div><span class="wnq-ppc-eyebrow">Phases 2–6</span><h2>Account intelligence</h2><p>Read-only Google Ads diagnostics, investigations, and GA4 lead-quality evidence.</p></div>
+                <div><span class="wnq-ppc-eyebrow">Phases 2–7</span><h2>Account intelligence</h2><p>Read-only diagnostics, investigations, lead-quality evidence, and approval-gated change planning.</p></div>
                 <a class="button" href="<?php echo esc_url(add_query_arg('refresh_ppc', '1')); ?>">Refresh diagnostics</a>
             </div>
             <nav class="wnq-module-nav">
-                <a href="#ppc-attention">Attention</a><a href="#ppc-investigations">Investigations</a><a href="#ppc-account">Account</a><a href="#ppc-conversions">Conversions</a><a href="#ppc-changes">Changes</a><a href="#ppc-share">Impression share</a><a href="#ppc-budgets">Budgets</a><a href="#ppc-keywords">Keywords</a><a href="#ppc-search-terms">Search terms</a><a href="#ppc-ads">Ads &amp; claims</a><a href="#ppc-lead-quality">Lead quality</a>
+                <a href="#ppc-attention">Attention</a><a href="#ppc-investigations">Investigations</a><a href="#ppc-account">Account</a><a href="#ppc-conversions">Conversions</a><a href="#ppc-changes">Changes</a><a href="#ppc-share">Impression share</a><a href="#ppc-budgets">Budgets</a><a href="#ppc-keywords">Keywords</a><a href="#ppc-search-terms">Search terms</a><a href="#ppc-ads">Ads &amp; claims</a><a href="#ppc-lead-quality">Lead quality</a><a href="#ppc-mutation-safety">Mutation safety</a>
             </nav>
             <?php
             $findings = array_merge((array)($dashboard['findings'] ?? []), (array)($search_terms['findings'] ?? []), (array)($ad_audit['findings'] ?? []), (array)($keywords['findings'] ?? []));
@@ -482,6 +511,7 @@ final class PpcIntelligenceAdmin
             <?php self::renderSearchTerms((array)($search_terms ?? []), $client_id); ?>
             <?php self::renderAdAudit((array)($ad_audit ?? []), $client_id); ?>
             <?php self::renderLeadQuality((array)($lead_quality ?? []), $client_id); ?>
+            <?php self::renderMutationSafety($mutation_plans, $connection, $client_id); ?>
         </section>
         <?php
     }
@@ -718,6 +748,92 @@ final class PpcIntelligenceAdmin
         <?php
     }
 
+    private static function renderMutationSafety(array $plans, array $connection, string $client_id): void
+    {
+        $account_name = (string)($connection['account_name'] ?? 'Linked Google Ads account');
+        $customer_id = (string)($connection['customer_id'] ?? '');
+        ?>
+        <article class="wnq-module" id="ppc-mutation-safety">
+            <div class="wnq-module-title">
+                <div><h3>Mutation Safety</h3><p>Exact-target dry runs, human approval, rollback planning, and tamper-evident audit history.</p></div>
+                <?php self::pill('execution_disabled'); ?>
+            </div>
+            <div class="wnq-safety-banner"><strong>Nothing on this screen can modify Google Ads.</strong><span>An approval records human authorization for the exact preview only. Phase 7 intentionally provides no execution endpoint.</span></div>
+
+            <details class="wnq-detail wnq-mutation-create">
+                <summary>Create Mutation Preview — Current Account State</summary>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <?php wp_nonce_field('wnq_ppc_create_mutation_plan_' . $client_id); ?>
+                    <input type="hidden" name="action" value="wnq_ppc_create_mutation_plan">
+                    <input type="hidden" name="client_id" value="<?php echo esc_attr($client_id); ?>">
+                    <input type="hidden" name="request_token" value="<?php echo esc_attr(wp_generate_uuid4()); ?>">
+                    <p class="wnq-exact-target"><strong>Exact target:</strong> <?php echo esc_html($account_name); ?> (CID <?php echo esc_html(self::formatCustomerId($customer_id)); ?>) · 1 entity</p>
+                    <div class="wnq-mutation-form-grid">
+                        <label><span>Operation</span><select name="operation" required><option value="">Select operation</option><?php foreach (PpcMutationPlan::operations() as $value => $label): ?><option value="<?php echo esc_attr($value); ?>"><?php echo esc_html($label); ?></option><?php endforeach; ?></select></label>
+                        <label><span>Entity type</span><select name="entity_type" required><option value="">Select entity type</option><?php foreach (PpcMutationPlan::entityTypes() as $value => $label): ?><option value="<?php echo esc_attr($value); ?>"><?php echo esc_html($label); ?></option><?php endforeach; ?></select></label>
+                        <label><span>Exact entity ID or resource name</span><input type="text" name="entity_id" maxlength="255" required></label>
+                        <label><span>Exact entity name</span><input type="text" name="entity_name" maxlength="255"></label>
+                        <label><span>Reversibility</span><select name="reversibility" required><option value="">Select reversibility</option><?php foreach (PpcMutationPlan::reversibilityOptions() as $value => $label): ?><option value="<?php echo esc_attr($value); ?>"><?php echo esc_html($label); ?></option><?php endforeach; ?></select></label>
+                    </div>
+                    <div class="wnq-mutation-values">
+                        <label><span>Current value — exact snapshot</span><textarea name="current_value" rows="5" required></textarea></label>
+                        <label><span>Proposed value — exact preview</span><textarea name="proposed_value" rows="5" required></textarea></label>
+                    </div>
+                    <label><span>Evidence and reason</span><textarea name="evidence" rows="3"></textarea></label>
+                    <label><span>Rollback plan or irreversible explanation</span><textarea name="rollback_plan" rows="3" required></textarea></label>
+                    <label class="wnq-checkbox"><input type="checkbox" name="irreversible_ack" value="1"> I acknowledge that an irreversible proposal could not be restored after a future execution.</label>
+                    <p class="description">The operator-supplied current value must be reverified against live account data before any future execution. The preview expires after seven days, duplicate submissions are idempotent, and partial or fuzzy entity matching is unavailable.</p>
+                    <button class="button button-primary">Create dry-run preview</button>
+                </form>
+            </details>
+
+            <div class="wnq-mutation-list">
+                <?php if (!$plans): ?><p class="description">No mutation previews have been created for this client.</p><?php endif; ?>
+                <?php foreach ($plans as $plan): $status = (string)($plan['status'] ?? 'unknown'); ?>
+                    <details class="wnq-mutation-plan" <?php echo $status === 'awaiting_approval' ? 'open' : ''; ?>>
+                        <summary><?php self::pill($status); ?> <?php echo esc_html(self::label((string)$plan['operation'])); ?> — <?php echo esc_html((string)($plan['entity_name'] ?: $plan['entity_id'])); ?></summary>
+                        <div class="wnq-mutation-plan-body">
+                            <div class="wnq-preview-heading"><strong>MUTATION PREVIEW</strong><small>Created <?php echo esc_html(self::displayDate((string)$plan['created_at'])); ?> · Expires <?php echo esc_html(self::displayDate((string)$plan['expires_at'])); ?></small></div>
+                            <dl class="wnq-preview-meta">
+                                <div><dt>Target</dt><dd><?php echo esc_html((string)$plan['account_name']); ?> (CID <?php echo esc_html(self::formatCustomerId((string)$plan['customer_id'])); ?>)</dd></div>
+                                <div><dt>Operation</dt><dd><?php echo esc_html(PpcMutationPlan::operations()[(string)$plan['operation']] ?? self::label((string)$plan['operation'])); ?></dd></div>
+                                <div><dt>Entity</dt><dd><?php echo esc_html(PpcMutationPlan::entityTypes()[(string)$plan['entity_type']] ?? self::label((string)$plan['entity_type'])); ?> · exact ID <?php echo esc_html((string)$plan['entity_id']); ?></dd></div>
+                                <div><dt>Entities affected</dt><dd>1</dd></div>
+                                <div><dt>Reversibility</dt><dd><?php echo esc_html(PpcMutationPlan::reversibilityOptions()[(string)$plan['reversibility']] ?? self::label((string)$plan['reversibility'])); ?></dd></div>
+                                <div><dt>Preview fingerprint</dt><dd><code><?php echo esc_html((string)$plan['content_hash']); ?></code></dd></div>
+                            </dl>
+                            <div class="wnq-current-proposed">
+                                <div><span>Current</span><pre><?php echo esc_html((string)($plan['current_state']['value'] ?? '')); ?></pre></div>
+                                <b aria-hidden="true">→</b>
+                                <div><span>Proposed</span><pre><?php echo esc_html((string)($plan['proposed_state']['value'] ?? '')); ?></pre></div>
+                            </div>
+                            <?php if (!empty($plan['evidence']['reason'])): ?><p><strong>Evidence:</strong> <?php echo nl2br(esc_html((string)$plan['evidence']['reason'])); ?></p><?php endif; ?>
+                            <p><strong>Rollback plan:</strong> <?php echo nl2br(esc_html((string)$plan['rollback_plan'])); ?></p>
+
+                            <?php if ($status === 'awaiting_approval'): ?>
+                                <form class="wnq-approval-form" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                                    <?php wp_nonce_field('wnq_ppc_review_mutation_plan_' . $client_id . '_' . (int)$plan['id']); ?>
+                                    <input type="hidden" name="action" value="wnq_ppc_review_mutation_plan"><input type="hidden" name="client_id" value="<?php echo esc_attr($client_id); ?>"><input type="hidden" name="plan_id" value="<?php echo esc_attr((string)$plan['id']); ?>"><input type="hidden" name="expected_hash" value="<?php echo esc_attr((string)$plan['content_hash']); ?>">
+                                    <label><span>Decision</span><select name="decision" required><option value="">Choose</option><option value="approved">Approve exact preview</option><option value="rejected">Reject</option><option value="cancelled">Cancel</option></select></label>
+                                    <label><span>Human confirmation</span><input type="text" name="confirmation" autocomplete="off" placeholder="Type APPROVE, REJECT, or CANCEL" required></label>
+                                    <button class="button button-primary">Record decision</button>
+                                    <small>The confirmation must be typed by the human reviewer. It is never generated or filled automatically.</small>
+                                </form>
+                            <?php elseif ($status === 'approved'): ?>
+                                <p class="wnq-approved-only"><strong>Authorized only:</strong> This approval did not execute the plan. Google Ads remains unchanged.</p>
+                            <?php endif; ?>
+
+                            <details class="wnq-detail"><summary>Audit History (<?php echo esc_html((string)count((array)$plan['events'])); ?> events) — Chain <?php echo !empty($plan['audit_valid']) ? 'Valid' : 'Invalid'; ?></summary>
+                                <div class="wnq-table-scroll"><table><thead><tr><th>Date and time</th><th>Event</th><th>Actor</th><th>Event hash</th></tr></thead><tbody><?php foreach ((array)$plan['events'] as $event): ?><tr><td><?php echo esc_html(self::displayDate((string)$event['created_at'])); ?></td><td><?php echo esc_html(self::label((string)$event['event_type'])); ?></td><td>User #<?php echo esc_html((string)$event['actor_id']); ?></td><td><code><?php echo esc_html((string)$event['event_hash']); ?></code></td></tr><?php endforeach; ?></tbody></table></div>
+                            </details>
+                        </div>
+                    </details>
+                <?php endforeach; ?>
+            </div>
+        </article>
+        <?php
+    }
+
     private static function renderAccountDiagnostic(array $module): void
     {
         ?>
@@ -895,6 +1011,7 @@ final class PpcIntelligenceAdmin
         <style>
         .wnq-ppc-intelligence{max-width:1200px}.wnq-ppc-hero{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;background:linear-gradient(135deg,#07131c,#0d539e);color:#fff;padding:26px;border-radius:12px;margin:18px 0}.wnq-ppc-hero h2{color:#fff;font-size:26px;margin:3px 0 7px}.wnq-ppc-hero p{margin:0;color:#dbeafe}.wnq-ppc-eyebrow{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#f3cf55}.wnq-read-only-badge{background:#f3cf55;color:#07131c;border-radius:999px;padding:6px 11px;font-size:11px;font-weight:800;text-transform:uppercase;white-space:nowrap}.wnq-ppc-status-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}.wnq-ppc-status{background:#fff;border:1px solid #dcdcde;border-left:4px solid #dba617;border-radius:8px;padding:14px}.wnq-ppc-status.is-ok{border-left-color:#1f9d55}.wnq-ppc-status span{display:block;color:#646970;font-size:11px;text-transform:uppercase;font-weight:700;margin-bottom:5px}.wnq-ppc-status strong{display:block;color:#1d2327;font-size:14px;overflow-wrap:anywhere}.wnq-ppc-layout{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}.wnq-ppc-card,.wnq-module{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:22px}.wnq-ppc-card h3,.wnq-module h3{font-size:17px;margin:0 0 5px}.wnq-ppc-card label{display:block;margin:14px 0}.wnq-ppc-card label>span{display:block;font-weight:600;margin-bottom:5px}.wnq-ppc-card input,.wnq-ppc-card select{width:100%;max-width:none}.wnq-ppc-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}.wnq-ppc-actions-separated{border-top:1px solid #eee;padding-top:16px;justify-content:space-between}.wnq-ppc-actions form{margin:0}.wnq-ppc-test-form{margin-top:12px}.wnq-account-details{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid #e5e7eb;border-radius:8px;margin:16px 0}.wnq-account-details div{padding:12px;border-bottom:1px solid #e5e7eb}.wnq-account-details div:nth-last-child(-n+2){border-bottom:0}.wnq-account-details dt{font-size:11px;color:#646970;text-transform:uppercase;font-weight:700}.wnq-account-details dd{margin:4px 0 0;font-weight:600}.wnq-ppc-card .notice.inline{margin:14px 0;padding:1px 12px}.wnq-ppc-card .button-link-delete{color:#b32d2e}.wnq-diagnostics-shell{margin:18px 0}.wnq-diagnostics-head,.wnq-module-title{display:flex;justify-content:space-between;align-items:flex-start;gap:18px}.wnq-diagnostics-head{background:#07131c;color:#fff;padding:22px;border-radius:10px 10px 0 0}.wnq-diagnostics-head h2{color:#fff;margin:3px 0}.wnq-diagnostics-head p,.wnq-module-title p{margin:0;color:#646970}.wnq-diagnostics-head p{color:#cbd5e1}.wnq-module-nav{display:flex;gap:4px;flex-wrap:wrap;background:#fff;border:1px solid #dcdcde;padding:9px}.wnq-module-nav a{padding:7px 11px;text-decoration:none;font-weight:600}.wnq-module{margin-top:14px;scroll-margin-top:42px}.wnq-pill{display:inline-block;border-radius:999px;padding:4px 8px;background:#e5e7eb;color:#374151;font-size:11px;font-weight:700;white-space:nowrap}.wnq-pill.is-ready,.wnq-pill.is-enabled,.wnq-pill.is-healthy,.wnq-pill.is-on_track{background:#dcfce7;color:#166534}.wnq-pill.is-unavailable,.wnq-pill.is-configuration_issue,.wnq-pill.is-over{background:#fee2e2;color:#991b1b}.wnq-pill.is-partial,.wnq-pill.is-warning,.wnq-pill.is-stale,.wnq-pill.is-under{background:#fef3c7;color:#92400e}.wnq-period-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:18px 0}.wnq-period-card{border:1px solid #e5e7eb;border-radius:8px;padding:13px}.wnq-period-card>*{display:block}.wnq-period-card>strong{font-size:11px;text-transform:uppercase;color:#646970}.wnq-period-card span{margin-top:8px}.wnq-period-card b{font-size:16px;margin:4px 0}.wnq-period-card small{color:#646970}.wnq-module-summary,.wnq-module-note{color:#646970}.wnq-table-scroll{overflow:auto;margin-top:14px}.wnq-module table{width:100%;border-collapse:collapse;min-width:760px}.wnq-module th,.wnq-module td{text-align:left;padding:10px;border-bottom:1px solid #e5e7eb;vertical-align:top}.wnq-module th{font-size:11px;text-transform:uppercase;color:#646970}.wnq-health-grid{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.wnq-health-grid div{min-width:120px;background:#f8fafc;border-radius:8px;padding:10px}.wnq-health-grid span{display:block;font-size:11px;text-transform:uppercase;color:#646970}.wnq-health-grid strong{font-size:20px}.wnq-split-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:18px 0}.wnq-bars>div{display:grid;grid-template-columns:110px 1fr 110px;align-items:center;gap:8px;margin:7px 0}.wnq-bars i{height:8px;background:#e5e7eb;border-radius:99px;overflow:hidden}.wnq-bars i b{display:block;height:100%;background:#0d539e}.wnq-bars strong{font-size:11px}.wnq-unavailable{display:flex;gap:10px;align-items:center;background:#f8fafc;border-left:4px solid #94a3b8;padding:14px;margin-top:14px}.wnq-detail{margin-top:14px}.wnq-detail summary{cursor:pointer;font-weight:600}.wnq-timeline{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}.wnq-timeline span{display:flex;justify-content:space-between;background:#f8fafc;padding:8px}.wnq-timeline b{font-size:11px}@media(max-width:1000px){.wnq-period-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:900px){.wnq-ppc-status-grid{grid-template-columns:repeat(2,1fr)}.wnq-ppc-layout,.wnq-split-grid{grid-template-columns:1fr}}@media(max-width:600px){.wnq-ppc-hero,.wnq-diagnostics-head{flex-direction:column}.wnq-ppc-status-grid,.wnq-account-details,.wnq-period-grid,.wnq-timeline{grid-template-columns:1fr}.wnq-account-details div:nth-last-child(2){border-bottom:1px solid #e5e7eb}.wnq-bars>div{grid-template-columns:85px 1fr}.wnq-bars strong{grid-column:2}}
         .wnq-findings{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:16px}.wnq-finding{border-left:5px solid #64748b;background:#f8fafc;padding:14px;border-radius:6px}.wnq-finding.is-critical{border-color:#b91c1c;background:#fff1f2}.wnq-finding.is-warning{border-color:#d97706;background:#fffbeb}.wnq-finding.is-opportunity{border-color:#2563eb;background:#eff6ff}.wnq-finding.is-healthy{border-color:#15803d;background:#f0fdf4}.wnq-finding>div{display:flex;align-items:center;gap:10px}.wnq-finding>div strong{font-size:15px}.wnq-severity{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}.wnq-finding p{margin:8px 0}.wnq-finding .button{float:right}.wnq-detail>summary,.wnq-sqr-controls summary{cursor:pointer;padding:11px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;font-weight:700}.wnq-sqr-controls{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin:15px 0}.wnq-sqr-controls>form{display:flex;gap:8px;align-items:center}.wnq-sqr-controls>details{min-width:300px}.wnq-sqr-controls>details form{padding:14px;border:1px solid #e5e7eb}.wnq-config-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.wnq-config-grid label>span{display:block;font-weight:600}.wnq-config-grid textarea{width:100%}.wnq-bulk{display:flex;align-items:center;gap:8px;margin:12px 0}.wnq-bulk small{color:#991b1b;font-weight:600}.wnq-claim-config form,.wnq-quality-config form{padding:14px;border:1px solid #e5e7eb}.wnq-claim-config label span,.wnq-quality-config label span{display:block;font-weight:600;margin-bottom:6px}.wnq-claim-config textarea,.wnq-quality-config textarea{width:100%;font-family:monospace}.wnq-quality-config-grid{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:10px}.wnq-quality-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:16px 0}.wnq-quality-grid>div{border:1px solid #bfdbfe;border-top:4px solid #0d539e;border-radius:8px;padding:13px;background:#eff6ff}.wnq-quality-grid>div.is-unmapped{border-color:#dcdcde;background:#f8fafc}.wnq-quality-grid span,.wnq-quality-grid strong,.wnq-quality-grid small{display:block}.wnq-quality-grid span{font-size:11px;font-weight:700;text-transform:uppercase;color:#50575e}.wnq-quality-grid strong{font-size:20px;margin:6px 0}.wnq-quality-grid small{color:#646970}.wnq-ad-copy{min-width:360px;max-width:560px}.wnq-ad-copy ol{margin-top:5px}.wnq-ad-copy p{overflow-wrap:anywhere}.wnq-read-only-note{border-left:4px solid #0d539e;background:#eff6ff;padding:12px;margin-top:16px}.wnq-investigation{border:1px solid #e5e7eb;border-radius:8px;margin-top:10px}.wnq-investigation>summary{cursor:pointer;padding:12px;font-weight:700}.wnq-investigation>div{padding:0 14px 14px}.wnq-confidence{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}.wnq-confidence span{background:#eef2ff;padding:6px 9px;border-radius:999px;font-size:11px;font-weight:700}@media(max-width:1000px){.wnq-quality-config-grid,.wnq-quality-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:782px){.wnq-findings,.wnq-config-grid,.wnq-quality-config-grid,.wnq-quality-grid{grid-template-columns:1fr}.wnq-sqr-controls{display:block}.wnq-sqr-controls>details{margin-top:10px;min-width:0}.wnq-ad-copy{min-width:260px}}
+        .wnq-pill.is-execution_disabled{background:#e5e7eb;color:#374151}.wnq-safety-banner{display:flex;gap:10px;align-items:flex-start;border-left:4px solid #b91c1c;background:#fff1f2;padding:13px;margin:15px 0}.wnq-safety-banner span{color:#50575e}.wnq-mutation-create form{border:1px solid #e5e7eb;padding:15px}.wnq-exact-target{background:#eff6ff;padding:10px;border-radius:6px}.wnq-mutation-form-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.wnq-mutation-values{display:grid;grid-template-columns:1fr 1fr;gap:12px}.wnq-mutation-create label>span,.wnq-approval-form label>span{display:block;font-weight:600;margin:11px 0 5px}.wnq-mutation-create input[type=text],.wnq-mutation-create select,.wnq-mutation-create textarea,.wnq-approval-form input,.wnq-approval-form select{width:100%;max-width:none}.wnq-mutation-create textarea{font-family:monospace}.wnq-mutation-create .wnq-checkbox{display:block;margin:12px 0}.wnq-mutation-plan{border:1px solid #dcdcde;border-radius:8px;margin-top:12px}.wnq-mutation-plan>summary{cursor:pointer;padding:13px;font-weight:700}.wnq-mutation-plan-body{padding:0 15px 15px}.wnq-preview-heading{display:flex;justify-content:space-between;gap:12px;border-bottom:2px solid #07131c;padding-bottom:8px}.wnq-preview-heading small{color:#646970}.wnq-preview-meta{display:grid;grid-template-columns:repeat(2,1fr);border:1px solid #e5e7eb;margin:14px 0}.wnq-preview-meta div{padding:10px;border-bottom:1px solid #e5e7eb}.wnq-preview-meta dt{font-size:11px;text-transform:uppercase;color:#646970;font-weight:700}.wnq-preview-meta dd{margin:4px 0 0;overflow-wrap:anywhere}.wnq-preview-meta code,.wnq-mutation-plan table code{font-size:10px;overflow-wrap:anywhere}.wnq-current-proposed{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px}.wnq-current-proposed>div{border:1px solid #e5e7eb;border-radius:7px;padding:10px;min-width:0}.wnq-current-proposed span{font-size:11px;text-transform:uppercase;font-weight:800}.wnq-current-proposed pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0}.wnq-approval-form{display:grid;grid-template-columns:1fr 1fr auto;align-items:end;gap:10px;border:2px solid #dba617;background:#fffbeb;padding:12px;margin:14px 0}.wnq-approval-form small{grid-column:1/-1}.wnq-approved-only{border-left:4px solid #15803d;background:#f0fdf4;padding:12px}.wnq-pill.is-approved{background:#dcfce7;color:#166534}.wnq-pill.is-rejected,.wnq-pill.is-cancelled,.wnq-pill.is-expired{background:#fee2e2;color:#991b1b}.wnq-pill.is-awaiting_approval{background:#fef3c7;color:#92400e}@media(max-width:900px){.wnq-mutation-form-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:782px){.wnq-mutation-form-grid,.wnq-mutation-values,.wnq-preview-meta,.wnq-current-proposed,.wnq-approval-form{grid-template-columns:1fr}.wnq-current-proposed>b{transform:rotate(90deg);text-align:center}.wnq-preview-heading{display:block}.wnq-approval-form small{grid-column:auto}}
         </style>
         <?php
     }
