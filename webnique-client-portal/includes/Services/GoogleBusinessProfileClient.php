@@ -722,8 +722,9 @@ final class GoogleBusinessProfileClient
 
     private static function hasGoogleAdsCredentialPair(): bool
     {
-        return trim((string)get_option('wnq_google_ads_oauth_client_id', '')) !== ''
-            && trim((string)get_option('wnq_google_ads_oauth_client_secret', '')) !== '';
+        $credentials = GoogleAdsCredentials::get();
+        return trim((string)($credentials['oauth_client_id'] ?? '')) !== ''
+            && trim((string)($credentials['oauth_client_secret'] ?? '')) !== '';
     }
 
     private static function refreshToken(): string

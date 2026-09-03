@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
 
 final class GoogleAdsClient
 {
-    private const API_VERSION = 'v24';
+    private const API_VERSION = 'v25';
     private const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
     private const ADS_BASE_URL = 'https://googleads.googleapis.com/';
 
@@ -37,6 +37,51 @@ final class GoogleAdsClient
     public function errors(): array
     {
         return array_values(array_unique(array_filter($this->errors)));
+    }
+
+    /**
+     * Execute one read-only GAQL query.
+     */
+    public function query(string $customer_id, string $query): array
+    {
+        $query = trim($query);
+        if (
+            preg_match('/^SELECT\s/i', $query) !== 1
+            || str_contains($query, ';')
+            || preg_match('/\b(?:MUTATE|CREATE|UPDATE|DELETE|REMOVE|INSERT)\b/i', $query) === 1
+        ) {
+            $this->errors[] = 'Only a single read-only GAQL SELECT query is allowed.';
+            return [];
+        }
+        return $this->search($customer_id, $query);
+    }
+
+    public function accountMetadata(string $customer_id): array
+    {
+        $customer_id = $this->customerId($customer_id);
+        if ($customer_id === '') {
+            $this->errors[] = 'Google Ads customer ID is missing.';
+            return [];
+        }
+
+        $rows = $this->query(
+            $customer_id,
+            'SELECT customer.id, customer.descriptive_name, customer.status, customer.currency_code, customer.time_zone, customer.manager, customer.test_account FROM customer LIMIT 1'
+        );
+        $customer = $rows[0]['customer'] ?? [];
+        if (!is_array($customer) || !$customer) {
+            return [];
+        }
+
+        return [
+            'customer_id'  => $this->customerId((string)($customer['id'] ?? $customer_id)),
+            'name'         => sanitize_text_field((string)($customer['descriptiveName'] ?? '')),
+            'status'       => strtolower(sanitize_key((string)($customer['status'] ?? 'unknown'))),
+            'currency_code'=> sanitize_text_field((string)($customer['currencyCode'] ?? '')),
+            'time_zone'    => sanitize_text_field((string)($customer['timeZone'] ?? '')),
+            'is_manager'   => !empty($customer['manager']),
+            'test_account' => !empty($customer['testAccount']),
+        ];
     }
 
     public function listManagerAccounts(bool $refresh = false): array

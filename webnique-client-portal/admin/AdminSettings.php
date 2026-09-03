@@ -32,12 +32,14 @@ final class AdminSettings
         $stripe_has_secret_key = (string)get_option('wnq_stripe_test_secret_key', '') !== '';
         $stripe_has_webhook_secret = (string)get_option('wnq_stripe_webhook_secret', '') !== '';
         $stripe_webhook_url = rest_url('wnq/v1/notifications/stripe');
-        $google_ads_has_developer_token = (string)get_option('wnq_google_ads_developer_token', '') !== '';
-        $google_ads_access_level = get_option('wnq_google_ads_access_level', 'test');
-        $google_ads_manager_customer_id = get_option('wnq_google_ads_manager_customer_id', '');
-        $google_ads_has_oauth_client_id = (string)get_option('wnq_google_ads_oauth_client_id', '') !== '';
-        $google_ads_has_oauth_client_secret = (string)get_option('wnq_google_ads_oauth_client_secret', '') !== '';
-        $google_ads_has_refresh_token = (string)get_option('wnq_google_ads_refresh_token', '') !== '';
+        $can_manage_ppc = \WNQ\Core\Permissions::currentUserCanManagePpc();
+        $google_ads_status = \WNQ\Services\GoogleAdsCredentials::status();
+        $google_ads_has_developer_token = !empty($google_ads_status['has_developer_token']);
+        $google_ads_access_level = (string)($google_ads_status['access_level'] ?? 'test');
+        $google_ads_manager_customer_id = (string)($google_ads_status['manager_customer_id'] ?? '');
+        $google_ads_has_oauth_client_id = !empty($google_ads_status['has_oauth_client_id']);
+        $google_ads_has_oauth_client_secret = !empty($google_ads_status['has_oauth_client_secret']);
+        $google_ads_has_refresh_token = !empty($google_ads_status['has_refresh_token']);
         $google_ads_last_connection_check = (string)get_option('wnq_google_ads_last_connection_check_at', '');
         $google_ads_last_connection_error = (string)get_option('wnq_google_ads_last_connection_error', '');
         $google_ads_test = get_transient('wnq_google_ads_test_' . get_current_user_id());
@@ -217,6 +219,7 @@ final class AdminSettings
                         </table>
                     </div>
 
+                    <?php if ($can_manage_ppc): ?>
                     <div class="settings-panel">
                         <h2>Google Ads API</h2>
                         <p class="description">Internal, read-only reporting connection. Credentials stay server-side and are never sent to the client portal JavaScript. Use the developer token, MCC ID, OAuth client, OAuth secret, and OAuth refresh token here.</p>
@@ -245,6 +248,7 @@ final class AdminSettings
                                 <td>
                                     <select name="wnq_google_ads_access_level" id="wnq_google_ads_access_level">
                                         <option value="test" <?php selected($google_ads_access_level, 'test'); ?>>Test Account Access</option>
+                                        <option value="explorer" <?php selected($google_ads_access_level, 'explorer'); ?>>Explorer Access</option>
                                         <option value="basic" <?php selected($google_ads_access_level, 'basic'); ?>>Basic Access</option>
                                         <option value="standard" <?php selected($google_ads_access_level, 'standard'); ?>>Standard Access</option>
                                     </select>
@@ -293,6 +297,7 @@ final class AdminSettings
                             </div>
                         <?php endif; ?>
                     </div>
+                    <?php endif; ?>
 
                     <div class="settings-panel">
                         <h2>Telegram Notifications</h2>
@@ -429,7 +434,7 @@ final class AdminSettings
 
                     <p class="submit">
                         <button type="submit" class="button button-primary button-large">Save Settings</button>
-                        <button type="submit" name="wnq_test_google_ads" value="1" class="button button-secondary button-large">Save &amp; Test Google Ads</button>
+                        <?php if ($can_manage_ppc): ?><button type="submit" name="wnq_test_google_ads" value="1" class="button button-secondary button-large">Save &amp; Test Google Ads</button><?php endif; ?>
                         <button type="submit" name="wnq_find_telegram_groups" value="1" class="button button-secondary button-large">Save &amp; Find Telegram Groups</button>
                         <button type="submit" name="wnq_test_telegram" value="1" class="button button-secondary button-large">Save &amp; Test Telegram</button>
                         <button type="submit" name="wnq_sync_telegram_commands" value="1" class="button button-secondary button-large">Save &amp; Sync Bot Commands</button>
@@ -731,35 +736,28 @@ final class AdminSettings
             delete_option('wnq_telegram_webhook_processed_updates');
             delete_transient('wnq_telegram_webhook_retry_lock');
         }
-        $google_ads_token = sanitize_text_field(wp_unslash($_POST['wnq_google_ads_developer_token'] ?? ''));
-        $clear_google_ads_token = !empty($_POST['wnq_google_ads_clear_developer_token']);
-        if ($clear_google_ads_token) {
-            update_option('wnq_google_ads_developer_token', '', false);
-        } elseif ($google_ads_token !== '') {
-            update_option('wnq_google_ads_developer_token', $google_ads_token, false);
-        }
-        $google_ads_access_level = sanitize_key($_POST['wnq_google_ads_access_level'] ?? 'test');
-        if (!in_array($google_ads_access_level, ['test', 'basic', 'standard'], true)) {
-            $google_ads_access_level = 'test';
-        }
-        update_option('wnq_google_ads_access_level', $google_ads_access_level, false);
-        $google_ads_manager_customer_id = preg_replace('/[^0-9-]/', '', sanitize_text_field($_POST['wnq_google_ads_manager_customer_id'] ?? ''));
-        update_option('wnq_google_ads_manager_customer_id', $google_ads_manager_customer_id, false);
-        delete_transient('wnq_google_ads_accounts_' . md5($google_ads_manager_customer_id));
-        foreach ([
-            'wnq_google_ads_oauth_client_id',
-            'wnq_google_ads_oauth_client_secret',
-            'wnq_google_ads_refresh_token',
-        ] as $secret_option) {
-            $clear_key = 'wnq_google_ads_clear_' . str_replace('wnq_google_ads_', '', $secret_option);
-            if (!empty($_POST[$clear_key])) {
-                update_option($secret_option, '', false);
-                continue;
+        if (\WNQ\Core\Permissions::currentUserCanManagePpc()) {
+            $google_ads_credentials = \WNQ\Services\GoogleAdsCredentials::get();
+            $posted_credentials = [
+                'developer_token' => wp_unslash($_POST['wnq_google_ads_developer_token'] ?? ''),
+                'manager_customer_id' => wp_unslash($_POST['wnq_google_ads_manager_customer_id'] ?? ''),
+                'access_level' => sanitize_key((string)($_POST['wnq_google_ads_access_level'] ?? 'test')),
+                'oauth_client_id' => wp_unslash($_POST['wnq_google_ads_oauth_client_id'] ?? ''),
+                'oauth_client_secret' => wp_unslash($_POST['wnq_google_ads_oauth_client_secret'] ?? ''),
+                'refresh_token' => wp_unslash($_POST['wnq_google_ads_refresh_token'] ?? ''),
+            ];
+            foreach ($posted_credentials as $credential_key => $credential_value) {
+                if (trim((string)$credential_value) !== '') {
+                    $google_ads_credentials[$credential_key] = $credential_value;
+                }
             }
-            $secret_value = sanitize_text_field(wp_unslash($_POST[$secret_option] ?? ''));
-            if ($secret_value !== '') {
-                update_option($secret_option, $secret_value, false);
+            foreach (['developer_token', 'oauth_client_id', 'oauth_client_secret', 'refresh_token'] as $credential_key) {
+                if (!empty($_POST['wnq_google_ads_clear_' . $credential_key])) {
+                    $google_ads_credentials[$credential_key] = '';
+                }
             }
+            \WNQ\Services\GoogleAdsCredentials::save($google_ads_credentials, false);
+            delete_transient('wnq_google_ads_accounts_' . md5((string)($google_ads_credentials['manager_customer_id'] ?? '')));
         }
         update_option('wnq_support_name', sanitize_text_field($_POST['wnq_support_name'] ?? ''));
         update_option('wnq_support_title', sanitize_text_field($_POST['wnq_support_title'] ?? ''));
@@ -772,18 +770,12 @@ final class AdminSettings
         }
 
         $tested = false;
-        if (!empty($_POST['wnq_test_google_ads'])) {
+        if (!empty($_POST['wnq_test_google_ads']) && \WNQ\Core\Permissions::currentUserCanManagePpc()) {
             $tested = true;
             if (!class_exists('WNQ\\Services\\GoogleAdsClient')) {
                 require_once WNQ_PORTAL_PATH . 'includes/Services/GoogleAdsClient.php';
             }
-            $ads = new \WNQ\Services\GoogleAdsClient([
-                'developer_token' => (string)get_option('wnq_google_ads_developer_token', ''),
-                'manager_customer_id' => (string)get_option('wnq_google_ads_manager_customer_id', ''),
-                'oauth_client_id' => (string)get_option('wnq_google_ads_oauth_client_id', ''),
-                'oauth_client_secret' => (string)get_option('wnq_google_ads_oauth_client_secret', ''),
-                'refresh_token' => (string)get_option('wnq_google_ads_refresh_token', ''),
-            ]);
+            $ads = new \WNQ\Services\GoogleAdsClient(\WNQ\Services\GoogleAdsCredentials::get());
             $google_ads_result = $ads->connectionTest();
             set_transient('wnq_google_ads_test_' . get_current_user_id(), $google_ads_result, 5 * MINUTE_IN_SECONDS);
             update_option('wnq_google_ads_last_connection_check_at', current_time('mysql'), false);
