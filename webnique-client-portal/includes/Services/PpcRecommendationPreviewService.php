@@ -10,6 +10,7 @@ namespace WNQ\Services;
 use WNQ\Models\PpcAccount;
 use WNQ\Models\PpcMutationPlan;
 use WNQ\Models\PpcProposal;
+use WNQ\Models\Client;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -27,7 +28,7 @@ final class PpcRecommendationPreviewService
         foreach ((array)($search_terms['terms'] ?? []) as $term) {
             $action = (string)($term['recommended_action'] ?? '');
             $status = (string)($term['status'] ?? '');
-            if (in_array($status, ['approved_exact', 'approved_phrase'], true) && !empty($term['id'])) {
+            if (in_array($status, ['approved_exact', 'approved_phrase'], true) && in_array($action, ['negative_exact', 'negative_phrase'], true) && !empty($term['id'])) {
                 $candidates[] = self::candidate(
                     'ready',
                     'Approved negative: ' . (string)$term['query'],
@@ -36,7 +37,7 @@ final class PpcRecommendationPreviewService
                     (int)($term['id'] ?? 0),
                     $term
                 );
-            } elseif (in_array($status, ['approved_exact', 'approved_phrase'], true)) {
+            } elseif (in_array($status, ['approved_exact', 'approved_phrase'], true) && in_array($action, ['negative_exact', 'negative_phrase'], true)) {
                 $candidates[] = self::candidate('missing_identifier', 'Approved negative: ' . (string)$term['query'], 'The stored proposal ID is missing, so an exact safety preview cannot be created.', 'Last 30 Days', 0, $term);
             } elseif (in_array($action, ['negative_exact', 'negative_phrase'], true) && $status === 'pending') {
                 $candidates[] = self::candidate('needs_internal_review', 'Proposed negative: ' . (string)$term['query'], 'Approve or reject this search term in Search-Term Review before creating a safety preview.', 'Last 30 Days', 0, $term);
@@ -89,6 +90,9 @@ final class PpcRecommendationPreviewService
         if (!in_array($status, ['approved_exact', 'approved_phrase'], true)) {
             return ['ok' => false, 'message' => 'This recommendation has not completed internal negative-keyword review.'];
         }
+        if (!in_array((string)($proposal['recommended_action'] ?? ''), ['negative_exact', 'negative_phrase'], true)) {
+            return ['ok' => false, 'message' => 'Only a recommendation originally classified as a negative can create a negative-keyword preview.'];
+        }
         if (!in_array($scope, ['campaign', 'ad_group'], true)) {
             return ['ok' => false, 'message' => 'Choose an exact campaign or ad-group scope.'];
         }
@@ -100,14 +104,28 @@ final class PpcRecommendationPreviewService
         }
         $query_text = sanitize_text_field((string)($proposal['query_text'] ?? ''));
         $match_type = $status === 'approved_phrase' ? 'phrase' : 'exact';
-        $snapshot = self::negativeSnapshot($customer_id, $scope, $campaign_id, $ad_group_id);
-        if (empty($snapshot['available'])) {
-            return ['ok' => false, 'message' => (string)($snapshot['message'] ?? 'Current negative-keyword state could not be verified.')];
+        $inventory = (new PpcNegativeInventoryService())->inventory($customer_id, true);
+        if (empty($inventory['available']) || !empty($inventory['errors'])) {
+            return ['ok' => false, 'message' => 'Every applicable negative-keyword scope could not be verified. No preview was created.'];
         }
-        foreach ((array)$snapshot['negatives'] as $negative) {
-            if (strcasecmp(trim((string)$negative['text']), trim($query_text)) === 0 && (string)$negative['match_type'] === $match_type) {
-                return ['ok' => false, 'message' => 'This exact negative already exists in the selected scope. The recommendation is already resolved.'];
-            }
+        $duplicate = PpcNegativeInventoryService::duplicate($inventory, $query_text, $match_type, $campaign_id, $ad_group_id);
+        if ($duplicate) {
+            return ['ok' => false, 'message' => 'This exact negative already applies through ' . str_replace('_', ' ', (string)$duplicate['scope']) . '. The recommendation is already resolved.'];
+        }
+        $client = Client::getByClientId($client_id) ?: [];
+        $config = PpcSearchTermService::config($client_id, $client);
+        $protected = PpcNegativeInventoryService::protectedTerms($query_text, $config);
+        if ($protected) {
+            return ['ok' => false, 'message' => 'This recommendation overlaps protected client brand, service, or geographic terms and requires renewed human investigation.'];
+        }
+        $positive_inventory = (new PpcNegativeInventoryService())->positiveKeywords($customer_id);
+        if (empty($positive_inventory['available'])) {
+            return ['ok' => false, 'message' => 'Enabled positive keyword coverage could not be verified. No preview was created.'];
+        }
+        $prospective = ['scope'=>$scope,'negative'=>$query_text,'match_type'=>$match_type,'resource_name'=>'prospective','campaign_id'=>$campaign_id,'ad_group_id'=>$ad_group_id,'campaign_ids'=>[]];
+        $positive_conflicts = PpcNegativeInventoryService::conflicts((array)$positive_inventory['items'], [$prospective]);
+        if ($positive_conflicts) {
+            return ['ok' => false, 'message' => 'This proposed negative may block ' . count($positive_conflicts) . ' enabled positive keyword(s) in the selected scope. Renewed routing review is required.'];
         }
 
         $scope_id = $scope === 'campaign' ? $campaign_id : $ad_group_id;
@@ -121,7 +139,7 @@ final class PpcRecommendationPreviewService
             'entity_type'     => 'negative_keyword',
             'entity_id'       => $parent_resource,
             'entity_name'     => $query_text,
-            'current_value'   => "No identical {$match_type}-match negative found in {$scope_label} during the current read-only verification.",
+            'current_value'   => "No identical {$match_type}-match negative found in any applicable ad-group, campaign, shared-list, or account-level scope during the current read-only verification for {$scope_label}.",
             'proposed_value'  => "Add {$match_type}-match negative keyword \"{$query_text}\" to exact {$scope} ID {$scope_id}.",
             'evidence'        => 'Internally reviewed search-term recommendation. Last 30 Days: ' . (int)($evidence['clicks'] ?? 0) . ' clicks, ' . number_format((float)($evidence['cost'] ?? 0), 2) . ' spend, ' . number_format((float)($evidence['conversions'] ?? 0), 2) . ' conversions. Classification: ' . sanitize_key((string)($proposal['classification'] ?? '')) . '; confidence: ' . number_format((float)($proposal['confidence'] ?? 0) * 100, 0) . '%.',
             'reversibility'   => 'reversible',
@@ -146,29 +164,4 @@ final class PpcRecommendationPreviewService
         ];
     }
 
-    private static function negativeSnapshot(string $customer_id, string $scope, string $campaign_id, string $ad_group_id): array
-    {
-        $query = new GoogleAdsQueryService();
-        if ($scope === 'campaign') {
-            $gaql = "SELECT campaign_criterion.criterion_id, campaign_criterion.keyword.text, campaign_criterion.keyword.match_type FROM campaign_criterion WHERE campaign.id = {$campaign_id} AND campaign_criterion.negative = TRUE AND campaign_criterion.type = 'KEYWORD' LIMIT 10000";
-            $key = 'campaignCriterion';
-        } else {
-            $gaql = "SELECT ad_group_criterion.criterion_id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type FROM ad_group_criterion WHERE campaign.id = {$campaign_id} AND ad_group.id = {$ad_group_id} AND ad_group_criterion.negative = TRUE AND ad_group_criterion.type = 'KEYWORD' LIMIT 10000";
-            $key = 'adGroupCriterion';
-        }
-        $rows = $query->select($customer_id, $gaql);
-        if ($query->errors()) {
-            return ['available' => false, 'message' => 'Current Google Ads negative-keyword state is unavailable. No preview was created.', 'negatives' => []];
-        }
-        $negatives = [];
-        foreach ($rows as $row) {
-            $criterion = (array)($row[$key] ?? []);
-            $negatives[] = [
-                'criterion_id' => preg_replace('/\D+/', '', (string)($criterion['criterionId'] ?? '')) ?: '',
-                'text'         => sanitize_text_field((string)($criterion['keyword']['text'] ?? '')),
-                'match_type'   => strtolower(sanitize_key((string)($criterion['keyword']['matchType'] ?? 'unknown'))),
-            ];
-        }
-        return ['available' => true, 'negatives' => $negatives];
-    }
 }

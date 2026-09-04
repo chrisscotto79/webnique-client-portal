@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 3.3.0
+Stable tag: 3.4.0
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,14 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+3.4.0 - PPC Intelligence Phase 10
+
+- Adds read-only shared-list and account-level negative-keyword inventory, conflict evidence, duplicate prevention, and protected client-term safeguards.
+- Adds a persistent, auditable recommendation lifecycle that keeps review, approval, implementation, monitoring, and outcome states separate.
+- Adds conservative equal-period 7, 14, and 30-day validation evidence with minimum-data and concurrent-change safeguards.
+- Adds recent Google Ads change-event correlation and an agency recommendation-quality dashboard with client, campaign, category, severity, confidence, and date filters.
+- Adds grouped shared-budget evidence and preserves all existing preview approvals without adding Google Ads execution.
+
 3.3.0 - PPC Intelligence Phase 9
 
 - Reorganizes PPC Intelligence into focused Overview, Performance, Search & Creative, Lead Quality, and Change Control workspaces.

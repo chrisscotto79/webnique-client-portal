@@ -270,7 +270,7 @@ final class PpcDiagnosticService
         $start = $end->modify('-29 days');
         $from = $start->format('Y-m-d 00:00:00');
         $to = $end->format('Y-m-d 23:59:59');
-        $result = $this->select($customer_id, "SELECT change_event.change_date_time, change_event.change_resource_type, change_event.change_resource_name, change_event.client_type, change_event.user_email, change_event.resource_change_operation, change_event.changed_fields, campaign.name, ad_group.name FROM change_event WHERE change_event.change_date_time >= '{$from}' AND change_event.change_date_time <= '{$to}' ORDER BY change_event.change_date_time DESC LIMIT 200");
+        $result = $this->select($customer_id, "SELECT change_event.change_date_time, change_event.change_resource_type, change_event.change_resource_name, change_event.campaign, change_event.ad_group, change_event.client_type, change_event.user_email, change_event.resource_change_operation, change_event.changed_fields, campaign.id, campaign.name, ad_group.id, ad_group.name FROM change_event WHERE change_event.change_date_time >= '{$from}' AND change_event.change_date_time <= '{$to}' ORDER BY change_event.change_date_time DESC LIMIT 200");
         if (!$result['ok']) return $this->unavailable($result['error']);
         $changes = [];
         foreach ($result['rows'] as $row) {
@@ -283,7 +283,9 @@ final class PpcDiagnosticService
                 'operation' => strtolower(sanitize_key((string)($change['resourceChangeOperation'] ?? 'unknown'))),
                 'client_type' => strtolower(sanitize_key((string)($change['clientType'] ?? 'unknown'))),
                 'user_email' => sanitize_email((string)($change['userEmail'] ?? '')),
+                'campaign_id' => preg_replace('/\D+/', '', (string)($row['campaign']['id'] ?? basename((string)($change['campaign'] ?? '')))) ?: '',
                 'campaign' => sanitize_text_field((string)($row['campaign']['name'] ?? '')),
+                'ad_group_id' => preg_replace('/\D+/', '', (string)($row['adGroup']['id'] ?? basename((string)($change['adGroup'] ?? '')))) ?: '',
                 'ad_group' => sanitize_text_field((string)($row['adGroup']['name'] ?? '')),
                 'fields' => array_values(array_map('sanitize_text_field', is_array($paths) ? $paths : [])),
             ];
@@ -316,7 +318,7 @@ final class PpcDiagnosticService
     private function budgetAnalysis(string $customer_id): array
     {
         $dates = $this->dates();
-        $result = $this->select($customer_id, "SELECT campaign.id, campaign.name, campaign.status, campaign_budget.amount_micros, campaign_budget.delivery_method, campaign_budget.explicitly_shared, metrics.cost_micros, metrics.conversions, metrics.clicks FROM campaign WHERE segments.date BETWEEN '{$dates['current_month_start']}' AND '{$dates['today']}' AND campaign.status != 'REMOVED' ORDER BY metrics.cost_micros DESC LIMIT 200");
+        $result = $this->select($customer_id, "SELECT campaign.id, campaign.name, campaign.status, campaign_budget.id, campaign_budget.name, campaign_budget.resource_name, campaign_budget.amount_micros, campaign_budget.delivery_method, campaign_budget.explicitly_shared, metrics.cost_micros, metrics.conversions, metrics.clicks FROM campaign WHERE segments.date BETWEEN '{$dates['current_month_start']}' AND '{$dates['today']}' AND campaign.status != 'REMOVED' ORDER BY metrics.cost_micros DESC LIMIT 200");
         if (!$result['ok']) return $this->unavailable($result['error']);
         $elapsed = max(1, (int)current_datetime()->format('j'));
         $days_in_month = (int)current_datetime()->format('t');
@@ -350,9 +352,33 @@ final class PpcDiagnosticService
                 'clicks' => (int)($metrics['clicks'] ?? 0),
                 'delivery_method' => strtolower(sanitize_key((string)($budget['deliveryMethod'] ?? 'unknown'))),
                 'shared_budget' => !empty($budget['explicitlyShared']),
+                'budget_id' => sanitize_text_field((string)($budget['id'] ?? '')),
+                'budget_name' => sanitize_text_field((string)($budget['name'] ?? '')),
+                'budget_resource' => sanitize_text_field((string)($budget['resourceName'] ?? '')),
             ];
         }
-        return ['available' => true, 'status' => 'ready', 'message' => 'Monthly projections use current-month spend pace and do not change Google Ads budgets.', 'campaigns' => $campaigns, 'days_elapsed' => $elapsed, 'days_in_month' => $days_in_month];
+        $shared_groups = [];
+        foreach ($campaigns as $campaign) {
+            if (empty($campaign['shared_budget']) || $campaign['budget_resource'] === '') continue;
+            $key = (string)$campaign['budget_resource'];
+            if (!isset($shared_groups[$key])) {
+                $shared_groups[$key] = ['budget_id'=>$campaign['budget_id'],'budget_name'=>$campaign['budget_name'],'budget_resource'=>$key,'daily_budget'=>$campaign['daily_budget'],'campaigns'=>[],'month_spend'=>0.0,'conversions'=>0.0,'clicks'=>0];
+            }
+            $shared_groups[$key]['campaigns'][] = ['id'=>$campaign['id'],'name'=>$campaign['name'],'status'=>$campaign['status']];
+            $shared_groups[$key]['month_spend'] += (float)$campaign['month_spend'];
+            $shared_groups[$key]['conversions'] += (float)$campaign['conversions'];
+            $shared_groups[$key]['clicks'] += (int)$campaign['clicks'];
+        }
+        foreach ($shared_groups as &$group) {
+            $group['monthly_capacity'] = round((float)$group['daily_budget'] * 30.4, 2);
+            $group['month_spend'] = round((float)$group['month_spend'], 2);
+            $group['projected_spend'] = round(((float)$group['month_spend'] / $elapsed) * $days_in_month, 2);
+            $group['pace'] = $group['monthly_capacity'] > 0 ? round($group['projected_spend'] / $group['monthly_capacity'], 4) : 0;
+            $group['conversions'] = round((float)$group['conversions'], 2);
+            $group['recommendation'] = 'Review all ' . count($group['campaigns']) . ' attached campaigns and aggregate performance before considering any budget change.';
+        }
+        unset($group);
+        return ['available' => true, 'status' => 'ready', 'message' => 'Monthly projections use current-month spend pace and do not change Google Ads budgets. Shared budgets are also evaluated as grouped resources.', 'campaigns' => $campaigns, 'shared_budget_groups' => array_values($shared_groups), 'days_elapsed' => $elapsed, 'days_in_month' => $days_in_month];
     }
 
     private function select(string $customer_id, string $gaql): array
