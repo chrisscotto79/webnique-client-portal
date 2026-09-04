@@ -1,6 +1,48 @@
 (function () {
     'use strict';
 
+    var reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    document.querySelectorAll('[data-wnq-table-search]').forEach(function (input) {
+        var body = document.getElementById(input.getAttribute('data-wnq-table-search'));
+        if (!body) {
+            return;
+        }
+        var rows = Array.prototype.slice.call(body.querySelectorAll('[data-wnq-filter-row]'));
+        var count = input.closest('.wnq-table-toolbar').querySelector('[data-wnq-table-count]');
+        input.addEventListener('input', function () {
+            var query = input.value.trim().toLocaleLowerCase();
+            var visible = 0;
+            rows.forEach(function (row) {
+                var match = !query || row.textContent.toLocaleLowerCase().indexOf(query) !== -1;
+                row.hidden = !match;
+                if (match) {
+                    visible += 1;
+                }
+            });
+            if (count) {
+                count.textContent = visible + (visible === 1 ? ' record' : ' records');
+            }
+        });
+    });
+
+    document.querySelectorAll('[data-wnq-row-link]').forEach(function (row) {
+        function openRow(event) {
+            if (event.target.closest('a,button,input,select,textarea')) {
+                return;
+            }
+            if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') {
+                return;
+            }
+            if (event.type === 'keydown') {
+                event.preventDefault();
+            }
+            window.location.href = row.getAttribute('data-wnq-row-link');
+        }
+        row.addEventListener('click', openRow);
+        row.addEventListener('keydown', openRow);
+    });
+
     var root = document.querySelector('.wnq-ppc-intelligence');
     if (!root) {
         return;
@@ -63,7 +105,40 @@
     root.querySelectorAll('[data-wnq-open-workspace]').forEach(function (button) {
         button.addEventListener('click', function () {
             activateWorkspace(button.getAttribute('data-wnq-open-workspace'), false);
-            root.querySelector('.wnq-workspace-tabs').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            var targetId = button.getAttribute('data-wnq-scroll-target');
+            var severity = button.getAttribute('data-wnq-finding-filter');
+            var findingRows = Array.prototype.slice.call(root.querySelectorAll('[data-wnq-finding]'));
+            var clear = root.querySelector('.wnq-clear-finding-filter');
+            if (severity) {
+                findingRows.forEach(function (row) {
+                    row.classList.toggle('is-filtered-out', row.getAttribute('data-severity') !== severity);
+                });
+                if (clear) {
+                    clear.hidden = false;
+                }
+                targetId = 'ppc-attention';
+            }
+            var target = targetId ? document.getElementById(targetId) : root.querySelector('.wnq-workspace-tabs');
+            if (target) {
+                target.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' });
+            }
+        });
+    });
+
+    var clearFindingFilter = root.querySelector('.wnq-clear-finding-filter');
+    if (clearFindingFilter) {
+        clearFindingFilter.addEventListener('click', function () {
+            root.querySelectorAll('[data-wnq-finding]').forEach(function (row) {
+                row.classList.remove('is-filtered-out');
+            });
+            clearFindingFilter.hidden = true;
+        });
+    }
+
+    root.querySelectorAll('[data-wnq-toggle-evidence]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            var details = button.closest('.wnq-finding-row').querySelector('details');
+            details.open = !details.open;
         });
     });
 

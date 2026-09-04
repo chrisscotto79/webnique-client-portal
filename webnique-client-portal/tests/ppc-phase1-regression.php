@@ -60,6 +60,11 @@ function wp_salt(string $scheme = 'auth'): string
     return 'phase-one-test-site-salt';
 }
 
+function wp_timezone(): DateTimeZone
+{
+    return new DateTimeZone('America/New_York');
+}
+
 require_once dirname(__DIR__) . '/includes/Services/GoogleAdsClient.php';
 require_once dirname(__DIR__) . '/includes/Services/GoogleAdsCredentials.php';
 require_once dirname(__DIR__) . '/includes/Services/GoogleAdsQueryService.php';
@@ -72,6 +77,7 @@ require_once dirname(__DIR__) . '/includes/Services/PpcLeadQualityService.php';
 require_once dirname(__DIR__) . '/includes/Models/PpcMutationPlan.php';
 require_once dirname(__DIR__) . '/includes/Models/PpcRecommendation.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcRecommendationPreviewService.php';
+require_once dirname(__DIR__) . '/includes/Services/PpcChangeCorrelationService.php';
 
 use WNQ\Services\GoogleAdsCredentials;
 use WNQ\Services\GoogleAdsQueryService;
@@ -84,6 +90,7 @@ use WNQ\Services\PpcLeadQualityService;
 use WNQ\Models\PpcMutationPlan;
 use WNQ\Models\PpcRecommendation;
 use WNQ\Services\PpcRecommendationPreviewService;
+use WNQ\Services\PpcChangeCorrelationService;
 
 function assertPpc(bool $condition, string $message): void
 {
@@ -153,6 +160,16 @@ assertPpc(count($all_scope_conflicts) === 1 && $all_scope_conflicts[0]['scope'] 
 assertPpc(PpcNegativeInventoryService::conflicts([['criterion_id'=>'3','keyword'=>'junk removal lakeland','match_type'=>'exact','campaign_id'=>'99','campaign'=>'Other','ad_group_id'=>'4','ad_group'=>'Other']], $all_scope_negatives) === [], 'A campaign shared list must not affect campaigns to which it is not attached.');
 assertPpc(count(PpcNegativeInventoryService::conflicts([['criterion_id'=>'5','keyword'=>'jobs','match_type'=>'exact','campaign_id'=>'99','campaign'=>'Other','ad_group_id'=>'4','ad_group'=>'Other']], $all_scope_negatives)) === 1, 'An account-level negative list must apply across campaigns.');
 assertPpc(PpcNegativeInventoryService::conflicts($positives, []) === [], 'An account with no negative lists must return no fabricated conflicts.');
+$multi_campaign_keywords = [
+    ['criterion_id'=>'6','keyword'=>'junk removal lakeland','match_type'=>'exact','campaign_id'=>'1','campaign'=>'Search A','ad_group_id'=>'2','ad_group'=>'Junk'],
+    ['criterion_id'=>'7','keyword'=>'junk removal lakeland','match_type'=>'phrase','campaign_id'=>'3','campaign'=>'Search B','ad_group_id'=>'4','ad_group'=>'Junk'],
+];
+$multi_list_negatives = [
+    ['scope'=>'shared_list','negative'=>'junk removal','match_type'=>'phrase','resource_name'=>'customers/1234567890/sharedCriteria/11~12','shared_set_name'=>'Service exclusions','shared_set_id'=>'11','shared_set_resource'=>'customers/1234567890/sharedSets/11','campaign_ids'=>['1','3']],
+    ['scope'=>'shared_list','negative'=>'free','match_type'=>'broad','resource_name'=>'customers/1234567890/sharedCriteria/13~14','shared_set_name'=>'Free intent','shared_set_id'=>'13','shared_set_resource'=>'customers/1234567890/sharedSets/13','campaign_ids'=>['1']],
+];
+$multi_list_conflicts = PpcNegativeInventoryService::conflicts($multi_campaign_keywords, $multi_list_negatives);
+assertPpc(count($multi_list_conflicts) === 2, 'Multiple shared lists applied across multiple campaigns must preserve the exact campaign scope without fabricating conflicts.');
 assertPpc(PpcNegativeInventoryService::duplicate(['items'=>$all_scope_negatives], 'jobs', 'broad', '1', '2')['scope'] === 'account_level', 'Account-level negatives must prevent duplicate recommendations for every campaign.');
 assertPpc(count(PpcNegativeInventoryService::protectedTerms('sns hauling junk removal lakeland', $geo_config)) === 3, 'Brand, service, and target-geography overlaps must be protected before preview creation.');
 assertPpc(PpcLeadQualityService::saveConfig('phase-six-client', ['engagement' => "phone_click\nemail_click", 'raw_lead' => 'generate_lead', 'qualified_lead' => 'qualified_lead']), 'Lead-quality event mapping should save per client.');
@@ -179,6 +196,16 @@ $recommendation_event['event_hash'] = hash('sha256', implode('|', ['',12,'valida
 assertPpc(PpcRecommendation::verifyEventChain([$recommendation_event]), 'An intact recommendation lifecycle audit chain should validate.');
 $recommendation_event['to_status'] = 'successful';
 assertPpc(!PpcRecommendation::verifyEventChain([$recommendation_event]), 'A modified recommendation lifecycle audit event must invalidate the chain.');
+$date_time_method = new ReflectionMethod(PpcRecommendation::class, 'dateTime');
+$date_time_method->setAccessible(true);
+date_default_timezone_set('UTC');
+assertPpc($date_time_method->invoke(null, '2026-09-04T10:30') === '2026-09-04 10:30:00', 'External implementation time must remain in the WordPress site timezone.');
+assertPpc($date_time_method->invoke(null, '2026-02-30T10:30') === '', 'Invalid external implementation dates must be rejected.');
+$correlation_label_method = new ReflectionMethod(PpcChangeCorrelationService::class, 'evidenceLabel');
+$correlation_label_method->setAccessible(true);
+assertPpc($correlation_label_method->invoke(null, 1.0, 6, 2.0) === 'Observation', 'A tiny correlation sample must never be labeled strong evidence.');
+assertPpc($correlation_label_method->invoke(null, .2, 15, 1.0) === 'Possible contributor', 'A moderate sample may support a conservative contributor label.');
+assertPpc($correlation_label_method->invoke(null, .4, 30, 2.0) === 'Strong evidence', 'A large directional change with a robust sample may be labeled strong evidence while remaining unconfirmed.');
 $candidate_report = PpcRecommendationPreviewService::candidates(
     [
         'budget_analysis' => [
@@ -227,6 +254,10 @@ $workspace_styles = (string)file_get_contents(dirname(__DIR__) . '/assets/admin/
 assertPpc(str_contains($ppc_admin_source, 'data-wnq-workspace-tab') && str_contains($workspace_script, 'activateWorkspace'), 'Phase 9 must provide focused, accessible operations workspaces.');
 assertPpc(str_contains($workspace_script, "event.key === 'ArrowRight'") && str_contains($workspace_styles, 'prefers-reduced-motion'), 'Phase 9 navigation must include keyboard and reduced-motion support.');
 assertPpc(!preg_match('/googleAds:mutate|customers\/.+:mutate|->mutate/i', $workspace_script), 'The Phase 9 interface must not add Google Ads mutation behavior.');
+assertPpc(str_contains($ppc_admin_source, 'wnq-account-strip') && str_contains($ppc_admin_source, 'wnq-agency-command'), 'Phase 11 must provide compact client and agency command surfaces.');
+assertPpc(str_contains($ppc_admin_source, 'wnq-finding-row') && str_contains($ppc_admin_source, 'wnq-lifecycle-flow'), 'Phase 11 must keep decisions concise and lifecycle stages understandable.');
+assertPpc(str_contains($workspace_script, 'data-wnq-table-search') && str_contains($workspace_script, 'data-wnq-finding-filter'), 'Phase 11 must provide lightweight register search and finding filters.');
+assertPpc(str_contains($workspace_styles, '.wnq-ppc-intelligence .wnq-finding-row') && str_contains($workspace_styles, '.wnq-ppc-management .wnq-agency-command'), 'Phase 11 styles must remain scoped to PPC admin interfaces.');
 $negative_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Services/PpcNegativeInventoryService.php');
 $lifecycle_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Models/PpcRecommendation.php');
 $validation_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Services/PpcRecommendationValidationService.php');
@@ -239,6 +270,11 @@ foreach (['open','investigating','ready_for_review','approved','rejected','imple
 }
 assertPpc(str_contains($validation_source, '[7, 14, 30]') && str_contains($validation_source, 'correlation evidence, not causal proof'), 'Phase 10 must use conservative equal-length 7/14/30-day validation windows.');
 assertPpc(str_contains($correlation_source, "'root_cause_status'") && str_contains($correlation_source, "'unconfirmed'"), 'Change-history correlation must not claim confirmed causation.');
+assertPpc(str_contains($lifecycle_source, 'ORDER BY CASE status') && str_contains($lifecycle_source, "ELSE 7 END"), 'Active recommendation lifecycle states must sort before completed states.');
+assertPpc(str_contains($lifecycle_source, "date > current_time('mysql')"), 'External implementation timestamps must reject future dates.');
+assertPpc(str_contains($correlation_source, "modify('-32 days')"), 'Change correlation must fetch the complete three-day baseline for the 30-day Change Event window.');
+assertPpc(str_contains($correlation_source, '$robust_sample') && str_contains($correlation_source, '$moderate_sample'), 'Change correlation labels must apply minimum-data safeguards.');
+assertPpc(substr_count($ppc_admin_source, 'temporarily unavailable.') >= 6, 'Independent PPC modules must retain friendly failure isolation.');
 foreach ([$negative_source,$lifecycle_source,$validation_source,$correlation_source] as $phase_ten_source) {
     assertPpc(!preg_match('/googleAds:mutate|customers\/.+:mutate|->mutate|mutateCampaign|mutateAdGroup/i', $phase_ten_source), 'Phase 10 services must remain Google Ads read-only.');
 }

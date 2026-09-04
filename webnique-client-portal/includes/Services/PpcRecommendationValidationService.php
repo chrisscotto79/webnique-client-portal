@@ -13,9 +13,9 @@ final class PpcRecommendationValidationService
         if ($implemented === '' || strlen($customer_id) !== 10) {
             return self::unavailable('Record a verified implementation date before requesting before/after evidence.');
         }
-        $implementation_date = \DateTimeImmutable::createFromFormat('!Y-m-d', $implemented);
-        if (!$implementation_date) return self::unavailable('The implementation date is invalid.');
         $today = current_datetime()->setTime(0, 0);
+        $implementation_date = \DateTimeImmutable::createFromFormat('!Y-m-d', $implemented, $today->getTimezone());
+        if (!$implementation_date) return self::unavailable('The implementation date is invalid.');
         if ($implementation_date >= $today) return self::unavailable('Monitoring begins after at least one complete post-implementation day.');
 
         $windows = [];

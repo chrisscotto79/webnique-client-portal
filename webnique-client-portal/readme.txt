@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 3.4.0
+Stable tag: 3.5.0
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,20 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+3.5.0 - PPC Intelligence Phase 11
+
+- Refines the client workspace into a compact decision-first command center with a condensed connection strip and meaningful workspace counts.
+- Replaces oversized finding cards with prioritized rows, expandable evidence, compact investigations, and a visual recommendation workflow.
+- Adds lightweight register search, clickable portfolio rows, clearer priority and synchronization states, and grouped agency quality metrics.
+- Improves responsive density, keyboard focus, native disclosure controls, semantic status colors, and reduced-motion behavior without changing PPC calculations or API queries.
+
+3.4.1 - PPC Intelligence Phase 10 QA hardening
+
+- Keeps active recommendation states ahead of completed records and validates external implementation timestamps in the WordPress site timezone.
+- Adds conservative sample-size gates and a complete baseline window to change-history correlations.
+- Isolates additional PPC modules so an unavailable report does not take down the client workspace.
+- Strengthens recommendation audit-chain consistency and regression coverage without enabling Google Ads writes.
+
 3.4.0 - PPC Intelligence Phase 10
 
 - Adds read-only shared-list and account-level negative-keyword inventory, conflict evidence, duplicate prevention, and protected client-term safeguards.

@@ -94,6 +94,28 @@ final class PpcIntelligenceAdmin
             'to' => sanitize_text_field((string)wp_unslash($_GET['quality_to'] ?? '')),
         ];
         $quality_report = PpcRecommendation::qualityReport($quality_filters);
+        $agency_quality = count(array_filter($quality_filters, static fn($value): bool => $value !== '')) > 0
+            ? PpcRecommendation::qualityReport([])
+            : $quality_report;
+        $portfolio = [];
+        foreach ($clients as $client) {
+            $connection = PpcAccount::getByClientId((string)$client['client_id']);
+            $snapshot = PpcInvestigationService::snapshot((string)$client['client_id']);
+            $priority = (array)($snapshot['priority'] ?? []);
+            $portfolio[] = [
+                'client' => $client,
+                'connection' => $connection,
+                'priority' => $priority,
+                'tier' => isset($priority['tier']) ? (int)$priority['tier'] : 6,
+                'url' => admin_url('admin.php?page=wnq-clients&action=edit&id=' . (int)$client['id'] . '&client_tab=ppc'),
+            ];
+        }
+        usort($portfolio, static fn(array $a, array $b): int => $a['tier'] <=> $b['tier'] ?: strcasecmp((string)($a['client']['company'] ?: $a['client']['name']), (string)($b['client']['company'] ?: $b['client']['name'])));
+        $connected_count = count(array_filter($portfolio, static fn(array $row): bool => !empty($row['connection']['customer_id'])));
+        $critical_count = count(array_filter($portfolio, static fn(array $row): bool => $row['tier'] === 1));
+        $high_count = count(array_filter($portfolio, static fn(array $row): bool => $row['tier'] === 2));
+        $investigation_count = array_sum(array_map(static fn(array $row): int => (int)($row['priority']['case_count'] ?? 0), $portfolio));
+        $shared_budget_count = array_sum(array_map(static fn(array $row): int => (int)($row['priority']['shared_budgets'] ?? 0), $portfolio));
         ?>
         <div class="wrap wnq-ppc-management">
             <div class="wnq-management-hero">
@@ -105,23 +127,34 @@ final class PpcIntelligenceAdmin
                 <div class="notice notice-warning inline"><p><strong>Google Ads credentials need attention.</strong> Open any client below to securely configure and test the shared MCC connection.</p></div>
             <?php endif; ?>
 
+            <section class="wnq-agency-command" aria-labelledby="wnq-agency-command-title">
+                <div class="wnq-section-heading"><div><h2 id="wnq-agency-command-title">Agency attention queue</h2><p>Highest-priority client evidence first. Connection health is shown separately from PPC priority.</p></div></div>
+                <div class="wnq-agency-metrics">
+                    <?php self::metric('Connected accounts', (string)$connected_count, !$portfolio ? 'No clients available' : ($connected_count === count($portfolio) ? 'All clients mapped' : (count($portfolio) - $connected_count) . ' need connection'), 'neutral'); ?>
+                    <?php self::metric('Critical accounts', (string)$critical_count, $critical_count ? 'Review immediately' : 'None currently critical', 'critical'); ?>
+                    <?php self::metric('High priority', (string)$high_count, $high_count ? 'Needs attention' : 'No high-priority clients', 'warning'); ?>
+                    <?php self::metric('Open investigations', (string)$investigation_count, $investigation_count ? 'Across the portfolio' : 'No open cases', 'neutral'); ?>
+                    <?php self::metric('Shared budgets', (string)$shared_budget_count, $shared_budget_count ? 'Require grouped review' : 'None flagged', 'opportunity'); ?>
+                    <?php self::metric('Awaiting outcome', (string)($agency_quality['awaiting_outcome'] ?? 0), !empty($agency_quality['awaiting_outcome']) ? 'Monitoring required' : 'Nothing waiting', 'ready'); ?>
+                </div>
+            </section>
+
             <?php if (!$clients): ?>
                 <div class="notice notice-info inline"><p>No clients are available yet.</p></div>
             <?php else: ?>
-                <table class="wp-list-table widefat fixed striped wnq-portfolio-table">
+                <div class="wnq-table-toolbar"><label for="wnq-portfolio-search">Search clients</label><input id="wnq-portfolio-search" type="search" placeholder="Client or account" data-wnq-table-search="wnq-portfolio-body"><span data-wnq-table-count><?php echo esc_html((string)count($portfolio)); ?> clients</span></div>
+                <table class="wp-list-table widefat fixed wnq-portfolio-table">
                     <thead><tr><th>Client</th><th>Google Ads account</th><th>Priority</th><th>Investigations</th><th>Shared budgets</th><th>Last sync</th><th>Action</th></tr></thead>
-                    <tbody>
-                    <?php foreach ($clients as $client): ?>
-                        <?php $connection = PpcAccount::getByClientId((string)$client['client_id']); ?>
-                        <?php $snapshot = PpcInvestigationService::snapshot((string)$client['client_id']); $priority = (array)($snapshot['priority'] ?? []); ?>
-                        <tr>
+                    <tbody id="wnq-portfolio-body">
+                    <?php foreach ($portfolio as $portfolio_row): $client=$portfolio_row['client'];$connection=$portfolio_row['connection'];$priority=$portfolio_row['priority'];$sync_state=self::syncState((string)($connection['last_sync_at']??'')); ?>
+                        <tr class="<?php echo empty($connection['customer_id']) ? 'is-disconnected' : ''; ?>" data-wnq-filter-row data-wnq-row-link="<?php echo esc_url($portfolio_row['url']); ?>" tabindex="0">
                             <td><strong><?php echo esc_html((string)($client['company'] ?: $client['name'])); ?></strong><br><small><?php echo esc_html((string)$client['client_id']); ?></small></td>
-                            <td><?php echo esc_html((string)($connection['account_name'] ?? 'Not connected')); ?></td>
-                            <td><?php echo esc_html((string)($priority['label'] ?? 'Needs client refresh')); ?></td>
+                            <td><strong><?php echo esc_html((string)($connection['account_name'] ?? 'Not connected')); ?></strong><br><?php self::pill(!empty($connection['customer_id']) ? 'connected' : 'disconnected'); ?></td>
+                            <td><span class="wnq-priority is-tier-<?php echo esc_attr((string)$portfolio_row['tier']); ?>"><?php echo esc_html((string)($priority['label'] ?? 'Needs refresh')); ?></span></td>
                             <td><?php echo esc_html((string)($priority['case_count'] ?? '—')); ?></td>
                             <td><?php echo esc_html((string)($priority['shared_budgets'] ?? '—')); ?></td>
-                            <td><?php echo esc_html(!empty($connection['last_sync_at']) ? self::displayDate((string)$connection['last_sync_at']) : 'Never'); ?></td>
-                            <td><a class="button button-primary" href="<?php echo esc_url(admin_url('admin.php?page=wnq-clients&action=edit&id=' . (int)$client['id'] . '&client_tab=ppc')); ?>">Manage PPC</a></td>
+                            <td><span class="wnq-sync-state is-<?php echo esc_attr($sync_state); ?>"><?php echo esc_html($sync_state === 'current' ? 'Current' : ($sync_state === 'stale' ? 'Stale' : 'Never synced')); ?></span><br><small><?php echo esc_html(!empty($connection['last_sync_at']) ? self::displayDate((string)$connection['last_sync_at']) : 'Open client to refresh'); ?></small></td>
+                            <td><a class="button button-primary" href="<?php echo esc_url($portfolio_row['url']); ?>">Manage PPC</a></td>
                         </tr>
                     <?php endforeach; ?>
                     </tbody>
@@ -129,7 +162,6 @@ final class PpcIntelligenceAdmin
             <?php endif; ?>
             <?php self::renderQualityDashboard($quality_report, $quality_filters, $clients); ?>
         </div>
-        <style>.wnq-ppc-management{max-width:1200px}.wnq-ppc-management>p{font-size:14px;color:#50575e;margin-bottom:18px}.wnq-ppc-management .notice.inline{margin:12px 0 18px}.wnq-ppc-management table{margin-top:18px}.wnq-ppc-management th,.wnq-ppc-management td{vertical-align:middle}@media(max-width:782px){.wnq-ppc-management table{display:block;overflow-x:auto}}</style>
         <?php
     }
 
@@ -162,28 +194,52 @@ final class PpcIntelligenceAdmin
         $credential_status = GoogleAdsCredentials::status();
         $accounts = [];
         $discovery_error = '';
-        $diagnostics = null;
-        $search_terms = null;
+        $diagnostics = ['available' => false, 'status' => 'unavailable', 'message' => 'Account diagnostics have not loaded.', 'findings' => []];
+        $search_terms = ['available' => false, 'status' => 'unavailable', 'message' => 'Search-term intelligence has not loaded.', 'terms' => [], 'findings' => []];
         $ad_audit = null;
         $keyword_intelligence = null;
-        $investigations = null;
+        $investigations = ['available' => false, 'status' => 'unavailable', 'message' => 'Structured investigations have not loaded.', 'cases' => []];
         $change_correlations = ['available' => false, 'status' => 'unavailable', 'message' => 'Change correlation evidence has not loaded.', 'correlations' => []];
-        $lead_quality = (new PpcLeadQualityService())->report($client_id, (string)($connection['customer_id'] ?? ''));
-        $mutation_plans = PpcMutationPlan::forClient($client_id);
-        $recommendations = PpcRecommendation::forClient($client_id);
+        try {
+            $lead_quality = (new PpcLeadQualityService())->report($client_id, (string)($connection['customer_id'] ?? ''));
+        } catch (\Throwable $error) {
+            $lead_quality = ['available' => false, 'status' => 'unavailable', 'message' => 'Lead-quality intelligence is temporarily unavailable.'];
+        }
+        try {
+            $mutation_plans = PpcMutationPlan::forClient($client_id);
+        } catch (\Throwable $error) {
+            $mutation_plans = [];
+        }
+        try {
+            $recommendations = PpcRecommendation::forClient($client_id);
+        } catch (\Throwable $error) {
+            $recommendations = [];
+        }
         $preview_candidates = ['available' => false, 'status' => 'unavailable', 'candidates' => [], 'counts' => [], 'summary' => 'Recommendation evidence has not loaded.'];
 
         if (!empty($credential_status['configured'])) {
-            $query = new GoogleAdsQueryService();
-            $accounts = $query->discoverAccounts(!empty($_GET['refresh_accounts']));
-            $discovery_error = implode(' ', $query->errors());
+            try {
+                $query = new GoogleAdsQueryService();
+                $accounts = $query->discoverAccounts(!empty($_GET['refresh_accounts']));
+                $discovery_error = implode(' ', $query->errors());
+            } catch (\Throwable $error) {
+                $discovery_error = 'Google Ads account discovery is temporarily unavailable.';
+            }
         }
         if (!empty($connection['customer_id']) && !empty($credential_status['configured'])) {
-            $diagnostics = (new PpcDiagnosticService())->dashboard(
-                (string)$connection['customer_id'],
-                !empty($_GET['refresh_ppc'])
-            );
-            $search_terms = (new PpcSearchTermService())->report($client_id, (string)$connection['customer_id'], $client, !empty($_GET['refresh_ppc']));
+            try {
+                $diagnostics = (new PpcDiagnosticService())->dashboard(
+                    (string)$connection['customer_id'],
+                    !empty($_GET['refresh_ppc'])
+                );
+            } catch (\Throwable $error) {
+                $diagnostics = ['available' => false, 'status' => 'unavailable', 'message' => 'Account diagnostics are temporarily unavailable.', 'findings' => []];
+            }
+            try {
+                $search_terms = (new PpcSearchTermService())->report($client_id, (string)$connection['customer_id'], $client, !empty($_GET['refresh_ppc']));
+            } catch (\Throwable $error) {
+                $search_terms = ['available' => false, 'status' => 'unavailable', 'message' => 'Search-term intelligence is temporarily unavailable.', 'terms' => [], 'findings' => []];
+            }
             try {
                 $ad_audit = (new PpcAdAuditService())->report($client_id, (string)$connection['customer_id'], $client, !empty($_GET['refresh_ppc']));
             } catch (\Throwable $error) {
@@ -194,7 +250,11 @@ final class PpcIntelligenceAdmin
             } catch (\Throwable $error) {
                 $keyword_intelligence = ['available'=>false,'status'=>'unavailable','message'=>'Keyword intelligence is temporarily unavailable.','non_serving'=>[],'conflicts'=>[],'findings'=>[]];
             }
-            $investigations = PpcInvestigationService::build($client_id,(string)$connection['customer_id'],(array)$diagnostics,(array)$search_terms,(array)$ad_audit,(array)$keyword_intelligence);
+            try {
+                $investigations = PpcInvestigationService::build($client_id,(string)$connection['customer_id'],(array)$diagnostics,(array)$search_terms,(array)$ad_audit,(array)$keyword_intelligence);
+            } catch (\Throwable $error) {
+                $investigations = ['available' => false, 'status' => 'unavailable', 'message' => 'Structured investigations are temporarily unavailable.', 'cases' => []];
+            }
             try {
                 $change_correlations = (new PpcChangeCorrelationService())->report((string)$connection['customer_id'], (array)($diagnostics['change_history'] ?? []));
             } catch (\Throwable $error) {
@@ -203,9 +263,14 @@ final class PpcIntelligenceAdmin
             try {
                 $recommendations = PpcRecommendationLifecycleService::sync($client_id, (string)$connection['customer_id'], (array)$investigations, (array)$search_terms, (array)$keyword_intelligence);
             } catch (\Throwable $error) {
-                $recommendations = PpcRecommendation::forClient($client_id);
+                // Retain the register loaded before refresh; this module must not
+                // take the remaining account workspace down with it.
             }
-            $preview_candidates = PpcRecommendationPreviewService::candidates((array)$diagnostics, (array)$search_terms, (array)$keyword_intelligence);
+            try {
+                $preview_candidates = PpcRecommendationPreviewService::candidates((array)$diagnostics, (array)$search_terms, (array)$keyword_intelligence);
+            } catch (\Throwable $error) {
+                $preview_candidates = ['available' => false, 'status' => 'unavailable', 'candidates' => [], 'counts' => [], 'summary' => 'Recommendation evidence is temporarily unavailable.'];
+            }
             if (!empty($_GET['refresh_ppc'])) {
                 $available_modules = array_filter($diagnostics, static fn($module): bool => is_array($module) && !empty($module['available']));
                 if ($available_modules) {
@@ -228,17 +293,18 @@ final class PpcIntelligenceAdmin
             <div class="wnq-ppc-hero">
                 <div>
                     <span class="wnq-ppc-eyebrow">Internal agency workspace</span>
-                    <h2>PPC Intelligence</h2>
-                    <p>Read-only Google Ads intelligence for <?php echo esc_html((string)($client['company'] ?: $client['name'])); ?>.</p>
+                    <h2><?php echo esc_html((string)($client['company'] ?: $client['name'])); ?></h2>
+                    <p>PPC Intelligence · decision-first Google Ads evidence</p>
                 </div>
                 <span class="wnq-read-only-badge">Read only</span>
             </div>
 
-            <div class="wnq-ppc-status-grid">
+            <div class="wnq-account-strip" aria-label="Client Google Ads connection status">
+                <?php self::statusCard('Account', !empty($connection['customer_id']), !empty($connection['account_name']) ? (string)$connection['account_name'] : 'Not connected'); ?>
+                <?php self::statusCard('Customer ID', !empty($connection['customer_id']), !empty($connection['customer_id']) ? self::formatCustomerId((string)$connection['customer_id']) : 'Not mapped'); ?>
+                <?php self::statusCard('API', ($connection['connection_status'] ?? '') === 'connected', self::label((string)($connection['connection_status'] ?? 'not tested'))); ?>
+                <?php self::statusCard('Last sync', !empty($connection['last_connected_at']), !empty($connection['last_connected_at']) ? self::displayDate((string)$connection['last_connected_at']) : 'Never'); ?>
                 <?php self::statusCard('Credentials', !empty($credential_status['configured']), !empty($credential_status['configured']) ? 'Configured securely' : 'Setup required'); ?>
-                <?php self::statusCard('Client account', !empty($connection['customer_id']), !empty($connection['account_name']) ? (string)$connection['account_name'] : 'Not connected'); ?>
-                <?php self::statusCard('API status', ($connection['connection_status'] ?? '') === 'connected', ucfirst((string)($connection['connection_status'] ?? 'not tested'))); ?>
-                <?php self::statusCard('Last successful sync', !empty($connection['last_connected_at']), !empty($connection['last_connected_at']) ? self::displayDate((string)$connection['last_connected_at']) : 'Never'); ?>
             </div>
 
             <?php if ($connection && !empty($connection['customer_id'])): ?>
@@ -246,7 +312,7 @@ final class PpcIntelligenceAdmin
             <?php endif; ?>
 
             <details class="wnq-connection-settings" <?php echo empty($connection['customer_id']) || empty($credential_status['configured']) ? 'open' : ''; ?>>
-                <summary><span><strong>Connection &amp; security settings</strong><small>Exact client mapping, account testing, and encrypted server-side credentials</small></span><span class="wnq-settings-state"><?php echo esc_html(!empty($connection['customer_id']) && !empty($credential_status['configured']) ? 'Configured' : 'Needs setup'); ?></span></summary>
+                <summary><span><strong>Connection &amp; security</strong><small>Exact account mapping and encrypted server-side credentials</small></span><span class="wnq-settings-state"><?php echo esc_html(!empty($connection['customer_id']) && !empty($credential_status['configured']) ? 'Configured ✓ · Manage' : 'Needs setup · Open'); ?></span></summary>
             <div class="wnq-ppc-layout">
                 <section class="wnq-ppc-card">
                     <h3>Client account connection</h3>
@@ -529,9 +595,13 @@ final class PpcIntelligenceAdmin
         if (!$recommendation || !$connection || !hash_equals(preg_replace('/\D+/', '', (string)$recommendation['customer_id']) ?: '', preg_replace('/\D+/', '', (string)$connection['customer_id']) ?: '')) {
             self::finish($client_id, false, 'The recommendation no longer matches this client’s exact Google Ads account.');
         }
-        $dashboard = (new PpcDiagnosticService())->dashboard((string)$connection['customer_id'], true);
-        $validation = (new PpcRecommendationValidationService())->validate($recommendation, (array)($dashboard['change_history'] ?? []));
-        $saved = PpcRecommendation::recordValidation($client_id, $recommendation_id, $validation);
+        try {
+            $dashboard = (new PpcDiagnosticService())->dashboard((string)$connection['customer_id'], true);
+            $validation = (new PpcRecommendationValidationService())->validate($recommendation, (array)($dashboard['change_history'] ?? []));
+            $saved = PpcRecommendation::recordValidation($client_id, $recommendation_id, $validation);
+        } catch (\Throwable $error) {
+            self::finish($client_id, false, 'Before/after evidence is temporarily unavailable. No Google Ads change was made.');
+        }
         self::finish($client_id, $saved, $saved ? 'Before/after evidence refreshed. No Google Ads change was made.' : 'Before/after evidence could not be stored.');
     }
 
@@ -568,7 +638,12 @@ final class PpcIntelligenceAdmin
 
     private static function statusCard(string $label, bool $ok, string $value): void
     {
-        ?><div class="wnq-ppc-status <?php echo $ok ? 'is-ok' : 'is-pending'; ?>"><span><?php echo esc_html($label); ?></span><strong><?php echo esc_html($value); ?></strong></div><?php
+        ?><div class="wnq-account-status <?php echo $ok ? 'is-ok' : 'is-pending'; ?>"><span><?php echo esc_html($label); ?></span><strong><?php echo esc_html($value); ?></strong></div><?php
+    }
+
+    private static function metric(string $label, string $value, string $note, string $tone = 'neutral'): void
+    {
+        ?><div class="wnq-compact-metric is-<?php echo esc_attr(sanitize_key($tone)); ?>"><span><?php echo esc_html($label); ?></span><strong><?php echo esc_html($value); ?></strong><small><?php echo esc_html($note); ?></small></div><?php
     }
 
     private static function renderDiagnostics(?array $dashboard, ?array $search_terms, ?array $ad_audit, ?array $keywords, ?array $investigations, array $change_correlations, ?array $lead_quality, array $recommendations, array $preview_candidates, array $mutation_plans, array $connection, string $client_id): void
@@ -580,26 +655,29 @@ final class PpcIntelligenceAdmin
         $open_investigations = count(array_filter($investigation_cases, static fn(array $case): bool => !in_array((string)($case['status'] ?? ''), ['resolved', 'healthy'], true)));
         $plan_counts = array_count_values(array_map(static fn(array $plan): string => sanitize_key((string)($plan['status'] ?? 'unknown')), $mutation_plans));
         $ready_count = (int)($preview_candidates['counts']['ready'] ?? 0);
+        $search_count = count(array_filter($findings, static fn(array $finding): bool => in_array((string)($finding['section'] ?? ''), ['ppc-search-terms','ppc-ads','ppc-keywords'], true)));
+        $actionable_count = (int)($finding_counts['critical'] ?? 0) + (int)($finding_counts['warning'] ?? 0) + (int)($finding_counts['opportunity'] ?? 0);
+        $control_count = $ready_count + (int)($plan_counts['awaiting_approval'] ?? 0);
         ?>
         <section class="wnq-diagnostics-shell">
             <div class="wnq-diagnostics-head">
-                <div><span class="wnq-ppc-eyebrow">Phase 10 · Intelligence validation</span><h2>Account intelligence</h2><p>Start with decisions, preserve the review trail, then validate documented outcomes.</p></div>
+                <div><span class="wnq-ppc-eyebrow">Phase 11 · Operations workspace</span><h2>Account intelligence</h2><p>See the decision first; open supporting evidence only when needed.</p></div>
                 <a class="button" href="<?php echo esc_url(add_query_arg('refresh_ppc', '1')); ?>">Refresh diagnostics</a>
             </div>
             <div class="wnq-command-center" aria-label="PPC operations summary">
-                <button type="button" class="wnq-command-card is-critical" data-wnq-open-workspace="overview"><span>Critical</span><strong><?php echo esc_html((string)($finding_counts['critical'] ?? 0)); ?></strong><small>requires immediate review</small></button>
-                <button type="button" class="wnq-command-card is-warning" data-wnq-open-workspace="overview"><span>Warnings</span><strong><?php echo esc_html((string)($finding_counts['warning'] ?? 0)); ?></strong><small>needs attention</small></button>
-                <button type="button" class="wnq-command-card is-opportunity" data-wnq-open-workspace="overview"><span>Opportunities</span><strong><?php echo esc_html((string)($finding_counts['opportunity'] ?? 0)); ?></strong><small>potential improvements</small></button>
-                <button type="button" class="wnq-command-card is-investigation" data-wnq-open-workspace="overview"><span>Open investigations</span><strong><?php echo esc_html((string)$open_investigations); ?></strong><small>structured cases</small></button>
+                <button type="button" class="wnq-command-card is-critical" data-wnq-open-workspace="overview" data-wnq-finding-filter="critical"><span>Critical</span><strong><?php echo esc_html((string)($finding_counts['critical'] ?? 0)); ?></strong><small>review now</small></button>
+                <button type="button" class="wnq-command-card is-warning" data-wnq-open-workspace="overview" data-wnq-finding-filter="warning"><span>Warnings</span><strong><?php echo esc_html((string)($finding_counts['warning'] ?? 0)); ?></strong><small>needs attention</small></button>
+                <button type="button" class="wnq-command-card is-opportunity" data-wnq-open-workspace="overview" data-wnq-finding-filter="opportunity"><span>Opportunities</span><strong><?php echo esc_html((string)($finding_counts['opportunity'] ?? 0)); ?></strong><small>review next</small></button>
+                <button type="button" class="wnq-command-card is-investigation" data-wnq-open-workspace="overview" data-wnq-scroll-target="ppc-investigations"><span>Investigations</span><strong><?php echo esc_html((string)$open_investigations); ?></strong><small>open cases</small></button>
                 <button type="button" class="wnq-command-card is-ready" data-wnq-open-workspace="control"><span>Ready for preview</span><strong><?php echo esc_html((string)$ready_count); ?></strong><small>internally reviewed</small></button>
                 <button type="button" class="wnq-command-card is-approval" data-wnq-open-workspace="control"><span>Awaiting approval</span><strong><?php echo esc_html((string)($plan_counts['awaiting_approval'] ?? 0)); ?></strong><small>exact dry runs</small></button>
             </div>
             <nav class="wnq-workspace-tabs" role="tablist" aria-label="PPC Intelligence workspaces">
-                <button type="button" role="tab" aria-selected="true" aria-controls="ppc-workspace-overview" id="ppc-tab-overview" data-wnq-workspace-tab="overview">Overview</button>
+                <button type="button" role="tab" aria-selected="true" aria-controls="ppc-workspace-overview" id="ppc-tab-overview" data-wnq-workspace-tab="overview">Overview<?php if($actionable_count):?><span><?php echo esc_html((string)$actionable_count);?></span><?php endif;?></button>
                 <button type="button" role="tab" aria-selected="false" aria-controls="ppc-workspace-performance" id="ppc-tab-performance" data-wnq-workspace-tab="performance">Performance</button>
-                <button type="button" role="tab" aria-selected="false" aria-controls="ppc-workspace-search" id="ppc-tab-search" data-wnq-workspace-tab="search">Search &amp; creative</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="ppc-workspace-search" id="ppc-tab-search" data-wnq-workspace-tab="search">Search &amp; creative<?php if($search_count):?><span><?php echo esc_html((string)$search_count);?></span><?php endif;?></button>
                 <button type="button" role="tab" aria-selected="false" aria-controls="ppc-workspace-quality" id="ppc-tab-quality" data-wnq-workspace-tab="quality">Lead quality</button>
-                <button type="button" role="tab" aria-selected="false" aria-controls="ppc-workspace-control" id="ppc-tab-control" data-wnq-workspace-tab="control">Change control</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="ppc-workspace-control" id="ppc-tab-control" data-wnq-workspace-tab="control">Change control<?php if($control_count):?><span><?php echo esc_html((string)$control_count);?></span><?php endif;?></button>
             </nav>
             <details class="wnq-section-index"><summary>Jump to a specific report</summary><nav class="wnq-module-nav">
                 <a href="#ppc-attention">Attention</a><a href="#ppc-investigations">Investigations</a><a href="#ppc-recommendations">Lifecycle</a><a href="#ppc-account">Account</a><a href="#ppc-conversions">Conversions</a><a href="#ppc-changes">Changes</a><a href="#ppc-change-correlations">Correlations</a><a href="#ppc-validation">Validation</a><a href="#ppc-share">Impression share</a><a href="#ppc-budgets">Budgets</a><a href="#ppc-keywords">Keywords</a><a href="#ppc-search-terms">Search terms</a><a href="#ppc-ads">Ads &amp; claims</a><a href="#ppc-lead-quality">Lead quality</a><a href="#ppc-mutation-safety">Mutation safety</a>
@@ -648,19 +726,19 @@ final class PpcIntelligenceAdmin
     private static function renderAttention(array $findings): void
     {
         $order = ['critical' => 0, 'warning' => 1, 'opportunity' => 2, 'healthy' => 3];
-        usort($findings, static fn(array $a, array $b): int => ($order[$a['severity'] ?? ''] ?? 9) <=> ($order[$b['severity'] ?? ''] ?? 9));
+        usort($findings, static fn(array $a, array $b): int => ($order[$a['severity'] ?? ''] ?? 9) <=> ($order[$b['severity'] ?? ''] ?? 9) ?: ((float)($b['confidence'] ?? 0) <=> (float)($a['confidence'] ?? 0)));
         ?>
-        <article class="wnq-module wnq-attention" id="ppc-attention"><div class="wnq-module-title"><div><h3>What needs my attention?</h3><p>Prioritized decisions from the available PPC evidence.</p></div></div>
+        <article class="wnq-module wnq-attention" id="ppc-attention"><div class="wnq-module-title"><div><h3>What needs my attention?</h3><p>Prioritized decisions from the available PPC evidence.</p></div><button type="button" class="button wnq-clear-finding-filter" hidden>Show all findings</button></div>
             <div class="wnq-findings">
-            <?php foreach ($findings as $finding): ?>
-                <div class="wnq-finding is-<?php echo esc_attr(sanitize_key((string)$finding['severity'])); ?>">
-                    <div><span class="wnq-severity"><?php echo esc_html(self::label((string)$finding['severity'])); ?></span><strong><?php echo esc_html((string)$finding['title']); ?></strong></div>
-                    <p><b>Evidence — <?php echo esc_html((string)$finding['period']); ?>:</b> <?php echo esc_html((string)$finding['evidence']); ?></p>
-                    <p><b>Recommended action:</b> <?php echo esc_html((string)$finding['action']); ?></p>
-                    <small>Confidence: <?php echo esc_html(number_format_i18n((float)$finding['confidence'] * 100, 0)); ?>%</small>
-                    <?php if (!empty($finding['campaign_id'])): ?><a class="button" href="<?php echo esc_url(($finding['section'] ?? '') === 'ppc-ads' ? self::adCampaignUrl((string)$finding['campaign_id']) : (($finding['section'] ?? '') === 'ppc-keywords' ? self::keywordCampaignUrl((string)$finding['campaign_id']) : self::campaignUrl((string)$finding['campaign_id']))); ?>">Investigate campaign</a><?php endif; ?>
+            <?php if(!$findings):?><div class="wnq-empty-state"><strong>Nothing requires attention.</strong><span>No actionable finding was returned by the available evidence.</span></div><?php else:foreach ($findings as $finding): $severity=sanitize_key((string)$finding['severity']);$campaign=(string)($finding['campaign']??($finding['campaign_name']??'')); ?>
+                <div class="wnq-finding-row is-<?php echo esc_attr($severity); ?>" data-wnq-finding data-severity="<?php echo esc_attr($severity); ?>">
+                    <details>
+                        <summary><span class="wnq-severity"><?php echo esc_html(self::label($severity)); ?></span><span class="wnq-finding-copy"><strong><?php echo esc_html((string)$finding['title']); ?></strong><small><?php echo esc_html(wp_trim_words((string)$finding['evidence'],18)); ?></small></span><span class="wnq-finding-meta"><?php if($campaign!==''||!empty($finding['campaign_id'])):?><small><?php echo esc_html($campaign!==''?$campaign:'Campaign '.$finding['campaign_id']); ?></small><?php endif;?><b title="Recommendation confidence based on the available evidence."><?php echo esc_html(number_format_i18n((float)$finding['confidence'] * 100, 0)); ?>% confidence</b></span></summary>
+                        <div class="wnq-finding-evidence"><p><b>Evidence · <?php echo esc_html((string)$finding['period']); ?></b><br><?php echo esc_html((string)$finding['evidence']); ?></p><p><b>Recommended next action</b><br><?php echo esc_html((string)$finding['action']); ?></p></div>
+                    </details>
+                    <?php if (!empty($finding['campaign_id'])): ?><a class="button" href="<?php echo esc_url(($finding['section'] ?? '') === 'ppc-ads' ? self::adCampaignUrl((string)$finding['campaign_id']) : (($finding['section'] ?? '') === 'ppc-keywords' ? self::keywordCampaignUrl((string)$finding['campaign_id']) : self::campaignUrl((string)$finding['campaign_id']))); ?>">Investigate</a><?php else:?><button type="button" class="button" data-wnq-toggle-evidence>Evidence</button><?php endif; ?>
                 </div>
-            <?php endforeach; ?>
+            <?php endforeach;endif; ?>
             </div>
         </article>
         <?php
@@ -669,9 +747,9 @@ final class PpcIntelligenceAdmin
     private static function renderInvestigations(array $report): void
     {
         $cases=(array)($report['cases']??[]);$priority=(array)($report['priority']??[]);
-        ?><article class="wnq-module" id="ppc-investigations"><div class="wnq-module-title"><div><h3>Structured Investigations</h3><p>Problem → hypotheses → evidence → root-cause status → recommendation.</p></div><?php self::moduleStatus($report); ?></div>
+        ?><article class="wnq-module" id="ppc-investigations"><div class="wnq-module-title"><div><h3>Structured Investigations</h3><p>Open a case only when you need the reasoning and supporting evidence.</p></div><?php self::moduleStatus($report); ?></div>
         <?php if(empty($report['available'])):self::unavailable($report);else:?><p class="wnq-module-note"><strong>Account priority:</strong> Tier <?php echo esc_html((string)($priority['tier']??5)); ?> — <?php echo esc_html((string)($priority['label']??'No action')); ?> · <?php echo esc_html((string)($report['summary']??'')); ?></p>
-        <div class="wnq-investigation-list"><?php foreach($cases as $case): ?><details class="wnq-investigation"><summary><?php self::pill((string)$case['severity']); ?> <?php echo esc_html((string)$case['problem']); ?></summary><div><p><b>Observation — <?php echo esc_html((string)$case['period']); ?>:</b> <?php echo esc_html((string)$case['observation']); ?></p><p><b>Hypotheses:</b></p><ol><?php foreach((array)$case['hypotheses'] as $hypothesis):?><li><?php echo esc_html((string)$hypothesis); ?></li><?php endforeach;?></ol><p><b>Root-cause status:</b> <?php self::pill((string)$case['root_cause_status']); ?> <?php echo esc_html((string)$case['root_cause']); ?></p><p><b>Recommendation:</b> <?php echo esc_html((string)$case['recommendation']); ?></p><div class="wnq-confidence"><span>Data confidence: <?php echo esc_html(number_format_i18n((float)$case['data_confidence']*100,0)); ?>%</span><span>Recommendation confidence: <?php echo esc_html(number_format_i18n((float)$case['recommendation_confidence']*100,0)); ?>%</span></div><small><?php echo esc_html((string)$case['minimum_data_note']); ?></small></div></details><?php endforeach;?></div>
+        <div class="wnq-investigation-list"><?php if(!$cases):?><div class="wnq-empty-state"><strong>No open investigations.</strong><span>The current evidence did not generate an actionable case.</span></div><?php else:foreach($cases as $case): ?><details class="wnq-investigation"><summary><span class="wnq-investigation-heading"><?php self::pill((string)$case['severity']); ?><strong><?php echo esc_html((string)$case['problem']); ?></strong><small><?php echo esc_html(!empty($case['campaign_id'])?'Campaign '.$case['campaign_id']:'Account-wide'); ?></small></span><span class="wnq-investigation-meta"><small>Cause: <?php echo esc_html(self::label((string)$case['root_cause_status'])); ?></small><b><?php echo esc_html(number_format_i18n((float)$case['recommendation_confidence']*100,0)); ?>%</b><small>Needs review</small></span></summary><div><div class="wnq-evidence-grid"><section><h4>Observation · <?php echo esc_html((string)$case['period']); ?></h4><p><?php echo esc_html((string)$case['observation']); ?></p></section><section><h4>Evidence for</h4><p><?php echo esc_html((string)$case['observation']); ?></p></section><section><h4>Evidence against / limits</h4><p><?php echo esc_html((string)$case['minimum_data_note']); ?></p></section><section><h4>Root cause</h4><p><?php self::pill((string)$case['root_cause_status']); ?> <?php echo esc_html((string)$case['root_cause']); ?></p></section></div><h4>Hypotheses</h4><ol><?php foreach((array)$case['hypotheses'] as $hypothesis):?><li><?php echo esc_html((string)$hypothesis); ?></li><?php endforeach;?></ol><p><b>Recommendation:</b> <?php echo esc_html((string)$case['recommendation']); ?></p><div class="wnq-confidence"><span title="Confidence that the underlying report data is complete enough to interpret.">Data confidence: <?php echo esc_html(number_format_i18n((float)$case['data_confidence']*100,0)); ?>%</span><span title="Confidence that the recommended next step follows from the evidence.">Recommendation confidence: <?php echo esc_html(number_format_i18n((float)$case['recommendation_confidence']*100,0)); ?>%</span></div></div></details><?php endforeach;endif;?></div>
         <?php endif;?></article><?php
     }
 
@@ -680,12 +758,17 @@ final class PpcIntelligenceAdmin
         $counts = array_count_values(array_column($recommendations, 'status'));
         $active = count(array_filter($recommendations, static fn(array $row): bool => in_array((string)$row['status'], ['open','investigating','ready_for_review','approved'], true)));
         $awaiting = (int)($counts['implemented_externally'] ?? 0) + (int)($counts['monitoring'] ?? 0);
+        $reviewed = count($recommendations) - (int)($counts['open'] ?? 0) - (int)($counts['investigating'] ?? 0);
+        $approved = (int)($counts['approved'] ?? 0) + (int)($counts['implemented_externally'] ?? 0) + (int)($counts['monitoring'] ?? 0) + (int)($counts['successful'] ?? 0) + (int)($counts['neutral'] ?? 0) + (int)($counts['unsuccessful'] ?? 0);
+        $implemented = (int)($counts['implemented_externally'] ?? 0) + (int)($counts['monitoring'] ?? 0) + (int)($counts['successful'] ?? 0) + (int)($counts['neutral'] ?? 0) + (int)($counts['unsuccessful'] ?? 0);
+        $outcome_total = (int)($counts['successful'] ?? 0) + (int)($counts['neutral'] ?? 0) + (int)($counts['unsuccessful'] ?? 0);
         ?>
         <article class="wnq-module" id="ppc-recommendations"><div class="wnq-module-title"><div><h3>Recommendation Lifecycle</h3><p>Approval, implementation, monitoring, and outcome are separate auditable states.</p></div><?php self::pill('ready'); ?></div>
-            <div class="wnq-health-grid"><div><span>Generated</span><strong><?php echo esc_html((string)count($recommendations)); ?></strong></div><div><span>Active review</span><strong><?php echo esc_html((string)$active); ?></strong></div><div><span>Awaiting outcome</span><strong><?php echo esc_html((string)$awaiting); ?></strong></div><div><span>Positive outcomes</span><strong><?php echo esc_html((string)($counts['successful'] ?? 0)); ?></strong></div><div><span>Negative outcomes</span><strong><?php echo esc_html((string)($counts['unsuccessful'] ?? 0)); ?></strong></div></div>
-            <details class="wnq-detail"><summary>Recommendation Register (<?php echo esc_html((string)count($recommendations)); ?>)</summary><div class="wnq-table-scroll"><table><thead><tr><th>Recommendation</th><th>Scope</th><th>Confidence</th><th>Lifecycle</th><th>Update</th></tr></thead><tbody>
+            <ol class="wnq-lifecycle-flow" aria-label="Recommendation workflow"><li><span>Generated</span><strong><?php echo esc_html((string)count($recommendations));?></strong></li><li><span>Reviewed</span><strong><?php echo esc_html((string)$reviewed);?></strong></li><li><span>Approved</span><strong><?php echo esc_html((string)$approved);?></strong></li><li><span>Implemented</span><strong><?php echo esc_html((string)$implemented);?></strong></li><li><span>Monitoring</span><strong><?php echo esc_html((string)$awaiting);?></strong></li><li><span>Outcome</span><strong><?php echo esc_html((string)$outcome_total);?></strong></li></ol>
+            <div class="wnq-outcome-strip"><span>Active review <b><?php echo esc_html((string)$active);?></b></span><span class="is-positive">Positive <b><?php echo esc_html((string)($counts['successful']??0));?></b></span><span>Neutral <b><?php echo esc_html((string)($counts['neutral']??0));?></b></span><span class="is-negative">Negative <b><?php echo esc_html((string)($counts['unsuccessful']??0));?></b></span></div>
+            <details class="wnq-detail"><summary><span>Recommendation Register</span><small><?php echo esc_html((string)count($recommendations)); ?> records · details on demand</small></summary><div class="wnq-table-toolbar"><label for="wnq-lifecycle-search">Search register</label><input id="wnq-lifecycle-search" type="search" placeholder="Recommendation, campaign, or status" data-wnq-table-search="wnq-lifecycle-body"><span data-wnq-table-count><?php echo esc_html((string)count($recommendations)); ?> records</span></div><div class="wnq-table-scroll"><table><thead><tr><th>Recommendation</th><th>Scope</th><th>Confidence</th><th>Lifecycle</th><th>Update</th></tr></thead><tbody id="wnq-lifecycle-body">
             <?php if (!$recommendations): ?><tr><td colspan="5">No persistent recommendations have been generated for this client yet.</td></tr><?php else: foreach ($recommendations as $recommendation): ?>
-                <tr><td><strong><?php echo esc_html(PpcRecommendation::categories()[(string)$recommendation['category']] ?? self::label((string)$recommendation['category'])); ?></strong><br><?php echo esc_html((string)$recommendation['recommendation_text']); ?><br><small>Created <?php echo esc_html(self::displayDate((string)$recommendation['created_at'])); ?> · Evidence: <?php echo esc_html((string)$recommendation['reporting_period']); ?></small></td><td><?php echo esc_html((string)($recommendation['campaign_name'] ?: ($recommendation['campaign_id'] ? 'Campaign ID ' . $recommendation['campaign_id'] : 'Account'))); ?><?php if (!empty($recommendation['ad_group_id'])): ?><br><small>Ad group ID <?php echo esc_html((string)$recommendation['ad_group_id']); ?></small><?php endif; ?></td><td>Data <?php echo esc_html(number_format_i18n((float)$recommendation['data_confidence']*100,0)); ?>%<br>Recommendation <?php echo esc_html(number_format_i18n((float)$recommendation['recommendation_confidence']*100,0)); ?>%</td><td><?php self::pill((string)$recommendation['status']); ?><?php if (!empty($recommendation['implemented_at'])): ?><br><small>Implemented <?php echo esc_html(self::displayDate((string)$recommendation['implemented_at'])); ?></small><?php endif; ?></td><td>
+                <tr data-wnq-filter-row><td><strong><?php echo esc_html(PpcRecommendation::categories()[(string)$recommendation['category']] ?? self::label((string)$recommendation['category'])); ?></strong><br><?php echo esc_html((string)$recommendation['recommendation_text']); ?><br><small>Created <?php echo esc_html(self::displayDate((string)$recommendation['created_at'])); ?> · Evidence: <?php echo esc_html((string)$recommendation['reporting_period']); ?></small></td><td><?php echo esc_html((string)($recommendation['campaign_name'] ?: ($recommendation['campaign_id'] ? 'Campaign ID ' . $recommendation['campaign_id'] : 'Account'))); ?><?php if (!empty($recommendation['ad_group_id'])): ?><br><small>Ad group ID <?php echo esc_html((string)$recommendation['ad_group_id']); ?></small><?php endif; ?></td><td><span title="Confidence that the source data is sufficient.">Data <?php echo esc_html(number_format_i18n((float)$recommendation['data_confidence']*100,0)); ?>%</span><br><span title="Confidence that the proposed next step follows from the evidence.">Recommendation <?php echo esc_html(number_format_i18n((float)$recommendation['recommendation_confidence']*100,0)); ?>%</span></td><td><?php self::pill((string)$recommendation['status']); ?><?php if (!empty($recommendation['implemented_at'])): ?><br><small>Implemented <?php echo esc_html(self::displayDate((string)$recommendation['implemented_at'])); ?></small><?php endif; ?></td><td>
                     <details><summary>Update status</summary><form class="wnq-lifecycle-form" method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><?php wp_nonce_field('wnq_ppc_update_recommendation_'.$client_id.'_'.(int)$recommendation['id']); ?><input type="hidden" name="action" value="wnq_ppc_update_recommendation"><input type="hidden" name="client_id" value="<?php echo esc_attr($client_id); ?>"><input type="hidden" name="recommendation_id" value="<?php echo esc_attr((string)$recommendation['id']); ?>"><select name="recommendation_status" required><?php foreach(PpcRecommendation::statuses() as $value=>$label): if($value==='implemented_through_system')continue; ?><option value="<?php echo esc_attr($value); ?>" <?php selected((string)$recommendation['status'],$value); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?></select><label>External implementation date/time<input type="datetime-local" name="implemented_at" value="<?php echo esc_attr(!empty($recommendation['implemented_at'])?str_replace(' ','T',substr((string)$recommendation['implemented_at'],0,16)):''); ?>"></label><label>Audit note<textarea name="lifecycle_note" rows="2"></textarea></label><button class="button">Save lifecycle state</button><small>Changing status never changes Google Ads.</small></form></details>
                 </td></tr>
             <?php endforeach; endif; ?></tbody></table></div></details>
@@ -1156,27 +1239,17 @@ final class PpcIntelligenceAdmin
                 <label>Client<select name="quality_client"><option value="">All clients</option><?php foreach ($clients as $client): $value=(string)($client['client_id']??''); ?><option value="<?php echo esc_attr($value); ?>" <?php selected((string)($filters['client_id']??''),$value); ?>><?php echo esc_html((string)(($client['company']??'')?:($client['name']??$value))); ?></option><?php endforeach; ?></select></label>
                 <label>Campaign<input type="text" name="quality_campaign" value="<?php echo esc_attr((string)($filters['campaign']??'')); ?>" placeholder="Name or exact ID"></label>
                 <label>Category<select name="quality_category"><option value="">All categories</option><?php foreach(PpcRecommendation::categories() as $value=>$label):?><option value="<?php echo esc_attr($value); ?>" <?php selected((string)($filters['category']??''),$value); ?>><?php echo esc_html($label); ?></option><?php endforeach;?></select></label>
-                <label>Severity<select name="quality_severity"><option value="">All severities</option><?php foreach(['critical','warning','opportunity','healthy'] as $value):?><option value="<?php echo esc_attr($value); ?>" <?php selected((string)($filters['severity']??''),$value); ?>><?php echo esc_html(self::label($value)); ?></option><?php endforeach;?></select></label>
-                <label>Confidence<select name="quality_confidence"><option value="">All confidence</option><?php foreach(['low'=>'Low (<50%)','medium'=>'Medium (50–79%)','high'=>'High (80%+)'] as $value=>$label):?><option value="<?php echo esc_attr($value); ?>" <?php selected((string)($filters['confidence']??''),$value); ?>><?php echo esc_html($label); ?></option><?php endforeach;?></select></label>
-                <label>Created from<input type="date" name="quality_from" value="<?php echo esc_attr((string)($filters['from']??'')); ?>"></label>
-                <label>Created through<input type="date" name="quality_to" value="<?php echo esc_attr((string)($filters['to']??'')); ?>"></label>
+                <details class="wnq-more-filters" <?php echo !empty($filters['severity'])||!empty($filters['confidence'])||!empty($filters['from'])||!empty($filters['to'])?'open':'';?>><summary>More filters</summary><div><label>Severity<select name="quality_severity"><option value="">All severities</option><?php foreach(['critical','warning','opportunity','healthy'] as $value):?><option value="<?php echo esc_attr($value); ?>" <?php selected((string)($filters['severity']??''),$value); ?>><?php echo esc_html(self::label($value)); ?></option><?php endforeach;?></select></label><label>Confidence<select name="quality_confidence"><option value="">All confidence</option><?php foreach(['low'=>'Low (<50%)','medium'=>'Medium (50–79%)','high'=>'High (80%+)'] as $value=>$label):?><option value="<?php echo esc_attr($value); ?>" <?php selected((string)($filters['confidence']??''),$value); ?>><?php echo esc_html($label); ?></option><?php endforeach;?></select></label><label>Created from<input type="date" name="quality_from" value="<?php echo esc_attr((string)($filters['from']??'')); ?>"></label><label>Created through<input type="date" name="quality_to" value="<?php echo esc_attr((string)($filters['to']??'')); ?>"></label></div></details>
                 <div class="wnq-quality-filter-actions"><button class="button button-primary">Apply filters</button><a class="button" href="<?php echo esc_url(admin_url('admin.php?page=wnq-ppc-management')); ?>">Reset</a></div>
             </form>
-            <div class="wnq-quality-metrics">
-                <div><span>Generated</span><strong><?php echo esc_html(number_format_i18n((int)($report['generated']??0))); ?></strong></div>
-                <div><span>Reviewed</span><strong><?php echo esc_html(number_format_i18n((int)($report['reviewed']??0))); ?></strong></div>
-                <div><span>Approval rate</span><strong><?php echo esc_html(self::percent((float)($report['approval_rate']??0))); ?></strong></div>
-                <div><span>Rejection rate</span><strong><?php echo esc_html(self::percent((float)($report['rejection_rate']??0))); ?></strong></div>
-                <div><span>Implemented</span><strong><?php echo esc_html(number_format_i18n((int)($report['implemented']??0))); ?></strong></div>
-                <div><span>Awaiting outcome</span><strong><?php echo esc_html(number_format_i18n((int)($report['awaiting_outcome']??0))); ?></strong></div>
-                <div><span>Positive</span><strong><?php echo esc_html(number_format_i18n((int)($outcomes['successful']??0))); ?></strong></div>
-                <div><span>Neutral</span><strong><?php echo esc_html(number_format_i18n((int)($outcomes['neutral']??0))); ?></strong></div>
-                <div><span>Negative</span><strong><?php echo esc_html(number_format_i18n((int)($outcomes['unsuccessful']??0))); ?></strong></div>
-                <div><span>Average confidence</span><strong><?php echo esc_html(self::percent((float)($report['average_confidence']??0))); ?></strong></div>
+            <div class="wnq-quality-groups">
+                <section><h3>Workflow</h3><div><?php self::metric('Generated',number_format_i18n((int)($report['generated']??0)),'Recommendations','neutral');self::metric('Reviewed',number_format_i18n((int)($report['reviewed']??0)),'Human reviewed','neutral');self::metric('Implemented',number_format_i18n((int)($report['implemented']??0)),'Documented changes','ready');self::metric('Awaiting outcome',number_format_i18n((int)($report['awaiting_outcome']??0)),!empty($report['awaiting_outcome'])?'Needs monitoring':'Nothing waiting','warning');?></div></section>
+                <section><h3>Decision quality</h3><div><?php self::metric('Approval rate',self::percent((float)($report['approval_rate']??0)),'Of reviewed','opportunity');self::metric('Rejection rate',self::percent((float)($report['rejection_rate']??0)),'Of reviewed','neutral');self::metric('Average confidence',self::percent((float)($report['average_confidence']??0)),'Recommendation confidence','neutral');?></div></section>
+                <section><h3>Outcomes</h3><div><?php self::metric('Positive',number_format_i18n((int)($outcomes['successful']??0)),!empty($outcomes['successful'])?'Human-labeled outcomes':'No supported outcome yet','ready');self::metric('Neutral',number_format_i18n((int)($outcomes['neutral']??0)),'Inconclusive','neutral');self::metric('Negative',number_format_i18n((int)($outcomes['unsuccessful']??0)),!empty($outcomes['unsuccessful'])?'Requires review':'None recorded','critical');?></div></section>
             </div>
             <div class="wnq-quality-columns">
                 <details class="wnq-quality-panel" open><summary>Performance by recommendation category</summary><div class="wnq-quality-table"><table class="widefat"><thead><tr><th>Category</th><th>Generated</th><th>Outcome rate</th><th>Positive</th><th>Neutral</th><th>Negative</th></tr></thead><tbody><?php if(empty($report['by_category'])):?><tr><td colspan="6">No recommendations match these filters.</td></tr><?php else:foreach((array)$report['by_category'] as $category=>$counts):?><tr><td><?php echo esc_html(PpcRecommendation::categories()[(string)$category]??self::label((string)$category)); ?></td><td><?php echo esc_html((string)($counts['generated']??0)); ?></td><td><?php echo esc_html(self::percent((float)($counts['outcome_rate']??0))); ?></td><td><?php echo esc_html((string)($counts['successful']??0)); ?></td><td><?php echo esc_html((string)($counts['neutral']??0)); ?></td><td><?php echo esc_html((string)($counts['unsuccessful']??0)); ?></td></tr><?php endforeach;endif;?></tbody></table></div></details>
-                <details class="wnq-quality-panel"><summary>Recommendation register (<?php echo esc_html((string)count($rows)); ?> shown)</summary><div class="wnq-quality-table"><table class="widefat"><thead><tr><th>Created</th><th>Client</th><th>Recommendation</th><th>Confidence</th><th>Status</th><th>Outcome</th></tr></thead><tbody><?php if(!$rows):?><tr><td colspan="6">No recommendations match these filters.</td></tr><?php else:foreach($rows as $row):?><tr><td><?php echo esc_html(self::displayDate((string)$row['created_at'])); ?></td><td><?php echo esc_html((string)($client_names[(string)$row['client_id']]??$row['client_id'])); ?></td><td><strong><?php echo esc_html(PpcRecommendation::categories()[(string)$row['category']]??self::label((string)$row['category'])); ?></strong><br><small><?php echo esc_html(wp_trim_words((string)$row['recommendation_text'],20)); ?></small></td><td><?php echo esc_html(number_format_i18n((float)$row['recommendation_confidence']*100,0)); ?>%</td><td><?php echo esc_html(PpcRecommendation::statuses()[(string)$row['status']]??self::label((string)$row['status'])); ?></td><td><?php echo esc_html((string)($row['outcome_label']?self::label((string)$row['outcome_label']):'Pending')); ?></td></tr><?php endforeach;endif;?></tbody></table></div></details>
+                <details class="wnq-quality-panel"><summary>Recommendation register (<?php echo esc_html((string)count($rows)); ?> shown)</summary><div class="wnq-table-toolbar"><label for="wnq-quality-search">Search register</label><input id="wnq-quality-search" type="search" placeholder="Client, recommendation, or status" data-wnq-table-search="wnq-quality-body"><span data-wnq-table-count><?php echo esc_html((string)count($rows)); ?> records</span></div><div class="wnq-quality-table"><table class="widefat"><thead><tr><th>Created</th><th>Client</th><th>Recommendation</th><th>Confidence</th><th>Status</th><th>Outcome</th></tr></thead><tbody id="wnq-quality-body"><?php if(!$rows):?><tr><td colspan="6">No recommendations match these filters.</td></tr><?php else:foreach($rows as $row):?><tr data-wnq-filter-row><td><?php echo esc_html(self::displayDate((string)$row['created_at'])); ?></td><td><?php echo esc_html((string)($client_names[(string)$row['client_id']]??$row['client_id'])); ?></td><td><strong><?php echo esc_html(PpcRecommendation::categories()[(string)$row['category']]??self::label((string)$row['category'])); ?></strong><br><small><?php echo esc_html(wp_trim_words((string)$row['recommendation_text'],20)); ?></small></td><td><?php echo esc_html(number_format_i18n((float)$row['recommendation_confidence']*100,0)); ?>%</td><td><?php self::pill((string)$row['status']); ?></td><td><?php self::pill((string)($row['outcome_label']?:'pending')); ?></td></tr><?php endforeach;endif;?></tbody></table></div></details>
             </div>
             <p class="description">Rates describe recorded workflow states, not guaranteed causal impact. Outcome labeling remains a human decision.</p>
         </section>
@@ -1263,6 +1336,13 @@ final class PpcIntelligenceAdmin
     {
         $timestamp = strtotime($value);
         return $timestamp ? wp_date('M j, Y g:i a', $timestamp) : $value;
+    }
+
+    private static function syncState(string $value): string
+    {
+        $date = \DateTimeImmutable::createFromFormat('!Y-m-d H:i:s', $value, wp_timezone());
+        if (!$date) return 'never';
+        return (current_datetime()->getTimestamp() - $date->getTimestamp()) > (2 * DAY_IN_SECONDS) ? 'stale' : 'current';
     }
 
     private static function formatCustomerId(string $value): string

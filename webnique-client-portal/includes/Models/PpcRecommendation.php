@@ -179,7 +179,7 @@ final class PpcRecommendation
         global $wpdb;
         $table = $wpdb->prefix . self::TABLE;
         $limit = max(1, min(500, $limit));
-        $rows = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$table} WHERE client_id = %s ORDER BY FIELD(status,'open','investigating','ready_for_review','approved','implemented_externally','monitoring'), severity = 'critical' DESC, updated_at DESC LIMIT %d", sanitize_text_field($client_id), $limit), ARRAY_A);
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$table} WHERE client_id = %s ORDER BY CASE status WHEN 'open' THEN 1 WHEN 'investigating' THEN 2 WHEN 'ready_for_review' THEN 3 WHEN 'approved' THEN 4 WHEN 'implemented_externally' THEN 5 WHEN 'monitoring' THEN 6 ELSE 7 END, severity = 'critical' DESC, updated_at DESC LIMIT %d", sanitize_text_field($client_id), $limit), ARRAY_A);
         return array_map([self::class, 'hydrate'], (array)$rows);
     }
 
@@ -210,6 +210,9 @@ final class PpcRecommendation
             if ($date === '') {
                 return ['ok' => false, 'message' => 'Record the external implementation date and time before monitoring an outcome.'];
             }
+            if ($date > current_time('mysql')) {
+                return ['ok' => false, 'message' => 'The external implementation time cannot be in the future.'];
+            }
             $implementation_source = 'external';
         }
         $outcome = in_array($status, ['successful', 'neutral', 'unsuccessful'], true) ? $status : '';
@@ -226,9 +229,7 @@ final class PpcRecommendation
             $update['implemented_at'] = $date;
             $update['implementation_source'] = $implementation_source;
         }
-        if ($outcome !== '') {
-            $update['outcome_label'] = $outcome;
-        }
+        $update['outcome_label'] = $outcome;
         $wpdb->query('START TRANSACTION');
         $saved = $wpdb->update($table, $update, ['id' => $id, 'client_id' => sanitize_text_field($client_id), 'customer_id' => (string)$recommendation['customer_id']]);
         $audited = $saved !== false && self::appendEvent($id, 'status_changed', (string)$recommendation['status'], $status, $note, ['implemented_at' => $date, 'outcome' => $outcome]);
@@ -352,6 +353,10 @@ final class PpcRecommendation
     private static function appendEvent(int $id, string $type, string $from, string $to, string $note, array $metadata): bool
     {
         global $wpdb;
+        $type = sanitize_key($type);
+        $from = sanitize_key($from);
+        $to = sanitize_key($to);
+        $note = sanitize_textarea_field($note);
         $events = $wpdb->prefix . self::EVENT_TABLE;
         $last = $wpdb->get_row($wpdb->prepare("SELECT event_hash FROM {$events} WHERE recommendation_id = %d ORDER BY id DESC LIMIT 1", $id), ARRAY_A);
         $previous = (string)($last['event_hash'] ?? '');
@@ -361,11 +366,11 @@ final class PpcRecommendation
         $hash = hash('sha256', implode('|', [$previous, $id, $type, $from, $to, $actor, $created, $note, $metadata_json]));
         return $wpdb->insert($events, [
             'recommendation_id' => $id,
-            'event_type' => sanitize_key($type),
-            'from_status' => sanitize_key($from),
-            'to_status' => sanitize_key($to),
+            'event_type' => $type,
+            'from_status' => $from,
+            'to_status' => $to,
             'actor_id' => $actor,
-            'note' => sanitize_textarea_field($note),
+            'note' => $note,
             'metadata_json' => $metadata_json,
             'previous_event_hash' => $previous,
             'event_hash' => $hash,
@@ -411,8 +416,15 @@ final class PpcRecommendation
 
     private static function dateTime(string $value): string
     {
-        $timestamp = strtotime($value);
-        return $timestamp ? wp_date('Y-m-d H:i:s', $timestamp) : '';
+        $value = trim($value);
+        foreach (['!Y-m-d\\TH:i', '!Y-m-d\\TH:i:s'] as $format) {
+            $date = \DateTimeImmutable::createFromFormat($format, $value, wp_timezone());
+            $errors = \DateTimeImmutable::getLastErrors();
+            if ($date && ($errors === false || ($errors['warning_count'] === 0 && $errors['error_count'] === 0))) {
+                return $date->format('Y-m-d H:i:s');
+            }
+        }
+        return '';
     }
 
     private static function decode(string $json): array
