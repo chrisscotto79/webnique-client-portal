@@ -69,6 +69,7 @@ require_once dirname(__DIR__) . '/includes/Services/PpcAdAuditService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcKeywordIntelligenceService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcLeadQualityService.php';
 require_once dirname(__DIR__) . '/includes/Models/PpcMutationPlan.php';
+require_once dirname(__DIR__) . '/includes/Services/PpcRecommendationPreviewService.php';
 
 use WNQ\Services\GoogleAdsCredentials;
 use WNQ\Services\GoogleAdsQueryService;
@@ -78,6 +79,7 @@ use WNQ\Services\PpcAdAuditService;
 use WNQ\Services\PpcKeywordIntelligenceService;
 use WNQ\Services\PpcLeadQualityService;
 use WNQ\Models\PpcMutationPlan;
+use WNQ\Services\PpcRecommendationPreviewService;
 
 function assertPpc(bool $condition, string $message): void
 {
@@ -156,6 +158,22 @@ $audit_events = [['plan_id' => 7, 'event_type' => 'preview_created', 'actor_id' 
 assertPpc(PpcMutationPlan::verifyEventChain($audit_events), 'An intact mutation audit hash chain should validate.');
 $audit_events[0]['details_json'] = wp_json_encode(['status' => 'approved']);
 assertPpc(!PpcMutationPlan::verifyEventChain($audit_events), 'A modified mutation audit event must invalidate the chain.');
+$candidate_report = PpcRecommendationPreviewService::candidates(
+    [
+        'budget_analysis' => [
+            'available' => true,
+            'campaigns' => [['id' => '10', 'name' => 'Shared', 'pace_status' => 'under', 'shared_budget' => true]],
+        ],
+    ],
+    ['available' => true, 'terms' => [
+        ['id' => 9, 'query' => 'junk removal jobs', 'status' => 'approved_phrase', 'recommended_action' => 'negative_phrase', 'campaign' => 'Search', 'campaign_id' => '10', 'ad_group' => 'Junk', 'ad_group_id' => '11'],
+        ['id' => 10, 'query' => 'junk removal quote', 'status' => 'not_proposed', 'recommended_action' => 'add_as_keyword', 'campaign' => 'Search', 'campaign_id' => '10'],
+    ]],
+    ['conflicts' => [], 'non_serving' => []]
+);
+assertPpc(($candidate_report['counts']['ready'] ?? 0) === 1, 'An internally approved negative should be eligible for exact preview preparation.');
+assertPpc(($candidate_report['counts']['needs_keyword_coverage'] ?? 0) === 1, 'Keyword opportunities must wait for existing-coverage verification.');
+assertPpc(($candidate_report['counts']['shared_budget_review'] ?? 0) === 1, 'Shared-budget recommendations must remain blocked for grouped review.');
 
 $client_portal_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Models/ClientPortal.php');
 $ppc_admin_source = (string)file_get_contents(dirname(__DIR__) . '/admin/PpcIntelligenceAdmin.php');
@@ -179,5 +197,8 @@ assertPpc(!preg_match('/[\'\"](?:userId|userPseudoId|clientId|gclid)[\'\"]/', $a
 $mutation_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Models/PpcMutationPlan.php');
 assertPpc(str_contains($mutation_source, "'APPROVE'") && str_contains($mutation_source, 'hash_equals'), 'Mutation approval must require an exact human confirmation and content fingerprint.');
 assertPpc(!preg_match('/GoogleAdsClient|GoogleAdsQueryService|function\s+(?:execute|rollback)|->mutate/i', $mutation_source), 'Phase 7 must not contain a Google Ads execution or rollback endpoint.');
+$preview_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Services/PpcRecommendationPreviewService.php');
+assertPpc(str_contains($preview_source, 'negativeSnapshot') && str_contains($preview_source, 'SELECT campaign_criterion.criterion_id'), 'Phase 8 must re-read negative-keyword state before creating a preview.');
+assertPpc(!preg_match('/googleAds:mutate|customers\/.+:mutate|->mutate/i', $preview_source), 'Recommendation preparation must remain SELECT-only.');
 
 echo "PPC regression checks passed.\n";
