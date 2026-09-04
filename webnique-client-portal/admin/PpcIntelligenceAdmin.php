@@ -13,6 +13,7 @@ use WNQ\Models\PpcAccount;
 use WNQ\Models\PpcProposal;
 use WNQ\Models\PpcMutationPlan;
 use WNQ\Models\PpcRecommendation;
+use WNQ\Models\PpcMemory;
 use WNQ\Services\GoogleAdsClient;
 use WNQ\Services\GoogleAdsCredentials;
 use WNQ\Services\GoogleAdsQueryService;
@@ -26,6 +27,7 @@ use WNQ\Services\PpcRecommendationPreviewService;
 use WNQ\Services\PpcRecommendationLifecycleService;
 use WNQ\Services\PpcRecommendationValidationService;
 use WNQ\Services\PpcChangeCorrelationService;
+use WNQ\Services\PpcAdvancedSearchService;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -52,6 +54,8 @@ final class PpcIntelligenceAdmin
         add_action('admin_post_wnq_ppc_prepare_recommendation', [self::class, 'handlePrepareRecommendation']);
         add_action('admin_post_wnq_ppc_update_recommendation', [self::class, 'handleUpdateRecommendation']);
         add_action('admin_post_wnq_ppc_validate_recommendation', [self::class, 'handleValidateRecommendation']);
+        add_action('admin_post_wnq_ppc_save_memory', [self::class, 'handleSaveMemory']);
+        add_action('admin_post_wnq_ppc_feedback_result', [self::class, 'handleFeedbackResult']);
     }
 
     public static function enqueueAssets(): void
@@ -171,6 +175,7 @@ final class PpcIntelligenceAdmin
         PpcProposal::maybeUpgrade();
         PpcMutationPlan::maybeUpgrade();
         PpcRecommendation::maybeUpgrade();
+        PpcMemory::maybeUpgrade();
         GoogleAdsCredentials::migrateLegacy();
         $admin = get_role('administrator');
         if ($admin && !$admin->has_cap('gwm_manage_ppc')) {
@@ -216,6 +221,7 @@ final class PpcIntelligenceAdmin
             $recommendations = [];
         }
         $preview_candidates = ['available' => false, 'status' => 'unavailable', 'candidates' => [], 'counts' => [], 'summary' => 'Recommendation evidence has not loaded.'];
+        $advanced_search = [];
 
         if (!empty($credential_status['configured'])) {
             try {
@@ -251,7 +257,12 @@ final class PpcIntelligenceAdmin
                 $keyword_intelligence = ['available'=>false,'status'=>'unavailable','message'=>'Keyword intelligence is temporarily unavailable.','non_serving'=>[],'conflicts'=>[],'findings'=>[]];
             }
             try {
-                $investigations = PpcInvestigationService::build($client_id,(string)$connection['customer_id'],(array)$diagnostics,(array)$search_terms,(array)$ad_audit,(array)$keyword_intelligence);
+                $advanced_search = (new PpcAdvancedSearchService())->report($client_id,(string)$connection['customer_id'],(array)$search_terms,(array)$ad_audit,(array)$keyword_intelligence,!empty($_GET['refresh_ppc']));
+            } catch (\Throwable $error) {
+                $advanced_search = [];
+            }
+            try {
+                $investigations = PpcInvestigationService::build($client_id,(string)$connection['customer_id'],(array)$diagnostics,(array)$search_terms,(array)$ad_audit,(array)$keyword_intelligence,(array)$advanced_search);
             } catch (\Throwable $error) {
                 $investigations = ['available' => false, 'status' => 'unavailable', 'message' => 'Structured investigations are temporarily unavailable.', 'cases' => []];
             }
@@ -308,7 +319,7 @@ final class PpcIntelligenceAdmin
             </div>
 
             <?php if ($connection && !empty($connection['customer_id'])): ?>
-                <?php self::renderDiagnostics($diagnostics, $search_terms, $ad_audit, $keyword_intelligence, $investigations, $change_correlations, $lead_quality, $recommendations, $preview_candidates, $mutation_plans, $connection, $client_id); ?>
+                <?php self::renderDiagnostics($diagnostics, $search_terms, $ad_audit, $keyword_intelligence, $advanced_search, $investigations, $change_correlations, $lead_quality, $recommendations, $preview_candidates, $mutation_plans, $connection, $client_id); ?>
             <?php endif; ?>
 
             <details class="wnq-connection-settings" <?php echo empty($connection['customer_id']) || empty($credential_status['configured']) ? 'open' : ''; ?>>
@@ -505,9 +516,26 @@ final class PpcIntelligenceAdmin
         self::authorize('wnq_ppc_review_proposals_' . $client_id);
         $ids = is_array($_POST['proposal_ids'] ?? null) ? wp_unslash($_POST['proposal_ids']) : [];
         $status = sanitize_key((string)wp_unslash($_POST['review_action'] ?? ''));
+        $reason = sanitize_textarea_field((string)wp_unslash($_POST['review_reason']??''));
+        if ($reason === '') self::finish($client_id,false,'Record a reason for the human decision so future classifications have usable context.');
+        $proposals = PpcProposal::getByIdsForClient($ids, $client_id);
         $updated = PpcProposal::review($client_id, $ids, $status);
+        $connection = PpcAccount::getByClientId($client_id) ?: [];
+        if ($updated > 0 && !empty($connection['customer_id'])) foreach ($proposals as $proposal) PpcMemory::recordFeedback($client_id,(string)$connection['customer_id'],$proposal,$status,$reason);
         self::clearSearchCache($client_id);
         self::finish($client_id, $updated > 0, $updated > 0 ? "{$updated} proposal(s) reviewed internally. No Google Ads changes were made." : 'Select at least one proposal and a review action.');
+    }
+
+    public static function handleSaveMemory(): void
+    {
+        $client_id=self::requestClientId();self::authorize('wnq_ppc_save_memory_'.$client_id);$connection=PpcAccount::getByClientId($client_id)?:[];
+        $saved=!empty($connection['customer_id'])&&PpcMemory::add($client_id,(string)$connection['customer_id'],sanitize_key((string)wp_unslash($_POST['memory_type']??'')),sanitize_text_field((string)wp_unslash($_POST['memory_subject']??'')),sanitize_textarea_field((string)wp_unslash($_POST['memory_content']??'')));
+        self::clearSearchCache($client_id);self::finish($client_id,$saved,$saved?'Client PPC memory saved. It will be shown explicitly as context in future reviews.':'Client PPC memory could not be saved.');
+    }
+
+    public static function handleFeedbackResult():void
+    {
+        $client_id=self::requestClientId();$id=absint($_POST['feedback_id']??0);self::authorize('wnq_ppc_feedback_result_'.$client_id.'_'.$id);$connection=PpcAccount::getByClientId($client_id)?:[];$saved=!empty($connection['customer_id'])&&PpcMemory::updateFeedbackResult($client_id,(string)$connection['customer_id'],$id,sanitize_textarea_field((string)wp_unslash($_POST['eventual_result']??'')));self::finish($client_id,$saved,$saved?'Human feedback outcome saved.':'The feedback outcome could not be saved.');
     }
 
     public static function handleSaveClaimSources(): void
@@ -646,22 +674,23 @@ final class PpcIntelligenceAdmin
         ?><div class="wnq-compact-metric is-<?php echo esc_attr(sanitize_key($tone)); ?>"><span><?php echo esc_html($label); ?></span><strong><?php echo esc_html($value); ?></strong><small><?php echo esc_html($note); ?></small></div><?php
     }
 
-    private static function renderDiagnostics(?array $dashboard, ?array $search_terms, ?array $ad_audit, ?array $keywords, ?array $investigations, array $change_correlations, ?array $lead_quality, array $recommendations, array $preview_candidates, array $mutation_plans, array $connection, string $client_id): void
+    private static function renderDiagnostics(?array $dashboard, ?array $search_terms, ?array $ad_audit, ?array $keywords, array $advanced, ?array $investigations, array $change_correlations, ?array $lead_quality, array $recommendations, array $preview_candidates, array $mutation_plans, array $connection, string $client_id): void
     {
         $dashboard = is_array($dashboard) ? $dashboard : [];
         $findings = array_merge((array)($dashboard['findings'] ?? []), (array)($search_terms['findings'] ?? []), (array)($ad_audit['findings'] ?? []), (array)($keywords['findings'] ?? []));
+        foreach (['anomalies','ngrams','routing','messaging','quality_score'] as $module) $findings=array_merge($findings,(array)($advanced[$module]['findings']??[]));
         $finding_counts = array_count_values(array_map(static fn(array $finding): string => sanitize_key((string)($finding['severity'] ?? 'unknown')), $findings));
         $investigation_cases = (array)($investigations['cases'] ?? []);
         $open_investigations = count(array_filter($investigation_cases, static fn(array $case): bool => !in_array((string)($case['status'] ?? ''), ['resolved', 'healthy'], true)));
         $plan_counts = array_count_values(array_map(static fn(array $plan): string => sanitize_key((string)($plan['status'] ?? 'unknown')), $mutation_plans));
         $ready_count = (int)($preview_candidates['counts']['ready'] ?? 0);
-        $search_count = count(array_filter($findings, static fn(array $finding): bool => in_array((string)($finding['section'] ?? ''), ['ppc-search-terms','ppc-ads','ppc-keywords'], true)));
+        $search_count = count(array_filter($findings, static fn(array $finding): bool => in_array((string)($finding['section'] ?? ''), ['ppc-search-terms','ppc-ads','ppc-keywords','ppc-quality-score','ppc-ngrams','ppc-routing','ppc-messaging'], true)));
         $actionable_count = (int)($finding_counts['critical'] ?? 0) + (int)($finding_counts['warning'] ?? 0) + (int)($finding_counts['opportunity'] ?? 0);
         $control_count = $ready_count + (int)($plan_counts['awaiting_approval'] ?? 0);
         ?>
         <section class="wnq-diagnostics-shell">
             <div class="wnq-diagnostics-head">
-                <div><span class="wnq-ppc-eyebrow">Phase 11 · Operations workspace</span><h2>Account intelligence</h2><p>See the decision first; open supporting evidence only when needed.</p></div>
+                <div><span class="wnq-ppc-eyebrow">Phase 12 · Search intelligence</span><h2>Account intelligence</h2><p>Search campaigns only · anomaly, intent, routing, quality, and memory evidence.</p></div>
                 <a class="button" href="<?php echo esc_url(add_query_arg('refresh_ppc', '1')); ?>">Refresh diagnostics</a>
             </div>
             <div class="wnq-command-center" aria-label="PPC operations summary">
@@ -680,7 +709,7 @@ final class PpcIntelligenceAdmin
                 <button type="button" role="tab" aria-selected="false" aria-controls="ppc-workspace-control" id="ppc-tab-control" data-wnq-workspace-tab="control">Change control<?php if($control_count):?><span><?php echo esc_html((string)$control_count);?></span><?php endif;?></button>
             </nav>
             <details class="wnq-section-index"><summary>Jump to a specific report</summary><nav class="wnq-module-nav">
-                <a href="#ppc-attention">Attention</a><a href="#ppc-investigations">Investigations</a><a href="#ppc-recommendations">Lifecycle</a><a href="#ppc-account">Account</a><a href="#ppc-conversions">Conversions</a><a href="#ppc-changes">Changes</a><a href="#ppc-change-correlations">Correlations</a><a href="#ppc-validation">Validation</a><a href="#ppc-share">Impression share</a><a href="#ppc-budgets">Budgets</a><a href="#ppc-keywords">Keywords</a><a href="#ppc-search-terms">Search terms</a><a href="#ppc-ads">Ads &amp; claims</a><a href="#ppc-lead-quality">Lead quality</a><a href="#ppc-mutation-safety">Mutation safety</a>
+                <a href="#ppc-attention">Attention</a><a href="#ppc-investigations">Investigations</a><a href="#ppc-recommendations">Lifecycle</a><a href="#ppc-account">Account</a><a href="#ppc-anomalies">Anomalies</a><a href="#ppc-conversions">Conversions</a><a href="#ppc-share">Impression share</a><a href="#ppc-budgets">Budgets</a><a href="#ppc-quality-score">Quality Score</a><a href="#ppc-ngrams">N-grams</a><a href="#ppc-routing">Routing</a><a href="#ppc-messaging">Messaging gaps</a><a href="#ppc-memory">PPC memory</a><a href="#ppc-keywords">Keywords</a><a href="#ppc-search-terms">Search terms</a><a href="#ppc-ads">Ads &amp; claims</a><a href="#ppc-lead-quality">Lead quality</a><a href="#ppc-mutation-safety">Mutation safety</a>
             </nav></details>
             <?php
             $has_actionable_finding = count(array_filter($findings, static function (array $finding): bool {
@@ -699,12 +728,18 @@ final class PpcIntelligenceAdmin
                     <?php self::renderRecommendationLifecycle($recommendations, $client_id); ?>
                 </div>
                 <div class="wnq-workspace-panel" id="ppc-workspace-performance" role="tabpanel" aria-labelledby="ppc-tab-performance" data-wnq-workspace="performance">
+                    <?php self::renderAdvancedModule('anomalies',(array)($advanced['anomalies']??[]),$client_id); ?>
                     <?php self::renderAccountDiagnostic((array)($dashboard['account_diagnostic'] ?? [])); ?>
                     <?php self::renderConversionHealth((array)($dashboard['conversion_health'] ?? [])); ?>
                     <?php self::renderImpressionShare((array)($dashboard['impression_share'] ?? [])); ?>
                     <?php self::renderBudgetAnalysis((array)($dashboard['budget_analysis'] ?? [])); ?>
                 </div>
                 <div class="wnq-workspace-panel" id="ppc-workspace-search" role="tabpanel" aria-labelledby="ppc-tab-search" data-wnq-workspace="search">
+                    <?php self::renderAdvancedModule('quality_score',(array)($advanced['quality_score']??[]),$client_id); ?>
+                    <?php self::renderAdvancedModule('ngrams',(array)($advanced['ngrams']??[]),$client_id); ?>
+                    <?php self::renderAdvancedModule('routing',(array)($advanced['routing']??[]),$client_id); ?>
+                    <?php self::renderAdvancedModule('messaging',(array)($advanced['messaging']??[]),$client_id); ?>
+                    <?php self::renderPpcMemory((array)($advanced['memory']??[]),$client_id); ?>
                     <?php self::renderKeywordIntelligence((array)($keywords ?? [])); ?>
                     <?php self::renderSearchTerms((array)($search_terms ?? []), $client_id); ?>
                     <?php self::renderAdAudit((array)($ad_audit ?? []), $client_id); ?>
@@ -749,7 +784,7 @@ final class PpcIntelligenceAdmin
         $cases=(array)($report['cases']??[]);$priority=(array)($report['priority']??[]);
         ?><article class="wnq-module" id="ppc-investigations"><div class="wnq-module-title"><div><h3>Structured Investigations</h3><p>Open a case only when you need the reasoning and supporting evidence.</p></div><?php self::moduleStatus($report); ?></div>
         <?php if(empty($report['available'])):self::unavailable($report);else:?><p class="wnq-module-note"><strong>Account priority:</strong> Tier <?php echo esc_html((string)($priority['tier']??5)); ?> — <?php echo esc_html((string)($priority['label']??'No action')); ?> · <?php echo esc_html((string)($report['summary']??'')); ?></p>
-        <div class="wnq-investigation-list"><?php if(!$cases):?><div class="wnq-empty-state"><strong>No open investigations.</strong><span>The current evidence did not generate an actionable case.</span></div><?php else:foreach($cases as $case): ?><details class="wnq-investigation"><summary><span class="wnq-investigation-heading"><?php self::pill((string)$case['severity']); ?><strong><?php echo esc_html((string)$case['problem']); ?></strong><small><?php echo esc_html(!empty($case['campaign_id'])?'Campaign '.$case['campaign_id']:'Account-wide'); ?></small></span><span class="wnq-investigation-meta"><small>Cause: <?php echo esc_html(self::label((string)$case['root_cause_status'])); ?></small><b><?php echo esc_html(number_format_i18n((float)$case['recommendation_confidence']*100,0)); ?>%</b><small>Needs review</small></span></summary><div><div class="wnq-evidence-grid"><section><h4>Observation · <?php echo esc_html((string)$case['period']); ?></h4><p><?php echo esc_html((string)$case['observation']); ?></p></section><section><h4>Evidence for</h4><p><?php echo esc_html((string)$case['observation']); ?></p></section><section><h4>Evidence against / limits</h4><p><?php echo esc_html((string)$case['minimum_data_note']); ?></p></section><section><h4>Root cause</h4><p><?php self::pill((string)$case['root_cause_status']); ?> <?php echo esc_html((string)$case['root_cause']); ?></p></section></div><h4>Hypotheses</h4><ol><?php foreach((array)$case['hypotheses'] as $hypothesis):?><li><?php echo esc_html((string)$hypothesis); ?></li><?php endforeach;?></ol><p><b>Recommendation:</b> <?php echo esc_html((string)$case['recommendation']); ?></p><div class="wnq-confidence"><span title="Confidence that the underlying report data is complete enough to interpret.">Data confidence: <?php echo esc_html(number_format_i18n((float)$case['data_confidence']*100,0)); ?>%</span><span title="Confidence that the recommended next step follows from the evidence.">Recommendation confidence: <?php echo esc_html(number_format_i18n((float)$case['recommendation_confidence']*100,0)); ?>%</span></div></div></details><?php endforeach;endif;?></div>
+        <div class="wnq-investigation-list"><?php if(!$cases):?><div class="wnq-empty-state"><strong>No open investigations.</strong><span>The current evidence did not generate an actionable case.</span></div><?php else:foreach($cases as $case): ?><details class="wnq-investigation"><summary><span class="wnq-investigation-heading"><?php self::pill((string)$case['severity']); ?><strong><?php echo esc_html((string)$case['problem']); ?></strong><small><?php echo esc_html(!empty($case['campaign_id'])?'Campaign '.$case['campaign_id']:'Account-wide'); ?></small></span><span class="wnq-investigation-meta"><small>Cause: <?php echo esc_html(self::label((string)$case['root_cause_status'])); ?></small><b><?php echo esc_html(number_format_i18n((float)$case['recommendation_confidence']*100,0)); ?>%</b><small>Needs review</small></span></summary><div><div class="wnq-evidence-grid"><section><h4>Observation · <?php echo esc_html((string)$case['period']); ?></h4><p><?php echo esc_html((string)$case['observation']); ?></p></section><section><h4>Evidence for</h4><p><?php echo esc_html((string)$case['observation']); ?></p></section><section><h4>Evidence against / limits</h4><p><?php echo esc_html((string)$case['minimum_data_note']); ?></p></section><section><h4>Root cause</h4><p><?php self::pill((string)$case['root_cause_status']); ?> <?php echo esc_html((string)$case['root_cause']); ?></p></section></div><?php if(!empty($case['historical_context'])):?><h4>Dated client history (context only)</h4><ul><?php foreach((array)$case['historical_context'] as $history):?><li><strong><?php echo esc_html((string)$history['subject']);?>:</strong> <?php echo esc_html((string)$history['content']);?> <small>(confirmed <?php echo esc_html(self::displayDate((string)$history['last_confirmed_at']));?>)</small></li><?php endforeach;?></ul><?php endif;?><h4>Hypotheses</h4><ol><?php foreach((array)$case['hypotheses'] as $hypothesis):?><li><?php echo esc_html((string)$hypothesis); ?></li><?php endforeach;?></ol><p><b>Recommendation:</b> <?php echo esc_html((string)$case['recommendation']); ?></p><div class="wnq-confidence"><span title="Confidence that the underlying report data is complete enough to interpret.">Data confidence: <?php echo esc_html(number_format_i18n((float)$case['data_confidence']*100,0)); ?>%</span><span title="Confidence that the recommended next step follows from the evidence.">Recommendation confidence: <?php echo esc_html(number_format_i18n((float)$case['recommendation_confidence']*100,0)); ?>%</span></div></div></details><?php endforeach;endif;?></div>
         <?php endif;?></article><?php
     }
 
@@ -823,6 +858,46 @@ final class PpcIntelligenceAdmin
         <details class="wnq-detail"><summary>Non-Serving Keywords — Last 180 Days (<?php echo esc_html((string)count($dead)); ?>)</summary><div class="wnq-table-scroll"><table><thead><tr><th>Keyword</th><th>Campaign / ad group</th><th>Google status — Current</th><th>Impressions — Last 180 Days</th><th>Spend — Last 180 Days</th><th>Verdict</th><th>Safeguard</th></tr></thead><tbody><?php if(!$dead):?><tr><td colspan="7">No enabled zero-impression Search keywords were returned.</td></tr><?php else:foreach($dead as $row):?><tr><td><strong><?php echo esc_html((string)$row['keyword']); ?></strong><br><small><?php echo esc_html(self::label((string)$row['match_type'])); ?></small></td><td><?php echo esc_html((string)$row['campaign']); ?><br><small><?php echo esc_html((string)$row['ad_group']); ?></small></td><td><?php echo esc_html(self::label((string)$row['primary_status'])); ?></td><td>0</td><td><?php echo esc_html(self::money((float)$row['cost'])); ?></td><td><?php self::pill((string)$row['verdict']); ?></td><td><?php echo esc_html((string)$row['reason']); ?></td></tr><?php endforeach;endif;?></tbody></table></div></details><p class="wnq-read-only-note"><strong>Read-only:</strong> No keyword or negative is paused, removed, or added from this screen.</p><?php endif;?></article><?php
     }
 
+    private static function renderAdvancedModule(string $type,array $report,string $client_id):void
+    {
+        $meta=[
+            'anomalies'=>['Search Campaign Anomalies','Campaign-specific changes that crossed conservative volume and statistical safeguards.','campaigns','ppc-anomalies'],
+            'quality_score'=>['Quality Score Intelligence','Quality components prioritized by economic significance; low Quality Score alone is never a change recommendation.','items','ppc-quality-score'],
+            'ngrams'=>['N-Gram Search-Term Intelligence','Recurring 1-word, 2-word, and 3-word intent patterns. No negatives are added automatically.','items','ppc-ngrams'],
+            'routing'=>['Query Routing & Ad Group Leakage','Possible routes where more dedicated enabled keyword coverage exists elsewhere. Investigation only.','cases','ppc-routing'],
+            'messaging'=>['Search Term → RSA Messaging Gap','High-performing themes absent from active RSA copy. Copy recommendations require approved source evidence.','gaps','ppc-messaging'],
+        ][$type];$rows=(array)($report[$meta[2]]??[]);
+        ?><article class="wnq-module" id="<?php echo esc_attr($meta[3]);?>"><div class="wnq-module-title"><div><h3><?php echo esc_html($meta[0]);?></h3><p><?php echo esc_html($meta[1]);?></p></div><?php self::moduleStatus($report);?></div>
+        <?php if(empty($report['available'])):self::unavailable($report);else:?><?php if(!empty($report['method'])):?><p class="wnq-module-note"><strong>Method:</strong> <?php echo esc_html((string)$report['method']);?></p><?php endif;?><?php if(!empty($report['message'])):?><div class="wnq-unavailable"><strong>Partial evidence</strong><span><?php echo esc_html((string)$report['message']);?></span></div><?php endif;?>
+        <details class="wnq-detail"><summary><?php echo esc_html($meta[0].' — '.(string)($report['period']??'Current evidence').' ('.count($rows).')');?></summary><div class="wnq-intel-grid">
+        <?php if(!$rows):?><div class="wnq-empty-state"><strong>No qualifying items.</strong><span>No evidence crossed this module’s conservative review safeguards.</span></div><?php else:foreach(array_slice($rows,0,100) as $row):?>
+            <section class="wnq-intel-card">
+            <?php if($type==='anomalies'):?><h4><?php echo esc_html((string)$row['campaign']);?></h4><p><?php echo esc_html(count((array)$row['anomalies']).' unusual metric movement(s)');?></p><?php foreach((array)$row['anomalies'] as $a):?><div><strong><?php echo esc_html(self::label((string)$a['metric']));?></strong><span><?php echo esc_html(self::advancedMetric((string)$a['metric'],(float)$a['baseline']).' → '.self::advancedMetric((string)$a['metric'],(float)$a['current']));?></span><small><?php echo esc_html(number_format_i18n(abs((float)($a['relative_change']??0))*100,0).'% '.(string)$a['direction'].' · z '.number_format_i18n((float)$a['z_score'],1));?></small></div><?php endforeach;?>
+            <?php elseif($type==='quality_score'):?><h4><?php echo esc_html((string)$row['keyword']);?></h4><p><?php echo esc_html((string)$row['campaign'].' · '.(string)$row['ad_group']);?></p><div><strong>Quality Score</strong><span><?php echo esc_html($row['quality_score']===null?'Not populated':(string)$row['quality_score'].' / 10');?></span></div><div><small>Expected CTR: <?php echo esc_html(self::label((string)$row['expected_ctr']));?> · Ad relevance: <?php echo esc_html(self::label((string)$row['ad_relevance']));?> · Landing page: <?php echo esc_html(self::label((string)$row['landing_page_experience']));?></small></div><div><small><?php echo esc_html(self::money((float)$row['cost']).' spend · '.number_format_i18n((float)$row['conversions'],2).' conversions · '.self::money((float)$row['cpa']).' CPA'); ?></small></div>
+            <?php elseif($type==='ngrams'):?><h4><?php echo esc_html((string)$row['ngram']);?> <small><?php echo esc_html((string)$row['size'].'-gram');?></small></h4><?php self::pill((string)$row['classification']);?><p><?php echo esc_html((string)$row['queries'].' queries · '.number_format_i18n((int)$row['clicks']).' clicks · '.self::money((float)$row['cost']).' · '.number_format_i18n((float)$row['conversions'],2).' conversions · '.self::money((float)$row['cpa']).' CPA');?></p>
+            <?php elseif($type==='routing'):?><h4><?php echo esc_html((string)$row['query']);?></h4><p><strong>Current:</strong> <?php echo esc_html((string)$row['campaign'].' → '.(string)$row['ad_group'].' → '.(string)$row['matched_keyword']);?></p><p><strong>Possible dedicated coverage:</strong> <?php echo esc_html((string)$row['better_campaign'].' → '.(string)$row['better_ad_group'].' → '.(string)$row['better_keyword']);?></p><small><?php echo esc_html((string)$row['existing_negative_context'].' scoped negative(s) available for route review · similarity '.number_format_i18n((float)$row['similarity']*100,0).'%');?></small>
+            <?php else:?><h4><?php echo esc_html((string)$row['theme']);?></h4><?php self::pill(!empty($row['claim_verified'])?'source_verified':'verification_required');?><p><?php echo esc_html((string)$row['recommendation']);?></p><small><?php echo esc_html((string)$row['queries'].' queries · '.number_format_i18n((float)$row['conversions'],2).' conversions');?><?php if(!empty($row['source'])):?> · <a href="<?php echo esc_url((string)$row['source']);?>" target="_blank" rel="noopener noreferrer">approved client source</a><?php endif;?></small>
+            <?php endif;?>
+            <?php if(!empty($row['client_rule_context'])):?><p class="wnq-rule-context"><strong>Client rule context:</strong> <?php echo esc_html(implode(' ',(array)$row['client_rule_context']));?></p><?php endif;?></section>
+        <?php endforeach;endif;?></div></details><p class="wnq-read-only-note"><strong>Read-only:</strong> This module creates evidence and investigations only. It cannot change Google Ads.</p><?php endif;?></article><?php
+    }
+
+    private static function renderPpcMemory(array $report,string $client_id):void
+    {
+        $memories=(array)($report['memories']??[]);$feedback=(array)($report['feedback']??[]);
+        ?><article class="wnq-module" id="ppc-memory"><div class="wnq-module-title"><div><h3>Persistent Client PPC Memory</h3><p>Client-specific rules, strategies, tests, outcomes, patterns, and human corrections. Old context is dated—not treated as permanent truth.</p></div><?php self::moduleStatus($report);?></div><?php if(empty($report['available'])){self::unavailable($report);echo '</article>';return;}?>
+        <details class="wnq-detail"><summary>Add a client-specific learning or rule</summary><form class="wnq-memory-form" method="post" action="<?php echo esc_url(admin_url('admin-post.php'));?>"><?php wp_nonce_field('wnq_ppc_save_memory_'.$client_id);?><input type="hidden" name="action" value="wnq_ppc_save_memory"><input type="hidden" name="client_id" value="<?php echo esc_attr($client_id);?>"><label><span>Type</span><select name="memory_type" required><?php foreach(['client_rule'=>'Known client rule','strategy'=>'Strategy result','bid_strategy'=>'Bid-strategy history','search_pattern'=>'Important search pattern','test'=>'Test','outcome'=>'Outcome','learning'=>'Other learning'] as $v=>$l):?><option value="<?php echo esc_attr($v);?>"><?php echo esc_html($l);?></option><?php endforeach;?></select></label><label><span>Subject / pattern</span><input name="memory_subject" required maxlength="255"></label><label><span>Learning, rule, or outcome</span><textarea name="memory_content" rows="3" required></textarea></label><button class="button button-primary">Save client memory</button><small>No Google Ads change is made.</small></form></details>
+        <details class="wnq-detail"><summary>Durable learnings (<?php echo esc_html((string)count($memories));?>)</summary><div class="wnq-intel-grid"><?php if(!$memories):?><div class="wnq-empty-state"><strong>No manual memory yet.</strong><span>Recommendation lifecycle history still remains available separately.</span></div><?php else:foreach($memories as $row):?><section class="wnq-intel-card"><h4><?php echo esc_html((string)$row['subject_key']);?></h4><?php self::pill((string)$row['memory_type']);?><p><?php echo esc_html((string)$row['content']);?></p><small>Confirmed <?php echo esc_html(self::displayDate((string)$row['last_confirmed_at']));?></small></section><?php endforeach;endif;?></div></details>
+        <details class="wnq-detail"><summary>Human classification feedback (<?php echo esc_html((string)count($feedback));?>)</summary><div class="wnq-table-scroll"><table><thead><tr><th>Search term</th><th>Original AI classification</th><th>Human decision</th><th>Reason</th><th>Date</th><th>Eventual result</th></tr></thead><tbody><?php if(!$feedback):?><tr><td colspan="6">No classification feedback has been recorded yet.</td></tr><?php else:foreach($feedback as $row):?><tr><td><strong><?php echo esc_html((string)$row['subject_key']);?></strong><?php if(!empty($row['is_stale'])):?><br><?php self::pill('stale_context');?><?php endif;?></td><td><?php self::pill((string)$row['original_classification']);?></td><td><?php self::pill((string)$row['human_decision']);?></td><td><?php echo esc_html((string)($row['reason']?:'No reason recorded'));?></td><td><?php echo esc_html(self::displayDate((string)$row['decided_at']));?></td><td><?php if(!empty($row['eventual_result'])):?><?php echo esc_html((string)$row['eventual_result']);?><?php else:?><form class="wnq-inline-result" method="post" action="<?php echo esc_url(admin_url('admin-post.php'));?>"><?php wp_nonce_field('wnq_ppc_feedback_result_'.$client_id.'_'.(int)$row['id']);?><input type="hidden" name="action" value="wnq_ppc_feedback_result"><input type="hidden" name="client_id" value="<?php echo esc_attr($client_id);?>"><input type="hidden" name="feedback_id" value="<?php echo esc_attr((string)$row['id']);?>"><input type="text" name="eventual_result" required placeholder="Observed result"><button class="button">Save</button></form><?php endif;?></td></tr><?php endforeach;endif;?></tbody></table></div></details></article><?php
+    }
+
+    private static function advancedMetric(string $metric,float $value):string
+    {
+        if(in_array($metric,['spend','cpc','cpa'],true))return self::money($value);
+        if(in_array($metric,['ctr','conversion_rate','search_is','lost_is_budget','lost_is_rank'],true))return number_format_i18n($value*100,1).'%';
+        return number_format_i18n($value,2);
+    }
+
     private static function renderSearchTerms(array $report, string $client_id): void
     {
         $filter = sanitize_key((string)($_GET['sqr_filter'] ?? 'all'));
@@ -856,7 +931,7 @@ final class PpcIntelligenceAdmin
             <details class="wnq-detail"><summary>Search-Term Review — Last 30 Days (<?php echo esc_html((string)count($terms)); ?> rows)</summary>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <?php wp_nonce_field('wnq_ppc_review_proposals_' . $client_id); ?><input type="hidden" name="action" value="wnq_ppc_review_proposals"><input type="hidden" name="client_id" value="<?php echo esc_attr($client_id); ?>">
-                <div class="wnq-bulk"><select name="review_action" required><option value="">Bulk review action</option><option value="approved_exact">Approve Negative Exact (internal)</option><option value="approved_phrase">Approve Negative Phrase (internal)</option><option value="relevant">Mark Relevant</option><option value="ignored">Ignore</option><option value="rejected">Reject Proposal</option></select><button class="button button-primary">Apply Review</button><small>Review-only. No Google Ads changes are sent.</small></div>
+                <div class="wnq-bulk"><select name="review_action" required><option value="">Bulk review action</option><option value="approved_exact">Approve Negative Exact (internal)</option><option value="approved_phrase">Approve Negative Phrase (internal)</option><option value="relevant">Mark Relevant</option><option value="ignored">Ignore</option><option value="rejected">Reject Proposal</option></select><input type="text" name="review_reason" required placeholder="Reason for this human decision" maxlength="500"><button class="button button-primary">Apply Review</button><small>Review-only. Original AI classification, decision, reason, and date are retained. No Google Ads changes are sent.</small></div>
                 <div class="wnq-table-scroll"><table><thead><tr><th>Check</th><th>Search term</th><th>Campaign / ad group</th><th>Keyword</th><th>Intent</th><th>Impressions — Last 30 Days</th><th>Clicks — Last 30 Days</th><th>Cost — Last 30 Days</th><th>Conversions — Last 30 Days</th><th>CPA — Last 30 Days</th><th>Confidence</th><th>Recommendation</th><th>Review status</th></tr></thead><tbody>
                 <?php if (!$terms): ?><tr><td colspan="13">No search terms match the selected filter.</td></tr><?php else: foreach ($terms as $term): ?>
                     <tr><td><input type="checkbox" name="proposal_ids[]" value="<?php echo esc_attr((string)$term['id']); ?>" <?php disabled((int)$term['id'] === 0); ?>></td><td><strong><?php echo esc_html((string)$term['query']); ?></strong><br><small><?php echo esc_html((string)$term['reason']); ?></small></td><td><a href="<?php echo esc_url(self::campaignUrl((string)$term['campaign_id'])); ?>"><?php echo esc_html((string)$term['campaign']); ?></a><br><small><?php echo esc_html((string)$term['ad_group']); ?></small></td><td><?php echo esc_html((string)($term['keyword'] ?: 'Unknown')); ?><br><small><?php echo esc_html(self::label((string)$term['match_type'])); ?></small></td><td><?php self::pill((string)$term['classification']); ?></td><td><?php echo esc_html(number_format_i18n((int)$term['impressions'])); ?></td><td><?php echo esc_html(number_format_i18n((int)$term['clicks'])); ?></td><td><?php echo esc_html(self::money((float)$term['cost'])); ?></td><td><?php echo esc_html(number_format_i18n((float)$term['conversions'], 2)); ?></td><td><?php echo esc_html(self::money((float)$term['cpa'])); ?></td><td><?php echo esc_html(number_format_i18n((float)$term['confidence'] * 100, 0)); ?>%</td><td><?php self::pill((string)$term['recommended_action']); ?></td><td><?php self::pill((string)$term['status']); ?></td></tr>

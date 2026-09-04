@@ -8,6 +8,7 @@
 namespace WNQ\Services;
 
 use WNQ\Models\PpcProposal;
+use WNQ\Models\PpcMemory;
 
 if (!defined('ABSPATH')) exit;
 
@@ -53,6 +54,7 @@ final class PpcSearchTermService
         $negative_service = new PpcNegativeInventoryService();
         $inventory = $negative_service->inventory($customer_id, $refresh);
         $positive_inventory = $negative_service->positiveKeywords($customer_id);
+        $memory = PpcMemory::context($client_id, $customer_id);
         $terms = [];
         foreach ($rows as $row) {
             $view = (array)($row['searchTermView'] ?? []);
@@ -73,6 +75,23 @@ final class PpcSearchTermService
             ];
             $term['cpa'] = $term['conversions'] > 0 ? round($term['cost'] / $term['conversions'], 2) : 0;
             $term += self::classify($term['query'], $config, $term);
+            $term['original_ai_classification'] = $term['classification'];
+            $feedback = PpcMemory::feedbackForQuery($term['query'], $memory);
+            if ($feedback) {
+                $decision = (string)($feedback['human_decision'] ?? '');
+                if (empty($feedback['is_stale'])) {
+                    if ($decision === 'relevant') { $term['classification']='human_confirmed_relevant'; $term['recommended_action']='keep'; $term['confidence']=.99; }
+                    elseif (in_array($decision,['approved_exact','approved_phrase'],true)) { $term['classification']='human_confirmed_excluded'; $term['recommended_action']=$decision==='approved_phrase'?'negative_phrase':'negative_exact'; $term['confidence']=.99; }
+                    elseif ($decision === 'rejected') { $term['classification']='human_rejected_recommendation'; $term['recommended_action']='no_action'; $term['confidence']=.95; }
+                    elseif ($decision === 'ignored') { $term['classification']='human_ignored'; $term['recommended_action']='no_action'; $term['confidence']=.95; }
+                    $term['reason'] = 'Human feedback (' . str_replace('_',' ',$decision) . ') from ' . (string)($feedback['decided_at']??'an earlier review') . ' is being applied explicitly. ' . ((string)($feedback['reason']??'') ?: 'No review reason was recorded.');
+                } else $term['reason'] .= ' Historical human feedback from more than 365 days ago is shown as stale context and does not override current evidence.';
+            }
+            $rules = PpcMemory::rulesForText($term['query'], $memory);
+            if ($rules) {
+                $term['client_rule_context'] = array_map(static fn(array $rule): string => (string)$rule['content'], $rules);
+                $term['reason'] .= ' Explicit client rule context: ' . implode(' ', $term['client_rule_context']);
+            } else $term['client_rule_context'] = [];
             if (in_array($term['recommended_action'], ['negative_exact', 'negative_phrase'], true)) {
                 $match_type = $term['recommended_action'] === 'negative_phrase' ? 'phrase' : 'exact';
                 $protected = PpcNegativeInventoryService::protectedTerms($term['query'], $config);
@@ -110,7 +129,7 @@ final class PpcSearchTermService
         foreach ($terms as &$term) $term += $statuses[$term['proposal_key']] ?? ['id' => 0, 'status' => 'not_proposed'];
         unset($term);
         $inventory_errors = array_values(array_unique(array_merge((array)($inventory['errors'] ?? []), (array)($positive_inventory['errors'] ?? []))));
-        $result = ['available' => true, 'status' => $inventory_errors ? 'partial' : 'ready', 'message' => trim((string)($inventory['message'] ?? '') . ' ' . implode(' ', $inventory_errors)), 'terms' => $terms, 'period' => 'Last 30 days', 'config' => $config, 'negative_inventory_status' => (string)($inventory['status'] ?? 'unavailable'), 'counts' => array_count_values(array_column($terms, 'classification')), 'findings' => self::findings($terms)];
+        $result = ['available' => true, 'status' => $inventory_errors ? 'partial' : 'ready', 'message' => trim((string)($inventory['message'] ?? '') . ' ' . implode(' ', $inventory_errors)), 'terms' => $terms, 'period' => 'Last 30 days', 'config' => $config, 'memory_context_count' => count((array)($memory['memories']??[])) + count((array)($memory['feedback']??[])), 'negative_inventory_status' => (string)($inventory['status'] ?? 'unavailable'), 'counts' => array_count_values(array_column($terms, 'classification')), 'findings' => self::findings($terms)];
         set_transient($cache_key, $result, 15 * MINUTE_IN_SECONDS);
         return $result;
     }

@@ -22,7 +22,7 @@ final class PpcRecommendationLifecycleService
                 (string)($case['campaign_id'] ?? ''),
                 '',
                 '',
-                ['problem' => (string)($case['problem'] ?? ''), 'observation' => (string)($case['observation'] ?? ''), 'root_cause_status' => (string)($case['root_cause_status'] ?? ''), 'root_cause' => (string)($case['root_cause'] ?? ''), 'hypotheses' => (array)($case['hypotheses'] ?? [])]
+                ['problem' => (string)($case['problem'] ?? ''), 'observation' => (string)($case['observation'] ?? ''), 'root_cause_status' => (string)($case['root_cause_status'] ?? ''), 'root_cause' => (string)($case['root_cause'] ?? ''), 'hypotheses' => (array)($case['hypotheses'] ?? []), 'historical_context' => (array)($case['historical_context'] ?? [])]
             );
         }
         foreach ((array)($search_terms['terms'] ?? []) as $term) {
@@ -77,6 +77,8 @@ final class PpcRecommendationLifecycleService
     public static function category(string $text): string
     {
         $rules = [
+            'campaign anomaly' => 'campaign_anomaly', 'n-gram' => 'ngram_intelligence', 'routing leakage' => 'query_routing',
+            'query routing' => 'query_routing', 'quality score' => 'quality_score', 'messaging gap' => 'messaging_gap',
             'conversion' => 'conversion_tracking', 'search-term' => 'search_term_waste', 'search term' => 'search_term_waste',
             'negative' => 'negative_conflict', 'non-serving' => 'non_serving_keyword', 'keyword' => 'keyword_opportunity',
             'budget' => 'budget_pacing', 'impression share' => 'impression_share', 'rank' => 'ad_rank',

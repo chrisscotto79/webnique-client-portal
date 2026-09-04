@@ -40,6 +40,11 @@ function sanitize_text_field(string $value): string
     return trim(strip_tags($value));
 }
 
+function sanitize_textarea_field(string $value): string
+{
+    return trim(strip_tags($value));
+}
+
 function wp_json_encode($value): string
 {
     return (string)json_encode($value);
@@ -76,6 +81,8 @@ require_once dirname(__DIR__) . '/includes/Services/PpcKeywordIntelligenceServic
 require_once dirname(__DIR__) . '/includes/Services/PpcLeadQualityService.php';
 require_once dirname(__DIR__) . '/includes/Models/PpcMutationPlan.php';
 require_once dirname(__DIR__) . '/includes/Models/PpcRecommendation.php';
+require_once dirname(__DIR__) . '/includes/Models/PpcMemory.php';
+require_once dirname(__DIR__) . '/includes/Services/PpcAdvancedSearchService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcRecommendationPreviewService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcChangeCorrelationService.php';
 
@@ -91,6 +98,7 @@ use WNQ\Models\PpcMutationPlan;
 use WNQ\Models\PpcRecommendation;
 use WNQ\Services\PpcRecommendationPreviewService;
 use WNQ\Services\PpcChangeCorrelationService;
+use WNQ\Services\PpcAdvancedSearchService;
 
 function assertPpc(bool $condition, string $message): void
 {
@@ -278,5 +286,32 @@ assertPpc(substr_count($ppc_admin_source, 'temporarily unavailable.') >= 6, 'Ind
 foreach ([$negative_source,$lifecycle_source,$validation_source,$correlation_source] as $phase_ten_source) {
     assertPpc(!preg_match('/googleAds:mutate|customers\/.+:mutate|->mutate|mutateCampaign|mutateAdGroup/i', $phase_ten_source), 'Phase 10 services must remain Google Ads read-only.');
 }
+
+$ngram_terms=[
+    ['query'=>'emergency junk removal','impressions'=>100,'clicks'=>6,'cost'=>30,'conversions'=>2],
+    ['query'=>'junk removal near me','impressions'=>120,'clicks'=>7,'cost'=>35,'conversions'=>2],
+    ['query'=>'same day junk removal','impressions'=>90,'clicks'=>5,'cost'=>20,'conversions'=>1],
+];
+$ngram_report=PpcAdvancedSearchService::ngrams($ngram_terms);
+$junk=array_values(array_filter($ngram_report['items'],static fn($row)=>$row['ngram']==='junk removal'));
+assertPpc(count($junk)===1 && $junk[0]['queries']===3 && $junk[0]['conversions']===5.0,'N-grams must aggregate recurring contiguous patterns without duplicating a query.');
+assertPpc($junk[0]['classification']==='high_performing_intent','Converted recurring n-grams should surface as high-performing intent.');
+$routing=PpcAdvancedSearchService::routing([
+    ['query'=>'emergency junk removal','keyword'=>'junk removal','campaign_id'=>'1','campaign'=>'General','ad_group_id'=>'10','ad_group'=>'General','clicks'=>4,'cost'=>22,'conversions'=>0],
+],[
+    ['keyword'=>'emergency junk removal','campaign_id'=>'2','campaign'=>'Emergency','ad_group_id'=>'20','ad_group'=>'Emergency'],
+],[]);
+assertPpc(count($routing['cases'])===1 && $routing['cases'][0]['better_ad_group_id']==='20','Routing must surface stronger dedicated keyword coverage as an investigation.');
+$messaging=PpcAdvancedSearchService::messaging($ngram_terms,[['status'=>'enabled','headlines'=>[['text'=>'Fast Local Service']],'descriptions'=>[['text'=>'Request a Quote']]]],[],['available'=>true,'pages'=>[['url'=>'https://example.com/junk-removal','text'=>'emergency junk removal service']]]);
+$verified_gaps=array_filter($messaging['gaps'],static fn($row)=>!empty($row['claim_verified']));
+assertPpc(count($verified_gaps)>0,'RSA messaging recommendations must require supporting approved website evidence.');
+$anomaly_rows=[];$origin=new DateTimeImmutable('2026-01-01');for($day=0;$day<35;$day++){$current=$day>=28;$anomaly_rows[]=['campaign'=>['id'=>'42','name'=>'Search Only'],'segments'=>['date'=>$origin->modify("+{$day} days")->format('Y-m-d')],'metrics'=>['impressions'=>'700','clicks'=>'70','costMicros'=>$current?'300000000':'100000000','conversions'=>'7','searchImpressionShare'=>.6,'searchBudgetLostImpressionShare'=>.2,'searchRankLostImpressionShare'=>.2]];}
+$anomaly=PpcAdvancedSearchService::analyzeAnomalies($anomaly_rows,'2026-01-01','2026-02-04');
+assertPpc(count($anomaly['campaigns'])===1 && count($anomaly['campaigns'][0]['anomalies'])>0,'Campaign anomaly detection must compare a seven-day window with four campaign-specific baseline windows.');
+$advanced_source=(string)file_get_contents(dirname(__DIR__).'/includes/Services/PpcAdvancedSearchService.php');
+$memory_source=(string)file_get_contents(dirname(__DIR__).'/includes/Models/PpcMemory.php');
+assertPpc(substr_count($advanced_source,"advertising_channel_type = 'SEARCH'")===2,'Every new Google Ads query must be explicitly restricted to Search campaigns.');
+assertPpc(!preg_match('/googleAds:mutate|customers\/.+:mutate|->mutate|mutateCampaign|mutateAdGroup/i',$advanced_source.$memory_source),'Phase 12 intelligence and memory must remain Google Ads read-only.');
+foreach(['original_classification','human_decision','reason','decided_at','eventual_result'] as $field)assertPpc(str_contains($memory_source,$field),"Human feedback must preserve {$field}.");
 
 echo "PPC regression checks passed.\n";

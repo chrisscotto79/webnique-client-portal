@@ -51,6 +51,11 @@ final class PpcRecommendation
         'schedule_performance' => 'Schedule/hour performance',
         'geographic_issue' => 'Geographic issue',
         'change_history' => 'Change-history investigation',
+        'campaign_anomaly' => 'Search campaign anomaly',
+        'ngram_intelligence' => 'Search-term n-gram intelligence',
+        'query_routing' => 'Query routing / leakage',
+        'quality_score' => 'Quality Score intelligence',
+        'messaging_gap' => 'Search-to-RSA messaging gap',
         'other' => 'Other',
     ];
 
