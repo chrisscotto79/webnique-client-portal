@@ -162,28 +162,52 @@ final class PpcIntelligenceAdmin
         $credential_status = GoogleAdsCredentials::status();
         $accounts = [];
         $discovery_error = '';
-        $diagnostics = null;
-        $search_terms = null;
+        $diagnostics = ['available' => false, 'status' => 'unavailable', 'message' => 'Account diagnostics have not loaded.', 'findings' => []];
+        $search_terms = ['available' => false, 'status' => 'unavailable', 'message' => 'Search-term intelligence has not loaded.', 'terms' => [], 'findings' => []];
         $ad_audit = null;
         $keyword_intelligence = null;
-        $investigations = null;
+        $investigations = ['available' => false, 'status' => 'unavailable', 'message' => 'Structured investigations have not loaded.', 'cases' => []];
         $change_correlations = ['available' => false, 'status' => 'unavailable', 'message' => 'Change correlation evidence has not loaded.', 'correlations' => []];
-        $lead_quality = (new PpcLeadQualityService())->report($client_id, (string)($connection['customer_id'] ?? ''));
-        $mutation_plans = PpcMutationPlan::forClient($client_id);
-        $recommendations = PpcRecommendation::forClient($client_id);
+        try {
+            $lead_quality = (new PpcLeadQualityService())->report($client_id, (string)($connection['customer_id'] ?? ''));
+        } catch (\Throwable $error) {
+            $lead_quality = ['available' => false, 'status' => 'unavailable', 'message' => 'Lead-quality intelligence is temporarily unavailable.'];
+        }
+        try {
+            $mutation_plans = PpcMutationPlan::forClient($client_id);
+        } catch (\Throwable $error) {
+            $mutation_plans = [];
+        }
+        try {
+            $recommendations = PpcRecommendation::forClient($client_id);
+        } catch (\Throwable $error) {
+            $recommendations = [];
+        }
         $preview_candidates = ['available' => false, 'status' => 'unavailable', 'candidates' => [], 'counts' => [], 'summary' => 'Recommendation evidence has not loaded.'];
 
         if (!empty($credential_status['configured'])) {
-            $query = new GoogleAdsQueryService();
-            $accounts = $query->discoverAccounts(!empty($_GET['refresh_accounts']));
-            $discovery_error = implode(' ', $query->errors());
+            try {
+                $query = new GoogleAdsQueryService();
+                $accounts = $query->discoverAccounts(!empty($_GET['refresh_accounts']));
+                $discovery_error = implode(' ', $query->errors());
+            } catch (\Throwable $error) {
+                $discovery_error = 'Google Ads account discovery is temporarily unavailable.';
+            }
         }
         if (!empty($connection['customer_id']) && !empty($credential_status['configured'])) {
-            $diagnostics = (new PpcDiagnosticService())->dashboard(
-                (string)$connection['customer_id'],
-                !empty($_GET['refresh_ppc'])
-            );
-            $search_terms = (new PpcSearchTermService())->report($client_id, (string)$connection['customer_id'], $client, !empty($_GET['refresh_ppc']));
+            try {
+                $diagnostics = (new PpcDiagnosticService())->dashboard(
+                    (string)$connection['customer_id'],
+                    !empty($_GET['refresh_ppc'])
+                );
+            } catch (\Throwable $error) {
+                $diagnostics = ['available' => false, 'status' => 'unavailable', 'message' => 'Account diagnostics are temporarily unavailable.', 'findings' => []];
+            }
+            try {
+                $search_terms = (new PpcSearchTermService())->report($client_id, (string)$connection['customer_id'], $client, !empty($_GET['refresh_ppc']));
+            } catch (\Throwable $error) {
+                $search_terms = ['available' => false, 'status' => 'unavailable', 'message' => 'Search-term intelligence is temporarily unavailable.', 'terms' => [], 'findings' => []];
+            }
             try {
                 $ad_audit = (new PpcAdAuditService())->report($client_id, (string)$connection['customer_id'], $client, !empty($_GET['refresh_ppc']));
             } catch (\Throwable $error) {
@@ -194,7 +218,11 @@ final class PpcIntelligenceAdmin
             } catch (\Throwable $error) {
                 $keyword_intelligence = ['available'=>false,'status'=>'unavailable','message'=>'Keyword intelligence is temporarily unavailable.','non_serving'=>[],'conflicts'=>[],'findings'=>[]];
             }
-            $investigations = PpcInvestigationService::build($client_id,(string)$connection['customer_id'],(array)$diagnostics,(array)$search_terms,(array)$ad_audit,(array)$keyword_intelligence);
+            try {
+                $investigations = PpcInvestigationService::build($client_id,(string)$connection['customer_id'],(array)$diagnostics,(array)$search_terms,(array)$ad_audit,(array)$keyword_intelligence);
+            } catch (\Throwable $error) {
+                $investigations = ['available' => false, 'status' => 'unavailable', 'message' => 'Structured investigations are temporarily unavailable.', 'cases' => []];
+            }
             try {
                 $change_correlations = (new PpcChangeCorrelationService())->report((string)$connection['customer_id'], (array)($diagnostics['change_history'] ?? []));
             } catch (\Throwable $error) {
@@ -203,9 +231,14 @@ final class PpcIntelligenceAdmin
             try {
                 $recommendations = PpcRecommendationLifecycleService::sync($client_id, (string)$connection['customer_id'], (array)$investigations, (array)$search_terms, (array)$keyword_intelligence);
             } catch (\Throwable $error) {
-                $recommendations = PpcRecommendation::forClient($client_id);
+                // Retain the register loaded before refresh; this module must not
+                // take the remaining account workspace down with it.
             }
-            $preview_candidates = PpcRecommendationPreviewService::candidates((array)$diagnostics, (array)$search_terms, (array)$keyword_intelligence);
+            try {
+                $preview_candidates = PpcRecommendationPreviewService::candidates((array)$diagnostics, (array)$search_terms, (array)$keyword_intelligence);
+            } catch (\Throwable $error) {
+                $preview_candidates = ['available' => false, 'status' => 'unavailable', 'candidates' => [], 'counts' => [], 'summary' => 'Recommendation evidence is temporarily unavailable.'];
+            }
             if (!empty($_GET['refresh_ppc'])) {
                 $available_modules = array_filter($diagnostics, static fn($module): bool => is_array($module) && !empty($module['available']));
                 if ($available_modules) {
@@ -529,9 +562,13 @@ final class PpcIntelligenceAdmin
         if (!$recommendation || !$connection || !hash_equals(preg_replace('/\D+/', '', (string)$recommendation['customer_id']) ?: '', preg_replace('/\D+/', '', (string)$connection['customer_id']) ?: '')) {
             self::finish($client_id, false, 'The recommendation no longer matches this client’s exact Google Ads account.');
         }
-        $dashboard = (new PpcDiagnosticService())->dashboard((string)$connection['customer_id'], true);
-        $validation = (new PpcRecommendationValidationService())->validate($recommendation, (array)($dashboard['change_history'] ?? []));
-        $saved = PpcRecommendation::recordValidation($client_id, $recommendation_id, $validation);
+        try {
+            $dashboard = (new PpcDiagnosticService())->dashboard((string)$connection['customer_id'], true);
+            $validation = (new PpcRecommendationValidationService())->validate($recommendation, (array)($dashboard['change_history'] ?? []));
+            $saved = PpcRecommendation::recordValidation($client_id, $recommendation_id, $validation);
+        } catch (\Throwable $error) {
+            self::finish($client_id, false, 'Before/after evidence is temporarily unavailable. No Google Ads change was made.');
+        }
         self::finish($client_id, $saved, $saved ? 'Before/after evidence refreshed. No Google Ads change was made.' : 'Before/after evidence could not be stored.');
     }
 

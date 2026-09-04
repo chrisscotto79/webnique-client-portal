@@ -13,7 +13,9 @@ final class PpcChangeCorrelationService
         }
         $today = current_datetime()->setTime(0, 0);
         $end = $today->format('Y-m-d');
-        $start = $today->modify('-29 days')->format('Y-m-d');
+        // Change Event covers 30 days; fetch three extra days so the oldest
+        // eligible change still has a complete pre-change comparison window.
+        $start = $today->modify('-32 days')->format('Y-m-d');
         $query = new GoogleAdsQueryService();
         $rows = $query->select($customer_id, "SELECT segments.date, campaign.id, campaign.name, metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions FROM campaign WHERE segments.date BETWEEN '{$start}' AND '{$end}' ORDER BY segments.date");
         if ($query->errors()) {
@@ -33,21 +35,27 @@ final class PpcChangeCorrelationService
         $correlations = [];
         foreach (array_slice((array)($change_history['changes'] ?? []), 0, 100) as $change) {
             $campaign_id = (string)($change['campaign_id'] ?? '');
-            $date = \DateTimeImmutable::createFromFormat('!Y-m-d', substr((string)($change['date_time'] ?? ''), 0, 10));
+            $date = \DateTimeImmutable::createFromFormat('!Y-m-d', substr((string)($change['date_time'] ?? ''), 0, 10), $today->getTimezone());
             if (!$date || $date->modify('+3 days') >= $today) continue;
             $series = $campaign_id !== '' ? ($daily[$campaign_id] ?? []) : ($daily['__account'] ?? []);
             $before = self::sum($series, $date->modify('-3 days'), $date->modify('-1 day'));
             $after = self::sum($series, $date->modify('+1 day'), $date->modify('+3 days'));
-            if (($before['clicks'] + $after['clicks']) < 6 && ($before['conversions'] + $after['conversions']) < 2) continue;
+            $sample_clicks = $before['clicks'] + $after['clicks'];
+            $sample_conversions = $before['conversions'] + $after['conversions'];
+            if ($sample_clicks < 6 && $sample_conversions < 2) continue;
 
             $conversion_change = self::rate($before['conversions'], $after['conversions']);
             $cpa_before = $before['conversions'] > 0 ? $before['spend'] / $before['conversions'] : null;
             $cpa_after = $after['conversions'] > 0 ? $after['spend'] / $after['conversions'] : null;
             $cpa_change = is_numeric($cpa_before) && is_numeric($cpa_after) ? self::rate($cpa_before, $cpa_after) : null;
             $magnitude = max(abs($conversion_change), is_numeric($cpa_change) ? abs($cpa_change) : 0);
-            $label = $magnitude >= .35 ? 'Strong evidence' : ($magnitude >= .15 ? 'Possible contributor' : 'Observation');
+            $robust_sample = $sample_clicks >= 30 || $sample_conversions >= 6;
+            $moderate_sample = $sample_clicks >= 15 || $sample_conversions >= 4;
+            $label = self::evidenceLabel($magnitude, $sample_clicks, $sample_conversions);
             $evidence_for = [];
             $evidence_against = [];
+            if (!$moderate_sample) $evidence_against[] = 'Minimum-data safeguard: this comparison is too small to support a contributor label.';
+            elseif (!$robust_sample) $evidence_against[] = 'The sample supports investigation but is too small for a strong-evidence label.';
             if (abs($conversion_change) >= .15) $evidence_for[] = 'Conversions changed ' . round(abs($conversion_change)*100) . '% in the three complete days after the change.';
             else $evidence_against[] = 'Conversion volume did not materially separate in the immediate comparison.';
             if (is_numeric($cpa_change) && abs($cpa_change) >= .15) $evidence_for[] = 'CPA changed ' . round(abs($cpa_change)*100) . '% after the change.';
@@ -82,5 +90,14 @@ final class PpcChangeCorrelationService
     private static function rate(float $before, float $after): float
     {
         return abs($before) < .00001 ? (abs($after) < .00001 ? 0 : 1) : ($after-$before)/abs($before);
+    }
+
+    private static function evidenceLabel(float $magnitude, int $clicks, float $conversions): string
+    {
+        $robust_sample = $clicks >= 30 || $conversions >= 6;
+        $moderate_sample = $clicks >= 15 || $conversions >= 4;
+        if ($magnitude >= .35 && $robust_sample) return 'Strong evidence';
+        if ($magnitude >= .15 && $moderate_sample) return 'Possible contributor';
+        return 'Observation';
     }
 }
