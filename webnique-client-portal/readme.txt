@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 3.2.0
+Stable tag: 3.3.0
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,14 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+3.3.0 - PPC Intelligence Phase 9
+
+- Reorganizes PPC Intelligence into focused Overview, Performance, Search & Creative, Lead Quality, and Change Control workspaces.
+- Adds an action-first command center for critical findings, warnings, investigations, recommendation previews, and pending approvals.
+- Adds accessible keyboard-aware workspace navigation that preserves campaign and report deep links.
+- Collapses configured connection and credential controls to reduce page length while keeping setup visible when required.
+- Refreshes the responsive visual system without adding Google Ads mutation capability.
+
 3.2.0 - PPC Intelligence Phase 8
 
 - Connects internally approved negative-keyword recommendations to exact Mutation Safety previews.

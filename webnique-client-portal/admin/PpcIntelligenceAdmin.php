@@ -33,6 +33,7 @@ final class PpcIntelligenceAdmin
     {
         add_action('admin_menu', [self::class, 'addSubmenu'], 20);
         add_action('admin_init', [self::class, 'maybeUpgrade']);
+        add_action('admin_enqueue_scripts', [self::class, 'enqueueAssets']);
         add_action('admin_post_wnq_ppc_save_credentials', [self::class, 'handleSaveCredentials']);
         add_action('admin_post_wnq_ppc_test_credentials', [self::class, 'handleTestCredentials']);
         add_action('admin_post_wnq_ppc_save_mapping', [self::class, 'handleSaveMapping']);
@@ -45,6 +46,16 @@ final class PpcIntelligenceAdmin
         add_action('admin_post_wnq_ppc_create_mutation_plan', [self::class, 'handleCreateMutationPlan']);
         add_action('admin_post_wnq_ppc_review_mutation_plan', [self::class, 'handleReviewMutationPlan']);
         add_action('admin_post_wnq_ppc_prepare_recommendation', [self::class, 'handlePrepareRecommendation']);
+    }
+
+    public static function enqueueAssets(): void
+    {
+        $page = sanitize_key((string)wp_unslash($_GET['page'] ?? ''));
+        if (!in_array($page, ['wnq-clients', 'wnq-ppc-management'], true)) {
+            return;
+        }
+        wp_enqueue_style('wnq-ppc-intelligence', WNQ_PORTAL_URL . 'assets/admin/ppc-intelligence.css', [], WNQ_PORTAL_VERSION);
+        wp_enqueue_script('wnq-ppc-intelligence', WNQ_PORTAL_URL . 'assets/admin/ppc-intelligence.js', [], WNQ_PORTAL_VERSION, true);
     }
 
     public static function addSubmenu(): void
@@ -69,8 +80,10 @@ final class PpcIntelligenceAdmin
         $credential_status = GoogleAdsCredentials::status();
         ?>
         <div class="wrap wnq-ppc-management">
-            <h1>PPC Management</h1>
-            <p>Manage each client’s exact Google Ads account connection. This internal section is read-only and is never shown to clients.</p>
+            <div class="wnq-management-hero">
+                <div><span>Golden Web Marketing</span><h1>PPC Management</h1><p>Portfolio priorities and exact Google Ads account connections in one internal workspace.</p></div>
+                <strong>Internal · Read only</strong>
+            </div>
 
             <?php if (empty($credential_status['configured'])): ?>
                 <div class="notice notice-warning inline"><p><strong>Google Ads credentials need attention.</strong> Open any client below to securely configure and test the shared MCC connection.</p></div>
@@ -79,7 +92,7 @@ final class PpcIntelligenceAdmin
             <?php if (!$clients): ?>
                 <div class="notice notice-info inline"><p>No clients are available yet.</p></div>
             <?php else: ?>
-                <table class="wp-list-table widefat fixed striped">
+                <table class="wp-list-table widefat fixed striped wnq-portfolio-table">
                     <thead><tr><th>Client</th><th>Google Ads account</th><th>Priority</th><th>Investigations</th><th>Shared budgets</th><th>Last sync</th><th>Action</th></tr></thead>
                     <tbody>
                     <?php foreach ($clients as $client): ?>
@@ -202,6 +215,8 @@ final class PpcIntelligenceAdmin
                 <?php self::renderDiagnostics($diagnostics, $search_terms, $ad_audit, $keyword_intelligence, $investigations, $lead_quality, $preview_candidates, $mutation_plans, $connection, $client_id); ?>
             <?php endif; ?>
 
+            <details class="wnq-connection-settings" <?php echo empty($connection['customer_id']) || empty($credential_status['configured']) ? 'open' : ''; ?>>
+                <summary><span><strong>Connection &amp; security settings</strong><small>Exact client mapping, account testing, and encrypted server-side credentials</small></span><span class="wnq-settings-state"><?php echo esc_html(!empty($connection['customer_id']) && !empty($credential_status['configured']) ? 'Configured' : 'Needs setup'); ?></span></summary>
             <div class="wnq-ppc-layout">
                 <section class="wnq-ppc-card">
                     <h3>Client account connection</h3>
@@ -294,6 +309,7 @@ final class PpcIntelligenceAdmin
                     <?php endif; ?>
                 </section>
             </div>
+            </details>
         </div>
         <?php self::styles(); ?>
         <?php
@@ -497,17 +513,37 @@ final class PpcIntelligenceAdmin
     private static function renderDiagnostics(?array $dashboard, ?array $search_terms, ?array $ad_audit, ?array $keywords, ?array $investigations, ?array $lead_quality, array $preview_candidates, array $mutation_plans, array $connection, string $client_id): void
     {
         $dashboard = is_array($dashboard) ? $dashboard : [];
+        $findings = array_merge((array)($dashboard['findings'] ?? []), (array)($search_terms['findings'] ?? []), (array)($ad_audit['findings'] ?? []), (array)($keywords['findings'] ?? []));
+        $finding_counts = array_count_values(array_map(static fn(array $finding): string => sanitize_key((string)($finding['severity'] ?? 'unknown')), $findings));
+        $investigation_cases = (array)($investigations['cases'] ?? []);
+        $open_investigations = count(array_filter($investigation_cases, static fn(array $case): bool => !in_array((string)($case['status'] ?? ''), ['resolved', 'healthy'], true)));
+        $plan_counts = array_count_values(array_map(static fn(array $plan): string => sanitize_key((string)($plan['status'] ?? 'unknown')), $mutation_plans));
+        $ready_count = (int)($preview_candidates['counts']['ready'] ?? 0);
         ?>
         <section class="wnq-diagnostics-shell">
             <div class="wnq-diagnostics-head">
-                <div><span class="wnq-ppc-eyebrow">Phases 2–8</span><h2>Account intelligence</h2><p>Read-only diagnostics, investigations, lead quality, recommendation safeguards, and approval-gated planning.</p></div>
+                <div><span class="wnq-ppc-eyebrow">Phase 9 · Operations workspace</span><h2>Account intelligence</h2><p>Start with decisions, then open only the evidence needed to investigate them.</p></div>
                 <a class="button" href="<?php echo esc_url(add_query_arg('refresh_ppc', '1')); ?>">Refresh diagnostics</a>
             </div>
-            <nav class="wnq-module-nav">
-                <a href="#ppc-attention">Attention</a><a href="#ppc-investigations">Investigations</a><a href="#ppc-account">Account</a><a href="#ppc-conversions">Conversions</a><a href="#ppc-changes">Changes</a><a href="#ppc-share">Impression share</a><a href="#ppc-budgets">Budgets</a><a href="#ppc-keywords">Keywords</a><a href="#ppc-search-terms">Search terms</a><a href="#ppc-ads">Ads &amp; claims</a><a href="#ppc-lead-quality">Lead quality</a><a href="#ppc-mutation-safety">Mutation safety</a>
+            <div class="wnq-command-center" aria-label="PPC operations summary">
+                <button type="button" class="wnq-command-card is-critical" data-wnq-open-workspace="overview"><span>Critical</span><strong><?php echo esc_html((string)($finding_counts['critical'] ?? 0)); ?></strong><small>requires immediate review</small></button>
+                <button type="button" class="wnq-command-card is-warning" data-wnq-open-workspace="overview"><span>Warnings</span><strong><?php echo esc_html((string)($finding_counts['warning'] ?? 0)); ?></strong><small>needs attention</small></button>
+                <button type="button" class="wnq-command-card is-opportunity" data-wnq-open-workspace="overview"><span>Opportunities</span><strong><?php echo esc_html((string)($finding_counts['opportunity'] ?? 0)); ?></strong><small>potential improvements</small></button>
+                <button type="button" class="wnq-command-card is-investigation" data-wnq-open-workspace="overview"><span>Open investigations</span><strong><?php echo esc_html((string)$open_investigations); ?></strong><small>structured cases</small></button>
+                <button type="button" class="wnq-command-card is-ready" data-wnq-open-workspace="control"><span>Ready for preview</span><strong><?php echo esc_html((string)$ready_count); ?></strong><small>internally reviewed</small></button>
+                <button type="button" class="wnq-command-card is-approval" data-wnq-open-workspace="control"><span>Awaiting approval</span><strong><?php echo esc_html((string)($plan_counts['awaiting_approval'] ?? 0)); ?></strong><small>exact dry runs</small></button>
+            </div>
+            <nav class="wnq-workspace-tabs" role="tablist" aria-label="PPC Intelligence workspaces">
+                <button type="button" role="tab" aria-selected="true" aria-controls="ppc-workspace-overview" id="ppc-tab-overview" data-wnq-workspace-tab="overview">Overview</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="ppc-workspace-performance" id="ppc-tab-performance" data-wnq-workspace-tab="performance">Performance</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="ppc-workspace-search" id="ppc-tab-search" data-wnq-workspace-tab="search">Search &amp; creative</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="ppc-workspace-quality" id="ppc-tab-quality" data-wnq-workspace-tab="quality">Lead quality</button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="ppc-workspace-control" id="ppc-tab-control" data-wnq-workspace-tab="control">Change control</button>
             </nav>
+            <details class="wnq-section-index"><summary>Jump to a specific report</summary><nav class="wnq-module-nav">
+                <a href="#ppc-attention">Attention</a><a href="#ppc-investigations">Investigations</a><a href="#ppc-account">Account</a><a href="#ppc-conversions">Conversions</a><a href="#ppc-changes">Changes</a><a href="#ppc-share">Impression share</a><a href="#ppc-budgets">Budgets</a><a href="#ppc-keywords">Keywords</a><a href="#ppc-search-terms">Search terms</a><a href="#ppc-ads">Ads &amp; claims</a><a href="#ppc-lead-quality">Lead quality</a><a href="#ppc-mutation-safety">Mutation safety</a>
+            </nav></details>
             <?php
-            $findings = array_merge((array)($dashboard['findings'] ?? []), (array)($search_terms['findings'] ?? []), (array)($ad_audit['findings'] ?? []), (array)($keywords['findings'] ?? []));
             $has_actionable_finding = count(array_filter($findings, static function (array $finding): bool {
                 return ($finding['severity'] ?? '') !== 'healthy';
             })) > 0;
@@ -516,19 +552,31 @@ final class PpcIntelligenceAdmin
                     return ($finding['severity'] ?? '') !== 'healthy';
                 }));
             }
-            self::renderAttention($findings);
             ?>
-            <?php self::renderInvestigations((array)($investigations ?? [])); ?>
-            <?php self::renderAccountDiagnostic((array)($dashboard['account_diagnostic'] ?? [])); ?>
-            <?php self::renderConversionHealth((array)($dashboard['conversion_health'] ?? [])); ?>
-            <?php self::renderChangeHistory((array)($dashboard['change_history'] ?? [])); ?>
-            <?php self::renderImpressionShare((array)($dashboard['impression_share'] ?? [])); ?>
-            <?php self::renderBudgetAnalysis((array)($dashboard['budget_analysis'] ?? [])); ?>
-            <?php self::renderKeywordIntelligence((array)($keywords ?? [])); ?>
-            <?php self::renderSearchTerms((array)($search_terms ?? []), $client_id); ?>
-            <?php self::renderAdAudit((array)($ad_audit ?? []), $client_id); ?>
-            <?php self::renderLeadQuality((array)($lead_quality ?? []), $client_id); ?>
-            <?php self::renderMutationSafety($preview_candidates, $mutation_plans, $connection, $client_id); ?>
+            <div class="wnq-workspace-panels">
+                <div class="wnq-workspace-panel is-active" id="ppc-workspace-overview" role="tabpanel" aria-labelledby="ppc-tab-overview" data-wnq-workspace="overview">
+                    <?php self::renderAttention($findings); ?>
+                    <?php self::renderInvestigations((array)($investigations ?? [])); ?>
+                </div>
+                <div class="wnq-workspace-panel" id="ppc-workspace-performance" role="tabpanel" aria-labelledby="ppc-tab-performance" data-wnq-workspace="performance">
+                    <?php self::renderAccountDiagnostic((array)($dashboard['account_diagnostic'] ?? [])); ?>
+                    <?php self::renderConversionHealth((array)($dashboard['conversion_health'] ?? [])); ?>
+                    <?php self::renderImpressionShare((array)($dashboard['impression_share'] ?? [])); ?>
+                    <?php self::renderBudgetAnalysis((array)($dashboard['budget_analysis'] ?? [])); ?>
+                </div>
+                <div class="wnq-workspace-panel" id="ppc-workspace-search" role="tabpanel" aria-labelledby="ppc-tab-search" data-wnq-workspace="search">
+                    <?php self::renderKeywordIntelligence((array)($keywords ?? [])); ?>
+                    <?php self::renderSearchTerms((array)($search_terms ?? []), $client_id); ?>
+                    <?php self::renderAdAudit((array)($ad_audit ?? []), $client_id); ?>
+                </div>
+                <div class="wnq-workspace-panel" id="ppc-workspace-quality" role="tabpanel" aria-labelledby="ppc-tab-quality" data-wnq-workspace="quality">
+                    <?php self::renderLeadQuality((array)($lead_quality ?? []), $client_id); ?>
+                </div>
+                <div class="wnq-workspace-panel" id="ppc-workspace-control" role="tabpanel" aria-labelledby="ppc-tab-control" data-wnq-workspace="control">
+                    <?php self::renderChangeHistory((array)($dashboard['change_history'] ?? [])); ?>
+                    <?php self::renderMutationSafety($preview_candidates, $mutation_plans, $connection, $client_id); ?>
+                </div>
+            </div>
         </section>
         <?php
     }
