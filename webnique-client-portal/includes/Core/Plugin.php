@@ -59,6 +59,7 @@ final class Plugin
     \WNQ\Models\KnowledgeBase::createTables();
     \WNQ\Models\PpcAccount::createTable();
     \WNQ\Models\PpcProposal::createTable();
+    \WNQ\Models\PpcMutationPlan::createTables();
     Activator::run();
   }
 
@@ -84,6 +85,7 @@ final class Plugin
     require_once WNQ_PORTAL_PATH . 'includes/Models/KnowledgeBase.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/PpcAccount.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/PpcProposal.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Models/PpcMutationPlan.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/Task.php';
 
     /**

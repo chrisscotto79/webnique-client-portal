@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 3.0.0
+Stable tag: 3.1.0
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,13 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+3.1.0 - PPC Intelligence Phase 7
+
+- Adds exact-account, exact-entity mutation previews with current and proposed values, evidence, reversibility, and rollback plans.
+- Requires an unexpired content fingerprint and a human-typed APPROVE, REJECT, or CANCEL decision; approval is never generated or inferred.
+- Adds idempotent preview creation, seven-day expiry, stale account-mapping protection, and a hash-chained audit history.
+- Records authorization only. There is no Google Ads execution or rollback endpoint, so the PPC workspace remains read-only.
+
 3.0.0 - PPC Intelligence Phase 6
 
 - Adds configurable GA4 quality stages for engagement, raw leads, qualified leads, booked work, and known revenue outcomes.

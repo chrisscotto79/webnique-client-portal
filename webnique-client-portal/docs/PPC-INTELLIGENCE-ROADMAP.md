@@ -10,14 +10,6 @@ This file records planned work that must remain visible as PPC Intelligence evol
 - Phase 4: RSA structure, policy, destination, asset-performance, and website-backed claim verification.
 - Phase 5: structured investigations, confidence separation, keyword hygiene/conflicts, shared-budget awareness, minimum-data safeguards, and cached portfolio priority tiers.
 - Phase 6: privacy-safe GA4 quality stages filtered to the exact linked Google Ads customer, client-specific event mapping, date/hour/device/campaign evidence, and explicit unavailable or unmapped states.
+- Phase 7: formal exact-target mutation previews, human-typed approval/rejection/cancellation, seven-day expiry, idempotency, account-remapping protection, reversibility and rollback documentation, and a hash-chained append-only application audit trail. Authorization is recorded locally; Google Ads execution remains disabled.
 
-## Phase 7 — Mutation safety
-
-- Formal mutation proposals with exact client, account, entity, current value, and proposed value.
-- Dry-run previews and explicit human approval.
-- Immutable approval and execution audit records.
-- Idempotency and exact-identifier safeguards.
-- Reversibility classification and rollback plans.
-- No autonomous Google Ads mutations.
-
-These items are roadmap commitments, not claims that the current plugin already implements them.
+The completed foundation reflects the current plugin. Any future live execution and automated rollback engine requires a separate reviewed phase; a Phase 7 approval does not authorize this plugin to call the Google Ads mutate API.
