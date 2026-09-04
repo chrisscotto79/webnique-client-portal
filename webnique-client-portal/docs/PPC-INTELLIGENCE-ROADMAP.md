@@ -9,11 +9,7 @@ This file records planned work that must remain visible as PPC Intelligence evol
 - Phase 3: search-query classification, geographic review, and local negative-keyword proposal decisions.
 - Phase 4: RSA structure, policy, destination, asset-performance, and website-backed claim verification.
 - Phase 5: structured investigations, confidence separation, keyword hygiene/conflicts, shared-budget awareness, minimum-data safeguards, and cached portfolio priority tiers.
-
-## Phase 6 — GA4 lead quality
-
-- Separate raw conversions, engaged leads, qualified leads, booked work, and known revenue outcomes when source data supports those distinctions.
-- Preserve privacy and explicitly label unavailable or incomplete quality evidence.
+- Phase 6: privacy-safe GA4 quality stages filtered to the exact linked Google Ads customer, client-specific event mapping, date/hour/device/campaign evidence, and explicit unavailable or unmapped states.
 
 ## Phase 7 — Mutation safety
 

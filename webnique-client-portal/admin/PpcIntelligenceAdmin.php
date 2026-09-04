@@ -19,6 +19,7 @@ use WNQ\Services\PpcSearchTermService;
 use WNQ\Services\PpcAdAuditService;
 use WNQ\Services\PpcKeywordIntelligenceService;
 use WNQ\Services\PpcInvestigationService;
+use WNQ\Services\PpcLeadQualityService;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -38,6 +39,7 @@ final class PpcIntelligenceAdmin
         add_action('admin_post_wnq_ppc_save_search_config', [self::class, 'handleSaveSearchConfig']);
         add_action('admin_post_wnq_ppc_review_proposals', [self::class, 'handleReviewProposals']);
         add_action('admin_post_wnq_ppc_save_claim_sources', [self::class, 'handleSaveClaimSources']);
+        add_action('admin_post_wnq_ppc_save_quality_events', [self::class, 'handleSaveQualityEvents']);
     }
 
     public static function addSubmenu(): void
@@ -128,6 +130,7 @@ final class PpcIntelligenceAdmin
         $ad_audit = null;
         $keyword_intelligence = null;
         $investigations = null;
+        $lead_quality = (new PpcLeadQualityService())->report($client_id, (string)($connection['customer_id'] ?? ''));
 
         if (!empty($credential_status['configured'])) {
             $query = new GoogleAdsQueryService();
@@ -187,7 +190,7 @@ final class PpcIntelligenceAdmin
             </div>
 
             <?php if ($connection && !empty($connection['customer_id'])): ?>
-                <?php self::renderDiagnostics($diagnostics, $search_terms, $ad_audit, $keyword_intelligence, $investigations, $client_id); ?>
+                <?php self::renderDiagnostics($diagnostics, $search_terms, $ad_audit, $keyword_intelligence, $investigations, $lead_quality, $client_id); ?>
             <?php endif; ?>
 
             <div class="wnq-ppc-layout">
@@ -397,6 +400,18 @@ final class PpcIntelligenceAdmin
         self::finish($client_id, $saved, $saved ? 'Verified PPC claim sources saved. No Google Ads changes were made.' : 'Claim sources could not be saved. Use a source URL on the client website for every claim.');
     }
 
+    public static function handleSaveQualityEvents(): void
+    {
+        $client_id = self::requestClientId();
+        self::authorize('wnq_ppc_save_quality_events_' . $client_id);
+        $saved = PpcLeadQualityService::saveConfig($client_id, (array)wp_unslash($_POST));
+        self::finish(
+            $client_id,
+            $saved,
+            $saved ? 'GA4 lead-quality event mapping saved.' : 'GA4 lead-quality event mapping could not be saved.'
+        );
+    }
+
     private static function authorize(string $nonce_action): void
     {
         if (!self::canManage()) {
@@ -433,17 +448,17 @@ final class PpcIntelligenceAdmin
         ?><div class="wnq-ppc-status <?php echo $ok ? 'is-ok' : 'is-pending'; ?>"><span><?php echo esc_html($label); ?></span><strong><?php echo esc_html($value); ?></strong></div><?php
     }
 
-    private static function renderDiagnostics(?array $dashboard, ?array $search_terms, ?array $ad_audit, ?array $keywords, ?array $investigations, string $client_id): void
+    private static function renderDiagnostics(?array $dashboard, ?array $search_terms, ?array $ad_audit, ?array $keywords, ?array $investigations, ?array $lead_quality, string $client_id): void
     {
         $dashboard = is_array($dashboard) ? $dashboard : [];
         ?>
         <section class="wnq-diagnostics-shell">
             <div class="wnq-diagnostics-head">
-                <div><span class="wnq-ppc-eyebrow">Phases 2–5</span><h2>Account intelligence</h2><p>Live, read-only Google Ads diagnostics and evidence-first investigations.</p></div>
+                <div><span class="wnq-ppc-eyebrow">Phases 2–6</span><h2>Account intelligence</h2><p>Read-only Google Ads diagnostics, investigations, and GA4 lead-quality evidence.</p></div>
                 <a class="button" href="<?php echo esc_url(add_query_arg('refresh_ppc', '1')); ?>">Refresh diagnostics</a>
             </div>
             <nav class="wnq-module-nav">
-                <a href="#ppc-attention">Attention</a><a href="#ppc-investigations">Investigations</a><a href="#ppc-account">Account</a><a href="#ppc-conversions">Conversions</a><a href="#ppc-changes">Changes</a><a href="#ppc-share">Impression share</a><a href="#ppc-budgets">Budgets</a><a href="#ppc-keywords">Keywords</a><a href="#ppc-search-terms">Search terms</a><a href="#ppc-ads">Ads &amp; claims</a>
+                <a href="#ppc-attention">Attention</a><a href="#ppc-investigations">Investigations</a><a href="#ppc-account">Account</a><a href="#ppc-conversions">Conversions</a><a href="#ppc-changes">Changes</a><a href="#ppc-share">Impression share</a><a href="#ppc-budgets">Budgets</a><a href="#ppc-keywords">Keywords</a><a href="#ppc-search-terms">Search terms</a><a href="#ppc-ads">Ads &amp; claims</a><a href="#ppc-lead-quality">Lead quality</a>
             </nav>
             <?php
             $findings = array_merge((array)($dashboard['findings'] ?? []), (array)($search_terms['findings'] ?? []), (array)($ad_audit['findings'] ?? []), (array)($keywords['findings'] ?? []));
@@ -466,6 +481,7 @@ final class PpcIntelligenceAdmin
             <?php self::renderKeywordIntelligence((array)($keywords ?? [])); ?>
             <?php self::renderSearchTerms((array)($search_terms ?? []), $client_id); ?>
             <?php self::renderAdAudit((array)($ad_audit ?? []), $client_id); ?>
+            <?php self::renderLeadQuality((array)($lead_quality ?? []), $client_id); ?>
         </section>
         <?php
     }
@@ -626,6 +642,82 @@ final class PpcIntelligenceAdmin
         <?php
     }
 
+    private static function renderLeadQuality(array $report, string $client_id): void
+    {
+        $config = (array)($report['config'] ?? PpcLeadQualityService::config($client_id));
+        $levels = (array)($report['levels'] ?? []);
+        $rows = (array)($report['rows'] ?? []);
+        ?>
+        <article class="wnq-module" id="ppc-lead-quality">
+            <div class="wnq-module-title">
+                <div>
+                    <h3>GA4 Lead Quality</h3>
+                    <p>Aggregate outcomes attributed to this client’s exact linked Google Ads account, by quality stage, date, time, device, campaign, and landing page.</p>
+                </div>
+                <?php self::moduleStatus($report); ?>
+            </div>
+
+            <details class="wnq-detail wnq-quality-config">
+                <summary>Lead-Quality Event Mapping — Current Configuration</summary>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <?php wp_nonce_field('wnq_ppc_save_quality_events_' . $client_id); ?>
+                    <input type="hidden" name="action" value="wnq_ppc_save_quality_events">
+                    <input type="hidden" name="client_id" value="<?php echo esc_attr($client_id); ?>">
+                    <div class="wnq-quality-config-grid">
+                        <?php foreach (PpcLeadQualityService::labels() as $key => $label): ?>
+                            <label>
+                                <span><?php echo esc_html($label); ?></span>
+                                <textarea name="<?php echo esc_attr($key); ?>" rows="4" spellcheck="false"><?php echo esc_textarea(implode("\n", (array)($config[$key] ?? []))); ?></textarea>
+                            </label>
+                        <?php endforeach; ?>
+                    </div>
+                    <p class="description">Enter one exact GA4 event name per line. An empty stage is shown as “Not mapped,” never as zero. This mapping is stored only for this client.</p>
+                    <button class="button button-primary">Save event mapping</button>
+                </form>
+            </details>
+
+            <?php if (empty($report['available'])): ?>
+                <?php self::unavailable($report); ?>
+            <?php else: ?>
+                <p class="wnq-module-note"><strong>Scope — <?php echo esc_html((string)($report['period'] ?? 'Last 30 Days')); ?>:</strong> <?php echo esc_html((string)($report['scope'] ?? 'GA4 events attributed to the exact linked Google Ads customer')); ?>. <?php echo esc_html((string)($report['message'] ?? '')); ?></p>
+                <div class="wnq-quality-grid">
+                    <?php foreach (PpcLeadQualityService::labels() as $key => $label): $level = (array)($levels[$key] ?? []); ?>
+                        <div class="<?php echo empty($level['configured']) ? 'is-unmapped' : ''; ?>">
+                            <span><?php echo esc_html($label); ?> — Last 30 Days</span>
+                            <?php if (empty($level['configured'])): ?>
+                                <strong>Not mapped</strong><small>Configure GA4 event names</small>
+                            <?php else: ?>
+                                <strong><?php echo esc_html(number_format_i18n((int)($level['count'] ?? 0))); ?></strong><small>configured event occurrences</small>
+                            <?php endif; ?>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+                <details class="wnq-detail">
+                    <summary>Paid-Traffic Lead Evidence — Last 30 Days (<?php echo esc_html((string)count($rows)); ?> rows)</summary>
+                    <div class="wnq-table-scroll"><table><thead><tr><th>Date — GA4 property time</th><th>Hour — GA4 property time</th><th>Device</th><th>Quality stage</th><th>GA4 event</th><th>Campaign</th><th>Source / medium</th><th>Landing page</th><th>Events — Last 30 Days</th></tr></thead><tbody>
+                    <?php if (!$rows): ?>
+                        <tr><td colspan="9">No configured Google paid-traffic events were returned for the last 30 days.</td></tr>
+                    <?php else: foreach ($rows as $row): ?>
+                        <tr>
+                            <td><?php echo esc_html(self::gaDate((string)($row['date'] ?? ''))); ?></td>
+                            <td><?php echo esc_html(self::hourLabel((int)($row['hour'] ?? 0))); ?></td>
+                            <td><?php echo esc_html(self::label((string)($row['device'] ?? 'unknown'))); ?></td>
+                            <td><?php self::pill((string)($row['quality_level'] ?? 'unmapped')); ?></td>
+                            <td><strong><?php echo esc_html((string)($row['event_name'] ?? '')); ?></strong></td>
+                            <td><?php echo esc_html((string)($row['campaign'] ?? '(not set)')); ?></td>
+                            <td><?php echo esc_html((string)($row['source_medium'] ?? '(not set)')); ?></td>
+                            <td><?php echo esc_html((string)($row['landing_page'] ?? '—')); ?></td>
+                            <td><?php echo esc_html(number_format_i18n((int)($row['count'] ?? 0))); ?></td>
+                        </tr>
+                    <?php endforeach; endif; ?>
+                    </tbody></table></div>
+                </details>
+                <p class="wnq-read-only-note"><strong>Privacy-safe and read-only:</strong> This view uses aggregate GA4 dimensions only. It does not retrieve names, email addresses, phone numbers, user-level identifiers, advertising IDs, or landing-page query strings.</p>
+            <?php endif; ?>
+        </article>
+        <?php
+    }
+
     private static function renderAccountDiagnostic(array $module): void
     {
         ?>
@@ -742,6 +834,11 @@ final class PpcIntelligenceAdmin
     private static function percent(float $value): string { return number_format_i18n($value * 100, 1) . '%'; }
     private static function nullablePercent($value): string { return is_numeric($value) ? self::percent((float)$value) : 'Not available'; }
     private static function label(string $value): string { return ucwords(str_replace(['_', '-'], ' ', $value)); }
+    private static function gaDate(string $value): string
+    {
+        $date = \DateTimeImmutable::createFromFormat('!Ymd', $value);
+        return $date ? $date->format('M j, Y') : ($value ?: 'Unknown');
+    }
     private static function hourLabel(int $hour): string
     {
         $date = \DateTimeImmutable::createFromFormat('!H', (string)max(0, min(23, $hour)));
@@ -797,7 +894,7 @@ final class PpcIntelligenceAdmin
         ?>
         <style>
         .wnq-ppc-intelligence{max-width:1200px}.wnq-ppc-hero{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;background:linear-gradient(135deg,#07131c,#0d539e);color:#fff;padding:26px;border-radius:12px;margin:18px 0}.wnq-ppc-hero h2{color:#fff;font-size:26px;margin:3px 0 7px}.wnq-ppc-hero p{margin:0;color:#dbeafe}.wnq-ppc-eyebrow{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#f3cf55}.wnq-read-only-badge{background:#f3cf55;color:#07131c;border-radius:999px;padding:6px 11px;font-size:11px;font-weight:800;text-transform:uppercase;white-space:nowrap}.wnq-ppc-status-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}.wnq-ppc-status{background:#fff;border:1px solid #dcdcde;border-left:4px solid #dba617;border-radius:8px;padding:14px}.wnq-ppc-status.is-ok{border-left-color:#1f9d55}.wnq-ppc-status span{display:block;color:#646970;font-size:11px;text-transform:uppercase;font-weight:700;margin-bottom:5px}.wnq-ppc-status strong{display:block;color:#1d2327;font-size:14px;overflow-wrap:anywhere}.wnq-ppc-layout{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}.wnq-ppc-card,.wnq-module{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:22px}.wnq-ppc-card h3,.wnq-module h3{font-size:17px;margin:0 0 5px}.wnq-ppc-card label{display:block;margin:14px 0}.wnq-ppc-card label>span{display:block;font-weight:600;margin-bottom:5px}.wnq-ppc-card input,.wnq-ppc-card select{width:100%;max-width:none}.wnq-ppc-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}.wnq-ppc-actions-separated{border-top:1px solid #eee;padding-top:16px;justify-content:space-between}.wnq-ppc-actions form{margin:0}.wnq-ppc-test-form{margin-top:12px}.wnq-account-details{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid #e5e7eb;border-radius:8px;margin:16px 0}.wnq-account-details div{padding:12px;border-bottom:1px solid #e5e7eb}.wnq-account-details div:nth-last-child(-n+2){border-bottom:0}.wnq-account-details dt{font-size:11px;color:#646970;text-transform:uppercase;font-weight:700}.wnq-account-details dd{margin:4px 0 0;font-weight:600}.wnq-ppc-card .notice.inline{margin:14px 0;padding:1px 12px}.wnq-ppc-card .button-link-delete{color:#b32d2e}.wnq-diagnostics-shell{margin:18px 0}.wnq-diagnostics-head,.wnq-module-title{display:flex;justify-content:space-between;align-items:flex-start;gap:18px}.wnq-diagnostics-head{background:#07131c;color:#fff;padding:22px;border-radius:10px 10px 0 0}.wnq-diagnostics-head h2{color:#fff;margin:3px 0}.wnq-diagnostics-head p,.wnq-module-title p{margin:0;color:#646970}.wnq-diagnostics-head p{color:#cbd5e1}.wnq-module-nav{display:flex;gap:4px;flex-wrap:wrap;background:#fff;border:1px solid #dcdcde;padding:9px}.wnq-module-nav a{padding:7px 11px;text-decoration:none;font-weight:600}.wnq-module{margin-top:14px;scroll-margin-top:42px}.wnq-pill{display:inline-block;border-radius:999px;padding:4px 8px;background:#e5e7eb;color:#374151;font-size:11px;font-weight:700;white-space:nowrap}.wnq-pill.is-ready,.wnq-pill.is-enabled,.wnq-pill.is-healthy,.wnq-pill.is-on_track{background:#dcfce7;color:#166534}.wnq-pill.is-unavailable,.wnq-pill.is-configuration_issue,.wnq-pill.is-over{background:#fee2e2;color:#991b1b}.wnq-pill.is-partial,.wnq-pill.is-warning,.wnq-pill.is-stale,.wnq-pill.is-under{background:#fef3c7;color:#92400e}.wnq-period-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:18px 0}.wnq-period-card{border:1px solid #e5e7eb;border-radius:8px;padding:13px}.wnq-period-card>*{display:block}.wnq-period-card>strong{font-size:11px;text-transform:uppercase;color:#646970}.wnq-period-card span{margin-top:8px}.wnq-period-card b{font-size:16px;margin:4px 0}.wnq-period-card small{color:#646970}.wnq-module-summary,.wnq-module-note{color:#646970}.wnq-table-scroll{overflow:auto;margin-top:14px}.wnq-module table{width:100%;border-collapse:collapse;min-width:760px}.wnq-module th,.wnq-module td{text-align:left;padding:10px;border-bottom:1px solid #e5e7eb;vertical-align:top}.wnq-module th{font-size:11px;text-transform:uppercase;color:#646970}.wnq-health-grid{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}.wnq-health-grid div{min-width:120px;background:#f8fafc;border-radius:8px;padding:10px}.wnq-health-grid span{display:block;font-size:11px;text-transform:uppercase;color:#646970}.wnq-health-grid strong{font-size:20px}.wnq-split-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:18px 0}.wnq-bars>div{display:grid;grid-template-columns:110px 1fr 110px;align-items:center;gap:8px;margin:7px 0}.wnq-bars i{height:8px;background:#e5e7eb;border-radius:99px;overflow:hidden}.wnq-bars i b{display:block;height:100%;background:#0d539e}.wnq-bars strong{font-size:11px}.wnq-unavailable{display:flex;gap:10px;align-items:center;background:#f8fafc;border-left:4px solid #94a3b8;padding:14px;margin-top:14px}.wnq-detail{margin-top:14px}.wnq-detail summary{cursor:pointer;font-weight:600}.wnq-timeline{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}.wnq-timeline span{display:flex;justify-content:space-between;background:#f8fafc;padding:8px}.wnq-timeline b{font-size:11px}@media(max-width:1000px){.wnq-period-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:900px){.wnq-ppc-status-grid{grid-template-columns:repeat(2,1fr)}.wnq-ppc-layout,.wnq-split-grid{grid-template-columns:1fr}}@media(max-width:600px){.wnq-ppc-hero,.wnq-diagnostics-head{flex-direction:column}.wnq-ppc-status-grid,.wnq-account-details,.wnq-period-grid,.wnq-timeline{grid-template-columns:1fr}.wnq-account-details div:nth-last-child(2){border-bottom:1px solid #e5e7eb}.wnq-bars>div{grid-template-columns:85px 1fr}.wnq-bars strong{grid-column:2}}
-        .wnq-findings{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:16px}.wnq-finding{border-left:5px solid #64748b;background:#f8fafc;padding:14px;border-radius:6px}.wnq-finding.is-critical{border-color:#b91c1c;background:#fff1f2}.wnq-finding.is-warning{border-color:#d97706;background:#fffbeb}.wnq-finding.is-opportunity{border-color:#2563eb;background:#eff6ff}.wnq-finding.is-healthy{border-color:#15803d;background:#f0fdf4}.wnq-finding>div{display:flex;align-items:center;gap:10px}.wnq-finding>div strong{font-size:15px}.wnq-severity{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}.wnq-finding p{margin:8px 0}.wnq-finding .button{float:right}.wnq-detail>summary,.wnq-sqr-controls summary{cursor:pointer;padding:11px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;font-weight:700}.wnq-sqr-controls{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin:15px 0}.wnq-sqr-controls>form{display:flex;gap:8px;align-items:center}.wnq-sqr-controls>details{min-width:300px}.wnq-sqr-controls>details form{padding:14px;border:1px solid #e5e7eb}.wnq-config-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.wnq-config-grid label>span{display:block;font-weight:600}.wnq-config-grid textarea{width:100%}.wnq-bulk{display:flex;align-items:center;gap:8px;margin:12px 0}.wnq-bulk small{color:#991b1b;font-weight:600}.wnq-claim-config form{padding:14px;border:1px solid #e5e7eb}.wnq-claim-config label span{display:block;font-weight:600;margin-bottom:6px}.wnq-claim-config textarea{width:100%;font-family:monospace}.wnq-ad-copy{min-width:360px;max-width:560px}.wnq-ad-copy ol{margin-top:5px}.wnq-ad-copy p{overflow-wrap:anywhere}.wnq-read-only-note{border-left:4px solid #0d539e;background:#eff6ff;padding:12px;margin-top:16px}.wnq-investigation{border:1px solid #e5e7eb;border-radius:8px;margin-top:10px}.wnq-investigation>summary{cursor:pointer;padding:12px;font-weight:700}.wnq-investigation>div{padding:0 14px 14px}.wnq-confidence{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}.wnq-confidence span{background:#eef2ff;padding:6px 9px;border-radius:999px;font-size:11px;font-weight:700}@media(max-width:782px){.wnq-findings,.wnq-config-grid{grid-template-columns:1fr}.wnq-sqr-controls{display:block}.wnq-sqr-controls>details{margin-top:10px;min-width:0}.wnq-ad-copy{min-width:260px}}
+        .wnq-findings{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:16px}.wnq-finding{border-left:5px solid #64748b;background:#f8fafc;padding:14px;border-radius:6px}.wnq-finding.is-critical{border-color:#b91c1c;background:#fff1f2}.wnq-finding.is-warning{border-color:#d97706;background:#fffbeb}.wnq-finding.is-opportunity{border-color:#2563eb;background:#eff6ff}.wnq-finding.is-healthy{border-color:#15803d;background:#f0fdf4}.wnq-finding>div{display:flex;align-items:center;gap:10px}.wnq-finding>div strong{font-size:15px}.wnq-severity{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}.wnq-finding p{margin:8px 0}.wnq-finding .button{float:right}.wnq-detail>summary,.wnq-sqr-controls summary{cursor:pointer;padding:11px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;font-weight:700}.wnq-sqr-controls{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin:15px 0}.wnq-sqr-controls>form{display:flex;gap:8px;align-items:center}.wnq-sqr-controls>details{min-width:300px}.wnq-sqr-controls>details form{padding:14px;border:1px solid #e5e7eb}.wnq-config-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.wnq-config-grid label>span{display:block;font-weight:600}.wnq-config-grid textarea{width:100%}.wnq-bulk{display:flex;align-items:center;gap:8px;margin:12px 0}.wnq-bulk small{color:#991b1b;font-weight:600}.wnq-claim-config form,.wnq-quality-config form{padding:14px;border:1px solid #e5e7eb}.wnq-claim-config label span,.wnq-quality-config label span{display:block;font-weight:600;margin-bottom:6px}.wnq-claim-config textarea,.wnq-quality-config textarea{width:100%;font-family:monospace}.wnq-quality-config-grid{display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:10px}.wnq-quality-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:16px 0}.wnq-quality-grid>div{border:1px solid #bfdbfe;border-top:4px solid #0d539e;border-radius:8px;padding:13px;background:#eff6ff}.wnq-quality-grid>div.is-unmapped{border-color:#dcdcde;background:#f8fafc}.wnq-quality-grid span,.wnq-quality-grid strong,.wnq-quality-grid small{display:block}.wnq-quality-grid span{font-size:11px;font-weight:700;text-transform:uppercase;color:#50575e}.wnq-quality-grid strong{font-size:20px;margin:6px 0}.wnq-quality-grid small{color:#646970}.wnq-ad-copy{min-width:360px;max-width:560px}.wnq-ad-copy ol{margin-top:5px}.wnq-ad-copy p{overflow-wrap:anywhere}.wnq-read-only-note{border-left:4px solid #0d539e;background:#eff6ff;padding:12px;margin-top:16px}.wnq-investigation{border:1px solid #e5e7eb;border-radius:8px;margin-top:10px}.wnq-investigation>summary{cursor:pointer;padding:12px;font-weight:700}.wnq-investigation>div{padding:0 14px 14px}.wnq-confidence{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}.wnq-confidence span{background:#eef2ff;padding:6px 9px;border-radius:999px;font-size:11px;font-weight:700}@media(max-width:1000px){.wnq-quality-config-grid,.wnq-quality-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:782px){.wnq-findings,.wnq-config-grid,.wnq-quality-config-grid,.wnq-quality-grid{grid-template-columns:1fr}.wnq-sqr-controls{display:block}.wnq-sqr-controls>details{margin-top:10px;min-width:0}.wnq-ad-copy{min-width:260px}}
         </style>
         <?php
     }

@@ -351,6 +351,57 @@ final class GoogleAnalytics
     }
 
     /**
+     * Aggregate configured lead-quality events without user-level identifiers.
+     */
+    public function getLeadQualityRows(array $event_names, string $google_ads_customer_id, string $start_date = '30daysAgo', string $end_date = 'today'): array
+    {
+        $event_names = array_values(array_unique(array_filter(array_map(
+            static fn($event): string => substr(preg_replace('/[^a-zA-Z0-9_]/', '', trim((string)$event)) ?: '', 0, 40),
+            $event_names
+        ))));
+        if (!$event_names) return [];
+        $google_ads_customer_id = preg_replace('/\D+/', '', $google_ads_customer_id) ?: '';
+        if ($google_ads_customer_id === '') return [];
+        sort($event_names);
+        $cache_key = "ga_lead_quality_{$this->property_id}_{$google_ads_customer_id}_{$start_date}_{$end_date}_" . md5(implode('|', $event_names));
+        $cached = AnalyticsCache::get($cache_key);
+        if (is_array($cached)) return $cached;
+        try {
+            $data = $this->makeRequest([
+                'dateRanges' => [['startDate' => $start_date, 'endDate' => $end_date]],
+                'dimensions' => array_map(static fn(string $name): array => ['name' => $name], ['eventName','date','hour','deviceCategory','sessionGoogleAdsCampaignName','sessionGoogleAdsCustomerId','sessionSourceMedium','landingPage']),
+                'metrics' => [['name' => 'eventCount']],
+                'dimensionFilter' => ['andGroup' => ['expressions' => [
+                    ['filter' => ['fieldName' => 'eventName', 'inListFilter' => ['values' => $event_names]]],
+                    ['filter' => ['fieldName' => 'sessionGoogleAdsCustomerId', 'stringFilter' => ['matchType' => 'EXACT', 'value' => $google_ads_customer_id]]],
+                ]]],
+                'orderBys' => [['dimension' => ['dimensionName' => 'date'], 'desc' => true]],
+                'limit' => 10000,
+            ]);
+            $rows = [];
+            foreach ((array)($data['rows'] ?? []) as $row) {
+                $dimensions = (array)($row['dimensionValues'] ?? []);
+                $rows[] = [
+                    'event_name'   => substr(preg_replace('/[^a-zA-Z0-9_]/', '', (string)($dimensions[0]['value'] ?? '')) ?: '', 0, 40),
+                    'date'         => sanitize_text_field((string)($dimensions[1]['value'] ?? '')),
+                    'hour'         => (int)($dimensions[2]['value'] ?? 0),
+                    'device'       => sanitize_key((string)($dimensions[3]['value'] ?? 'unknown')),
+                    'campaign'     => sanitize_text_field((string)($dimensions[4]['value'] ?? '(not set)')),
+                    'google_ads_customer_id' => preg_replace('/\D+/', '', (string)($dimensions[5]['value'] ?? '')) ?: '',
+                    'source_medium'=> sanitize_text_field((string)($dimensions[6]['value'] ?? '(not set)')),
+                    'landing_page' => sanitize_text_field((string)($dimensions[7]['value'] ?? '')),
+                    'count'        => (int)($row['metricValues'][0]['value'] ?? 0),
+                ];
+            }
+            AnalyticsCache::set($cache_key, $rows, 3600);
+            return $rows;
+        } catch (\Throwable $e) {
+            $this->recordError('lead_quality',$e->getMessage());
+            return [];
+        }
+    }
+
+    /**
      * Make API request to GA4
      */
     private function makeRequest(array $request_body): array

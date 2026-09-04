@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 2.9.0
+Stable tag: 3.0.0
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -227,6 +227,13 @@ This plugin is private and maintained internally by Golden Web Marketing.
 For development questions, roadmap changes, or feature requests, contact the Golden Web Marketing development team.
 
 Changelog
+3.0.0 - PPC Intelligence Phase 6
+
+- Adds configurable GA4 quality stages for engagement, raw leads, qualified leads, booked work, and known revenue outcomes.
+- Adds aggregate evidence for the client’s exact linked Google Ads customer by event date, property-local hour, device, campaign, source/medium, and landing-page path.
+- Keeps unmapped stages distinct from zero-volume stages and isolates GA4 failures from Google Ads diagnostics.
+- Excludes person-level identifiers and landing-page query strings; the entire PPC workspace remains read-only.
+
 2.9.0 - PPC Intelligence Phase 5
 - Adds evidence-first investigations with explicit problems, hypotheses, root-cause status, recommendations, and separate data/recommendation confidence.
 - Adds 180-day non-serving keyword review, campaign/ad-group negative-conflict detection, and minimum-data safeguards.
