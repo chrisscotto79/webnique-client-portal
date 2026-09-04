@@ -283,7 +283,68 @@
 .wnq-ppc-management .wnq-portfolio-table td { padding: 13px 10px; vertical-align: middle; }
 .wnq-ppc-management .wnq-portfolio-table tbody tr:hover td { background: #eef6ff; }
 
+.wnq-ppc-intelligence .wnq-lifecycle-form { display: grid; min-width: 280px; gap: 9px; padding: 12px; }
+.wnq-ppc-intelligence .wnq-lifecycle-form label,
+.wnq-ppc-intelligence .wnq-lifecycle-form small { display: grid; gap: 4px; }
+.wnq-ppc-intelligence .wnq-validation { margin-top: 10px; border: 1px solid var(--wnq-line); border-radius: 9px; }
+.wnq-ppc-intelligence .wnq-validation > summary { padding: 12px; cursor: pointer; font-weight: 700; }
+.wnq-ppc-intelligence .wnq-validation > div { padding: 0 14px 14px; }
+.wnq-ppc-intelligence .wnq-validation-windows { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.wnq-ppc-intelligence .wnq-validation-windows > div { display: grid; align-content: start; gap: 8px; padding: 13px; border: 1px solid var(--wnq-line); border-radius: 8px; background: var(--wnq-soft); }
+.wnq-ppc-intelligence .wnq-validation-windows dl { display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; margin: 0; }
+.wnq-ppc-intelligence .wnq-validation-windows dt,
+.wnq-ppc-intelligence .wnq-validation-windows dd { margin: 0; }
+.wnq-ppc-intelligence .wnq-campaign-chip { display: block; margin: 0 0 4px; }
+.wnq-ppc-intelligence .wnq-correlation-metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; margin: 10px 0; }
+.wnq-ppc-intelligence .wnq-correlation-metrics span { padding: 9px; border-radius: 6px; background: #f5f8fc; color: #607086; font-size: 11px; }
+.wnq-ppc-intelligence .wnq-correlation-metrics strong { display: block; margin-top: 4px; color: #142132; }
+.wnq-ppc-intelligence .wnq-pill.is-successful,
+.wnq-ppc-intelligence .wnq-pill.is-positive_evidence,
+.wnq-ppc-intelligence .wnq-pill.is-ready_for_review { background: #dcfce7; color: #166534; }
+.wnq-ppc-intelligence .wnq-pill.is-unsuccessful,
+.wnq-ppc-intelligence .wnq-pill.is-negative_evidence { background: #fee2e2; color: #991b1b; }
+.wnq-ppc-intelligence .wnq-pill.is-neutral,
+.wnq-ppc-intelligence .wnq-pill.is-neutral_inconclusive,
+.wnq-ppc-intelligence .wnq-pill.is-monitoring,
+.wnq-ppc-intelligence .wnq-pill.is-monitor { background: #fef3c7; color: #92400e; }
+.wnq-ppc-intelligence .wnq-pill.is-shared_list,
+.wnq-ppc-intelligence .wnq-pill.is-account_level { background: #dbeafe; color: #1e40af; }
+
+.wnq-ppc-management .wnq-quality-dashboard { margin: 24px 0; overflow: hidden; border: 1px solid #dce3ec; border-radius: 14px; background: #fff; box-shadow: 0 6px 22px rgba(20,33,50,.07); }
+.wnq-ppc-management .wnq-quality-dashboard-head { display: flex; justify-content: space-between; gap: 20px; padding: 22px 25px; background: #f5f8fc; border-bottom: 1px solid #dce3ec; }
+.wnq-ppc-management .wnq-quality-dashboard-head span { color: #0d539e; font-size: 11px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.wnq-ppc-management .wnq-quality-dashboard-head h2 { margin: 5px 0; }
+.wnq-ppc-management .wnq-quality-dashboard-head p { margin: 0; color: #607086; }
+.wnq-ppc-management .wnq-quality-dashboard-head > strong { align-self: flex-start; padding: 5px 9px; border-radius: 999px; background: #e8f1fb; color: #0d539e; font-size: 10px; text-transform: uppercase; white-space: nowrap; }
+.wnq-ppc-management .wnq-quality-filters { display: grid; grid-template-columns: repeat(7,minmax(115px,1fr)); gap: 10px; padding: 16px 20px; border-bottom: 1px solid #dce3ec; }
+.wnq-ppc-management .wnq-quality-filters label { display: grid; gap: 5px; color: #42526a; font-size: 11px; font-weight: 700; }
+.wnq-ppc-management .wnq-quality-filters select,
+.wnq-ppc-management .wnq-quality-filters input { width: 100%; }
+.wnq-ppc-management .wnq-quality-filter-actions { display: flex; grid-column: 1 / -1; gap: 8px; }
+.wnq-ppc-management .wnq-quality-metrics { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 10px; padding: 18px 20px; }
+.wnq-ppc-management .wnq-quality-metrics > div { padding: 13px; border-left: 4px solid #0d539e; border-radius: 7px; background: #f5f8fc; }
+.wnq-ppc-management .wnq-quality-metrics span,
+.wnq-ppc-management .wnq-quality-metrics strong { display: block; }
+.wnq-ppc-management .wnq-quality-metrics span { color: #607086; font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.wnq-ppc-management .wnq-quality-metrics strong { margin-top: 6px; font-size: 22px; }
+.wnq-ppc-management .wnq-quality-columns { display: grid; gap: 12px; padding: 0 20px 20px; }
+.wnq-ppc-management .wnq-quality-panel { border: 1px solid #dce3ec; border-radius: 9px; }
+.wnq-ppc-management .wnq-quality-panel > summary { padding: 12px 14px; background: #f5f8fc; font-weight: 700; cursor: pointer; }
+.wnq-ppc-management .wnq-quality-table { max-height: 460px; overflow: auto; }
+.wnq-ppc-management .wnq-quality-table table { border: 0; }
+.wnq-ppc-management .wnq-quality-dashboard > .description { padding: 0 20px 18px; }
+
 @media (max-width: 782px) {
     .wnq-ppc-management .wnq-management-hero { flex-direction: column; }
     .wnq-ppc-management .wnq-portfolio-table { display: block; overflow-x: auto; }
+    .wnq-ppc-intelligence .wnq-validation-windows { grid-template-columns: 1fr; }
+    .wnq-ppc-intelligence .wnq-correlation-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .wnq-ppc-management .wnq-quality-dashboard-head { flex-direction: column; }
+    .wnq-ppc-management .wnq-quality-filters { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .wnq-ppc-management .wnq-quality-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+
+@media (max-width: 480px) {
+    .wnq-ppc-management .wnq-quality-filters,
+    .wnq-ppc-management .wnq-quality-metrics { grid-template-columns: 1fr; }
 }

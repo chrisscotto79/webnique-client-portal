@@ -50,6 +50,9 @@ final class PpcSearchTermService
         $rows = $query->select($customer_id, "SELECT search_term_view.search_term, segments.keyword.info.text, segments.keyword.info.match_type, campaign.id, campaign.name, ad_group.id, ad_group.name, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions FROM search_term_view WHERE segments.date BETWEEN '{$start}' AND '{$today}' ORDER BY metrics.cost_micros DESC LIMIT 2000");
         if ($query->errors()) return ['available' => false, 'message' => self::safeErrors($query->errors()), 'terms' => [], 'period' => 'Last 30 days'];
         $config = self::config($client_id, $client);
+        $negative_service = new PpcNegativeInventoryService();
+        $inventory = $negative_service->inventory($customer_id, $refresh);
+        $positive_inventory = $negative_service->positiveKeywords($customer_id);
         $terms = [];
         foreach ($rows as $row) {
             $view = (array)($row['searchTermView'] ?? []);
@@ -70,6 +73,35 @@ final class PpcSearchTermService
             ];
             $term['cpa'] = $term['conversions'] > 0 ? round($term['cost'] / $term['conversions'], 2) : 0;
             $term += self::classify($term['query'], $config, $term);
+            if (in_array($term['recommended_action'], ['negative_exact', 'negative_phrase'], true)) {
+                $match_type = $term['recommended_action'] === 'negative_phrase' ? 'phrase' : 'exact';
+                $protected = PpcNegativeInventoryService::protectedTerms($term['query'], $config);
+                $duplicate = PpcNegativeInventoryService::duplicate($inventory, $term['query'], $match_type, $term['campaign_id'], $term['ad_group_id']);
+                $prospective = ['scope'=>'campaign','negative'=>$term['query'],'match_type'=>$match_type,'resource_name'=>'prospective','campaign_id'=>$term['campaign_id'],'ad_group_id'=>'','campaign_ids'=>[]];
+                $positive_conflicts = !empty($positive_inventory['available']) ? PpcNegativeInventoryService::conflicts((array)$positive_inventory['items'], [$prospective]) : [];
+                if ($duplicate) {
+                    $term['classification'] = 'already_excluded';
+                    $term['recommended_action'] = 'no_action';
+                    $term['confidence'] = 1.0;
+                    $term['reason'] = 'An identical negative already applies through ' . str_replace('_', ' ', (string)$duplicate['scope']) . '; a duplicate proposal was suppressed.';
+                } elseif ($protected) {
+                    $term['recommended_action'] = 'human_review';
+                    $term['reason'] = 'Protected client terms overlap this query (' . implode(', ', array_column($protected, 'term')) . '); negative proposal creation is blocked pending human review.';
+                    $term['confidence'] = min(.6, (float)$term['confidence']);
+                } elseif (empty($positive_inventory['available'])) {
+                    $term['recommended_action'] = 'human_review';
+                    $term['reason'] = 'Enabled positive keyword coverage could not be verified, so conflict-safe negative proposal creation is blocked.';
+                    $term['confidence'] = min(.5, (float)$term['confidence']);
+                } elseif ($positive_conflicts) {
+                    $term['recommended_action'] = 'human_review';
+                    $term['reason'] = 'This proposed negative may block ' . count($positive_conflicts) . ' enabled positive keyword(s); review exact campaign/ad-group routing first.';
+                    $term['confidence'] = min(.6, (float)$term['confidence']);
+                } elseif (empty($inventory['available']) || !empty($inventory['errors'])) {
+                    $term['recommended_action'] = 'human_review';
+                    $term['reason'] = 'All negative scopes could not be verified, so duplicate-safe negative proposal creation is blocked.';
+                    $term['confidence'] = min(.5, (float)$term['confidence']);
+                }
+            }
             $term['proposal_key'] = hash('sha256', $client_id . '|' . $customer_id . '|' . strtolower($term['query']) . '|' . $term['campaign_id'] . '|' . $term['recommended_action']);
             $terms[] = $term;
         }
@@ -77,7 +109,8 @@ final class PpcSearchTermService
         $statuses = PpcProposal::statuses($client_id);
         foreach ($terms as &$term) $term += $statuses[$term['proposal_key']] ?? ['id' => 0, 'status' => 'not_proposed'];
         unset($term);
-        $result = ['available' => true, 'status' => 'ready', 'message' => '', 'terms' => $terms, 'period' => 'Last 30 days', 'config' => $config, 'counts' => array_count_values(array_column($terms, 'classification')), 'findings' => self::findings($terms)];
+        $inventory_errors = array_values(array_unique(array_merge((array)($inventory['errors'] ?? []), (array)($positive_inventory['errors'] ?? []))));
+        $result = ['available' => true, 'status' => $inventory_errors ? 'partial' : 'ready', 'message' => trim((string)($inventory['message'] ?? '') . ' ' . implode(' ', $inventory_errors)), 'terms' => $terms, 'period' => 'Last 30 days', 'config' => $config, 'negative_inventory_status' => (string)($inventory['status'] ?? 'unavailable'), 'counts' => array_count_values(array_column($terms, 'classification')), 'findings' => self::findings($terms)];
         set_transient($cache_key, $result, 15 * MINUTE_IN_SECONDS);
         return $result;
     }

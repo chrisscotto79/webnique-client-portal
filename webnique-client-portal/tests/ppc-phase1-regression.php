@@ -66,9 +66,11 @@ require_once dirname(__DIR__) . '/includes/Services/GoogleAdsQueryService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcDiagnosticService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcSearchTermService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcAdAuditService.php';
+require_once dirname(__DIR__) . '/includes/Services/PpcNegativeInventoryService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcKeywordIntelligenceService.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcLeadQualityService.php';
 require_once dirname(__DIR__) . '/includes/Models/PpcMutationPlan.php';
+require_once dirname(__DIR__) . '/includes/Models/PpcRecommendation.php';
 require_once dirname(__DIR__) . '/includes/Services/PpcRecommendationPreviewService.php';
 
 use WNQ\Services\GoogleAdsCredentials;
@@ -76,9 +78,11 @@ use WNQ\Services\GoogleAdsQueryService;
 use WNQ\Services\PpcDiagnosticService;
 use WNQ\Services\PpcSearchTermService;
 use WNQ\Services\PpcAdAuditService;
+use WNQ\Services\PpcNegativeInventoryService;
 use WNQ\Services\PpcKeywordIntelligenceService;
 use WNQ\Services\PpcLeadQualityService;
 use WNQ\Models\PpcMutationPlan;
+use WNQ\Models\PpcRecommendation;
 use WNQ\Services\PpcRecommendationPreviewService;
 
 function assertPpc(bool $condition, string $message): void
@@ -140,6 +144,17 @@ $negatives=[['negative'=>'junk removal','match_type'=>'phrase','level'=>'campaig
 assertPpc(count(PpcKeywordIntelligenceService::conflicts($positives,$negatives))===1,'Phrase negatives must detect contiguous whole-word conflicts.');
 $negatives[0]['negative']='junk rem';
 assertPpc(count(PpcKeywordIntelligenceService::conflicts($positives,$negatives))===0,'Phrase conflict matching must respect whole words.');
+$all_scope_negatives = [
+    ['scope'=>'shared_list','negative'=>'junk removal','match_type'=>'phrase','resource_name'=>'customers/1234567890/sharedCriteria/7~8','shared_set_name'=>'Agency exclusions','shared_set_id'=>'7','shared_set_resource'=>'customers/1234567890/sharedSets/7','campaign_ids'=>['1']],
+    ['scope'=>'account_level','negative'=>'jobs','match_type'=>'broad','resource_name'=>'customers/1234567890/sharedCriteria/9~10','shared_set_name'=>'Account exclusions','shared_set_id'=>'9','shared_set_resource'=>'customers/1234567890/sharedSets/9','campaign_ids'=>[]],
+];
+$all_scope_conflicts = PpcNegativeInventoryService::conflicts($positives, $all_scope_negatives);
+assertPpc(count($all_scope_conflicts) === 1 && $all_scope_conflicts[0]['scope'] === 'shared_list', 'Attached shared negative lists must participate in keyword conflict detection.');
+assertPpc(PpcNegativeInventoryService::conflicts([['criterion_id'=>'3','keyword'=>'junk removal lakeland','match_type'=>'exact','campaign_id'=>'99','campaign'=>'Other','ad_group_id'=>'4','ad_group'=>'Other']], $all_scope_negatives) === [], 'A campaign shared list must not affect campaigns to which it is not attached.');
+assertPpc(count(PpcNegativeInventoryService::conflicts([['criterion_id'=>'5','keyword'=>'jobs','match_type'=>'exact','campaign_id'=>'99','campaign'=>'Other','ad_group_id'=>'4','ad_group'=>'Other']], $all_scope_negatives)) === 1, 'An account-level negative list must apply across campaigns.');
+assertPpc(PpcNegativeInventoryService::conflicts($positives, []) === [], 'An account with no negative lists must return no fabricated conflicts.');
+assertPpc(PpcNegativeInventoryService::duplicate(['items'=>$all_scope_negatives], 'jobs', 'broad', '1', '2')['scope'] === 'account_level', 'Account-level negatives must prevent duplicate recommendations for every campaign.');
+assertPpc(count(PpcNegativeInventoryService::protectedTerms('sns hauling junk removal lakeland', $geo_config)) === 3, 'Brand, service, and target-geography overlaps must be protected before preview creation.');
 assertPpc(PpcLeadQualityService::saveConfig('phase-six-client', ['engagement' => "phone_click\nemail_click", 'raw_lead' => 'generate_lead', 'qualified_lead' => 'qualified_lead']), 'Lead-quality event mapping should save per client.');
 $quality_config = PpcLeadQualityService::config('phase-six-client');
 assertPpc($quality_config['engagement'] === ['phone_click', 'email_click'], 'Lead-quality event names should be normalized and deduplicated.');
@@ -158,6 +173,12 @@ $audit_events = [['plan_id' => 7, 'event_type' => 'preview_created', 'actor_id' 
 assertPpc(PpcMutationPlan::verifyEventChain($audit_events), 'An intact mutation audit hash chain should validate.');
 $audit_events[0]['details_json'] = wp_json_encode(['status' => 'approved']);
 assertPpc(!PpcMutationPlan::verifyEventChain($audit_events), 'A modified mutation audit event must invalidate the chain.');
+$recommendation_metadata = wp_json_encode(['evidence_label'=>'positive_evidence']);
+$recommendation_event = ['recommendation_id'=>12,'event_type'=>'validation_refreshed','from_status'=>'monitoring','to_status'=>'monitoring','actor_id'=>7,'created_at'=>'2026-09-04 10:00:00','note'=>'Read-only before/after evidence refreshed.','metadata_json'=>$recommendation_metadata,'previous_event_hash'=>''];
+$recommendation_event['event_hash'] = hash('sha256', implode('|', ['',12,'validation_refreshed','monitoring','monitoring',7,'2026-09-04 10:00:00','Read-only before/after evidence refreshed.',$recommendation_metadata]));
+assertPpc(PpcRecommendation::verifyEventChain([$recommendation_event]), 'An intact recommendation lifecycle audit chain should validate.');
+$recommendation_event['to_status'] = 'successful';
+assertPpc(!PpcRecommendation::verifyEventChain([$recommendation_event]), 'A modified recommendation lifecycle audit event must invalidate the chain.');
 $candidate_report = PpcRecommendationPreviewService::candidates(
     [
         'budget_analysis' => [
@@ -198,12 +219,28 @@ $mutation_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Model
 assertPpc(str_contains($mutation_source, "'APPROVE'") && str_contains($mutation_source, 'hash_equals'), 'Mutation approval must require an exact human confirmation and content fingerprint.');
 assertPpc(!preg_match('/GoogleAdsClient|GoogleAdsQueryService|function\s+(?:execute|rollback)|->mutate/i', $mutation_source), 'Phase 7 must not contain a Google Ads execution or rollback endpoint.');
 $preview_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Services/PpcRecommendationPreviewService.php');
-assertPpc(str_contains($preview_source, 'negativeSnapshot') && str_contains($preview_source, 'SELECT campaign_criterion.criterion_id'), 'Phase 8 must re-read negative-keyword state before creating a preview.');
+assertPpc(str_contains($preview_source, 'PpcNegativeInventoryService') && str_contains($preview_source, 'inventory($customer_id, true)'), 'Recommendation preparation must re-read every applicable negative-keyword scope.');
+assertPpc(str_contains($preview_source, 'positiveKeywords($customer_id)') && str_contains($preview_source, 'positive_conflicts'), 'Recommendation preparation must verify enabled positive-keyword conflicts before creating a negative preview.');
 assertPpc(!preg_match('/googleAds:mutate|customers\/.+:mutate|->mutate/i', $preview_source), 'Recommendation preparation must remain SELECT-only.');
 $workspace_script = (string)file_get_contents(dirname(__DIR__) . '/assets/admin/ppc-intelligence.js');
 $workspace_styles = (string)file_get_contents(dirname(__DIR__) . '/assets/admin/ppc-intelligence.css');
 assertPpc(str_contains($ppc_admin_source, 'data-wnq-workspace-tab') && str_contains($workspace_script, 'activateWorkspace'), 'Phase 9 must provide focused, accessible operations workspaces.');
 assertPpc(str_contains($workspace_script, "event.key === 'ArrowRight'") && str_contains($workspace_styles, 'prefers-reduced-motion'), 'Phase 9 navigation must include keyboard and reduced-motion support.');
 assertPpc(!preg_match('/googleAds:mutate|customers\/.+:mutate|->mutate/i', $workspace_script), 'The Phase 9 interface must not add Google Ads mutation behavior.');
+$negative_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Services/PpcNegativeInventoryService.php');
+$lifecycle_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Models/PpcRecommendation.php');
+$validation_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Services/PpcRecommendationValidationService.php');
+$correlation_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Services/PpcChangeCorrelationService.php');
+foreach (['campaign_shared_set','shared_criterion','customer_negative_criterion'] as $resource) {
+    assertPpc(str_contains($negative_source, $resource), "Phase 10 negative inventory must query {$resource}.");
+}
+foreach (['open','investigating','ready_for_review','approved','rejected','implemented_externally','implemented_through_system','monitoring','successful','neutral','unsuccessful','superseded','cancelled'] as $status) {
+    assertPpc(str_contains($lifecycle_source, "'{$status}'"), "Recommendation lifecycle must retain the {$status} state.");
+}
+assertPpc(str_contains($validation_source, '[7, 14, 30]') && str_contains($validation_source, 'correlation evidence, not causal proof'), 'Phase 10 must use conservative equal-length 7/14/30-day validation windows.');
+assertPpc(str_contains($correlation_source, "'root_cause_status'") && str_contains($correlation_source, "'unconfirmed'"), 'Change-history correlation must not claim confirmed causation.');
+foreach ([$negative_source,$lifecycle_source,$validation_source,$correlation_source] as $phase_ten_source) {
+    assertPpc(!preg_match('/googleAds:mutate|customers\/.+:mutate|->mutate|mutateCampaign|mutateAdGroup/i', $phase_ten_source), 'Phase 10 services must remain Google Ads read-only.');
+}
 
 echo "PPC regression checks passed.\n";

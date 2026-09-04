@@ -60,6 +60,7 @@ final class Plugin
     \WNQ\Models\PpcAccount::createTable();
     \WNQ\Models\PpcProposal::createTable();
     \WNQ\Models\PpcMutationPlan::createTables();
+    \WNQ\Models\PpcRecommendation::createTables();
     Activator::run();
   }
 
@@ -86,6 +87,7 @@ final class Plugin
     require_once WNQ_PORTAL_PATH . 'includes/Models/PpcAccount.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/PpcProposal.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/PpcMutationPlan.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Models/PpcRecommendation.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/Task.php';
 
     /**
@@ -108,10 +110,14 @@ final class Plugin
     require_once WNQ_PORTAL_PATH . 'includes/Services/PpcDiagnosticService.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/PpcSearchTermService.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/PpcAdAuditService.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Services/PpcNegativeInventoryService.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/PpcKeywordIntelligenceService.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/PpcInvestigationService.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Services/PpcChangeCorrelationService.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/PpcLeadQualityService.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/PpcRecommendationPreviewService.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Services/PpcRecommendationLifecycleService.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Services/PpcRecommendationValidationService.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/AIEngine.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramNotifier.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramAssistant.php';
