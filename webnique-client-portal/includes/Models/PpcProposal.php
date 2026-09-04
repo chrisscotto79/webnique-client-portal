@@ -107,6 +107,16 @@ final class PpcProposal
         return $row;
     }
 
+    public static function getByIdsForClient(array $ids, string $client_id): array
+    {
+        $result = [];
+        foreach (array_values(array_unique(array_filter(array_map('absint', $ids)))) as $id) {
+            $row = self::getByIdForClient($id, $client_id);
+            if ($row) $result[] = $row;
+        }
+        return $result;
+    }
+
     public static function review(string $client_id, array $ids, string $status): int
     {
         global $wpdb;

@@ -61,6 +61,7 @@ final class Plugin
     \WNQ\Models\PpcProposal::createTable();
     \WNQ\Models\PpcMutationPlan::createTables();
     \WNQ\Models\PpcRecommendation::createTables();
+    \WNQ\Models\PpcMemory::createTables();
     Activator::run();
   }
 
@@ -88,6 +89,7 @@ final class Plugin
     require_once WNQ_PORTAL_PATH . 'includes/Models/PpcProposal.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/PpcMutationPlan.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/PpcRecommendation.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Models/PpcMemory.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/Task.php';
 
     /**
@@ -118,6 +120,7 @@ final class Plugin
     require_once WNQ_PORTAL_PATH . 'includes/Services/PpcRecommendationPreviewService.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/PpcRecommendationLifecycleService.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/PpcRecommendationValidationService.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Services/PpcAdvancedSearchService.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/AIEngine.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramNotifier.php';
     require_once WNQ_PORTAL_PATH . 'includes/Services/TelegramAssistant.php';

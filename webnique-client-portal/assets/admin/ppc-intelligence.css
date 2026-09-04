@@ -456,6 +456,20 @@
 .wnq-ppc-intelligence .wnq-table-toolbar input,.wnq-ppc-management .wnq-table-toolbar input { width: min(320px,100%); }
 .wnq-ppc-intelligence .wnq-table-toolbar [data-wnq-table-count],.wnq-ppc-management .wnq-table-toolbar [data-wnq-table-count] { margin-left: auto; color: #607086; font-size: 11px; }
 .wnq-ppc-intelligence .wnq-empty-state { display: grid; gap: 3px; padding: 12px; border: 1px dashed #cbd5e1; border-radius: 7px; background: #f8fafc; color: #475569; }
+.wnq-ppc-intelligence .wnq-intel-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; padding:10px; }
+.wnq-ppc-intelligence .wnq-intel-card { min-width:0; padding:10px 11px; border:1px solid #dce3ec; border-radius:7px; background:#fff; }
+.wnq-ppc-intelligence .wnq-intel-card h4 { margin:0 0 5px; font-size:13px; }
+.wnq-ppc-intelligence .wnq-intel-card h4 small { color:#607086; font-weight:500; }
+.wnq-ppc-intelligence .wnq-intel-card p { margin:6px 0; }
+.wnq-ppc-intelligence .wnq-intel-card > div { display:flex; flex-wrap:wrap; justify-content:space-between; gap:5px 10px; padding:4px 0; border-top:1px solid #eef2f7; }
+.wnq-ppc-intelligence .wnq-intel-card > div small { flex-basis:100%; color:#607086; }
+.wnq-ppc-intelligence .wnq-rule-context { padding:7px; border-left:3px solid #7c3aed; background:#f5f3ff; color:#4c1d95; }
+.wnq-ppc-intelligence .wnq-memory-form { display:grid; grid-template-columns:180px minmax(180px,1fr) 2fr auto; gap:8px; align-items:end; padding:10px; }
+.wnq-ppc-intelligence .wnq-memory-form label { display:grid; gap:4px; }
+.wnq-ppc-intelligence .wnq-memory-form label span { color:#42526a; font-size:11px; font-weight:700; }
+.wnq-ppc-intelligence .wnq-memory-form textarea { min-height:58px; }
+.wnq-ppc-intelligence .wnq-memory-form small { grid-column:1/-1; color:#607086; }
+.wnq-ppc-intelligence .wnq-bulk input[name="review_reason"] { min-width:240px; }
 .wnq-ppc-intelligence .wnq-pill.is-awaiting_approval { background: #ede9fe; color: #6d28d9; }
 
 .wnq-ppc-management { --wnq-mgmt-line:#dce3ec; --wnq-mgmt-muted:#607086; max-width:1320px; }
@@ -501,6 +515,8 @@
     .wnq-ppc-management .wnq-quality-groups section:nth-child(n) > div { grid-template-columns:repeat(4,minmax(0,1fr)); }
 }
 @media (max-width: 782px) {
+    .wnq-ppc-intelligence .wnq-intel-grid { grid-template-columns:1fr; }
+    .wnq-ppc-intelligence .wnq-memory-form { grid-template-columns:1fr; }
     .wnq-ppc-intelligence .wnq-account-strip { grid-template-columns:repeat(2,minmax(0,1fr)); }
     .wnq-ppc-intelligence .wnq-account-status { border-bottom:1px solid var(--wnq-line); }
     .wnq-ppc-intelligence .wnq-finding-row { grid-template-columns:1fr; }
