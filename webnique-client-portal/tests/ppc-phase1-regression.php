@@ -254,6 +254,10 @@ $workspace_styles = (string)file_get_contents(dirname(__DIR__) . '/assets/admin/
 assertPpc(str_contains($ppc_admin_source, 'data-wnq-workspace-tab') && str_contains($workspace_script, 'activateWorkspace'), 'Phase 9 must provide focused, accessible operations workspaces.');
 assertPpc(str_contains($workspace_script, "event.key === 'ArrowRight'") && str_contains($workspace_styles, 'prefers-reduced-motion'), 'Phase 9 navigation must include keyboard and reduced-motion support.');
 assertPpc(!preg_match('/googleAds:mutate|customers\/.+:mutate|->mutate/i', $workspace_script), 'The Phase 9 interface must not add Google Ads mutation behavior.');
+assertPpc(str_contains($ppc_admin_source, 'wnq-account-strip') && str_contains($ppc_admin_source, 'wnq-agency-command'), 'Phase 11 must provide compact client and agency command surfaces.');
+assertPpc(str_contains($ppc_admin_source, 'wnq-finding-row') && str_contains($ppc_admin_source, 'wnq-lifecycle-flow'), 'Phase 11 must keep decisions concise and lifecycle stages understandable.');
+assertPpc(str_contains($workspace_script, 'data-wnq-table-search') && str_contains($workspace_script, 'data-wnq-finding-filter'), 'Phase 11 must provide lightweight register search and finding filters.');
+assertPpc(str_contains($workspace_styles, '.wnq-ppc-intelligence .wnq-finding-row') && str_contains($workspace_styles, '.wnq-ppc-management .wnq-agency-command'), 'Phase 11 styles must remain scoped to PPC admin interfaces.');
 $negative_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Services/PpcNegativeInventoryService.php');
 $lifecycle_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Models/PpcRecommendation.php');
 $validation_source = (string)file_get_contents(dirname(__DIR__) . '/includes/Services/PpcRecommendationValidationService.php');
