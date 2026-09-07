@@ -585,7 +585,7 @@ final class ClientPortal
     {
         $settings = self::adsSettings($client_id, false);
         // PPC Management's saved account is authoritative even if the legacy option mirror is stale.
-        $connection = PpcAccount::getByClientId($client_id);
+        $connection = class_exists(PpcAccount::class) ? PpcAccount::getByClientId($client_id) : null;
         if ($connection && preg_match('/^\d{10}$/',(string)($connection['customer_id']??''))) {
             $settings['customer_id']=(string)$connection['customer_id'];
             $settings['matched_account_name']=(string)($connection['account_name']??'');

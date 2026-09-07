@@ -1,45 +1,24 @@
-# Client results activity — 3.6.0
+# Client Analytics lead summary — 3.7.0
 
-## Included
+Client Analytics now opens with a read-only Lead Summary for the selected date range. The primary number is **Total Verified Leads**: unique Google Ads calls at or above the configured duration threshold plus GA4 form and email events that are marked as key events. Website phone clicks are shown separately and are never added to the lead total.
 
-The existing backend Analytics tab now starts with three independently loaded reports above the preserved GA4, Search Console, and Ads overview:
+The summary also shows All Recorded Calls versus Verified Calls, a client-facing sentence, provider status, and an expandable Tracking Breakdown for Ads calls, GA4 paid/organic/other/unknown phone clicks, forms, and emails. A warning is shown when paid phone clicks cannot be confidently matched to the saved Ads customer ID. Each provider remains independent, so an unavailable GA4 property does not hide available Ads call counts.
 
-1. **Google Ads call records:** Search-campaign call start timestamps, campaign, call status, duration, and account timezone. Uses the existing exact client-to-Ads mapping and read-only GoogleAdsQueryService. No recordings, caller numbers, spend, cost, CPC, or billing are returned.
-2. **GA4 phone-click activity:** date/minute, event name, device, reported session channel, event count, and GA4 key-event count. Sources are Google Ads, Organic search, Other, and Unknown. Google Ads requires the session Ads customer ID to match the saved client account. Paid Search alone does not establish that match. Event names are configurable per client; default is the existing phone_click.
+## Configuration
 
-Each panel has reporting dates, timezone, explicit limits, empty/unavailable states, source filtering, text search, and 25-row pagination. Phone-click source totals count events in the fetched report, not unique people. There is deliberately no combined lead total: phone clicks and Ads calls can overlap.
+Expand **Tracking connections & lead-event names** in Client Analytics. Select the existing portal client with the saved Google Ads account, enter the exact GA4 event names for phone clicks, form leads, and email leads, and set the minimum call duration. The default (and SNS Hauling rule) is 20 seconds. Saving these values does not install tags, change Ads settings, or enable writes.
 
-## Setup
+## Boundaries
 
-In Analytics, select a client and expand **Tracking connections & phone-event names**.
-
-- Enter exact GA4 event names already sent by that client's website. Saving a name does not install a tag or mark an event as a key event.
-- Save, then Refresh. Not connected, unavailable, and empty are distinct states.
-
-## Safety and boundaries
-
-- New activity endpoint is logged-in backend staff-only (manage_options or wnq_manage_portal) with the Analytics nonce. It does not expand the existing client-facing AJAX response.
-- Setup requires the same role checks, a client-specific nonce, and an existing analytics client.
-- Reports cache for three minutes under client/provider/date/configuration identities. Refresh bypasses report cache. Browser responses use no-cache headers.
-- No Google Ads mutation endpoint, public webhook, tracking tag installation, or automatic account matching was added.
-- Source failures do not erase another provider's results. API failures remain scoped to that provider.
-
-## Reporting limitations
-
-- GA4 Data API returns aggregated minute-level rows, not raw individual call events or recordings. Privacy thresholds, sampling, attribution, and delayed processing can affect results. Restrictions are surfaced when reported in metadata.
-- This call_view feed covers Search ad call reporting, not every website call. Missing records do not prove no calls occurred. Recordings are not provided by this feed.
-- Form date filters fetch a one-day buffer and enforce the displayed WordPress timezone dates locally, because the upstream date filter timezone is unspecified.
-- Maximum fetched records: 1,000 GA4 groups and 1,000 Ads calls. Capped/limited reports are labeled incomplete. These are not unlimited full-history exports.
-- Phone-click event names must be dedicated to phone actions; configuring a generic click event would also count unrelated clicks.
-- Per-client connection setup is manual and explicit. No real credentials or subaccount IDs were populated during development.
+- Search-only Google Ads `call_view` data is used. No spend, cost, CPC, billing, credentials, tokens, recordings, or caller details are returned by the Analytics activity endpoint.
+- Calls are deduplicated by the account-scoped `call_view` resource name. Phone clicks, forms, and emails remain separate evidence streams to prevent call/click double-counting.
+- GA4 form and email counts are “confirmed” only when the configured event is reported as a GA4 key event. They are not CRM-person deduplication.
+- Date filters are applied to every provider. Reports are cached briefly per client, provider, date range, mapping, and configuration; Refresh bypasses the cache.
+- Staff permissions, nonces, exact client mapping, and server-side credential handling are preserved. No Google Ads mutation endpoint was added.
 
 ## Tests
 
-- analytics-activity-regression.php: mapping/attribution safeguards, authenticated credential storage, settings validation, GA4 row/time normalization, threshold disclosure, Search-only call query, call-account mismatch rejection, GHL paging/date conversion/field exclusion, failed-page behavior, staff permissions, disconnect, and Ads independence from GA4.
-- analytics-activity-browser.cjs: production renderer and styles with synthetic responses at 1440px and 390px; source filters, pagination, search, escaped content, unavailable GHL state, refresh, and no page overflow.
-- Existing Analytics, PPC, and service-city regressions remain part of release validation.
-
-These are offline tests, not live WordPress/Google/GHL acceptance tests. Check one real client end-to-end on staging before rollout.
+`tests/analytics-lead-summary.php` checks event classification, key-event-only lead counting, and attribution safeguards. `tests/analytics-activity-browser.cjs` exercises the production renderer at desktop and mobile widths, including the primary total, period sentence, warning, expandable breakdown, filters, pagination, escaping, refresh, and overflow checks. Run PHP syntax validation across all plugin files and both fixtures before release. These are offline checks; verify one connected client on staging for live GA4/Ads reporting behavior.
 
 ## Provider references
 

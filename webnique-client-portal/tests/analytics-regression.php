@@ -20,6 +20,7 @@ namespace {
     set_error_handler(static function($severity,$message,$file,$line){throw new \ErrorException($message,0,$severity,$file,$line);});
     function sanitize_text_field($v){return trim(strip_tags((string)$v));}
     function sanitize_key($v){return preg_replace('/[^a-z0-9_-]/','',strtolower((string)$v));}
+    function get_option($key,$default=[]){return $default;}
     function absint($v){return abs((int)$v);}
     function current_datetime(){return new DateTimeImmutable('2026-09-07',new DateTimeZone('America/New_York'));}
     function check_ajax_referer($a,$b){$GLOBALS['nonceChecked']=true;}
