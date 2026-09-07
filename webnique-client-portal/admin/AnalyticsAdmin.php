@@ -124,17 +124,21 @@ final class AnalyticsAdmin
 
         (function($) {
             let currentChart = null;
+            let requestNumber = 0;
+            let activeRequest = null;
 
             $('#client-selector').on('change', function() {
                 window.location.href = '<?php echo admin_url('admin.php?page=wnq-analytics'); ?>&client=' + $(this).val();
             });
 
             function loadData(days, refresh) {
+                const request = ++requestNumber;
+                if (activeRequest) activeRequest.abort();
                 $('#wnq-analytics-loading').show();
                 $('#wnq-analytics-content').hide();
                 $('#wnq-refresh-data').prop('disabled', true).text('⏳ Loading...');
 
-                $.ajax({
+                activeRequest = $.ajax({
                     url: wnqAnalytics.ajaxUrl,
                     type: 'POST',
                     data: {
@@ -145,6 +149,7 @@ final class AnalyticsAdmin
                         refresh: refresh ? 1 : 0
                     },
                     success: function(resp) {
+                        if (request !== requestNumber) return;
                         if (resp.success) {
                             renderData(resp.data);
                         } else {
@@ -152,9 +157,12 @@ final class AnalyticsAdmin
                         }
                     },
                     error: function(xhr) {
+                        if (request !== requestNumber || xhr.statusText === 'abort') return;
                         showError('Error loading data');
                     },
                     complete: function() {
+                        if (request !== requestNumber) return;
+                        activeRequest = null;
                         $('#wnq-refresh-data').prop('disabled', false).text('🔄 Refresh');
                     }
                 });
@@ -241,7 +249,9 @@ final class AnalyticsAdmin
             }
 
             function renderData(data) {
+                if (currentChart) { currentChart.destroy(); currentChart = null; }
                 let html = '<div class="wnq-analytics-dashboard">';
+                if (data && data.period) html += '<p class="description">Reporting dates: ' + escapeHtml(data.period.start) + ' – ' + escapeHtml(data.period.end) + '. Includes today; recent data may be incomplete. Provider reporting time zones may differ.</p>';
                 const ga4 = data && data.ga4 ? data.ga4 : null;
                 let gaData = null;
 
@@ -263,7 +273,7 @@ final class AnalyticsAdmin
 
                 // KEY EVENTS - Compact Cards
                 if (gaData.key_events && gaData.key_events.length > 0) {
-                    html += '<div class="wnq-section-header"><h2>🎯 Key Events</h2></div>';
+                    html += '<div class="wnq-section-header"><h2>🎯 Tracked Actions</h2></div><p class="description">Counts of selected event names, not necessarily GA4 key events or unique leads.</p>';
                     html += '<div class="wnq-events-grid">';
 
                     gaData.key_events.forEach(event => {
@@ -398,7 +408,7 @@ final class AnalyticsAdmin
             }
 
             function showError(msg) {
-                $('#wnq-analytics-content').html('<div class="notice notice-error"><p>' + msg + '</p></div>').show();
+                $('#wnq-analytics-content').html('<div class="notice notice-error"><p>' + escapeHtml(msg) + '</p></div>').show();
                 $('#wnq-analytics-loading').hide();
             }
 
@@ -972,14 +982,21 @@ final class AnalyticsAdmin
             $date_range = in_array($date_range, [7, 30, 90, 180, 365, 730], true) ? $date_range : 30;
             $refresh    = !empty($_POST['refresh']);
 
-            $config      = AnalyticsConfig::getClientConfig($client_id);
-            $credentials = AnalyticsConfig::getCredentials();
+            $config = null;
+            $credentials = null;
+            try {
+                $config = AnalyticsConfig::getClientConfig($client_id);
+                $credentials = AnalyticsConfig::getCredentials();
+            } catch (\Throwable $e) {
+                error_log('[WNQ Analytics] Analytics configuration unavailable.');
+            }
 
             $today      = current_datetime()->setTime(0, 0);
             $end_date   = $today->format('Y-m-d');
-            $start_date = $today->modify("-{$date_range} days")->format('Y-m-d');
+            $start_date = $today->modify('-' . ($date_range - 1) . ' days')->format('Y-m-d');
 
             $data = [
+                'period' => ['start'=>$start_date, 'end'=>$end_date, 'days'=>$date_range],
                 'ga4' => [
                     'status'  => 'unavailable',
                     'message' => 'Unavailable',
@@ -997,25 +1014,26 @@ final class AnalyticsAdmin
             if ($config && $credentials && !empty($config['ga4_property_id'])) {
                 try {
                     $token = self::getGoogleAccessToken($credentials['credentials']);
+                    $overview = self::fetchOverviewStats($token, $config['ga4_property_id'], $start_date, $end_date);
                     $data['ga4'] = [
                         'status' => 'available',
                         'data'   => [
-                            'overview'           => self::fetchOverviewStats($token, $config['ga4_property_id'], $start_date, $end_date),
+                            'overview'           => $overview,
                             'visitors_over_time' => self::fetchVisitorsOverTime($token, $config['ga4_property_id'], $start_date, $end_date),
-                            'traffic_sources'    => self::fetchTrafficSources($token, $config['ga4_property_id'], $start_date, $end_date),
+                            'traffic_sources'    => self::fetchTrafficSources($token, $config['ga4_property_id'], $start_date, $end_date, $overview['sessions']),
                             'top_pages'          => self::fetchTopPages($token, $config['ga4_property_id'], $start_date, $end_date),
                             'key_events'         => self::fetchKeyEvents($token, $config['ga4_property_id'], $start_date, $end_date),
                         ],
                     ];
                 } catch (\Throwable $e) {
                     error_log('[WNQ Analytics] GA4 fetch error: ' . $e->getMessage());
-                    delete_transient('wnq_ga_access_token');
+                    delete_transient(self::tokenCacheKey($credentials['credentials']));
                 }
             }
 
             if ($config && $credentials && !empty($config['search_console_url'])) {
                 try {
-                    $search_console = new GoogleSearchConsole($client_id);
+                    $search_console = new GoogleSearchConsole($client_id, $refresh);
                     $overview       = $search_console->getOverviewStats($start_date, $end_date);
                     $queries        = $search_console->getKeywordRankings($start_date, $end_date, 5);
 
@@ -1326,6 +1344,8 @@ final class AnalyticsAdmin
 
         // Clear the shared GA access token
         delete_transient('wnq_ga_access_token');
+        $credentials = AnalyticsConfig::getCredentials();
+        if ($credentials) delete_transient(self::tokenCacheKey($credentials['credentials']));
 
         // Clear all analytics data transients
         global $wpdb;
@@ -1351,8 +1371,9 @@ final class AnalyticsAdmin
 
     private static function getGoogleAccessToken(array $credentials): string
     {
-        $cached = get_transient('wnq_ga_access_token');
-        if ($cached) return $cached;
+        $cache_key = self::tokenCacheKey($credentials);
+        $cached = get_transient($cache_key);
+        if (is_string($cached) && $cached !== '') return $cached;
 
         $now    = time();
         $header = ['alg' => 'RS256', 'typ' => 'JWT'];
@@ -1389,13 +1410,18 @@ final class AnalyticsAdmin
 
         $body = json_decode(wp_remote_retrieve_body($response), true);
 
-        if (!isset($body['access_token'])) {
-            throw new \Exception('Token failed: ' . ($body['error_description'] ?? $body['error'] ?? 'Unknown'));
+        if ((int)wp_remote_retrieve_response_code($response) !== 200 || !is_string($body['access_token']??null) || $body['access_token'] === '') {
+            throw new \Exception('Google Analytics authentication failed.');
         }
 
         $token = $body['access_token'];
-        set_transient('wnq_ga_access_token', $token, 3000);
+        set_transient($cache_key, $token, max(1, min(3000, (int)($body['expires_in']??3600)-60)));
         return $token;
+    }
+
+    private static function tokenCacheKey(array $credentials): string
+    {
+        return 'wnq_ga_access_token_' . hash('sha256', (string)($credentials['client_email']??'').'|'.(string)($credentials['private_key']??''));
     }
 
     private static function fetchKeyEvents(string $token, string $property_id, string $start, string $end): array
@@ -1427,7 +1453,7 @@ final class AnalyticsAdmin
             'email_click'         => 'Email Clicks',
             'social_click'        => 'Social Clicks',
             'contact_page_visit'  => 'Contact Page',
-            'generate_lead'       => 'Form Submissions',
+            'generate_lead'       => 'Lead Events',
             'purchase'            => 'Purchases',
         ];
 
@@ -1489,7 +1515,7 @@ final class AnalyticsAdmin
         return $trends;
     }
 
-    private static function fetchTrafficSources(string $token, string $property_id, string $start, string $end): array
+    private static function fetchTrafficSources(string $token, string $property_id, string $start, string $end, int $total_sessions): array
     {
         $data = self::makeGARequest($token, $property_id, [
             'dateRanges' => [['startDate' => $start, 'endDate' => $end]],
@@ -1500,12 +1526,9 @@ final class AnalyticsAdmin
         ]);
 
         $sources = [];
-        $total   = 0;
+        $total   = max(0, $total_sessions);
 
         if (isset($data['rows'])) {
-            foreach ($data['rows'] as $row) {
-                $total += intval($row['metricValues'][0]['value']);
-            }
             foreach ($data['rows'] as $row) {
                 $sessions  = intval($row['metricValues'][0]['value']);
                 $sources[] = [
@@ -1523,7 +1546,7 @@ final class AnalyticsAdmin
     {
         $data = self::makeGARequest($token, $property_id, [
             'dateRanges' => [['startDate' => $start, 'endDate' => $end]],
-            'dimensions' => [['name' => 'pagePath'], ['name' => 'pageTitle']],
+            'dimensions' => [['name' => 'pagePath']],
             'metrics'    => [['name' => 'screenPageViews'], ['name' => 'bounceRate']],
             'orderBys'   => [['metric' => ['metricName' => 'screenPageViews'], 'desc' => true]],
             'limit'      => 10,
@@ -1534,7 +1557,7 @@ final class AnalyticsAdmin
             foreach ($data['rows'] as $row) {
                 $pages[] = [
                     'path'        => $row['dimensionValues'][0]['value'],
-                    'title'       => $row['dimensionValues'][1]['value'] ?? 'Untitled',
+                    'title'       => $row['dimensionValues'][0]['value'],
                     'views'       => intval($row['metricValues'][0]['value']),
                     'bounce_rate' => self::normalizePercentageMetric($row['metricValues'][1]['value'] ?? 0),
                 ];
@@ -1567,6 +1590,7 @@ final class AnalyticsAdmin
 
     private static function makeGARequest(string $token, string $property_id, array $body): array
     {
+        if (!preg_match('#^properties/[0-9]+$#', $property_id)) throw new \Exception('Invalid GA4 property ID.');
         $url = "https://analyticsdata.googleapis.com/v1beta/{$property_id}:runReport";
 
         $response = wp_remote_post($url, [
@@ -1585,8 +1609,8 @@ final class AnalyticsAdmin
         $code = wp_remote_retrieve_response_code($response);
         $data = json_decode(wp_remote_retrieve_body($response), true);
 
-        if ($code !== 200) {
-            throw new \Exception('GA API error ' . $code . ': ' . ($data['error']['message'] ?? 'Unknown error'));
+        if ((int)$code !== 200 || !is_array($data) || isset($data['error']) || (isset($data['rows']) && !is_array($data['rows']))) {
+            throw new \Exception('Google Analytics returned an unavailable or invalid report.');
         }
 
         return $data;
