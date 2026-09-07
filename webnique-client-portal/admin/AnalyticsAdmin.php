@@ -109,7 +109,7 @@ final class AnalyticsAdmin
             </div>
 
             <section id="wnq-results-activity" aria-label="Client results activity">
-                <header class="wnq-results-header"><div><span>CLIENT RESULTS</span><h2>Calls &amp; phone-click activity</h2><p>Separate call records and click counts—not a combined unique-lead total.</p></div></header>
+                <header class="wnq-results-header"><div><span>CLIENT RESULTS</span><h2>Lead Summary</h2><p>Verified leads for the selected reporting period, with source evidence kept separate.</p></div></header>
                 <div id="wnq-activity-feeds"></div>
                 <?php self::renderActivitySettings($current_client_id); ?>
             </section>
@@ -1163,7 +1163,7 @@ final class AnalyticsAdmin
     {
         $settings=\WNQ\Services\AnalyticsActivity::settings($client);
         ?>
-        <details class="wnq-activity-settings"><summary>Tracking connections &amp; phone-event names</summary>
+        <details class="wnq-activity-settings"><summary>Tracking connections &amp; lead-event names</summary>
             <?php if (isset($_GET['activity_saved'])): ?><p role="status">Tracking settings saved. Refresh the activity reports to check the connection.</p><?php endif; ?>
             <p>Choose the portal client whose account is already connected in PPC Management / Reports. This reuses the saved account; it does not create or change a Google Ads connection. Automatic resolution uses exact client IDs or a unique matching website/property, never names.</p>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
@@ -1171,6 +1171,9 @@ final class AnalyticsAdmin
                 <input type="hidden" name="client_id" value="<?php echo esc_attr($client); ?>">
                 <?php wp_nonce_field('wnq_activity_settings_'.$client,'wnq_nonce'); ?>
                 <label>GA4 phone-click event names <input name="phone_events" required value="<?php echo esc_attr(implode(', ',\WNQ\Services\AnalyticsActivity::phoneNames($client))); ?>"><small>Comma-separated exact names already sent by your website, such as phone_click. This does not install tracking tags.</small></label>
+                <label>GA4 form lead event names <input name="form_events" required value="<?php echo esc_attr(implode(', ',\WNQ\Services\AnalyticsActivity::formNames($client))); ?>"><small>Only events marked as GA4 key events are counted as confirmed Form Leads.</small></label>
+                <label>GA4 email lead event names <input name="email_events" required value="<?php echo esc_attr(implode(', ',\WNQ\Services\AnalyticsActivity::emailNames($client))); ?>"><small>Only events marked as GA4 key events are counted as confirmed Email Leads.</small></label>
+                <label>Minimum Google Ads call duration (seconds) <input type="number" min="0" max="3600" name="min_call_duration" required value="<?php echo esc_attr((string)\WNQ\Services\AnalyticsActivity::callThreshold($client)); ?>"><small>Calls at or above this duration are Verified Calls. SNS Hauling uses the current 20-second rule.</small></label>
                 <label>Portal client with the saved Google Ads account
                     <select name="ads_portal_client_id">
                         <option value="">Automatic — exact ID or unique website/property</option>
@@ -1192,7 +1195,7 @@ final class AnalyticsAdmin
         check_admin_referer('wnq_activity_settings_'.$client,'wnq_nonce');
         if ($client==='' || !AnalyticsConfig::getClientConfig($client)) wp_die('Client not found.');
         try {
-            $ok=\WNQ\Services\AnalyticsActivity::save($client,sanitize_text_field(wp_unslash($_POST['ads_portal_client_id']??'')),(string)wp_unslash($_POST['phone_events']??''));
+            $ok=\WNQ\Services\AnalyticsActivity::save($client,sanitize_text_field(wp_unslash($_POST['ads_portal_client_id']??'')),(string)wp_unslash($_POST['phone_events']??''),(string)wp_unslash($_POST['form_events']??'generate_lead'),(string)wp_unslash($_POST['email_events']??'email_click'),(int)($_POST['min_call_duration']??20));
         } catch (\Throwable $e) { $ok=false; }
         if (!$ok) wp_die('Settings could not be saved. Check the event names and selected portal client.');
         wp_safe_redirect(add_query_arg(['page'=>'wnq-analytics','client'=>$client,'activity_saved'=>'1'],admin_url('admin.php')));
@@ -1207,7 +1210,7 @@ final class AnalyticsAdmin
         nocache_headers();
         $client=sanitize_text_field(wp_unslash($_POST['client_id']??''));
         $provider=sanitize_key($_POST['provider']??'');
-        if ($client==='' || !in_array($provider,['phone_events','ads_calls'],true)) { wp_send_json_error(['message'=>'Invalid activity request'],400); return; }
+        if ($client==='' || !in_array($provider,['lead_summary','phone_events','ads_calls'],true)) { wp_send_json_error(['message'=>'Invalid activity request'],400); return; }
         $days=(int)($_POST['date_range']??30);
         if (!in_array($days,[7,30,90,180,365,730],true)) $days=30;
         $today=current_datetime()->setTime(0,0);$start=$today->modify('-'.($days-1).' days')->format('Y-m-d');$end=$today->format('Y-m-d');
@@ -1216,7 +1219,7 @@ final class AnalyticsAdmin
             if (!$config) throw new \RuntimeException('Client not configured.');
             $connection=\WNQ\Models\PpcAccount::getByClientId(\WNQ\Services\AnalyticsActivity::adsClient($client))?:[];
             $settings=\WNQ\Services\AnalyticsActivity::settings($client);
-            $credentials=$provider==='phone_events'?AnalyticsConfig::getCredentials():null;
+            $credentials=in_array($provider,['lead_summary','phone_events'],true)?AnalyticsConfig::getCredentials():null;
             $key='wnq_activity_report_v2_'.hash('sha256',wp_json_encode([$client,$provider,$start,$end,$config,$connection,$settings,$credentials]));
             $report=empty($_POST['refresh'])?get_transient($key):false;
             if (!is_array($report)) {
@@ -1224,13 +1227,17 @@ final class AnalyticsAdmin
                     if (!$credentials || empty($config['ga4_property_id'])) throw new \RuntimeException('GA4 not configured.');
                     $token=self::getGoogleAccessToken($credentials['credentials']);
                     $report=\WNQ\Services\AnalyticsActivity::phoneEvents($client,$start,$end,static fn($body)=>self::makeGARequest($token,(string)$config['ga4_property_id'],$body));
+                } elseif ($provider==='lead_summary') {
+                    $gaRequest=null;
+                    if ($credentials && !empty($config['ga4_property_id'])) { $token=self::getGoogleAccessToken($credentials['credentials']); $gaRequest=static fn($body)=>self::makeGARequest($token,(string)$config['ga4_property_id'],$body); }
+                    $report=\WNQ\Services\AnalyticsActivity::leadSummary($client,$start,$end,$gaRequest);
                 } else $report=\WNQ\Services\AnalyticsActivity::adsCalls($client,$start,$end);
                 if (in_array($report['status'],['available','partial'],true)) set_transient($key,$report,180);
             }
         } catch (\Throwable $e) {
             $report=\WNQ\Services\AnalyticsActivity::unavailable('Unavailable. Check this client’s connection, reporting permissions, and tracking setup, then refresh.');
         }
-        $report['period']=['start'=>$start,'end'=>$end];
+        $report['period']=array_merge((array)($report['period']??[]),['start'=>$start,'end'=>$end]);
         wp_send_json_success($report);
     }
 
