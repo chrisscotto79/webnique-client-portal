@@ -96,6 +96,8 @@ final class AnalyticsAdmin
                         <?php endforeach; ?>
                     </select>
                     <select id="wnq-date-range">
+                        <option value="month">This Month</option>
+                        <option value="previous_month">Previous Month</option>
                         <option value="7">Last 7 Days</option>
                         <option value="30" selected>Last 30 Days</option>
                         <option value="90">Last 3 Months</option>
@@ -235,8 +237,14 @@ final class AnalyticsAdmin
                 }
 
                 const ads = provider.data || {};
+                const money = amount => {
+                    if (amount == null || !Number.isFinite(Number(amount))) return 'Unavailable';
+                    try { return ads.currency_code ? new Intl.NumberFormat(undefined, {style:'currency', currency:ads.currency_code}).format(amount) : formatNumber(amount,2) + ' (account currency unavailable)'; } catch (_) { return formatNumber(amount,2); }
+                };
                 if (ads.customer_id) html += '<p class="description">Linked account: ' + escapeHtml(ads.account_name || 'Google Ads') + ' · ' + escapeHtml(ads.customer_id) + '</p>';
+                html += '<p class="description">Account-wide campaign performance. Ads conversions use Google attribution and can differ from the verified call and lead counts above.</p>';
                 html += '<div class="wnq-overview-grid">';
+                html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label" title="Google Ads media cost for the selected period, in the account currency.">Google Ads cost</span><span class="metric-value">' + escapeHtml(money(ads.cost)) + '</span></div></div>';
                 html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">Clicks</span><span class="metric-value">' + formatNumber(ads.clicks) + '</span></div></div>';
                 html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">Impressions</span><span class="metric-value">' + formatNumber(ads.impressions) + '</span></div></div>';
                 html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">CTR</span><span class="metric-value">' + formatNumber(Number(ads.ctr) * 100, 2) + '%</span></div></div>';
@@ -245,10 +253,10 @@ final class AnalyticsAdmin
 
                 html += '<div class="wnq-table-section"><h3>Campaign Status &amp; Performance</h3>';
                 if (Array.isArray(ads.campaigns) && ads.campaigns.length) {
-                    html += '<div class="wnq-table-scroll"><table class="wnq-compact-table"><thead><tr><th>Campaign</th><th>Status</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Conversions</th></tr></thead><tbody>';
+                    html += '<div class="wnq-table-scroll"><table class="wnq-compact-table"><thead><tr><th>Campaign</th><th>Status</th><th>Cost</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Conversions</th></tr></thead><tbody>';
                     ads.campaigns.forEach(campaign => {
                         const status = campaign.status || 'unknown';
-                        html += '<tr><td><strong>' + escapeHtml(campaign.name) + '</strong></td><td><span class="wnq-status-pill status-' + escapeHtml(status) + '">' + escapeHtml(status.replace(/_/g, ' ')) + '</span></td><td>' + formatNumber(campaign.clicks) + '</td><td>' + formatNumber(campaign.impressions) + '</td><td>' + formatNumber(Number(campaign.ctr) * 100, 2) + '%</td><td>' + formatNumber(campaign.conversions, 2) + '</td></tr>';
+                        html += '<tr><td><strong>' + escapeHtml(campaign.name) + '</strong></td><td><span class="wnq-status-pill status-' + escapeHtml(status) + '">' + escapeHtml(status.replace(/_/g, ' ')) + '</span></td><td>' + escapeHtml(money(campaign.cost)) + '</td><td>' + formatNumber(campaign.clicks) + '</td><td>' + formatNumber(campaign.impressions) + '</td><td>' + formatNumber(Number(campaign.ctr) * 100, 2) + '%</td><td>' + formatNumber(campaign.conversions, 2) + '</td></tr>';
                     });
                     html += '</tbody></table></div>';
                 } else {
@@ -260,7 +268,7 @@ final class AnalyticsAdmin
             function renderData(data) {
                 if (currentChart) { currentChart.destroy(); currentChart = null; }
                 let html = '<div class="wnq-analytics-dashboard">';
-                if (data && data.period) html += '<p class="description">Reporting dates: ' + escapeHtml(data.period.start) + ' – ' + escapeHtml(data.period.end) + '. Includes today; recent data may be incomplete. Provider reporting time zones may differ.</p>';
+                if (data && data.period) html += '<p class="description">Reporting dates: ' + escapeHtml(data.period.start) + ' – ' + escapeHtml(data.period.end) + '. Recent data may be incomplete. Provider reporting time zones may differ.</p>';
                 const ga4 = data && data.ga4 ? data.ga4 : null;
                 let gaData = null;
 
@@ -317,7 +325,7 @@ final class AnalyticsAdmin
                 // Visitors Chart
                 if (gaData.visitors_over_time && gaData.visitors_over_time.length > 0) {
                     html += '<div class="wnq-chart-section">';
-                    html += '<h3>📈 Visitors Over Time</h3>';
+                    html += '<h3>📈 Visitors Over Time</h3><p class="description">Daily users can appear on multiple days. Adding daily users will not equal unique visitors for the whole period.</p>';
                     html += '<canvas id="visitors-chart"></canvas>';
                     html += '</div>';
                 }
@@ -331,7 +339,7 @@ final class AnalyticsAdmin
                     html += '<table class="wnq-compact-table">';
                     html += '<thead><tr><th>Channel</th><th>Sessions</th><th>%</th></tr></thead>';
                     html += '<tbody>';
-                    gaData.traffic_sources.slice(0, 5).forEach(s => {
+                    gaData.traffic_sources.forEach(s => {
                         html += '<tr><td>' + escapeHtml(s.channel) + '</td><td>' + formatNumber(s.sessions) + '</td><td><strong>' + formatNumber(s.percentage, 1) + '%</strong></td></tr>';
                     });
                     html += '</tbody></table>';
@@ -340,12 +348,12 @@ final class AnalyticsAdmin
 
                 if (gaData.top_pages && gaData.top_pages.length > 0) {
                     html += '<div class="wnq-table-section">';
-                    html += '<h3>📄 Top Pages</h3>';
+                    html += '<h3>📄 Top 10 Pages</h3>';
                     html += '<table class="wnq-compact-table">';
                     html += '<thead><tr><th>Page</th><th>Views</th></tr></thead>';
                     html += '<tbody>';
-                    gaData.top_pages.slice(0, 5).forEach(p => {
-                        const displayPath = p.path.length > 35 ? p.path.substring(0, 35) + '...' : p.path;
+                    gaData.top_pages.forEach(p => {
+                        const displayPath = String(p.path || '/');
                         html += '<tr><td><code>' + escapeHtml(displayPath) + '</code></td><td><strong>' + formatNumber(p.views) + '</strong></td></tr>';
                     });
                     html += '</tbody></table>';
@@ -422,11 +430,11 @@ final class AnalyticsAdmin
             }
 
             $('#wnq-refresh-data').on('click', function() {
-                loadData(parseInt($('#wnq-date-range').val()), true);
+                loadData($('#wnq-date-range').val(), true);
             });
 
             $('#wnq-date-range').on('change', function() {
-                loadData(parseInt($(this).val()), false);
+                loadData($(this).val(), false);
             });
 
             $(document).ready(function() {
@@ -1000,9 +1008,9 @@ final class AnalyticsAdmin
                 error_log('[WNQ Analytics] Analytics configuration unavailable.');
             }
 
-            $today      = current_datetime()->setTime(0, 0);
-            $end_date   = $today->format('Y-m-d');
-            $start_date = $today->modify('-' . ($date_range - 1) . ' days')->format('Y-m-d');
+            $period=\WNQ\Services\AnalyticsActivity::reportingPeriod($_POST['date_range']??30);
+            $start_date=$period['start']; $end_date=$period['end'];
+            $date_range=(int)((strtotime($end_date)-strtotime($start_date))/86400)+1;
 
             $data = [
                 'period' => ['start'=>$start_date, 'end'=>$end_date, 'days'=>$date_range],
@@ -1095,6 +1103,7 @@ final class AnalyticsAdmin
                             'impressions' => absint($campaign['impressions'] ?? 0),
                             'ctr'         => (float)($campaign['ctr'] ?? 0),
                             'conversions' => (float)($campaign['conversions'] ?? 0),
+                            'cost'        => max(0, (float)($campaign['spend'] ?? 0)),
                         ];
                     }, $ads_campaigns);
 
@@ -1107,11 +1116,13 @@ final class AnalyticsAdmin
                         'data'   => [
                             'account_name' => sanitize_text_field((string)($ads_report['account_name']??'')),
                             'customer_id' => preg_replace('/\D/','',(string)($ads_report['customer_id']??'')),
+                            'currency_code' => preg_match('/^[A-Z]{3}$/', (string)($ads_report['currency_code']??'')) ? $ads_report['currency_code'] : '',
+                            'cost' => max(0, (float)($ads_summary['spend'] ?? 0)),
                             'clicks'      => absint($ads_summary['clicks'] ?? 0),
                             'impressions' => absint($ads_summary['impressions'] ?? 0),
                             'ctr'         => (float)($ads_summary['ctr'] ?? 0),
                             'conversions' => (float)($ads_summary['conversions'] ?? 0),
-                            'campaigns'   => array_slice($safe_campaigns, 0, 5),
+                            'campaigns'   => $safe_campaigns,
                         ],
                     ];
                 }
@@ -1174,6 +1185,8 @@ final class AnalyticsAdmin
                 <label>GA4 phone-click event names <input name="phone_events" required value="<?php echo esc_attr(implode(', ',\WNQ\Services\AnalyticsActivity::phoneNames($client))); ?>"><small>Comma-separated exact names already sent by your website, such as phone_click. This does not install tracking tags.</small></label>
                 <label>GA4 form lead event names <input name="form_events" required value="<?php echo esc_attr(implode(', ',\WNQ\Services\AnalyticsActivity::formNames($client))); ?>"><small>Only events marked as GA4 key events are counted as confirmed Form Leads.</small></label>
                 <label>GA4 email lead event names <input name="email_events" required value="<?php echo esc_attr(implode(', ',\WNQ\Services\AnalyticsActivity::emailNames($client))); ?>"><small>Only events marked as GA4 key events are counted as confirmed Email Leads.</small></label>
+                <label><input type="checkbox" name="lead_events_confirmed" value="1" <?php checked(!empty($settings['lead_events_confirmed'])); ?>> I have verified these form and email events fire on completed submissions, not button clicks or opening an email app.</label>
+                <p class="description">A GA4 key-event label alone does not confirm a submitted lead. Until this setup is confirmed, form/email totals stay unavailable. Counts represent tracked submissions, not unique people.</p>
                 <label>Minimum Google Ads call duration (seconds) <input type="number" min="0" max="3600" name="min_call_duration" required value="<?php echo esc_attr((string)\WNQ\Services\AnalyticsActivity::callThreshold($client)); ?>"><small>Calls at or above this duration are Verified Calls. SNS Hauling uses the current 20-second rule.</small></label>
                 <label>Portal client with the saved Google Ads account
                     <select name="ads_portal_client_id">
@@ -1196,7 +1209,7 @@ final class AnalyticsAdmin
         check_admin_referer('wnq_activity_settings_'.$client,'wnq_nonce');
         if ($client==='' || !AnalyticsConfig::getClientConfig($client)) wp_die('Client not found.');
         try {
-            $ok=\WNQ\Services\AnalyticsActivity::save($client,sanitize_text_field(wp_unslash($_POST['ads_portal_client_id']??'')),(string)wp_unslash($_POST['phone_events']??''),(string)wp_unslash($_POST['form_events']??'generate_lead'),(string)wp_unslash($_POST['email_events']??'email_click'),(int)($_POST['min_call_duration']??20));
+            $ok=\WNQ\Services\AnalyticsActivity::save($client,sanitize_text_field(wp_unslash($_POST['ads_portal_client_id']??'')),(string)wp_unslash($_POST['phone_events']??''),(string)wp_unslash($_POST['form_events']??'generate_lead'),(string)wp_unslash($_POST['email_events']??'email_click'),wp_unslash($_POST['min_call_duration']??'20'),!empty($_POST['lead_events_confirmed']));
         } catch (\Throwable $e) { $ok=false; }
         if (!$ok) wp_die('Settings could not be saved. Check the event names and selected portal client.');
         wp_safe_redirect(add_query_arg(['page'=>'wnq-analytics','client'=>$client,'activity_saved'=>'1'],admin_url('admin.php')));
@@ -1214,15 +1227,20 @@ final class AnalyticsAdmin
         if ($client==='' || !in_array($provider,['lead_summary','phone_events','ads_calls','gbp_summary'],true)) { wp_send_json_error(['message'=>'Invalid activity request'],400); return; }
         $days=(int)($_POST['date_range']??30);
         if (!in_array($days,[7,30,90,180,365,730],true)) $days=30;
-        $today=current_datetime()->setTime(0,0);$start=$today->modify('-'.($days-1).' days')->format('Y-m-d');$end=$today->format('Y-m-d');
+        $period=\WNQ\Services\AnalyticsActivity::reportingPeriod($_POST['date_range']??30);$start=$period['start'];$end=$period['end'];
         try {
             $config=AnalyticsConfig::getClientConfig($client);
             if (!$config) throw new \RuntimeException('Client not configured.');
             $connection=[];
-            if ($provider!=='gbp_summary') $connection=\WNQ\Models\PpcAccount::getByClientId(\WNQ\Services\AnalyticsActivity::adsClient($client))?:[];
+            try { if ($provider!=='gbp_summary') $connection=\WNQ\Models\PpcAccount::getByClientId(\WNQ\Services\AnalyticsActivity::adsClient($client))?:[]; } catch (\Throwable $e) { $connection=[]; }
+            if ($provider==='gbp_summary') {
+                $gbpClient=$client;
+                if (!\WNQ\Services\GoogleBusinessProfileClient::mappingForClient($client)) $gbpClient=\WNQ\Services\AnalyticsActivity::adsClient($client);
+                $connection=[\WNQ\Services\GoogleBusinessProfileClient::mappingForClient($gbpClient), hash('sha256', (string)get_option('wnq_gbp_refresh_token','')), \WNQ\Services\GoogleBusinessProfileClient::credentialsConfigured()];
+            }
             $settings=\WNQ\Services\AnalyticsActivity::settings($client);
             $credentials=in_array($provider,['lead_summary','phone_events'],true)?AnalyticsConfig::getCredentials():null;
-            $key='wnq_activity_report_v2_'.hash('sha256',wp_json_encode([$client,$provider,$start,$end,$config,$connection,$settings,$credentials]));
+            $key='wnq_activity_report_v3_'.hash('sha256',wp_json_encode([$client,$provider,$start,$end,$config,$connection,$settings,$credentials]));
             $report=empty($_POST['refresh'])?get_transient($key):false;
             if (!is_array($report)) {
                 if ($provider==='phone_events') {
@@ -1231,10 +1249,10 @@ final class AnalyticsAdmin
                     $report=\WNQ\Services\AnalyticsActivity::phoneEvents($client,$start,$end,static fn($body)=>self::makeGARequest($token,(string)$config['ga4_property_id'],$body));
                 } elseif ($provider==='lead_summary') {
                     $gaRequest=null;
-                    if ($credentials && !empty($config['ga4_property_id'])) { $token=self::getGoogleAccessToken($credentials['credentials']); $gaRequest=static fn($body)=>self::makeGARequest($token,(string)$config['ga4_property_id'],$body); }
+                    if ($credentials && !empty($config['ga4_property_id'])) { $gaRequest=static function($body) use ($credentials,$config) { $token=self::getGoogleAccessToken($credentials['credentials']); return self::makeGARequest($token,(string)$config['ga4_property_id'],$body); }; }
                     $report=\WNQ\Services\AnalyticsActivity::leadSummary($client,$start,$end,$gaRequest);
                 } elseif ($provider==='gbp_summary') {
-                    $report=(new \WNQ\Services\GoogleBusinessProfileClient())->analyticsForClient($client,$start,$end);
+                    $report=(new \WNQ\Services\GoogleBusinessProfileClient())->analyticsForClient($gbpClient,$start,$end);
                 } else $report=\WNQ\Services\AnalyticsActivity::adsCalls($client,$start,$end);
                 if (in_array($report['status'],['available','partial'],true)) set_transient($key,$report,180);
             }
@@ -1619,7 +1637,7 @@ final class AnalyticsAdmin
             'dimensions' => [['name' => 'sessionDefaultChannelGroup']],
             'metrics'    => [['name' => 'sessions'], ['name' => 'totalUsers']],
             'orderBys'   => [['metric' => ['metricName' => 'sessions'], 'desc' => true]],
-            'limit'      => 10,
+            'limit'      => 50,
         ]);
 
         $sources = [];

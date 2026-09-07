@@ -50,7 +50,8 @@ namespace {
     check($GLOBALS['nonceChecked'],'Nonce must be checked.');
     check($result['period']['start']==='2026-09-01' && $result['period']['end']==='2026-09-07','Seven days must contain exactly seven inclusive dates.');
     check($result['google_ads']['status']==='available' && $result['ga4']['status']==='unavailable','Ads must work without GA credentials.');
-    foreach(['cost','spend','cpc','billing','refresh_token','secret'] as $forbidden) check(!str_contains(json_encode($result),$forbidden),'Ads response must omit '.$forbidden);
+    check($result['google_ads']['data']['cost']===999.0,'Ads cost must use the saved report spend.');
+    foreach(['spend','cpc','billing','refresh_token','secret'] as $forbidden) check(!str_contains(json_encode($result),$forbidden),'Ads response must omit '.$forbidden);
     $GLOBALS['admin']=false;Admin::ajaxGetAnalyticsData();
     check(ClientPortal::$lastClient==='own-client','Non-admin must be scoped to their own client.');
     $GLOBALS['admin']=true;Config::$broken=true;Admin::ajaxGetAnalyticsData();

@@ -6,6 +6,14 @@ if (!defined('ABSPATH')) exit;
 
 final class AnalyticsActivity
 {
+    public static function reportingPeriod($selection): array
+    {
+        $today=current_datetime()->setTime(0,0);
+        if ($selection==='month') return ['start'=>$today->format('Y-m-01'),'end'=>$today->format('Y-m-d')];
+        if ($selection==='previous_month') return ['start'=>$today->modify('first day of last month')->format('Y-m-d'),'end'=>$today->modify('last day of last month')->format('Y-m-d')];
+        $days=in_array((int)$selection,[7,30,90,180,365,730],true)?(int)$selection:30;
+        return ['start'=>$today->modify('-'.($days-1).' days')->format('Y-m-d'),'end'=>$today->format('Y-m-d')];
+    }
     public static function unavailable(string $message, string $status='unavailable'): array
     {
         return ['status'=>$status,'message'=>$message,'rows'=>[]];
@@ -90,7 +98,7 @@ final class AnalyticsActivity
         return strtolower(preg_replace('/^www\./i','',(string)$parts['host'])).(isset($parts['port'])?':'.$parts['port']:'').rtrim((string)($parts['path']??''),'/');
     }
 
-    public static function save(string $client,string $portalClient,string $events,string $formEvents='generate_lead',string $emailEvents='email_click',$threshold=20): bool
+    public static function save(string $client,string $portalClient,string $events,string $formEvents='generate_lead',string $emailEvents='email_click',$threshold=20,bool $confirmed=false): bool
     {
         if ($client==='') return false;
         $names=array_values(array_unique(array_filter(array_map('trim',preg_split('/[\s,]+/',$events)?:[]))));
@@ -111,6 +119,7 @@ final class AnalyticsActivity
         $value['phone_events']=$names;
         $value['form_events']=$form;
         $value['email_events']=$email;
+        $value['lead_events_confirmed']=$confirmed;
         $value['min_call_duration']=(int)$threshold;
         $value['ads_portal_client_id']=$portalClient;
         $key='wnq_activity_'.hash('sha256',$client);
@@ -127,7 +136,7 @@ final class AnalyticsActivity
 
     public static function phoneEvents(string $client,string $start,string $end,callable $request): array
     {
-        $connection=PpcAccount::getByClientId(self::adsClient($client))?:[];
+        try { $connection=PpcAccount::getByClientId(self::adsClient($client))?:[]; } catch (\Throwable $e) { $connection=[]; }
         $body=[
             'dateRanges'=>[['startDate'=>$start,'endDate'=>$end]],
             'dimensions'=>array_map(static fn($n)=>['name'=>$n],['dateHourMinute','eventName','deviceCategory','sessionDefaultChannelGroup','sessionGoogleAdsCustomerId','sessionSource','sessionMedium']),
@@ -184,6 +193,7 @@ final class AnalyticsActivity
     /** Report configured GA4 key events used as confirmed form and email leads. */
     public static function leadEvents(string $client,string $start,string $end,callable $request): array
     {
+        if (empty(self::settings($client)['lead_events_confirmed'])) return self::unavailable('Confirm that the configured form and email events record completed submissions in Tracking connections. Clicks alone cannot verify leads.');
         // Keep event categories mutually exclusive so one GA4 event cannot become two lead types.
         $phone=self::phoneNames($client);
         $formNames=array_values(array_diff(self::formNames($client),$phone));
@@ -191,17 +201,17 @@ final class AnalyticsActivity
         $names=array_values(array_unique(array_merge($formNames,$emailNames)));
         if (!$names) return self::unavailable('No distinct GA4 form or email lead events are configured.');
         $data=$request(['dateRanges'=>[['startDate'=>$start,'endDate'=>$end]],
-            'dimensions'=>array_map(static fn($n)=>['name'=>$n],['dateHourMinute','eventName','deviceCategory','sessionDefaultChannelGroup','sessionGoogleAdsCustomerId']),
+            'dimensions'=>[['name'=>'eventName']],
             'metrics'=>[['name'=>'eventCount'],['name'=>'keyEvents']],
             'dimensionFilter'=>['filter'=>['fieldName'=>'eventName','inListFilter'=>['values'=>$names]]], 'limit'=>1000]);
         $rows=[];
         foreach ((array)($data['rows']??[]) as $row) {
             $d=array_column((array)($row['dimensionValues']??[]),'value'); $m=array_column((array)($row['metricValues']??[]),'value');
-            if (count($d)!==5 || count($m)!==2) throw new \RuntimeException('Invalid lead event report.');
-            $event=sanitize_text_field($d[1]); if (!in_array($event,$names,true)) continue;
+            if (count($d)!==1 || count($m)!==2) throw new \RuntimeException('Invalid lead event report.');
+            $event=sanitize_text_field($d[0]); if (!in_array($event,$names,true)) continue;
             $rows[]=['event'=>$event,'count'=>max(0,(int)$m[0]),'key_events'=>max(0,(float)$m[1])];
         }
-        $partial=(int)($data['rowCount']??count($rows))>count($rows) || !empty($data['metadata']['subjectToThresholding']) || !empty($data['metadata']['dataLossFromOtherRow']);
+        $partial=(int)($data['rowCount']??count($rows))>count($rows) || !empty($data['metadata']['subjectToThresholding']) || !empty($data['metadata']['dataLossFromOtherRow']) || !empty($data['metadata']['samplingMetadatas']);
         $form=$email=0;
         foreach ($rows as $row) { if (in_array($row['event'],$formNames,true)) $form+=(int)$row['key_events']; if (in_array($row['event'],$emailNames,true)) $email+=(int)$row['key_events']; }
         return ['status'=>$partial?'partial':'available','rows'=>$rows,'form_leads'=>$form,'email_leads'=>$email,
@@ -220,14 +230,15 @@ final class AnalyticsActivity
         if ($request) {
             try { $phones=self::phoneEvents($client,$start,$end,$request); } catch (\Throwable $e) { $phones=self::unavailable('GA4 phone-click data are unavailable.'); }
             try { $leads=self::leadEvents($client,$start,$end,$request); } catch (\Throwable $e) { $leads=self::unavailable('GA4 form and email lead data are unavailable.'); }
-            if (!$phones || !$leads || !in_array($phones['status'],['available','partial'],true) || !in_array($leads['status'],['available','partial'],true)) $gaUnavailable=self::unavailable('Some GA4 lead sources are unavailable.');
+            if (!$phones || !$leads || !in_array($phones['status'],['available','partial'],true) || !in_array($leads['status'],['available','partial'],true)) $gaUnavailable=self::unavailable(($leads['message']??'').' '.($phones['status']==='unavailable'?($phones['message']??''):''));
         }
         else $gaUnavailable=self::unavailable('GA4 is unavailable. Google Ads call counts can still be shown independently.');
         $gaAvailable=$phones && $leads && in_array($phones['status'],['available','partial'],true) && in_array($leads['status'],['available','partial'],true);
         $breakdown=['google_ads_recorded_calls'=>$all,'google_ads_verified_calls'=>$verified,'ga4_ads_phone_clicks'=>null,'ga4_organic_phone_clicks'=>null,'ga4_other_phone_clicks'=>null,'ga4_unknown_phone_clicks'=>null,'forms'=>$leads['form_leads']??null,'emails'=>$leads['email_leads']??null];
         if ($phones && in_array($phones['status'],['available','partial'],true)) { $counts=['Google Ads'=>0,'Organic search'=>0,'Other'=>0,'Unknown'=>0]; foreach ($phones['rows'] as $row) $counts[$row['source']??'Unknown']=($counts[$row['source']??'Unknown']??0)+(int)($row['count']??0); $breakdown['ga4_ads_phone_clicks']=$counts['Google Ads'];$breakdown['ga4_organic_phone_clicks']=$counts['Organic search'];$breakdown['ga4_other_phone_clicks']=$counts['Other'];$breakdown['ga4_unknown_phone_clicks']=$counts['Unknown']; }
         $form=$breakdown['forms']; $email=$breakdown['emails']; $total=($verified!==null && $form!==null && $email!==null)?$verified+$form+$email:null;
-        $days=max(1,(strtotime($end)-strtotime($start))/86400+1); $periodLabel=$days>=28?'this month':'this reporting period';
+        if (($ads['status']??'')!=='available' || ($leads['status']??'')!=='available') $total=null;
+        $periodLabel='during '.$start.' – '.$end;
         $unmatchedPaid=false;
         if ($phones && in_array($phones['status'],['available','partial'],true)) foreach ($phones['rows'] as $row) {
             $channel=strtolower((string)($row['channel']??''));
