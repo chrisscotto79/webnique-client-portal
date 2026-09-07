@@ -109,7 +109,7 @@ final class AnalyticsAdmin
             </div>
 
             <section id="wnq-results-activity" aria-label="Client results activity">
-                <header class="wnq-results-header"><div><span>CLIENT RESULTS</span><h2>Calls, phone clicks &amp; form arrivals</h2><p>Three evidence sources. Separate counts—not a combined unique-lead total.</p></div></header>
+                <header class="wnq-results-header"><div><span>CLIENT RESULTS</span><h2>Calls &amp; phone-click activity</h2><p>Separate call records and click counts—not a combined unique-lead total.</p></div></header>
                 <div id="wnq-activity-feeds"></div>
                 <?php self::renderActivitySettings($current_client_id); ?>
             </section>
@@ -234,6 +234,7 @@ final class AnalyticsAdmin
                 }
 
                 const ads = provider.data || {};
+                if (ads.customer_id) html += '<p class="description">Linked account: ' + escapeHtml(ads.account_name || 'Google Ads') + ' · ' + escapeHtml(ads.customer_id) + '</p>';
                 html += '<div class="wnq-overview-grid">';
                 html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">Clicks</span><span class="metric-value">' + formatNumber(ads.clicks) + '</span></div></div>';
                 html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">Impressions</span><span class="metric-value">' + formatNumber(ads.impressions) + '</span></div></div>';
@@ -1072,12 +1073,13 @@ final class AnalyticsAdmin
             }
 
             try {
-                $ads_report = ClientPortal::getAdsReportData($client_id, $start_date, $end_date, $refresh);
+                $ads_client_id = $is_admin ? \WNQ\Services\AnalyticsActivity::adsClient($client_id) : $client_id;
+                $ads_report = ClientPortal::getAdsReportData($ads_client_id, $start_date, $end_date, $refresh);
 
                 if (empty($ads_report['has_linked_account'])) {
                     $data['google_ads'] = [
                         'status'  => 'not_linked',
-                        'message' => 'No linked account',
+                        'message' => 'No verified Ads link. Select the portal client under Tracking connections below, or link its account in PPC Management.',
                     ];
                 } elseif (!empty($ads_report['errors']) || empty($ads_report['configured'])) {
                     error_log('[WNQ Analytics] Google Ads fetch error: ' . wp_json_encode($ads_report['errors'] ?? []));
@@ -1102,6 +1104,8 @@ final class AnalyticsAdmin
                     $data['google_ads'] = [
                         'status' => 'available',
                         'data'   => [
+                            'account_name' => sanitize_text_field((string)($ads_report['account_name']??'')),
+                            'customer_id' => preg_replace('/\D/','',(string)($ads_report['customer_id']??'')),
                             'clicks'      => absint($ads_summary['clicks'] ?? 0),
                             'impressions' => absint($ads_summary['impressions'] ?? 0),
                             'ctr'         => (float)($ads_summary['ctr'] ?? 0),
@@ -1161,15 +1165,20 @@ final class AnalyticsAdmin
         ?>
         <details class="wnq-activity-settings"><summary>Tracking connections &amp; phone-event names</summary>
             <?php if (isset($_GET['activity_saved'])): ?><p role="status">Tracking settings saved. Refresh the activity reports to check the connection.</p><?php endif; ?>
-            <p>Use this client’s exact GoHighLevel subaccount ID and a subaccount Private Integration Token with forms read access. Tokens are encrypted server-side and never redisplayed. No changes are made to Google Ads or GoHighLevel.</p>
+            <p>Choose the portal client whose account is already connected in PPC Management / Reports. This reuses the saved account; it does not create or change a Google Ads connection. Automatic resolution uses exact client IDs or a unique matching website/property, never names.</p>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="wnq_save_activity_settings">
                 <input type="hidden" name="client_id" value="<?php echo esc_attr($client); ?>">
                 <?php wp_nonce_field('wnq_activity_settings_'.$client,'wnq_nonce'); ?>
                 <label>GA4 phone-click event names <input name="phone_events" required value="<?php echo esc_attr(implode(', ',\WNQ\Services\AnalyticsActivity::phoneNames($client))); ?>"><small>Comma-separated exact names already sent by your website, such as phone_click. This does not install tracking tags.</small></label>
-                <label>GoHighLevel subaccount / Location ID <input name="ghl_location" autocomplete="off" value="<?php echo esc_attr((string)($settings['location']??'')); ?>"></label>
-                <label>GoHighLevel Private Integration Token <input type="password" name="ghl_token" autocomplete="new-password" value="" placeholder="<?php echo empty($settings['token'])?'Not connected':'Saved — leave blank to keep'; ?>"></label>
-                <label><input type="checkbox" name="disconnect_ghl" value="1"> Disconnect GoHighLevel for this client</label>
+                <label>Portal client with the saved Google Ads account
+                    <select name="ads_portal_client_id">
+                        <option value="">Automatic — exact ID or unique website/property</option>
+                        <?php foreach (\WNQ\Models\Client::getAll() as $portal): ?>
+                            <option value="<?php echo esc_attr((string)$portal['client_id']); ?>" <?php selected((string)($settings['ads_portal_client_id']??''),(string)$portal['client_id']); ?>><?php echo esc_html((string)($portal['company']?:$portal['name']).' — '.(string)$portal['client_id']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
                 <button class="button button-primary" type="submit">Save tracking connections</button>
             </form>
         </details>
@@ -1183,9 +1192,9 @@ final class AnalyticsAdmin
         check_admin_referer('wnq_activity_settings_'.$client,'wnq_nonce');
         if ($client==='' || !AnalyticsConfig::getClientConfig($client)) wp_die('Client not found.');
         try {
-            $ok=\WNQ\Services\AnalyticsActivity::save($client,trim((string)wp_unslash($_POST['ghl_location']??'')),trim((string)wp_unslash($_POST['ghl_token']??'')),(string)wp_unslash($_POST['phone_events']??''),!empty($_POST['disconnect_ghl']));
+            $ok=\WNQ\Services\AnalyticsActivity::save($client,sanitize_text_field(wp_unslash($_POST['ads_portal_client_id']??'')),(string)wp_unslash($_POST['phone_events']??''));
         } catch (\Throwable $e) { $ok=false; }
-        if (!$ok) wp_die('Settings could not be saved. Check the event names and subaccount ID. Supply a new token when changing subaccounts.');
+        if (!$ok) wp_die('Settings could not be saved. Check the event names and selected portal client.');
         wp_safe_redirect(add_query_arg(['page'=>'wnq-analytics','client'=>$client,'activity_saved'=>'1'],admin_url('admin.php')));
         exit;
     }
@@ -1198,25 +1207,24 @@ final class AnalyticsAdmin
         nocache_headers();
         $client=sanitize_text_field(wp_unslash($_POST['client_id']??''));
         $provider=sanitize_key($_POST['provider']??'');
-        if ($client==='' || !in_array($provider,['phone_events','ads_calls','forms'],true)) { wp_send_json_error(['message'=>'Invalid activity request'],400); return; }
+        if ($client==='' || !in_array($provider,['phone_events','ads_calls'],true)) { wp_send_json_error(['message'=>'Invalid activity request'],400); return; }
         $days=(int)($_POST['date_range']??30);
         if (!in_array($days,[7,30,90,180,365,730],true)) $days=30;
         $today=current_datetime()->setTime(0,0);$start=$today->modify('-'.($days-1).' days')->format('Y-m-d');$end=$today->format('Y-m-d');
         try {
             $config=AnalyticsConfig::getClientConfig($client);
             if (!$config) throw new \RuntimeException('Client not configured.');
-            $connection=$provider==='forms'?[]:(\WNQ\Models\PpcAccount::getByClientId($client)?:[]);
+            $connection=\WNQ\Models\PpcAccount::getByClientId(\WNQ\Services\AnalyticsActivity::adsClient($client))?:[];
             $settings=\WNQ\Services\AnalyticsActivity::settings($client);
             $credentials=$provider==='phone_events'?AnalyticsConfig::getCredentials():null;
-            $key='wnq_activity_report_'.hash('sha256',wp_json_encode([$client,$provider,$start,$end,$config,$connection,$settings,$credentials]));
+            $key='wnq_activity_report_v2_'.hash('sha256',wp_json_encode([$client,$provider,$start,$end,$config,$connection,$settings,$credentials]));
             $report=empty($_POST['refresh'])?get_transient($key):false;
             if (!is_array($report)) {
                 if ($provider==='phone_events') {
                     if (!$credentials || empty($config['ga4_property_id'])) throw new \RuntimeException('GA4 not configured.');
                     $token=self::getGoogleAccessToken($credentials['credentials']);
                     $report=\WNQ\Services\AnalyticsActivity::phoneEvents($client,$start,$end,static fn($body)=>self::makeGARequest($token,(string)$config['ga4_property_id'],$body));
-                } elseif ($provider==='ads_calls') $report=\WNQ\Services\AnalyticsActivity::adsCalls($client,$start,$end);
-                else $report=\WNQ\Services\AnalyticsActivity::forms($client,$start,$end);
+                } else $report=\WNQ\Services\AnalyticsActivity::adsCalls($client,$start,$end);
                 if (in_array($report['status'],['available','partial'],true)) set_transient($key,$report,180);
             }
         } catch (\Throwable $e) {

@@ -3,7 +3,7 @@
     $(function () {
         const root = document.getElementById('wnq-activity-feeds');
         if (!root || !window.wnqAnalytics || !wnqAnalytics.clientId) return;
-        const titles = { ads_calls: 'Google Ads call records', phone_events: 'Phone-click activity · GA4', forms: 'Form arrivals · GoHighLevel' };
+        const titles = { ads_calls: 'Google Ads call records', phone_events: 'Phone-click activity · GA4' };
         let generation = 0;
         const requests = {};
         function node(tag, text, className) {
@@ -34,7 +34,7 @@
                     const box = node('div'); box.append(node('strong', count.toLocaleString()), node('span', source + ' · phone clicks')); summary.append(box);
                 });
                 card.append(summary);
-            } else card.append(node('p', rows.length + (provider === 'forms' ? ' fetched form submissions' : ' reported calls') + ' · Not deduplicated across sources', 'wnq-feed-period'));
+            } else card.append(node('p', rows.length + ' reported calls · Not deduplicated across sources', 'wnq-feed-period'));
             const controls = node('div', undefined, 'wnq-feed-controls');
             const label = node('label', 'Source ');
             const filter = node('select');
@@ -53,8 +53,7 @@
             const scroll = node('div', undefined, 'wnq-feed-scroll'); scroll.tabIndex = 0; scroll.setAttribute('role', 'region'); scroll.setAttribute('aria-label', titles[provider] + ' evidence table; scroll for more columns');
             const table = node('table'); const head = node('thead'); const tr = node('tr');
             const columns = provider === 'phone_events' ? [['time','Date / minute'],['source','Attribution'],['event','Event'],['device','Device'],['count','Phone clicks'],['key_events','GA4 key events'],['channel','Reported channel']]
-                : provider === 'ads_calls' ? [['time','Call start'],['source','Source'],['campaign','Search campaign'],['status','Call status'],['duration','Duration (seconds)']]
-                : [['time','Submission arrived'],['form','Form ID'],['source','Attribution']];
+                : [['time','Call start'],['source','Source'],['campaign','Search campaign'],['status','Call status'],['duration','Duration (seconds)']];
             columns.forEach(([, title]) => { const th = node('th', title); th.scope = 'col'; tr.append(th); }); head.append(tr);
             const body = node('tbody'); table.append(head, body); scroll.append(table);
             const empty = node('p', 'No records match these filters.', 'wnq-feed-empty');

@@ -8,7 +8,6 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
     const reports={
         phone_events:{status:'available',timezone:'America/New_York',period:{start:'2026-09-01',end:'2026-09-07'},message:'Phone clicks, not confirmed calls. Rows group events within one minute by device and session attribution. These may overlap Ads calls.',rows},
         ads_calls:{status:'available',timezone:'America/New_York',period:{start:'2026-09-01',end:'2026-09-07'},message:'Search ad call records. Recordings are not available through this feed.',rows:[{time:'2026-09-07 14:20:00',source:'Google Ads',campaign:'Local Search',status:'RECEIVED',duration:85}]},
-        forms:{status:'not_linked',message:'Connect this client’s GoHighLevel subaccount to load form arrival times.',rows:[]}
     };
     const mock=`
     window.wnqAnalytics={clientId:'fixture',ajaxUrl:'/fixture',nonce:'fixture'};
@@ -33,15 +32,12 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
         await page.$eval('#wnq-feed-phone_events input',el=>{el.value='';el.dispatchEvent(new Event('input'));});
         await page.select('#wnq-feed-phone_events select','All sources');
         assert.equal(await page.evaluate(()=>window.injected),undefined);
-        assert.match(await page.$eval('#wnq-feed-forms',el=>el.textContent),/Not connected/);
         await page.screenshot({path:path.join(artifact,'desktop.png'),fullPage:true});
         await page.setViewport({width:390,height:844});
         assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No mobile page overflow');
         await page.screenshot({path:path.join(artifact,'mobile.png'),fullPage:true});
-        await page.evaluate(()=>{fixtureReports.forms={status:'available',timezone:'America/New_York',message:'Arrival timestamps only.',rows:[{time:'2026-09-07 12:00:00',form:'form-1',source:'Unknown'}]};});
         await page.click('#wnq-refresh-data');
-        await page.waitForSelector('#wnq-feed-forms tbody tr');
-        assert.equal(await page.evaluate(()=>fixtureRequests.slice(-3).every(r=>r.data.refresh===1)),true);
+        assert.equal(await page.evaluate(()=>fixtureRequests.slice(-2).every(r=>r.data.refresh===1)),true);
         assert.deepEqual(errors,[]);
         console.log('Analytics activity browser tests passed. Screenshots: '+artifact);
     } finally {await browser.close();}

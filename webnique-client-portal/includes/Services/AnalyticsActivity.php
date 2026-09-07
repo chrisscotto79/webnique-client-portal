@@ -22,37 +22,58 @@ final class AnalyticsActivity
         return (array)(self::settings($client)['phone_events']??['phone_click']);
     }
 
-    /** Authenticated encryption bound to the client and selected GHL location. */
-    public static function seal(string $token,string $client,string $location): string
+    /** Resolve the Analytics identity to the portal identity used by Reports/PPC. No name guessing. */
+    public static function adsClient(string $client): string
     {
-        $iv=random_bytes(12);$tag='';
-        $encrypted=openssl_encrypt($token,'aes-256-gcm',hash('sha256',wp_salt('auth'),true),OPENSSL_RAW_DATA,$iv,$tag,$client.'|'.$location);
-        if ($encrypted===false) throw new \RuntimeException('Secure storage unavailable.');
-        return base64_encode($iv.$tag.$encrypted);
+        $explicit=(string)(self::settings($client)['ads_portal_client_id']??'');
+        if ($explicit!=='') {
+            if (class_exists('\\WNQ\\Models\\Client') && !\WNQ\Models\Client::getByClientId($explicit)) throw new \RuntimeException('Saved Ads client mapping no longer exists.');
+            return $explicit;
+        }
+        if (class_exists('\\WNQ\\Models\\Client') && \WNQ\Models\Client::getByClientId($client)) return $client;
+        $legacy=get_option('wnq_google_ads_settings_'.md5($client),[]);
+        if (preg_match('/^\d{10}$/',preg_replace('/\D/','',(string)($legacy['customer_id']??'')))) return $client;
+        $config=\WNQ\Models\AnalyticsConfig::getClientConfig($client)?:[];
+        $property=self::property((string)($config['ga4_property_id']??''));
+        $site=self::site((string)($config['website_url']??''));
+        $matches=[];
+        foreach (class_exists('\\WNQ\\Models\\Client') ? \WNQ\Models\Client::getAll() : [] as $candidate) {
+            $otherProperty=self::property((string)($candidate['google_analytics_property_id']??''));
+            $otherSite=self::site((string)($candidate['website']??''));
+            // A contradictory configured property or website is not safe to auto-resolve.
+            if ($property!=='' && $otherProperty!=='' && $property!==$otherProperty) continue;
+            if ($site!=='' && $otherSite!=='' && $site!==$otherSite) continue;
+            if (($property!=='' && $property===$otherProperty) || ($site!=='' && $site===$otherSite)) $matches[(string)$candidate['client_id']]=true;
+        }
+        if (count($matches)>1) throw new \RuntimeException('Ambiguous Ads client mapping; select the portal client in tracking settings.');
+        return $matches ? (string)array_key_first($matches) : $client;
     }
 
-    public static function unseal(string $payload,string $client,string $location): string
+    private static function property(string $value): string
     {
-        $raw=base64_decode($payload,true);
-        if ($raw===false || strlen($raw)<29) return '';
-        $token=openssl_decrypt(substr($raw,28),'aes-256-gcm',hash('sha256',wp_salt('auth'),true),OPENSSL_RAW_DATA,substr($raw,0,12),substr($raw,12,16),$client.'|'.$location);
-        return is_string($token)?$token:'';
+        return preg_match('#^(?:properties/)?([0-9]+)$#',trim($value),$m)?$m[1]:'';
     }
 
-    public static function save(string $client,string $location,string $token,string $events,bool $disconnect=false): bool
+    private static function site(string $value): string
+    {
+        $value=trim($value);
+        if ($value==='' || !preg_match('#^https?://#i',$value)) return '';
+        $parts=parse_url($value);
+        if (!$parts || empty($parts['host']) || isset($parts['user']) || isset($parts['query'])) return '';
+        return strtolower(preg_replace('/^www\./i','',(string)$parts['host'])).(isset($parts['port'])?':'.$parts['port']:'').rtrim((string)($parts['path']??''),'/');
+    }
+
+    public static function save(string $client,string $portalClient,string $events): bool
     {
         if ($client==='') return false;
         $names=array_values(array_unique(array_filter(array_map('trim',preg_split('/[\s,]+/',$events)?:[]))));
         if (!$names || count($names)>20) return false;
         foreach ($names as $name) if (!preg_match('/^[A-Za-z][A-Za-z0-9_]{0,39}$/',$name)) return false;
-        if ($location!=='' && !preg_match('/^[A-Za-z0-9_-]{5,100}$/',$location)) return false;
-        if (strlen($token)>4096 || preg_match('/[\r\n]/',$token)) return false;
-        $old=self::settings($client);
-        if (!$disconnect && $location!==($old['location']??'') && $location!=='' && $token==='') return false;
-        if ($token!=='' && $location==='') return false;
-        $sealed=$disconnect||$location===''?'':(string)($old['token']??'');
-        if (!$disconnect && $token!=='') $sealed=self::seal($token,$client,$location);
-        $value=['location'=>$disconnect?'':$location,'token'=>$sealed,'phone_events'=>$names];
+        if ($portalClient!=='' && !\WNQ\Models\Client::getByClientId($portalClient)) return false;
+        // Preserve retired encrypted GHL settings without reading or using them.
+        $value=self::settings($client);
+        $value['phone_events']=$names;
+        $value['ads_portal_client_id']=$portalClient;
         $key='wnq_activity_'.hash('sha256',$client);
         return update_option($key,$value,false) || get_option($key) === $value;
     }
@@ -67,7 +88,7 @@ final class AnalyticsActivity
 
     public static function phoneEvents(string $client,string $start,string $end,callable $request): array
     {
-        $connection=PpcAccount::getByClientId($client)?:[];
+        $connection=PpcAccount::getByClientId(self::adsClient($client))?:[];
         $body=[
             'dateRanges'=>[['startDate'=>$start,'endDate'=>$end]],
             'dimensions'=>array_map(static fn($n)=>['name'=>$n],['dateHourMinute','eventName','deviceCategory','sessionDefaultChannelGroup','sessionGoogleAdsCustomerId','sessionSource','sessionMedium']),
@@ -95,7 +116,7 @@ final class AnalyticsActivity
 
     public static function adsCalls(string $client,string $start,string $end): array
     {
-        $connection=PpcAccount::getByClientId($client)?:[];
+        $connection=PpcAccount::getByClientId(self::adsClient($client))?:[];
         $id=(string)($connection['customer_id']??'');
         if (!preg_match('/^\d{10}$/',$id)) return self::unavailable('No Google Ads account is linked to this client.','not_linked');
         $api=new GoogleAdsQueryService();
@@ -115,43 +136,4 @@ final class AnalyticsActivity
             'message'=>'Search ad call records reported by Google Ads; not all website calls or unique leads. Call reporting must be enabled. Recordings are not available through this feed.'.(count($rows)>=1000?' Showing the latest 1,000 calls.':'')];
     }
 
-    public static function forms(string $client,string $start,string $end): array
-    {
-        $settings=self::settings($client);$location=(string)($settings['location']??'');
-        if ($location==='' || empty($settings['token'])) return self::unavailable('Connect this client’s GoHighLevel subaccount below to load form arrival times.','not_linked');
-        $token=self::unseal((string)$settings['token'],$client,$location);
-        if ($token==='') return self::unavailable('Reconnect GoHighLevel: the saved credential could not be opened.');
-        $rows=[];$seen=[];$partial=false;
-        // GHL date-filter timezone is not specified. Fetch a buffer, then enforce the displayed site's dates.
-        $queryStart=(new \DateTimeImmutable($start))->modify('-1 day')->format('Y-m-d');
-        $queryEnd=(new \DateTimeImmutable($end))->modify('+1 day')->format('Y-m-d');
-        for ($page=1;$page<=5;$page++) {
-            $url='https://services.leadconnectorhq.com/forms/submissions?'.http_build_query(['locationId'=>$location,'startAt'=>$queryStart,'endAt'=>$queryEnd,'page'=>$page,'limit'=>100]);
-            $response=wp_remote_get($url,['timeout'=>15,'redirection'=>0,'headers'=>['Authorization'=>'Bearer '.$token,'Version'=>'v3','Accept'=>'application/json']]);
-            if (is_wp_error($response) || (int)wp_remote_retrieve_response_code($response)!==200) throw new \RuntimeException('GoHighLevel forms unavailable.');
-            $data=json_decode(wp_remote_retrieve_body($response),true);
-            if (!is_array($data['submissions']??null) || !is_array($data['meta']??null) || !array_key_exists('nextPage',$data['meta']) || !isset($data['meta']['total'])) throw new \RuntimeException('Invalid form report.');
-            foreach ($data['submissions'] as $entry) {
-                if (isset($entry['locationId']) && (string)$entry['locationId']!==$location) throw new \RuntimeException('Form account mismatch.');
-                $id=(string)($entry['id']??'');
-                if ($id==='' || isset($seen[$id])) { $partial=true;continue; }
-                $seen[$id]=true;
-                $raw=(string)($entry['createdAt']??'');
-                if (!preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/',$raw)) { $partial=true;continue; }
-                $time=new \DateTimeImmutable($raw);
-                if ($time->format('Y-m-d')!==substr($raw,0,10)) { $partial=true;continue; }
-                $local=$time->setTimezone(wp_timezone());
-                if ($local->format('Y-m-d')<$start || $local->format('Y-m-d')>$end) continue;
-                $rows[]=['time'=>$local->format('Y-m-d H:i:s'),'source'=>'Unknown','form'=>sanitize_text_field((string)($entry['formId']??'Unknown form'))];
-            }
-            // Never infer a complete report just because a page contains fewer rows.
-            $next=$data['meta']['nextPage']??null;
-            if ($next===null) { if ((int)($data['meta']['total']??count($seen))>count($seen)) $partial=true;break; }
-            if ((int)$next!==$page+1) { $partial=true;break; }
-            if ($page===5) $partial=true;
-        }
-        usort($rows,static fn($a,$b)=>strcmp($b['time'],$a['time']));
-        return ['status'=>$partial?'partial':'available','rows'=>$rows,'timezone'=>wp_timezone()->getName(),
-            'message'=>'GoHighLevel form submission timestamps only; no contact details or answers are imported. Source remains unknown without verified submission attribution. '.($partial?'Coverage is incomplete; maximum 500 fetched submissions.':'')];
-    }
 }

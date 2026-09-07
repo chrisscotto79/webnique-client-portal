@@ -27,6 +27,7 @@
 #wnq-results-activity .wnq-feed-empty { padding:15px; background:#f5f7fa; }
 #wnq-results-activity .wnq-activity-settings form { display:grid; gap:12px; max-width:680px; margin-top:16px; }
 #wnq-results-activity .wnq-activity-settings label { display:block; font-weight:600; }
+#wnq-results-activity .wnq-activity-settings select { display:block; width:100%; max-width:100%; margin-top:5px; }
 #wnq-results-activity .wnq-activity-settings input:not([type=checkbox]):not([type=hidden]) { display:block; width:100%; margin-top:5px; }
 #wnq-results-activity small { display:block; font-weight:400; color:#526176; margin-top:5px; }
 #wnq-results-activity [hidden] { display:none!important; }
