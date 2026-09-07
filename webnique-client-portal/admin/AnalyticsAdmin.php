@@ -10,6 +10,7 @@ use WNQ\Models\AnalyticsConfig;
 use WNQ\Models\ClientPortal;
 
 if (!defined('ABSPATH')) exit;
+require_once dirname(__DIR__) . '/includes/Services/AnalyticsActivity.php';
 
 final class AnalyticsAdmin
 {
@@ -107,6 +108,12 @@ final class AnalyticsAdmin
                 </div>
             </div>
 
+            <section id="wnq-results-activity" aria-label="Client results activity">
+                <header class="wnq-results-header"><div><span>CLIENT RESULTS</span><h2>Calls, phone clicks &amp; form arrivals</h2><p>Three evidence sources. Separate counts—not a combined unique-lead total.</p></div></header>
+                <div id="wnq-activity-feeds"></div>
+                <?php self::renderActivitySettings($current_client_id); ?>
+            </section>
+            <h2>Traffic &amp; campaign overview</h2>
             <div id="wnq-analytics-loading" class="wnq-loading"><p>⏳ Loading analytics data...</p></div>
             <div id="wnq-analytics-content" style="display: none;"></div>
 
@@ -1146,6 +1153,77 @@ final class AnalyticsAdmin
         unset($config['credentials_json']);
 
         wp_send_json_success(['config' => $config]);
+    }
+
+    private static function renderActivitySettings(string $client): void
+    {
+        $settings=\WNQ\Services\AnalyticsActivity::settings($client);
+        ?>
+        <details class="wnq-activity-settings"><summary>Tracking connections &amp; phone-event names</summary>
+            <?php if (isset($_GET['activity_saved'])): ?><p role="status">Tracking settings saved. Refresh the activity reports to check the connection.</p><?php endif; ?>
+            <p>Use this client’s exact GoHighLevel subaccount ID and a subaccount Private Integration Token with forms read access. Tokens are encrypted server-side and never redisplayed. No changes are made to Google Ads or GoHighLevel.</p>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                <input type="hidden" name="action" value="wnq_save_activity_settings">
+                <input type="hidden" name="client_id" value="<?php echo esc_attr($client); ?>">
+                <?php wp_nonce_field('wnq_activity_settings_'.$client,'wnq_nonce'); ?>
+                <label>GA4 phone-click event names <input name="phone_events" required value="<?php echo esc_attr(implode(', ',\WNQ\Services\AnalyticsActivity::phoneNames($client))); ?>"><small>Comma-separated exact names already sent by your website, such as phone_click. This does not install tracking tags.</small></label>
+                <label>GoHighLevel subaccount / Location ID <input name="ghl_location" autocomplete="off" value="<?php echo esc_attr((string)($settings['location']??'')); ?>"></label>
+                <label>GoHighLevel Private Integration Token <input type="password" name="ghl_token" autocomplete="new-password" value="" placeholder="<?php echo empty($settings['token'])?'Not connected':'Saved — leave blank to keep'; ?>"></label>
+                <label><input type="checkbox" name="disconnect_ghl" value="1"> Disconnect GoHighLevel for this client</label>
+                <button class="button button-primary" type="submit">Save tracking connections</button>
+            </form>
+        </details>
+        <?php
+    }
+
+    public static function handleSaveActivitySettings(): void
+    {
+        if (!current_user_can('manage_options') && !current_user_can('wnq_manage_portal')) wp_die('Insufficient permissions.');
+        $client=sanitize_text_field(wp_unslash($_POST['client_id']??''));
+        check_admin_referer('wnq_activity_settings_'.$client,'wnq_nonce');
+        if ($client==='' || !AnalyticsConfig::getClientConfig($client)) wp_die('Client not found.');
+        try {
+            $ok=\WNQ\Services\AnalyticsActivity::save($client,trim((string)wp_unslash($_POST['ghl_location']??'')),trim((string)wp_unslash($_POST['ghl_token']??'')),(string)wp_unslash($_POST['phone_events']??''),!empty($_POST['disconnect_ghl']));
+        } catch (\Throwable $e) { $ok=false; }
+        if (!$ok) wp_die('Settings could not be saved. Check the event names and subaccount ID. Supply a new token when changing subaccounts.');
+        wp_safe_redirect(add_query_arg(['page'=>'wnq-analytics','client'=>$client,'activity_saved'=>'1'],admin_url('admin.php')));
+        exit;
+    }
+
+    public static function ajaxGetActivity(): void
+    {
+        check_ajax_referer('wnq_analytics_nonce','nonce');
+        // Activity details are backend staff-only; do not expand the existing client-portal response.
+        if (!current_user_can('manage_options') && !current_user_can('wnq_manage_portal')) { wp_send_json_error(['message'=>'Permission denied'],403); return; }
+        nocache_headers();
+        $client=sanitize_text_field(wp_unslash($_POST['client_id']??''));
+        $provider=sanitize_key($_POST['provider']??'');
+        if ($client==='' || !in_array($provider,['phone_events','ads_calls','forms'],true)) { wp_send_json_error(['message'=>'Invalid activity request'],400); return; }
+        $days=(int)($_POST['date_range']??30);
+        if (!in_array($days,[7,30,90,180,365,730],true)) $days=30;
+        $today=current_datetime()->setTime(0,0);$start=$today->modify('-'.($days-1).' days')->format('Y-m-d');$end=$today->format('Y-m-d');
+        try {
+            $config=AnalyticsConfig::getClientConfig($client);
+            if (!$config) throw new \RuntimeException('Client not configured.');
+            $connection=$provider==='forms'?[]:(\WNQ\Models\PpcAccount::getByClientId($client)?:[]);
+            $settings=\WNQ\Services\AnalyticsActivity::settings($client);
+            $credentials=$provider==='phone_events'?AnalyticsConfig::getCredentials():null;
+            $key='wnq_activity_report_'.hash('sha256',wp_json_encode([$client,$provider,$start,$end,$config,$connection,$settings,$credentials]));
+            $report=empty($_POST['refresh'])?get_transient($key):false;
+            if (!is_array($report)) {
+                if ($provider==='phone_events') {
+                    if (!$credentials || empty($config['ga4_property_id'])) throw new \RuntimeException('GA4 not configured.');
+                    $token=self::getGoogleAccessToken($credentials['credentials']);
+                    $report=\WNQ\Services\AnalyticsActivity::phoneEvents($client,$start,$end,static fn($body)=>self::makeGARequest($token,(string)$config['ga4_property_id'],$body));
+                } elseif ($provider==='ads_calls') $report=\WNQ\Services\AnalyticsActivity::adsCalls($client,$start,$end);
+                else $report=\WNQ\Services\AnalyticsActivity::forms($client,$start,$end);
+                if (in_array($report['status'],['available','partial'],true)) set_transient($key,$report,180);
+            }
+        } catch (\Throwable $e) {
+            $report=\WNQ\Services\AnalyticsActivity::unavailable('Unavailable. Check this client’s connection, reporting permissions, and tracking setup, then refresh.');
+        }
+        $report['period']=['start'=>$start,'end'=>$end];
+        wp_send_json_success($report);
     }
 
     // -------------------------------------------------------------------------

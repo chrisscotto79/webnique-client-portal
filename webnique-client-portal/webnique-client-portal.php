@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Golden Web Marketing Client Portal
  * Description: Complete client management with portal, analytics, billing, tasks, SEO tracking, and messaging
- * Version: 3.5.2
+ * Version: 3.6.0
  * Author: Golden Web Marketing
  * Requires at least: 6.0
  * Requires PHP: 8.0
@@ -19,7 +19,7 @@ if (defined('WNQ_PORTAL_VERSION')) {
     return;
 }
 
-define('WNQ_PORTAL_VERSION', '3.5.2');
+define('WNQ_PORTAL_VERSION', '3.6.0');
 define('WNQ_PORTAL_PATH', plugin_dir_path(__FILE__));
 define('WNQ_PORTAL_URL', plugin_dir_url(__FILE__));
 
@@ -446,6 +446,21 @@ add_action('admin_post_wnq_complete_recurring', function() {
 });
 
 // ANALYTICS HANDLERS
+add_action('admin_enqueue_scripts', function() {
+    if (($_GET['page']??'') !== 'wnq-analytics') return;
+    wp_enqueue_script('wnq-analytics-activity', WNQ_PORTAL_URL.'assets/admin/analytics-activity.js', ['jquery'], WNQ_PORTAL_VERSION, true);
+    wp_enqueue_style('wnq-analytics-activity', WNQ_PORTAL_URL.'assets/admin/analytics-activity.css', [], WNQ_PORTAL_VERSION);
+});
+add_action('admin_post_wnq_save_activity_settings', function() {
+    require_once WNQ_PORTAL_PATH . 'includes/Models/AnalyticsConfig.php';
+    require_once WNQ_PORTAL_PATH . 'admin/AnalyticsAdmin.php';
+    \WNQ\Admin\AnalyticsAdmin::handleSaveActivitySettings();
+});
+add_action('wp_ajax_wnq_get_analytics_activity', function() {
+    require_once WNQ_PORTAL_PATH . 'includes/Models/AnalyticsConfig.php';
+    require_once WNQ_PORTAL_PATH . 'admin/AnalyticsAdmin.php';
+    \WNQ\Admin\AnalyticsAdmin::ajaxGetActivity();
+});
 add_action('admin_post_wnq_save_analytics_settings', function() {
     $analytics_admin = WNQ_PORTAL_PATH . 'admin/AnalyticsAdmin.php';
     if (file_exists($analytics_admin)) {
