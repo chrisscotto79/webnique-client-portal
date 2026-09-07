@@ -275,6 +275,51 @@ final class GoogleBusinessProfileClient
         return is_array($mappings[$client_id] ?? null) ? $mappings[$client_id] : [];
     }
 
+    /** Read-only daily Business Profile performance for the client's saved location mapping. */
+    public function analyticsForClient(string $client_id, string $start, string $end): array
+    {
+        $mapping = self::mappingForClient($client_id);
+        $location = self::normalizeLocationName((string)($mapping['location_name'] ?? ''));
+        if ($location === '') return ['status' => 'not_linked', 'message' => 'No Google Business Profile location is mapped to this client.', 'rows' => []];
+        $token = $this->accessToken();
+        if ($token === '') return ['status' => 'unavailable', 'message' => $this->lastError('Google Business Profile is not connected.'), 'rows' => []];
+        try {
+            $from = new \DateTimeImmutable($start . ' 00:00:00', new \DateTimeZone('UTC'));
+            $to = new \DateTimeImmutable($end . ' 00:00:00', new \DateTimeZone('UTC'));
+            if ($from > $to) throw new \RuntimeException('Invalid Business Profile date range.');
+        } catch (\Throwable $e) {
+            return ['status' => 'unavailable', 'message' => 'Business Profile reporting dates are invalid.', 'rows' => []];
+        }
+        $metrics = ['BUSINESS_IMPRESSIONS_DESKTOP_SEARCH','BUSINESS_IMPRESSIONS_MOBILE_SEARCH','BUSINESS_IMPRESSIONS_MAPS','WEBSITE_CLICKS','CALL_CLICKS','BUSINESS_DIRECTION_REQUESTS'];
+        $query = [];
+        foreach ($metrics as $metric) $query[] = 'dailyMetrics=' . rawurlencode($metric);
+        $query[] = 'dailyRange.start_date.year=' . $from->format('Y');
+        $query[] = 'dailyRange.start_date.month=' . $from->format('n');
+        $query[] = 'dailyRange.start_date.day=' . $from->format('j');
+        $query[] = 'dailyRange.end_date.year=' . $to->format('Y');
+        $query[] = 'dailyRange.end_date.month=' . $to->format('n');
+        $query[] = 'dailyRange.end_date.day=' . $to->format('j');
+        $locationPath = str_replace('%2F', '/', rawurlencode($location));
+        $result = $this->authorizedRequest('https://businessprofileperformance.googleapis.com/v1/' . $locationPath . ':fetchMultiDailyMetricsTimeSeries?' . implode('&', $query), $token);
+        if (!$result['success']) return ['status' => 'unavailable', 'message' => sanitize_text_field((string)$result['error']), 'rows' => []];
+        $totals = array_fill_keys($metrics, 0); $series = [];
+        foreach ((array)($result['data']['multiDailyMetricTimeSeries'] ?? []) as $group) foreach ((array)($group['dailyMetricTimeSeries'] ?? []) as $item) {
+            $metric = sanitize_key((string)($item['dailyMetric'] ?? ''));
+            if ($metric === '' || !in_array(strtoupper($metric), $metrics, true)) continue;
+            $metricKey = strtoupper($metric); $values = [];
+            foreach ((array)($item['timeSeries']['datedValues'] ?? []) as $point) {
+                $value = max(0, (int)($point['value'] ?? 0)); $totals[$metricKey] += $value;
+                $date = (array)($point['date'] ?? []); $dateString = sprintf('%04d-%02d-%02d', (int)($date['year'] ?? 0), (int)($date['month'] ?? 0), (int)($date['day'] ?? 0));
+                if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateString)) $values[] = ['date' => $dateString, 'value' => $value];
+            }
+            $series[$metricKey] = $values;
+        }
+        $search = $totals['BUSINESS_IMPRESSIONS_DESKTOP_SEARCH'] + $totals['BUSINESS_IMPRESSIONS_MOBILE_SEARCH'];
+        return ['status' => 'available', 'location' => sanitize_text_field((string)($mapping['location_title'] ?? $location)), 'period' => ['start' => $start, 'end' => $end],
+            'metrics' => ['profile_views' => $search + $totals['BUSINESS_IMPRESSIONS_MAPS'], 'search_views' => $search, 'maps_views' => $totals['BUSINESS_IMPRESSIONS_MAPS'], 'website_clicks' => $totals['WEBSITE_CLICKS'], 'call_clicks' => $totals['CALL_CLICKS'], 'direction_requests' => $totals['BUSINESS_DIRECTION_REQUESTS']],
+            'series' => $series, 'rows' => [], 'message' => 'Read-only Google Business Profile Performance data for the client’s mapped location. Profile views and actions are reported by Google; they are not confirmed leads or Ads calls.'];
+    }
+
     public static function saveClientMapping(string $client_id, string $account_name, string $location_name): bool
     {
         if ($client_id === '' || !Client::getByClientId($client_id)) {

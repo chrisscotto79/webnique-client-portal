@@ -6,6 +6,9 @@
 #wnq-results-activity .wnq-results-header p { color:#d6e5f6; margin-bottom:0; }
 #wnq-results-activity .wnq-feed-card,#wnq-results-activity .wnq-activity-settings { padding:20px; background:white; border:1px solid #dce3ec; border-radius:10px; margin:14px 0; }
 #wnq-results-activity #wnq-feed-lead_summary { border-top:4px solid #1c9a59; box-shadow:0 4px 16px rgba(20,48,80,.08); }
+#wnq-results-activity #wnq-feed-gbp_summary { border-top:4px solid #4285f4; }
+#wnq-results-activity .wnq-gbp-metrics { display:grid; grid-template-columns:repeat(6,minmax(120px,1fr)); gap:10px; margin:16px 0; }
+#wnq-results-activity .wnq-gbp-series { margin-top:12px; border-top:1px solid #e5eaf1; padding-top:8px; }
 #wnq-results-activity .wnq-lead-metrics { display:grid; grid-template-columns:repeat(5,minmax(130px,1fr)); gap:10px; margin:16px 0; }
 #wnq-results-activity .wnq-lead-metric { background:#f5f8fc; border:1px solid #e0e7f0; border-radius:8px; padding:13px; min-width:0; }
 #wnq-results-activity .wnq-lead-metric-primary { background:#e9f7ef; border-color:#44ad73; }
@@ -57,10 +60,11 @@
     #wnq-results-activity .wnq-feed-controls input { width:100%; }
     #wnq-results-activity .wnq-feed-controls [role=status] { margin-left:0; }
     #wnq-results-activity .wnq-lead-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    #wnq-results-activity .wnq-gbp-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
     #wnq-results-activity .wnq-lead-metric-primary { grid-column:1/-1; }
     #wnq-results-activity .wnq-breakdown-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 @media(max-width:420px) {
-    #wnq-results-activity .wnq-lead-metrics,#wnq-results-activity .wnq-breakdown-grid { grid-template-columns:1fr; }
+    #wnq-results-activity .wnq-lead-metrics,#wnq-results-activity .wnq-breakdown-grid,#wnq-results-activity .wnq-gbp-metrics { grid-template-columns:1fr; }
     #wnq-results-activity .wnq-lead-metric-primary { grid-column:auto; }
 }

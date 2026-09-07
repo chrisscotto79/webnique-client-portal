@@ -3,7 +3,7 @@
     $(function () {
         const root = document.getElementById('wnq-activity-feeds');
         if (!root || !window.wnqAnalytics || !wnqAnalytics.clientId) return;
-        const titles = { lead_summary: 'Lead Summary', ads_calls: 'Google Ads call records', phone_events: 'Phone-click activity · GA4' };
+        const titles = { lead_summary: 'Lead Summary', gbp_summary: 'Google Business Profile', ads_calls: 'Google Ads call records', phone_events: 'Phone-click activity · GA4' };
         let generation = 0;
         const requests = {};
         function node(tag, text, className) {
@@ -42,10 +42,20 @@
             }; Object.entries(labels).forEach(([key, info]) => { const item = node('div', undefined, 'wnq-breakdown-item'); item.title = info[1]; item.setAttribute('aria-label', info[0] + ': ' + info[1]); item.append(node('span', info[0]), node('strong', value(report.breakdown?.[key])), node('small', info[1])); breakdown.append(item); }); details.append(breakdown); card.append(details);
             card.append(node('p', report.message || 'Each provider is checked independently; unavailable data is not presented as zero.', 'wnq-feed-note'));
         }
+        function renderGbp(card, report) {
+            card.replaceChildren();
+            const header = node('header', undefined, 'wnq-feed-header'); header.append(node('h3', 'Google Business Profile'), node('span', report.status === 'available' ? 'Ready' : report.status === 'not_linked' ? 'Not connected' : 'Unavailable', 'wnq-feed-status')); card.append(header);
+            if (report.period) card.append(node('p', report.period.start + ' – ' + report.period.end + (report.location ? ' · ' + report.location : ''), 'wnq-feed-period'));
+            const metrics = node('div', undefined, 'wnq-gbp-metrics'); const labels = [['profile_views','Profile views','Google Business Profile searches and Maps impressions for the mapped location.'],['search_views','Search views','Business Profile impressions from Google Search.'],['maps_views','Maps views','Business Profile impressions from Google Maps.'],['website_clicks','Website clicks','Clicks from the Google Business Profile to the website.'],['call_clicks','Profile call clicks','Clicks on the call action in the Business Profile; not confirmed Ads calls.'],['direction_requests','Direction requests','Requests for directions from the Business Profile.']];
+            labels.forEach(([key,label,help]) => metrics.append(metric(label, report.metrics?.[key], help, false, report.period ? report.period.start + ' – ' + report.period.end : 'Selected reporting period'))); card.append(metrics);
+            if (!['available'].includes(report.status)) { card.append(node('p', report.message || 'Google Business Profile data is unavailable. Other Analytics providers remain available.', 'wnq-feed-note')); return; }
+            const details = node('details', undefined, 'wnq-gbp-series'); details.append(node('summary', 'Daily Business Profile activity')); const scroll = node('div', undefined, 'wnq-feed-scroll'); const table = node('table'); const head = node('thead'); const row = node('tr'); ['Date','Search views','Maps views','Website clicks','Profile call clicks','Direction requests'].forEach(textValue => row.append(node('th', textValue))); head.append(row); const body = node('tbody'); const dates = new Set(); Object.values(report.series || {}).forEach(series => series.forEach(point => dates.add(point.date))); Array.from(dates).sort().reverse().forEach(date => { const tr = node('tr'); const get = key => (report.series?.[key] || []).find(point => point.date === date)?.value || 0; [date,get('BUSINESS_IMPRESSIONS_DESKTOP_SEARCH'),get('BUSINESS_IMPRESSIONS_MAPS'),get('WEBSITE_CLICKS'),get('CALL_CLICKS'),get('BUSINESS_DIRECTION_REQUESTS')].forEach((item,index) => tr.append(node('td', index ? Number(item).toLocaleString() : item))); body.append(tr); }); table.append(head,body); scroll.append(table); details.append(scroll); card.append(details); card.append(node('p', report.message, 'wnq-feed-note'));
+        }
         function render(provider, report) {
             const card = document.getElementById('wnq-feed-' + provider);
             card.replaceChildren();
             if (provider === 'lead_summary') { renderSummary(card, report); return; }
+            if (provider === 'gbp_summary') { renderGbp(card, report); return; }
             const header = node('header', undefined, 'wnq-feed-header');
             header.append(node('h3', titles[provider]), node('span', report.status === 'available' ? 'Ready' : report.status === 'partial' ? 'Incomplete coverage' : report.status === 'loading' ? 'Loading…' : report.status === 'not_linked' ? 'Not connected' : 'Unavailable', 'wnq-feed-status'));
             card.append(header);
