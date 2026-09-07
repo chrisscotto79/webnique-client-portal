@@ -26,12 +26,14 @@ final class GoogleSearchConsole
     private bool $site_url_resolved = false;
     private array $site_url_candidates = [];
     private array $errors = [];
+    private bool $refresh = false;
 
     /**
      * Initialize with credentials
      */
-    public function __construct(string $client_id)
+    public function __construct(string $client_id, bool $refresh = false)
     {
+        $this->refresh = $refresh;
         $config_data = AnalyticsConfig::getCredentials();
         $client_config = AnalyticsConfig::getClientConfig($client_id);
 
@@ -931,6 +933,7 @@ final class GoogleSearchConsole
      */
     private function getFromCache(string $key)
     {
+        if ($this->refresh) return false;
         return get_transient('wnq_gsc_' . md5(self::DATA_CACHE_VERSION . '|' . $key));
     }
 
