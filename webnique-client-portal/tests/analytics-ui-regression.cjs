@@ -36,3 +36,10 @@ requests[2].options.success({success:false,data:{message:'<img src=x onerror=ale
 assert.doesNotMatch(element('#wnq-analytics-content').markup,/<img/);
 assert.match(element('#wnq-analytics-content').markup,/&lt;img/);
 console.log('Analytics UI race-condition and escaping checks passed.');
+range.value='previous_month'; range.handlers.change.call(range);
+assert.equal(requests.at(-1).options.data.date_range,'previous_month');
+requests.at(-1).options.success({success:true,data:{period:{start:'2026-08-01',end:'2026-08-31'},ga4:{status:'unavailable'},search_console:{status:'unavailable'},google_ads:{status:'available',data:{currency_code:'EUR',cost:123.45,clicks:12,impressions:100,ctr:.12,conversions:2,campaigns:[{name:'Search',status:'enabled',cost:123.45,clicks:12,impressions:100,ctr:.12,conversions:2}]}}}});
+assert.match(element('#wnq-analytics-content').markup,/€123\.45/);
+assert.match(element('#wnq-analytics-content').markup,/<th>Cost<\/th>/);
+assert.match(element('#wnq-analytics-content').markup,/12%/);
+console.log('Monthly filter, account currency and campaign cost rendering passed.');

@@ -12,9 +12,9 @@ Expand **Tracking connections & lead-event names** in Client Analytics. Select t
 
 ## Boundaries
 
-- Search-only Google Ads `call_view` data is used. No spend, cost, CPC, billing, credentials, tokens, recordings, or caller details are returned by the Analytics activity endpoint.
+- Search-only Google Ads `call_view` data is used for verified calls. The overview endpoint now returns account/campaign cost and currency by request (3.7.1); credentials, tokens, billing details and recordings remain excluded.
 - Calls are deduplicated by the account-scoped `call_view` resource name. Phone clicks, forms, and emails remain separate evidence streams to prevent call/click double-counting.
-- GA4 form and email counts are “confirmed” only when the configured event is reported as a GA4 key event. They are not CRM-person deduplication.
+- GA4 form/email counts require staff confirmation that these events fire for completed submissions, plus GA4 key-event reporting. They are not CRM-person deduplication. See ANALYTICS-QA-3.7.1.md for audit changes and limitations.
 - Date filters are applied to every provider. Reports are cached briefly per client, provider, date range, mapping, and configuration; Refresh bypasses the cache.
 - Staff permissions, nonces, exact client mapping, and server-side credential handling are preserved. No Google Ads mutation endpoint was added.
 

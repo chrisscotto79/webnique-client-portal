@@ -597,7 +597,7 @@ final class ClientPortal
             'configured' => false,
             'customer_id' => $customer_id,
             'account_name' => (string)($settings['matched_account_name'] ?? ''),
-            'currency_code' => 'USD',
+            'currency_code' => preg_match('/^[A-Z]{3}$/', (string)($connection['currency_code'] ?? '')) ? $connection['currency_code'] : '',
             'period' => ['start' => $start_date, 'end' => $end_date],
             'summary' => [
                 'spend' => 0.0,
@@ -622,6 +622,7 @@ final class ClientPortal
         }
 
         $performance = $ads->accountPerformanceForRange($customer_id, $start_date, $end_date, $refresh, false);
+        if (preg_match('/^[A-Z]{3}$/',(string)($performance['currency_code']??''))) $result['currency_code']=$performance['currency_code'];
         $result['summary'] = is_array($performance['summary'] ?? null) ? $performance['summary'] : $result['summary'];
         $result['campaigns'] = is_array($performance['campaigns'] ?? null) ? $performance['campaigns'] : [];
         $result['errors'] = $ads->errors();

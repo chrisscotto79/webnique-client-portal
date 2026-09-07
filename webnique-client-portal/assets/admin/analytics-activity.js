@@ -17,12 +17,15 @@
             const box = node('div', undefined, 'wnq-lead-metric' + (emphasis ? ' wnq-lead-metric-primary' : ''));
             const heading = node('div', undefined, 'wnq-lead-metric-label'); heading.append(node('span', label));
             const tip = node('button', '?', 'wnq-metric-help'); tip.type = 'button'; tip.title = help; tip.setAttribute('aria-label', label + ': ' + help); heading.append(tip);
+            const explanation=node('p',help,'wnq-metric-explanation'); explanation.hidden=true;
+            tip.setAttribute('aria-expanded','false'); tip.addEventListener('click',()=>{explanation.hidden=!explanation.hidden;tip.setAttribute('aria-expanded',String(!explanation.hidden));});
             box.append(heading, node('strong', value(rawValue)), node('small', rawValue === null || rawValue === undefined ? 'Provider unavailable' : (periodText || 'Selected reporting period')));
+            box.append(explanation);
             return box;
         }
         function renderSummary(card, report) {
             card.replaceChildren();
-            const header = node('header', undefined, 'wnq-feed-header'); header.append(node('h3', 'Lead Summary'), node('span', report.status === 'available' ? 'Ready' : report.status === 'partial' ? 'Partial coverage' : 'Unavailable', 'wnq-feed-status')); card.append(header);
+            const header = node('header', undefined, 'wnq-feed-header'); header.append(node('h3', 'Lead Summary'), node('span', report.status === 'loading' ? 'Loading…' : report.status === 'available' ? 'Ready' : report.status === 'partial' ? 'Partial coverage' : 'Unavailable', 'wnq-feed-status')); card.append(header);
             if (report.period) card.append(node('p', report.period.start + ' – ' + report.period.end + ' · ' + (report.period.timezone || 'Provider reporting timezone'), 'wnq-feed-period'));
             const periodText = report.period ? report.period.start + ' – ' + report.period.end : 'Selected reporting period';
             const metrics = node('div', undefined, 'wnq-lead-metrics');
@@ -32,7 +35,7 @@
             metrics.append(metric('Email Leads', report.email_leads, 'GA4 events configured as email lead events and reported as key events. Source: GA4 Data API.', false, periodText));
             metrics.append(metric('Website Phone Clicks', report.website_phone_clicks, 'GA4 phone-click interactions. These are not confirmed calls and are excluded from Verified Calls.', false, periodText));
             card.append(metrics);
-            const sentence = report.total_verified_leads === null || report.total_verified_leads === undefined ? 'Lead totals are unavailable until each required provider reports successfully.' : 'Google Ads generated ' + value(report.verified_calls) + ' verified phone calls, ' + value(report.form_leads) + ' form submissions, and ' + value(report.email_leads) + ' email leads ' + (report.period_label || 'in this reporting period') + ', for ' + value(report.total_verified_leads) + ' verified leads total.';
+            const sentence = report.total_verified_leads == null ? 'A complete lead total is unavailable. Review source coverage and tracking settings below.' : 'You received ' + value(report.verified_calls) + ' verified Google Ads calls, ' + value(report.form_leads) + ' tracked form leads, and ' + value(report.email_leads) + ' tracked email leads ' + (report.period_label || 'in this reporting period') + ', for ' + value(report.total_verified_leads) + ' verified leads total. Forms and emails include all traffic sources.';
             card.append(node('p', sentence, 'wnq-lead-sentence'));
             const callDiff = node('div', undefined, 'wnq-call-difference'); callDiff.append(node('strong', 'All Recorded Calls: ' + value(report.all_recorded_calls)), node('strong', 'Verified Calls: ' + value(report.verified_calls)), node('span', 'Recorded calls include short calls; only calls meeting the threshold count as verified.')); card.append(callDiff);
             if (report.warning) { const warning = node('div', report.warning, 'wnq-lead-warning'); warning.setAttribute('role', 'alert'); card.append(warning); }
@@ -44,12 +47,24 @@
         }
         function renderGbp(card, report) {
             card.replaceChildren();
-            const header = node('header', undefined, 'wnq-feed-header'); header.append(node('h3', 'Google Business Profile'), node('span', report.status === 'available' ? 'Ready' : report.status === 'not_linked' ? 'Not connected' : 'Unavailable', 'wnq-feed-status')); card.append(header);
+            const header = node('header', undefined, 'wnq-feed-header'); header.append(node('h3', 'Google Business Profile'), node('span', report.status === 'loading' ? 'Loading…' : report.status === 'available' ? 'Ready' : report.status === 'partial' ? 'Incomplete coverage' : report.status === 'not_linked' ? 'Not connected' : 'Unavailable', 'wnq-feed-status')); card.append(header);
             if (report.period) card.append(node('p', report.period.start + ' – ' + report.period.end + (report.location ? ' · ' + report.location : ''), 'wnq-feed-period'));
             const metrics = node('div', undefined, 'wnq-gbp-metrics'); const labels = [['profile_views','Profile views','Google Business Profile searches and Maps impressions for the mapped location.'],['search_views','Search views','Business Profile impressions from Google Search.'],['maps_views','Maps views','Business Profile impressions from Google Maps.'],['website_clicks','Website clicks','Clicks from the Google Business Profile to the website.'],['call_clicks','Profile call clicks','Clicks on the call action in the Business Profile; not confirmed Ads calls.'],['direction_requests','Direction requests','Requests for directions from the Business Profile.']];
             labels.forEach(([key,label,help]) => metrics.append(metric(label, report.metrics?.[key], help, false, report.period ? report.period.start + ' – ' + report.period.end : 'Selected reporting period'))); card.append(metrics);
-            if (!['available'].includes(report.status)) { card.append(node('p', report.message || 'Google Business Profile data is unavailable. Other Analytics providers remain available.', 'wnq-feed-note')); return; }
-            const details = node('details', undefined, 'wnq-gbp-series'); details.append(node('summary', 'Daily Business Profile activity')); const scroll = node('div', undefined, 'wnq-feed-scroll'); const table = node('table'); const head = node('thead'); const row = node('tr'); ['Date','Search views','Maps views','Website clicks','Profile call clicks','Direction requests'].forEach(textValue => row.append(node('th', textValue))); head.append(row); const body = node('tbody'); const dates = new Set(); Object.values(report.series || {}).forEach(series => series.forEach(point => dates.add(point.date))); Array.from(dates).sort().reverse().forEach(date => { const tr = node('tr'); const get = key => (report.series?.[key] || []).find(point => point.date === date)?.value || 0; [date,get('BUSINESS_IMPRESSIONS_DESKTOP_SEARCH'),get('BUSINESS_IMPRESSIONS_MAPS'),get('WEBSITE_CLICKS'),get('CALL_CLICKS'),get('BUSINESS_DIRECTION_REQUESTS')].forEach((item,index) => tr.append(node('td', index ? Number(item).toLocaleString() : item))); body.append(tr); }); table.append(head,body); scroll.append(table); details.append(scroll); card.append(details); card.append(node('p', report.message, 'wnq-feed-note'));
+            if (!['available','partial'].includes(report.status)) { card.append(node('p', report.message || 'Google Business Profile data is unavailable. Other Analytics providers remain available.', 'wnq-feed-note')); return; }
+            const details = node('details', undefined, 'wnq-gbp-series'); details.append(node('summary', 'Daily Business Profile activity'));
+            const scroll = node('div', undefined, 'wnq-feed-scroll'); scroll.tabIndex=0; scroll.setAttribute('aria-label','Daily Business Profile activity');
+            const table=node('table'), head=node('thead'), row=node('tr'), body=node('tbody');
+            ['Date','Search views','Maps views','Website clicks','Profile call clicks','Direction requests'].forEach(label=>{ const th=node('th',label); th.scope='col'; row.append(th); }); head.append(row);
+            const dates=new Set(); Object.values(report.series||{}).forEach(series=>series.forEach(point=>dates.add(point.date)));
+            Array.from(dates).sort().reverse().forEach(date=>{
+                const tr=node('tr');
+                const get=key=>(report.series?.[key]||[]).find(point=>point.date===date)?.value ?? null;
+                const sum=(a,b)=>a===null||b===null?null:Number(a)+Number(b);
+                [date,sum(get('BUSINESS_IMPRESSIONS_DESKTOP_SEARCH'),get('BUSINESS_IMPRESSIONS_MOBILE_SEARCH')),sum(get('BUSINESS_IMPRESSIONS_DESKTOP_MAPS'),get('BUSINESS_IMPRESSIONS_MOBILE_MAPS')),get('WEBSITE_CLICKS'),get('CALL_CLICKS'),get('BUSINESS_DIRECTION_REQUESTS')].forEach((item,i)=>tr.append(node('td',i?value(item):item))); body.append(tr);
+            });
+            table.append(head,body); scroll.append(table); details.append(scroll); card.append(details);
+            card.append(node('p',report.message+' Views can include the same person across devices and surfaces. Missing metrics are shown as unavailable; recent dates may still be processing.','wnq-feed-note'));
         }
         function render(provider, report) {
             const card = document.getElementById('wnq-feed-' + provider);
@@ -75,7 +90,7 @@
                     const box = node('div'); box.append(node('strong', count.toLocaleString()), node('span', source + ' · phone clicks')); summary.append(box);
                 });
                 card.append(summary);
-            } else card.append(node('p', rows.length + ' reported calls · Not deduplicated across sources', 'wnq-feed-period'));
+            } else card.append(node('p', rows.length + ' unique Google Ads call records · Duration is shown in seconds', 'wnq-feed-period'));
             const controls = node('div', undefined, 'wnq-feed-controls');
             const label = node('label', 'Source ');
             const filter = node('select');
@@ -89,7 +104,7 @@
             const previous = node('button', 'Previous', 'button'); previous.type = 'button';
             const next = node('button', 'Next', 'button'); next.type = 'button';
             controls.append(label, search, status, previous, next);
-            const details = node('details', undefined, 'wnq-feed-evidence'); details.open = true;
+            const details = node('details', undefined, 'wnq-feed-evidence');
             details.append(node('summary', 'Activity evidence'));
             const scroll = node('div', undefined, 'wnq-feed-scroll'); scroll.tabIndex = 0; scroll.setAttribute('role', 'region'); scroll.setAttribute('aria-label', titles[provider] + ' evidence table; scroll for more columns');
             const table = node('table'); const head = node('thead'); const tr = node('tr');

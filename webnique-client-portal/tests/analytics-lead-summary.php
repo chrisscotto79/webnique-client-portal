@@ -8,7 +8,7 @@ require_once dirname(__DIR__) . '/includes/Services/AnalyticsActivity.php';
 
 $client = 'fixture';
 $GLOBALS['test_options']['wnq_activity_' . hash('sha256', $client)] = [
-    'phone_events' => ['phone_click'], 'form_events' => ['generate_lead'], 'email_events' => ['email_click'], 'min_call_duration' => 20,
+    'phone_events' => ['phone_click'], 'form_events' => ['generate_lead'], 'email_events' => ['email_click'], 'min_call_duration' => 20, 'lead_events_confirmed'=>true,
 ];
 assert(\WNQ\Services\AnalyticsActivity::callThreshold($client) === 20);
 assert(\WNQ\Services\AnalyticsActivity::attribution('Paid Search', '1234567890', '1234567890') === 'Google Ads');
@@ -18,8 +18,8 @@ assert(\WNQ\Services\AnalyticsActivity::attribution('Organic Search', '', '') ==
 $request = static function (array $body): array {
     assert($body['metrics'][1]['name'] === 'keyEvents');
     return ['rowCount' => 2, 'rows' => [
-        ['dimensionValues' => [['value'=>'202609071200'],['value'=>'generate_lead'],['value'=>'mobile'],['value'=>'Organic Search'],['value'=>'']], 'metricValues' => [['value'=>'5'],['value'=>'3']]],
-        ['dimensionValues' => [['value'=>'202609071201'],['value'=>'email_click'],['value'=>'desktop'],['value'=>'Organic Search'],['value'=>'']], 'metricValues' => [['value'=>'2'],['value'=>'2']]],
+        ['dimensionValues' => [['value'=>'generate_lead']], 'metricValues' => [['value'=>'5'],['value'=>'3']]],
+        ['dimensionValues' => [['value'=>'email_click']], 'metricValues' => [['value'=>'2'],['value'=>'2']]],
     ]];
 };
 $report = \WNQ\Services\AnalyticsActivity::leadEvents($client, '2026-09-01', '2026-09-07', $request);

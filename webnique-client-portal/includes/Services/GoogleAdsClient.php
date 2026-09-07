@@ -236,7 +236,7 @@ final class GoogleAdsClient
 
         $date_where = $this->reportingDateWhere($start_date, $end_date);
 
-        $cache_key = 'wnq_google_ads_report_range_' . md5($customer_id . '|' . $start_date . '|' . $end_date . '|' . (int)$include_details);
+        $cache_key = 'wnq_google_ads_report_range_v2_' . md5($customer_id . '|' . $start_date . '|' . $end_date . '|' . (int)$include_details);
         if (!$refresh) {
             $cached = get_transient($cache_key);
             if (is_array($cached)) {
@@ -244,7 +244,7 @@ final class GoogleAdsClient
             }
         }
 
-        $query = "SELECT campaign.id, campaign.name, campaign.status, metrics.clicks, metrics.impressions, metrics.ctr, metrics.average_cpc, metrics.cost_micros, metrics.conversions FROM campaign WHERE " . $date_where . " ORDER BY metrics.cost_micros DESC LIMIT 100";
+        $query = "SELECT customer.currency_code, campaign.id, campaign.name, campaign.status, metrics.clicks, metrics.impressions, metrics.ctr, metrics.average_cpc, metrics.cost_micros, metrics.conversions FROM campaign WHERE " . $date_where . " ORDER BY metrics.cost_micros DESC";
         $error_count = count($this->errors);
         $rows = $this->search($customer_id, $query);
         $summary = [
@@ -300,6 +300,7 @@ final class GoogleAdsClient
             ];
 
         $result = [
+            'currency_code' => sanitize_text_field((string)($rows[0]['customer']['currencyCode']??'')),
             'summary' => $summary,
             'campaigns' => $campaigns,
         ] + $detail_reports;
