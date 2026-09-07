@@ -2,6 +2,8 @@
 
 Client Analytics now opens with a read-only Lead Summary for the selected date range. The primary number is **Total Verified Leads**: unique Google Ads calls at or above the configured duration threshold plus GA4 form and email events that are marked as key events. Website phone clicks are shown separately and are never added to the lead total.
 
+The same Client Analytics area also includes a Google Business Profile panel for the client's saved GBP location mapping. It reports profile views, Search and Maps views, website clicks, profile call clicks, direction requests, and a daily evidence table for the selected period. GBP profile call clicks are interactions—not confirmed Google Ads calls—and remain separate from lead totals.
+
 The summary also shows All Recorded Calls versus Verified Calls, a client-facing sentence, provider status, and an expandable Tracking Breakdown for Ads calls, GA4 paid/organic/other/unknown phone clicks, forms, and emails. A warning is shown when paid phone clicks cannot be confidently matched to the saved Ads customer ID. Each provider remains independent, so an unavailable GA4 property does not hide available Ads call counts.
 
 ## Configuration
@@ -24,3 +26,4 @@ Expand **Tracking connections & lead-event names** in Client Analytics. Select t
 
 - [Google Ads call_view fields](https://developers.google.com/google-ads/api/fields/v25/call_view)
 - [GA4 reporting dimensions and metrics](https://developers.google.com/analytics/devguides/reporting/data/v1/api-schema)
+- [Google Business Profile Performance API](https://developers.google.com/my-business/reference/performance/rest/v1/locations/fetchMultiDailyMetricsTimeSeries)

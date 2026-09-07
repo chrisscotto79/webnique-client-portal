@@ -11,6 +11,7 @@ use WNQ\Models\ClientPortal;
 
 if (!defined('ABSPATH')) exit;
 require_once dirname(__DIR__) . '/includes/Services/AnalyticsActivity.php';
+require_once dirname(__DIR__) . '/includes/Services/GoogleBusinessProfileClient.php';
 
 final class AnalyticsAdmin
 {
@@ -1210,14 +1211,15 @@ final class AnalyticsAdmin
         nocache_headers();
         $client=sanitize_text_field(wp_unslash($_POST['client_id']??''));
         $provider=sanitize_key($_POST['provider']??'');
-        if ($client==='' || !in_array($provider,['lead_summary','phone_events','ads_calls'],true)) { wp_send_json_error(['message'=>'Invalid activity request'],400); return; }
+        if ($client==='' || !in_array($provider,['lead_summary','phone_events','ads_calls','gbp_summary'],true)) { wp_send_json_error(['message'=>'Invalid activity request'],400); return; }
         $days=(int)($_POST['date_range']??30);
         if (!in_array($days,[7,30,90,180,365,730],true)) $days=30;
         $today=current_datetime()->setTime(0,0);$start=$today->modify('-'.($days-1).' days')->format('Y-m-d');$end=$today->format('Y-m-d');
         try {
             $config=AnalyticsConfig::getClientConfig($client);
             if (!$config) throw new \RuntimeException('Client not configured.');
-            $connection=\WNQ\Models\PpcAccount::getByClientId(\WNQ\Services\AnalyticsActivity::adsClient($client))?:[];
+            $connection=[];
+            if ($provider!=='gbp_summary') $connection=\WNQ\Models\PpcAccount::getByClientId(\WNQ\Services\AnalyticsActivity::adsClient($client))?:[];
             $settings=\WNQ\Services\AnalyticsActivity::settings($client);
             $credentials=in_array($provider,['lead_summary','phone_events'],true)?AnalyticsConfig::getCredentials():null;
             $key='wnq_activity_report_v2_'.hash('sha256',wp_json_encode([$client,$provider,$start,$end,$config,$connection,$settings,$credentials]));
@@ -1231,6 +1233,8 @@ final class AnalyticsAdmin
                     $gaRequest=null;
                     if ($credentials && !empty($config['ga4_property_id'])) { $token=self::getGoogleAccessToken($credentials['credentials']); $gaRequest=static fn($body)=>self::makeGARequest($token,(string)$config['ga4_property_id'],$body); }
                     $report=\WNQ\Services\AnalyticsActivity::leadSummary($client,$start,$end,$gaRequest);
+                } elseif ($provider==='gbp_summary') {
+                    $report=(new \WNQ\Services\GoogleBusinessProfileClient())->analyticsForClient($client,$start,$end);
                 } else $report=\WNQ\Services\AnalyticsActivity::adsCalls($client,$start,$end);
                 if (in_array($report['status'],['available','partial'],true)) set_transient($key,$report,180);
             }
