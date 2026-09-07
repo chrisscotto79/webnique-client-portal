@@ -584,6 +584,13 @@ final class ClientPortal
     public static function getAdsReportData(string $client_id, string $start_date, string $end_date, bool $refresh = false): array
     {
         $settings = self::adsSettings($client_id, false);
+        // PPC Management's saved account is authoritative even if the legacy option mirror is stale.
+        $connection = PpcAccount::getByClientId($client_id);
+        if ($connection && preg_match('/^\d{10}$/',(string)($connection['customer_id']??''))) {
+            $settings['customer_id']=(string)$connection['customer_id'];
+            $settings['matched_account_name']=(string)($connection['account_name']??'');
+            if (!empty($connection['manager_customer_id'])) $settings['manager_customer_id']=(string)$connection['manager_customer_id'];
+        }
         $customer_id = (string)($settings['customer_id'] ?? '');
         $result = [
             'has_linked_account' => $customer_id !== '',
