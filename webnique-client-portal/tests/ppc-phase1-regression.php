@@ -288,9 +288,9 @@ foreach ([$negative_source,$lifecycle_source,$validation_source,$correlation_sou
 }
 
 $ngram_terms=[
-    ['query'=>'emergency junk removal','impressions'=>100,'clicks'=>6,'cost'=>30,'conversions'=>2],
-    ['query'=>'junk removal near me','impressions'=>120,'clicks'=>7,'cost'=>35,'conversions'=>2],
-    ['query'=>'same day junk removal','impressions'=>90,'clicks'=>5,'cost'=>20,'conversions'=>1],
+    ['query'=>'emergency junk removal','campaign_id'=>'1','campaign'=>'Search','ad_group_id'=>'10','ad_group'=>'Removal','impressions'=>100,'clicks'=>6,'cost'=>30,'conversions'=>2],
+    ['query'=>'junk removal near me','campaign_id'=>'1','campaign'=>'Search','ad_group_id'=>'10','ad_group'=>'Removal','impressions'=>120,'clicks'=>7,'cost'=>35,'conversions'=>2],
+    ['query'=>'same day junk removal','campaign_id'=>'1','campaign'=>'Search','ad_group_id'=>'10','ad_group'=>'Removal','impressions'=>90,'clicks'=>5,'cost'=>20,'conversions'=>1],
 ];
 $ngram_report=PpcAdvancedSearchService::ngrams($ngram_terms);
 $junk=array_values(array_filter($ngram_report['items'],static fn($row)=>$row['ngram']==='junk removal'));
@@ -302,7 +302,7 @@ $routing=PpcAdvancedSearchService::routing([
     ['keyword'=>'emergency junk removal','campaign_id'=>'2','campaign'=>'Emergency','ad_group_id'=>'20','ad_group'=>'Emergency'],
 ],[]);
 assertPpc(count($routing['cases'])===1 && $routing['cases'][0]['better_ad_group_id']==='20','Routing must surface stronger dedicated keyword coverage as an investigation.');
-$messaging=PpcAdvancedSearchService::messaging($ngram_terms,[['status'=>'enabled','headlines'=>[['text'=>'Fast Local Service']],'descriptions'=>[['text'=>'Request a Quote']]]],[],['available'=>true,'pages'=>[['url'=>'https://example.com/junk-removal','text'=>'emergency junk removal service']]]);
+$messaging=PpcAdvancedSearchService::messaging($ngram_terms,[['status'=>'enabled','campaign_status'=>'enabled','ad_group_status'=>'enabled','campaign_id'=>'1','ad_group_id'=>'10','headlines'=>[['text'=>'Fast Local Service']],'descriptions'=>[['text'=>'Request a Quote']]]],[],['available'=>true,'pages'=>[['url'=>'https://example.com/junk-removal','text'=>'emergency junk removal service']]]);
 $verified_gaps=array_filter($messaging['gaps'],static fn($row)=>!empty($row['claim_verified']));
 assertPpc(count($verified_gaps)>0,'RSA messaging recommendations must require supporting approved website evidence.');
 $anomaly_rows=[];$origin=new DateTimeImmutable('2026-01-01');for($day=0;$day<35;$day++){$current=$day>=28;$anomaly_rows[]=['campaign'=>['id'=>'42','name'=>'Search Only'],'segments'=>['date'=>$origin->modify("+{$day} days")->format('Y-m-d')],'metrics'=>['impressions'=>'700','clicks'=>'70','costMicros'=>$current?'300000000':'100000000','conversions'=>'7','searchImpressionShare'=>.6,'searchBudgetLostImpressionShare'=>.2,'searchRankLostImpressionShare'=>.2]];}

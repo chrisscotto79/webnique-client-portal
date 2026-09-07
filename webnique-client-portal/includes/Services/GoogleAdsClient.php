@@ -19,6 +19,7 @@ final class GoogleAdsClient
 
     private array $settings;
     private array $errors = [];
+    private array $sensitive_values = [];
 
     public function __construct(array $settings)
     {
@@ -36,7 +37,19 @@ final class GoogleAdsClient
 
     public function errors(): array
     {
-        return array_values(array_unique(array_filter($this->errors)));
+        $messages = $this->errors;
+        foreach ($messages as &$message) {
+            foreach ($this->sensitive_values as $value) {
+                if ($value !== '') $message = str_replace($value,'[redacted]',$message);
+            }
+            foreach (['developer_token','oauth_client_id','oauth_client_secret','refresh_token'] as $key) {
+                $value = $this->setting($key);
+                if ($value !== '') $message = str_replace($value,'[redacted]',$message);
+            }
+            $message = preg_replace('/Bearer\s+[^\s,;]+/i','Bearer [redacted]',$message) ?? 'Google Ads request failed.';
+        }
+        unset($message);
+        return array_values(array_unique(array_filter($messages)));
     }
 
     /**
@@ -453,36 +466,47 @@ final class GoogleAdsClient
 
     private function search(string $customer_id, string $query): array
     {
+        $id = $this->customerId($customer_id);
+        if (!preg_match('/^\\d{10}$/', $id)) {
+            $this->errors[] = 'A valid Google Ads customer ID is required.';
+            return [];
+        }
         $token = $this->accessToken();
-        if ($token === '') {
-            return [];
+        if ($token === '') return [];
+        $url = self::ADS_BASE_URL . self::API_VERSION . '/customers/' . rawurlencode($id) . '/googleAds:search';
+        $results = []; $page_token = ''; $seen = [];
+        // Bound work, but never return a truncated report as a complete successful result.
+        for ($page=0; $page<20; $page++) {
+            $payload = ['query'=>$query];
+            if ($page_token !== '') $payload['pageToken'] = $page_token;
+            $response = wp_remote_post($url, [
+                'timeout'=>25,
+                'headers'=>['Authorization'=>'Bearer '.$token, 'developer-token'=>$this->setting('developer_token'),
+                    'login-customer-id'=>$this->customerId($this->setting('manager_customer_id')), 'Content-Type'=>'application/json'],
+                'body'=>wp_json_encode($payload),
+            ]);
+            if (is_wp_error($response)) {
+                $this->errors[] = 'Google Ads could not be reached. Please retry.';
+                return [];
+            }
+            $code = (int)wp_remote_retrieve_response_code($response);
+            $body = json_decode((string)wp_remote_retrieve_body($response), true);
+            if ($code<200 || $code>=300) {
+                $this->errors[] = is_array($body) ? self::apiErrorMessage($body,'Google Ads API request failed.') : 'Google Ads returned an invalid response.';
+                return [];
+            }
+            if (!is_array($body) || (isset($body['results']) && !is_array($body['results']))) {
+                $this->errors[] = 'Google Ads returned an invalid report.';
+                return [];
+            }
+            $results = array_merge($results,(array)($body['results']??[]));
+            $page_token = (string)($body['nextPageToken']??'');
+            if ($page_token === '') return $results;
+            if (isset($seen[$page_token])) break;
+            $seen[$page_token] = true;
         }
-
-        $url = self::ADS_BASE_URL . self::API_VERSION . '/customers/' . rawurlencode($this->customerId($customer_id)) . '/googleAds:search';
-        $response = wp_remote_post($url, [
-            'timeout' => 25,
-            'headers' => [
-                'Authorization' => 'Bearer ' . $token,
-                'developer-token' => $this->setting('developer_token'),
-                'login-customer-id' => $this->customerId($this->setting('manager_customer_id')),
-                'Content-Type' => 'application/json',
-            ],
-            'body' => wp_json_encode(['query' => $query]),
-        ]);
-
-        if (is_wp_error($response)) {
-            $this->errors[] = $response->get_error_message();
-            return [];
-        }
-
-        $code = (int)wp_remote_retrieve_response_code($response);
-        $body = json_decode((string)wp_remote_retrieve_body($response), true);
-        if ($code < 200 || $code >= 300) {
-            $this->errors[] = self::apiErrorMessage($body, 'Google Ads API request failed.');
-            return [];
-        }
-
-        return is_array($body['results'] ?? null) ? $body['results'] : [];
+        $this->errors[] = 'Google Ads report pagination could not complete. Narrow the reporting period and retry.';
+        return [];
     }
 
     private function accessToken(): string
@@ -490,6 +514,7 @@ final class GoogleAdsClient
         $cache_key = $this->accessTokenCacheKey();
         $cached = get_transient($cache_key);
         if (is_string($cached) && $cached !== '') {
+            $this->sensitive_values[] = $cached;
             return $cached;
         }
 
@@ -509,13 +534,14 @@ final class GoogleAdsClient
         ]);
 
         if (is_wp_error($response)) {
-            $this->errors[] = 'Google OAuth could not be reached: ' . sanitize_text_field($response->get_error_message());
+            $this->errors[] = 'Google OAuth could not be reached. Please retry.';
             return '';
         }
 
         $status = (int)wp_remote_retrieve_response_code($response);
         $body = json_decode((string)wp_remote_retrieve_body($response), true);
         $token = (string)($body['access_token'] ?? '');
+        if ($token !== '') $this->sensitive_values[] = $token;
         if ($status < 200 || $status >= 300 || $token === '') {
             $this->errors[] = self::apiErrorMessage($body, 'Google OAuth token request failed.');
             return '';

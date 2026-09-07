@@ -103,7 +103,7 @@ final class PpcNegativeInventoryService
                 if (!self::blocks((string)$positive['keyword'], (string)$negative['negative'], (string)$negative['match_type'])) {
                     continue;
                 }
-                $key = hash('sha256', implode('|', [(string)($positive['criterion_id'] ?? ''), (string)($negative['resource_name'] ?? ''), (string)($negative['negative'] ?? '')]));
+                $key = hash('sha256', implode('|', [(string)($positive['campaign_id'] ?? ''), (string)($positive['ad_group_id'] ?? ''), (string)($positive['criterion_id'] ?? ''), (string)($positive['keyword'] ?? ''), (string)($negative['resource_name'] ?? ''), (string)($negative['negative'] ?? '')]));
                 if (isset($seen[$key])) {
                     continue;
                 }

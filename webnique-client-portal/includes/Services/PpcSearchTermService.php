@@ -43,18 +43,19 @@ final class PpcSearchTermService
 
     public function report(string $client_id, string $customer_id, array $client, bool $refresh = false): array
     {
-        $cache_key = 'wnq_ppc_sqr_' . md5($client_id . '|' . $customer_id);
+        $cache_key = 'wnq_ppc_sqr_v2_' . md5($client_id . '|' . $customer_id);
         if (!$refresh && is_array($cached = get_transient($cache_key))) return $cached;
         $today = current_datetime()->format('Y-m-d');
         $start = current_datetime()->modify('-29 days')->format('Y-m-d');
         $query = new GoogleAdsQueryService();
-        $rows = $query->select($customer_id, "SELECT search_term_view.search_term, segments.keyword.info.text, segments.keyword.info.match_type, campaign.id, campaign.name, ad_group.id, ad_group.name, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions FROM search_term_view WHERE segments.date BETWEEN '{$start}' AND '{$today}' ORDER BY metrics.cost_micros DESC LIMIT 2000");
+        $rows = $query->select($customer_id, "SELECT search_term_view.search_term, segments.keyword.info.text, segments.keyword.info.match_type, campaign.id, campaign.name, ad_group.id, ad_group.name, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions FROM search_term_view WHERE campaign.advertising_channel_type = 'SEARCH' AND segments.date BETWEEN '{$start}' AND '{$today}' ORDER BY metrics.cost_micros DESC LIMIT 2000");
         if ($query->errors()) return ['available' => false, 'message' => self::safeErrors($query->errors()), 'terms' => [], 'period' => 'Last 30 days'];
         $config = self::config($client_id, $client);
         $negative_service = new PpcNegativeInventoryService();
         $inventory = $negative_service->inventory($customer_id, $refresh);
         $positive_inventory = $negative_service->positiveKeywords($customer_id);
-        $memory = PpcMemory::context($client_id, $customer_id);
+        try { $memory = PpcMemory::context($client_id, $customer_id); }
+        catch (\Throwable $error) { $memory = ['unavailable'=>true, 'feedback'=>[], 'rules'=>[], 'memories'=>[]]; }
         $terms = [];
         foreach ($rows as $row) {
             $view = (array)($row['searchTermView'] ?? []);
@@ -76,7 +77,7 @@ final class PpcSearchTermService
             $term['cpa'] = $term['conversions'] > 0 ? round($term['cost'] / $term['conversions'], 2) : 0;
             $term += self::classify($term['query'], $config, $term);
             $term['original_ai_classification'] = $term['classification'];
-            $feedback = PpcMemory::feedbackForQuery($term['query'], $memory);
+            $feedback = PpcMemory::feedbackForQuery($term['query'], $memory, $term['campaign_id'], $term['ad_group_id']);
             if ($feedback) {
                 $decision = (string)($feedback['human_decision'] ?? '');
                 if (empty($feedback['is_stale'])) {
@@ -121,7 +122,8 @@ final class PpcSearchTermService
                     $term['confidence'] = min(.5, (float)$term['confidence']);
                 }
             }
-            $term['proposal_key'] = hash('sha256', $client_id . '|' . $customer_id . '|' . strtolower($term['query']) . '|' . $term['campaign_id'] . '|' . $term['recommended_action']);
+            $term = self::respectClientRules($term, $config, $memory);
+            $term['proposal_key'] = PpcProposal::key($client_id, $customer_id, $term);
             $terms[] = $term;
         }
         PpcProposal::sync($client_id, $customer_id, $terms);
@@ -129,6 +131,8 @@ final class PpcSearchTermService
         foreach ($terms as &$term) $term += $statuses[$term['proposal_key']] ?? ['id' => 0, 'status' => 'not_proposed'];
         unset($term);
         $inventory_errors = array_values(array_unique(array_merge((array)($inventory['errors'] ?? []), (array)($positive_inventory['errors'] ?? []))));
+        if (!empty($memory['unavailable'])) $inventory_errors[] = 'Client memory is unavailable; recommendations require human review until rules and feedback can be checked.';
+        if (count($rows) >= 2000) $inventory_errors[] = 'Showing the 2,000 highest-cost reported rows. Search-term coverage is incomplete.';
         $result = ['available' => true, 'status' => $inventory_errors ? 'partial' : 'ready', 'message' => trim((string)($inventory['message'] ?? '') . ' ' . implode(' ', $inventory_errors)), 'terms' => $terms, 'period' => 'Last 30 days', 'config' => $config, 'memory_context_count' => count((array)($memory['memories']??[])) + count((array)($memory['feedback']??[])), 'negative_inventory_status' => (string)($inventory['status'] ?? 'unavailable'), 'counts' => array_count_values(array_column($terms, 'classification')), 'findings' => self::findings($terms)];
         set_transient($cache_key, $result, 15 * MINUTE_IN_SECONDS);
         return $result;
@@ -150,6 +154,18 @@ final class PpcSearchTermService
         if ($service_match && preg_match('/\b(near me|company|service|contractor|quote|estimate|hire|emergency|same day|price|cost)\b/i', $q)) return self::result('high_intent', .9, !empty($metrics['conversions']) ? 'add_as_keyword' : 'keep', 'Service language and commercial intent are both present.');
         if ($service_match) return self::result('relevant', .82, 'keep', 'Matches a configured client service.');
         return self::result('requires_human_review', .45, 'human_review', 'No reliable service, geographic, or intent rule matched.');
+    }
+
+    public static function respectClientRules(array $term, array $config, array $memory): array
+    {
+        $rules = PpcMemory::rulesForText((string)$term['query'], $memory);
+        $excluded = self::contains(strtolower((string)$term['query']), array_merge((array)($config['excluded_terms'] ?? []), (array)($config['excluded_areas'] ?? [])));
+        if ($rules || !empty($memory['unavailable']) || ($excluded && str_starts_with((string)$term['classification'], 'human_'))) {
+            $term['recommended_action'] = 'human_review';
+            $term['confidence'] = min(.5, (float)$term['confidence']);
+            $term['reason'] .= ' Review required: client rules or missing memory take precedence over previous classifications.';
+        }
+        return $term;
     }
 
     private static function findings(array $terms): array

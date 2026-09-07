@@ -184,7 +184,9 @@ final class PpcRecommendation
         global $wpdb;
         $table = $wpdb->prefix . self::TABLE;
         $limit = max(1, min(500, $limit));
-        $rows = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$table} WHERE client_id = %s ORDER BY CASE status WHEN 'open' THEN 1 WHEN 'investigating' THEN 2 WHEN 'ready_for_review' THEN 3 WHEN 'approved' THEN 4 WHEN 'implemented_externally' THEN 5 WHEN 'monitoring' THEN 6 ELSE 7 END, severity = 'critical' DESC, updated_at DESC LIMIT %d", sanitize_text_field($client_id), $limit), ARRAY_A);
+        $connection = PpcAccount::getByClientId($client_id);
+        if (empty($connection['customer_id'])) return [];
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$table} WHERE client_id = %s AND customer_id = %s ORDER BY CASE status WHEN 'open' THEN 1 WHEN 'investigating' THEN 2 WHEN 'ready_for_review' THEN 3 WHEN 'approved' THEN 4 WHEN 'implemented_externally' THEN 5 WHEN 'monitoring' THEN 6 ELSE 7 END, severity = 'critical' DESC, updated_at DESC LIMIT %d", sanitize_text_field($client_id), (string)$connection['customer_id'], $limit), ARRAY_A);
         return array_map([self::class, 'hydrate'], (array)$rows);
     }
 

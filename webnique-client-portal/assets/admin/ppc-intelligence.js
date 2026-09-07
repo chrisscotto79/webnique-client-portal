@@ -16,6 +16,7 @@
             rows.forEach(function (row) {
                 var match = !query || row.textContent.toLocaleLowerCase().indexOf(query) !== -1;
                 row.hidden = !match;
+                if (!match) row.querySelectorAll('input[type="checkbox"]').forEach(function (checkbox) { checkbox.checked = false; });
                 if (match) {
                     visible += 1;
                 }
@@ -47,6 +48,59 @@
     if (!root) {
         return;
     }
+
+    // All evidence remains available without JavaScript; enhancement adds local search and pages.
+    root.querySelectorAll('.wnq-table-scroll table, .wnq-intel-grid').forEach(function (collection, index) {
+        var table = collection.tagName === 'TABLE';
+        var items = Array.from(table ? collection.querySelectorAll('tbody > tr') : collection.children);
+        if (items.length < 2 || collection.querySelector('[data-wnq-filter-row]')) return;
+        var host = table ? collection.parentElement : collection;
+        var title = collection.closest('.wnq-module');
+        var heading = title && title.querySelector('h3');
+        var name = heading ? heading.textContent : 'Evidence';
+        if (table) {
+            host.tabIndex = 0;
+            host.setAttribute('role','region');
+            host.setAttribute('aria-label',name+' table. Scroll horizontally for more columns.');
+        }
+        var toolbar = document.createElement('div');
+        toolbar.className = 'wnq-evidence-tools';
+        var label = document.createElement('label');
+        label.textContent = 'Search ' + name;
+        var input = document.createElement('input');
+        input.type = 'search'; input.placeholder = 'Search this report';
+        input.id = 'wnq-evidence-search-' + index; label.htmlFor = input.id;
+        var sizeLabel = document.createElement('label'); sizeLabel.textContent = 'Per page';
+        var size = document.createElement('select');
+        [10,25,50,100].forEach(function (number) { var option = document.createElement('option'); option.value=number; option.textContent=number; size.appendChild(option); });
+        size.value = '10'; sizeLabel.appendChild(size);
+        var status = document.createElement('span'); status.setAttribute('role','status'); status.setAttribute('aria-live','polite');
+        var previous = document.createElement('button'); previous.type='button'; previous.className='button'; previous.textContent='Previous'; previous.setAttribute('aria-label','Previous page of '+name);
+        var next = document.createElement('button'); next.type='button'; next.className='button'; next.textContent='Next'; next.setAttribute('aria-label','Next page of '+name);
+        [label,input,sizeLabel,status,previous,next].forEach(function (node) { toolbar.appendChild(node); });
+        host.before(toolbar);
+        var empty = document.createElement('p'); empty.className='wnq-empty-state'; empty.textContent='No records match this search.'; empty.hidden=true; host.after(empty);
+        var page=0;
+        var searchable=items.map(function (item) { return item.textContent.toLocaleLowerCase(); });
+        function renderPage() {
+            var query=input.value.trim().toLocaleLowerCase();
+            var matches=items.filter(function (item,i) { return !query || searchable[i].includes(query); });
+            var count=Number(size.value); page=Math.min(page,Math.max(0,Math.ceil(matches.length/count)-1));
+            var shown=new Set(matches.slice(page*count,(page+1)*count));
+            items.forEach(function (item) {
+                item.hidden=!shown.has(item);
+                // A bulk review must never include checked records hidden by a page or filter change.
+                if (item.hidden) item.querySelectorAll('input[type="checkbox"]').forEach(function (checkbox) { checkbox.checked=false; });
+            });
+            status.textContent=matches.length ? (page*count+1)+'–'+Math.min((page+1)*count,matches.length)+' of '+matches.length : '0 records';
+            previous.disabled=page===0; next.disabled=(page+1)*count>=matches.length; empty.hidden=matches.length!==0;
+        }
+        input.addEventListener('input',function () { page=0; renderPage(); });
+        size.addEventListener('change',function () { page=0; renderPage(); });
+        previous.addEventListener('click',function () { page--; renderPage(); });
+        next.addEventListener('click',function () { page++; renderPage(); });
+        renderPage();
+    });
 
     var tabs = Array.prototype.slice.call(root.querySelectorAll('[data-wnq-workspace-tab]'));
     var panels = Array.prototype.slice.call(root.querySelectorAll('[data-wnq-workspace]'));
@@ -83,6 +137,7 @@
     tabs.forEach(function (tab, index) {
         tab.addEventListener('click', function () {
             activateWorkspace(tab.getAttribute('data-wnq-workspace-tab'), false);
+            window.history.replaceState(null,'','#'+tab.getAttribute('aria-controls'));
         });
         tab.addEventListener('keydown', function (event) {
             var next = index;
@@ -142,14 +197,20 @@
         });
     });
 
-    root.querySelectorAll('.wnq-module-nav a[href^="#"]').forEach(function (link) {
+    root.querySelectorAll('a[href^="#"]').forEach(function (link) {
         link.addEventListener('click', function () {
-            var target = document.querySelector(link.getAttribute('href'));
+            var target = document.getElementById(link.getAttribute('href').slice(1));
             var workspace = workspaceForTarget(target);
             if (workspace) {
                 activateWorkspace(workspace, false);
             }
         });
+    });
+
+    window.addEventListener('hashchange', function () {
+        var target=document.getElementById(window.location.hash.slice(1));
+        var workspace=workspaceForTarget(target);
+        if (workspace) activateWorkspace(workspace,false);
     });
 
     root.classList.add('is-enhanced');

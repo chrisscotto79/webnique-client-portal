@@ -105,6 +105,7 @@ final class PpcIntelligenceAdmin
         foreach ($clients as $client) {
             $connection = PpcAccount::getByClientId((string)$client['client_id']);
             $snapshot = PpcInvestigationService::snapshot((string)$client['client_id']);
+            if (empty($connection['customer_id']) || (string)($snapshot['customer_id']??'') !== (string)$connection['customer_id']) $snapshot = [];
             $priority = (array)($snapshot['priority'] ?? []);
             $portfolio[] = [
                 'client' => $client,
@@ -518,12 +519,9 @@ final class PpcIntelligenceAdmin
         $status = sanitize_key((string)wp_unslash($_POST['review_action'] ?? ''));
         $reason = sanitize_textarea_field((string)wp_unslash($_POST['review_reason']??''));
         if ($reason === '') self::finish($client_id,false,'Record a reason for the human decision so future classifications have usable context.');
-        $proposals = PpcProposal::getByIdsForClient($ids, $client_id);
-        $updated = PpcProposal::review($client_id, $ids, $status);
-        $connection = PpcAccount::getByClientId($client_id) ?: [];
-        if ($updated > 0 && !empty($connection['customer_id'])) foreach ($proposals as $proposal) PpcMemory::recordFeedback($client_id,(string)$connection['customer_id'],$proposal,$status,$reason);
+        $updated = PpcProposal::review($client_id, $ids, $status, $reason);
         self::clearSearchCache($client_id);
-        self::finish($client_id, $updated > 0, $updated > 0 ? "{$updated} proposal(s) reviewed internally. No Google Ads changes were made." : 'Select at least one proposal and a review action.');
+        self::finish($client_id, $updated > 0, $updated > 0 ? "{$updated} proposal(s) reviewed internally. No Google Ads changes were made." : 'The review could not be saved. Refresh the account, select current proposals, and retry.');
     }
 
     public static function handleSaveMemory(): void
@@ -690,7 +688,7 @@ final class PpcIntelligenceAdmin
         ?>
         <section class="wnq-diagnostics-shell">
             <div class="wnq-diagnostics-head">
-                <div><span class="wnq-ppc-eyebrow">Phase 12 · Search intelligence</span><h2>Account intelligence</h2><p>Search campaigns only · anomaly, intent, routing, quality, and memory evidence.</p></div>
+                <div><span class="wnq-ppc-eyebrow">Search PPC workspace</span><h2>Account intelligence</h2><p>Review priorities, investigate performance, and keep decisions connected to their evidence.</p></div>
                 <a class="button" href="<?php echo esc_url(add_query_arg('refresh_ppc', '1')); ?>">Refresh diagnostics</a>
             </div>
             <div class="wnq-command-center" aria-label="PPC operations summary">
@@ -706,10 +704,10 @@ final class PpcIntelligenceAdmin
                 <button type="button" role="tab" aria-selected="false" aria-controls="ppc-workspace-performance" id="ppc-tab-performance" data-wnq-workspace-tab="performance">Performance</button>
                 <button type="button" role="tab" aria-selected="false" aria-controls="ppc-workspace-search" id="ppc-tab-search" data-wnq-workspace-tab="search">Search &amp; creative<?php if($search_count):?><span><?php echo esc_html((string)$search_count);?></span><?php endif;?></button>
                 <button type="button" role="tab" aria-selected="false" aria-controls="ppc-workspace-quality" id="ppc-tab-quality" data-wnq-workspace-tab="quality">Lead quality</button>
-                <button type="button" role="tab" aria-selected="false" aria-controls="ppc-workspace-control" id="ppc-tab-control" data-wnq-workspace-tab="control">Change control<?php if($control_count):?><span><?php echo esc_html((string)$control_count);?></span><?php endif;?></button>
+                <button type="button" role="tab" aria-selected="false" aria-controls="ppc-workspace-control" id="ppc-tab-control" data-wnq-workspace-tab="control">Review &amp; memory<?php if($control_count):?><span><?php echo esc_html((string)$control_count);?></span><?php endif;?></button>
             </nav>
             <details class="wnq-section-index"><summary>Jump to a specific report</summary><nav class="wnq-module-nav">
-                <a href="#ppc-attention">Attention</a><a href="#ppc-investigations">Investigations</a><a href="#ppc-recommendations">Lifecycle</a><a href="#ppc-account">Account</a><a href="#ppc-anomalies">Anomalies</a><a href="#ppc-conversions">Conversions</a><a href="#ppc-share">Impression share</a><a href="#ppc-budgets">Budgets</a><a href="#ppc-quality-score">Quality Score</a><a href="#ppc-ngrams">N-grams</a><a href="#ppc-routing">Routing</a><a href="#ppc-messaging">Messaging gaps</a><a href="#ppc-memory">PPC memory</a><a href="#ppc-keywords">Keywords</a><a href="#ppc-search-terms">Search terms</a><a href="#ppc-ads">Ads &amp; claims</a><a href="#ppc-lead-quality">Lead quality</a><a href="#ppc-mutation-safety">Mutation safety</a>
+                <a href="#ppc-attention">Attention</a><a href="#ppc-investigations">Investigations</a><a href="#ppc-recommendations">Lifecycle</a><a href="#ppc-account">Account</a><a href="#ppc-anomalies">Anomalies</a><a href="#ppc-conversions">Conversions</a><a href="#ppc-share">Impression share</a><a href="#ppc-budgets">Budgets</a><a href="#ppc-quality-score">Quality Score</a><a href="#ppc-ngrams">N-grams</a><a href="#ppc-routing">Routing</a><a href="#ppc-messaging">Messaging gaps</a><a href="#ppc-memory">PPC memory</a><a href="#ppc-keywords">Keywords</a><a href="#ppc-search-terms">Search terms</a><a href="#ppc-ads">Ads &amp; claims</a><a href="#ppc-lead-quality">Lead quality</a><a href="#ppc-changes">Change history</a><a href="#ppc-change-correlations">Correlations</a><a href="#ppc-validation">Validation</a><a href="#ppc-mutation-safety">Mutation safety</a>
             </nav></details>
             <?php
             $has_actionable_finding = count(array_filter($findings, static function (array $finding): bool {
@@ -729,17 +727,18 @@ final class PpcIntelligenceAdmin
                 </div>
                 <div class="wnq-workspace-panel" id="ppc-workspace-performance" role="tabpanel" aria-labelledby="ppc-tab-performance" data-wnq-workspace="performance">
                     <?php self::renderAdvancedModule('anomalies',(array)($advanced['anomalies']??[]),$client_id); ?>
+                    <?php self::renderAdvancedModule('quality_score',(array)($advanced['quality_score']??[]),$client_id); ?>
                     <?php self::renderAccountDiagnostic((array)($dashboard['account_diagnostic'] ?? [])); ?>
                     <?php self::renderConversionHealth((array)($dashboard['conversion_health'] ?? [])); ?>
                     <?php self::renderImpressionShare((array)($dashboard['impression_share'] ?? [])); ?>
                     <?php self::renderBudgetAnalysis((array)($dashboard['budget_analysis'] ?? [])); ?>
                 </div>
                 <div class="wnq-workspace-panel" id="ppc-workspace-search" role="tabpanel" aria-labelledby="ppc-tab-search" data-wnq-workspace="search">
-                    <?php self::renderAdvancedModule('quality_score',(array)($advanced['quality_score']??[]),$client_id); ?>
+
                     <?php self::renderAdvancedModule('ngrams',(array)($advanced['ngrams']??[]),$client_id); ?>
                     <?php self::renderAdvancedModule('routing',(array)($advanced['routing']??[]),$client_id); ?>
                     <?php self::renderAdvancedModule('messaging',(array)($advanced['messaging']??[]),$client_id); ?>
-                    <?php self::renderPpcMemory((array)($advanced['memory']??[]),$client_id); ?>
+
                     <?php self::renderKeywordIntelligence((array)($keywords ?? [])); ?>
                     <?php self::renderSearchTerms((array)($search_terms ?? []), $client_id); ?>
                     <?php self::renderAdAudit((array)($ad_audit ?? []), $client_id); ?>
@@ -748,6 +747,7 @@ final class PpcIntelligenceAdmin
                     <?php self::renderLeadQuality((array)($lead_quality ?? []), $client_id); ?>
                 </div>
                 <div class="wnq-workspace-panel" id="ppc-workspace-control" role="tabpanel" aria-labelledby="ppc-tab-control" data-wnq-workspace="control">
+                    <?php self::renderPpcMemory((array)($advanced['memory']??[]),$client_id); ?>
                     <?php self::renderChangeHistory((array)($dashboard['change_history'] ?? [])); ?>
                     <?php self::renderChangeCorrelations($change_correlations); ?>
                     <?php self::renderRecommendationValidation($recommendations, $client_id); ?>
@@ -771,7 +771,7 @@ final class PpcIntelligenceAdmin
                         <summary><span class="wnq-severity"><?php echo esc_html(self::label($severity)); ?></span><span class="wnq-finding-copy"><strong><?php echo esc_html((string)$finding['title']); ?></strong><small><?php echo esc_html(wp_trim_words((string)$finding['evidence'],18)); ?></small></span><span class="wnq-finding-meta"><?php if($campaign!==''||!empty($finding['campaign_id'])):?><small><?php echo esc_html($campaign!==''?$campaign:'Campaign '.$finding['campaign_id']); ?></small><?php endif;?><b title="Recommendation confidence based on the available evidence."><?php echo esc_html(number_format_i18n((float)$finding['confidence'] * 100, 0)); ?>% confidence</b></span></summary>
                         <div class="wnq-finding-evidence"><p><b>Evidence · <?php echo esc_html((string)$finding['period']); ?></b><br><?php echo esc_html((string)$finding['evidence']); ?></p><p><b>Recommended next action</b><br><?php echo esc_html((string)$finding['action']); ?></p></div>
                     </details>
-                    <?php if (!empty($finding['campaign_id'])): ?><a class="button" href="<?php echo esc_url(($finding['section'] ?? '') === 'ppc-ads' ? self::adCampaignUrl((string)$finding['campaign_id']) : (($finding['section'] ?? '') === 'ppc-keywords' ? self::keywordCampaignUrl((string)$finding['campaign_id']) : self::campaignUrl((string)$finding['campaign_id']))); ?>">Investigate</a><?php else:?><button type="button" class="button" data-wnq-toggle-evidence>Evidence</button><?php endif; ?>
+                    <?php if (!empty($finding['section']) && $finding['section'] !== 'ppc-attention'): ?><a class="button" href="#<?php echo esc_attr(sanitize_key((string)$finding['section'])); ?>">Review evidence</a><?php elseif (!empty($finding['campaign_id'])): ?><a class="button" href="<?php echo esc_url(self::campaignUrl((string)$finding['campaign_id'])); ?>">Investigate campaign</a><?php else: ?><button type="button" class="button" data-wnq-toggle-evidence>Evidence</button><?php endif; ?>
                 </div>
             <?php endforeach;endif; ?>
             </div>
@@ -858,28 +858,73 @@ final class PpcIntelligenceAdmin
         <details class="wnq-detail"><summary>Non-Serving Keywords — Last 180 Days (<?php echo esc_html((string)count($dead)); ?>)</summary><div class="wnq-table-scroll"><table><thead><tr><th>Keyword</th><th>Campaign / ad group</th><th>Google status — Current</th><th>Impressions — Last 180 Days</th><th>Spend — Last 180 Days</th><th>Verdict</th><th>Safeguard</th></tr></thead><tbody><?php if(!$dead):?><tr><td colspan="7">No enabled zero-impression Search keywords were returned.</td></tr><?php else:foreach($dead as $row):?><tr><td><strong><?php echo esc_html((string)$row['keyword']); ?></strong><br><small><?php echo esc_html(self::label((string)$row['match_type'])); ?></small></td><td><?php echo esc_html((string)$row['campaign']); ?><br><small><?php echo esc_html((string)$row['ad_group']); ?></small></td><td><?php echo esc_html(self::label((string)$row['primary_status'])); ?></td><td>0</td><td><?php echo esc_html(self::money((float)$row['cost'])); ?></td><td><?php self::pill((string)$row['verdict']); ?></td><td><?php echo esc_html((string)$row['reason']); ?></td></tr><?php endforeach;endif;?></tbody></table></div></details><p class="wnq-read-only-note"><strong>Read-only:</strong> No keyword or negative is paused, removed, or added from this screen.</p><?php endif;?></article><?php
     }
 
-    private static function renderAdvancedModule(string $type,array $report,string $client_id):void
+    private static function renderAdvancedModule(string $type, array $report, string $client_id): void
     {
-        $meta=[
-            'anomalies'=>['Search Campaign Anomalies','Campaign-specific changes that crossed conservative volume and statistical safeguards.','campaigns','ppc-anomalies'],
-            'quality_score'=>['Quality Score Intelligence','Quality components prioritized by economic significance; low Quality Score alone is never a change recommendation.','items','ppc-quality-score'],
-            'ngrams'=>['N-Gram Search-Term Intelligence','Recurring 1-word, 2-word, and 3-word intent patterns. No negatives are added automatically.','items','ppc-ngrams'],
-            'routing'=>['Query Routing & Ad Group Leakage','Possible routes where more dedicated enabled keyword coverage exists elsewhere. Investigation only.','cases','ppc-routing'],
-            'messaging'=>['Search Term → RSA Messaging Gap','High-performing themes absent from active RSA copy. Copy recommendations require approved source evidence.','gaps','ppc-messaging'],
-        ][$type];$rows=(array)($report[$meta[2]]??[]);
-        ?><article class="wnq-module" id="<?php echo esc_attr($meta[3]);?>"><div class="wnq-module-title"><div><h3><?php echo esc_html($meta[0]);?></h3><p><?php echo esc_html($meta[1]);?></p></div><?php self::moduleStatus($report);?></div>
-        <?php if(empty($report['available'])):self::unavailable($report);else:?><?php if(!empty($report['method'])):?><p class="wnq-module-note"><strong>Method:</strong> <?php echo esc_html((string)$report['method']);?></p><?php endif;?><?php if(!empty($report['message'])):?><div class="wnq-unavailable"><strong>Partial evidence</strong><span><?php echo esc_html((string)$report['message']);?></span></div><?php endif;?>
-        <details class="wnq-detail"><summary><?php echo esc_html($meta[0].' — '.(string)($report['period']??'Current evidence').' ('.count($rows).')');?></summary><div class="wnq-intel-grid">
-        <?php if(!$rows):?><div class="wnq-empty-state"><strong>No qualifying items.</strong><span>No evidence crossed this module’s conservative review safeguards.</span></div><?php else:foreach(array_slice($rows,0,100) as $row):?>
-            <section class="wnq-intel-card">
-            <?php if($type==='anomalies'):?><h4><?php echo esc_html((string)$row['campaign']);?></h4><p><?php echo esc_html(count((array)$row['anomalies']).' unusual metric movement(s)');?></p><?php foreach((array)$row['anomalies'] as $a):?><div><strong><?php echo esc_html(self::label((string)$a['metric']));?></strong><span><?php echo esc_html(self::advancedMetric((string)$a['metric'],(float)$a['baseline']).' → '.self::advancedMetric((string)$a['metric'],(float)$a['current']));?></span><small><?php echo esc_html(number_format_i18n(abs((float)($a['relative_change']??0))*100,0).'% '.(string)$a['direction'].' · z '.number_format_i18n((float)$a['z_score'],1));?></small></div><?php endforeach;?>
-            <?php elseif($type==='quality_score'):?><h4><?php echo esc_html((string)$row['keyword']);?></h4><p><?php echo esc_html((string)$row['campaign'].' · '.(string)$row['ad_group']);?></p><div><strong>Quality Score</strong><span><?php echo esc_html($row['quality_score']===null?'Not populated':(string)$row['quality_score'].' / 10');?></span></div><div><small>Expected CTR: <?php echo esc_html(self::label((string)$row['expected_ctr']));?> · Ad relevance: <?php echo esc_html(self::label((string)$row['ad_relevance']));?> · Landing page: <?php echo esc_html(self::label((string)$row['landing_page_experience']));?></small></div><div><small><?php echo esc_html(self::money((float)$row['cost']).' spend · '.number_format_i18n((float)$row['conversions'],2).' conversions · '.self::money((float)$row['cpa']).' CPA'); ?></small></div>
-            <?php elseif($type==='ngrams'):?><h4><?php echo esc_html((string)$row['ngram']);?> <small><?php echo esc_html((string)$row['size'].'-gram');?></small></h4><?php self::pill((string)$row['classification']);?><p><?php echo esc_html((string)$row['queries'].' queries · '.number_format_i18n((int)$row['clicks']).' clicks · '.self::money((float)$row['cost']).' · '.number_format_i18n((float)$row['conversions'],2).' conversions · '.self::money((float)$row['cpa']).' CPA');?></p>
-            <?php elseif($type==='routing'):?><h4><?php echo esc_html((string)$row['query']);?></h4><p><strong>Current:</strong> <?php echo esc_html((string)$row['campaign'].' → '.(string)$row['ad_group'].' → '.(string)$row['matched_keyword']);?></p><p><strong>Possible dedicated coverage:</strong> <?php echo esc_html((string)$row['better_campaign'].' → '.(string)$row['better_ad_group'].' → '.(string)$row['better_keyword']);?></p><small><?php echo esc_html((string)$row['existing_negative_context'].' scoped negative(s) available for route review · similarity '.number_format_i18n((float)$row['similarity']*100,0).'%');?></small>
-            <?php else:?><h4><?php echo esc_html((string)$row['theme']);?></h4><?php self::pill(!empty($row['claim_verified'])?'source_verified':'verification_required');?><p><?php echo esc_html((string)$row['recommendation']);?></p><small><?php echo esc_html((string)$row['queries'].' queries · '.number_format_i18n((float)$row['conversions'],2).' conversions');?><?php if(!empty($row['source'])):?> · <a href="<?php echo esc_url((string)$row['source']);?>" target="_blank" rel="noopener noreferrer">approved client source</a><?php endif;?></small>
-            <?php endif;?>
-            <?php if(!empty($row['client_rule_context'])):?><p class="wnq-rule-context"><strong>Client rule context:</strong> <?php echo esc_html(implode(' ',(array)$row['client_rule_context']));?></p><?php endif;?></section>
-        <?php endforeach;endif;?></div></details><p class="wnq-read-only-note"><strong>Read-only:</strong> This module creates evidence and investigations only. It cannot change Google Ads.</p><?php endif;?></article><?php
+        $meta = [
+            'anomalies'=>['Campaign anomalies','Unusual movement compared with each campaign’s own history.','campaigns','ppc-anomalies'],
+            'quality_score'=>['Keyword quality','Quality components alongside traffic, spend, conversions, and impression share.','items','ppc-quality-score'],
+            'ngrams'=>['Recurring search patterns','Explore the queries behind recurring intent and potential waste.','items','ppc-ngrams'],
+            'routing'=>['Query routing','Review where queries landed and where dedicated keyword coverage exists.','cases','ppc-routing'],
+            'messaging'=>['Messaging opportunities','Converting themes missing from the same ad group’s active RSA copy.','gaps','ppc-messaging'],
+        ][$type];
+        $rows = (array)($report[$meta[2]] ?? []);
+        $selected_campaign = preg_replace('/\\D+/','',(string)($_GET['investigate_campaign']??'')) ?: '';
+        if ($selected_campaign !== '' && $type !== 'ngrams') $rows=array_values(array_filter($rows,static fn($row)=>(string)($row['campaign_id']??'')===$selected_campaign));
+        $period = (string)($report['period']??'Current evidence');
+        ?>
+        <article class="wnq-module" id="<?php echo esc_attr($meta[3]); ?>">
+            <div class="wnq-module-title"><div><h3><?php echo esc_html($meta[0]); ?></h3><p><?php echo esc_html($meta[1]); ?></p></div><?php self::moduleStatus($report); ?></div>
+            <?php if (empty($report['available'])): self::unavailable($report); else: ?>
+            <div class="wnq-report-meta"><span><?php echo esc_html($period); ?></span><strong><?php echo esc_html((string)count($rows)); ?> <?php echo $type==='anomalies'?'campaigns to review':'records'; ?></strong></div>
+            <?php if ($selected_campaign !== '' && $type==='ngrams'): ?><p class="wnq-module-note">Patterns cover the whole linked Search account; other reports below use your campaign filter.</p><?php endif; ?>
+            <?php if (!empty($report['message'])): ?><p class="wnq-module-note"><?php echo esc_html((string)$report['message']); ?></p><?php endif; ?>
+            <?php if (!empty($report['method'])): ?><details class="wnq-detail"><summary>How this comparison works</summary><p class="wnq-module-note"><?php echo esc_html((string)$report['method']); ?></p></details><?php endif; ?>
+            <details class="wnq-detail" <?php echo $rows && count($rows)<=5?'open':''; ?>><summary>Review evidence <span class="wnq-record-count"><?php echo esc_html((string)count($rows)); ?></span></summary>
+            <?php if (!$rows): ?><div class="wnq-empty-state"><strong>No qualifying records in this view.</strong><span>Check the period, campaign filter, and data availability above.</span></div>
+            <?php elseif ($type==='anomalies'): ?>
+                <div class="wnq-intel-grid">
+                <?php foreach ($rows as $row): ?><section class="wnq-intel-card"><h4><?php echo esc_html((string)$row['campaign']); ?></h4><small><?php echo esc_html($period); ?></small>
+                    <?php foreach ((array)$row['anomalies'] as $metric): ?><div><strong><?php echo esc_html(self::label((string)$metric['metric'])); ?></strong><span><?php echo esc_html(self::advancedMetric((string)$metric['metric'],(float)$metric['baseline']).' → '.self::advancedMetric((string)$metric['metric'],(float)$metric['current'])); ?></span>
+                    <small><?php echo esc_html($metric['relative_change']===null?'New activity; no percentage baseline':number_format_i18n(abs((float)$metric['relative_change'])*100,0).'% '.(string)$metric['direction']); ?> · <?php echo esc_html($metric['z_score']===null?'Flat historical baseline':'z '.number_format_i18n((float)$metric['z_score'],1)); ?></small></div><?php endforeach; ?></section><?php endforeach; ?>
+                </div>
+            <?php else:
+                $columns = [
+                    'quality_score'=>['Keyword / campaign','Quality Score','Expected CTR','Ad relevance','Landing page','Impressions','Clicks','Spend','Conversions','CPA','Search IS'],
+                    'ngrams'=>['Pattern / examples','Assessment','Distinct queries','Impressions','Clicks','Spend','Conversions','Conv. rate','CPA'],
+                    'routing'=>['Query','Current route','Dedicated coverage','Negative conflicts','Performance'],
+                    'messaging'=>['Theme / ad group','Source verification','Queries','Clicks','Conversions','CPA','Next step'],
+                ][$type];
+            ?>
+                <div class="wnq-table-scroll"><table><thead><tr><?php foreach ($columns as $column): ?><th><?php echo esc_html($column); ?></th><?php endforeach; ?></tr></thead><tbody>
+                <?php foreach ($rows as $row): ?><tr>
+                <?php if ($type==='quality_score'): ?>
+                    <td><strong><?php echo esc_html((string)$row['keyword']); ?></strong><br><small><?php echo esc_html((string)$row['campaign'].' / '.(string)$row['ad_group']); ?></small></td>
+                    <td><?php echo esc_html($row['quality_score']===null?'Unavailable':(string)$row['quality_score'].' / 10'); ?></td>
+                    <?php foreach (['expected_ctr','ad_relevance','landing_page_experience'] as $component): ?><td><?php self::pill((string)$row[$component]); ?></td><?php endforeach; ?>
+                    <?php foreach (['impressions','clicks'] as $metric): ?><td><?php echo esc_html(number_format_i18n((float)$row[$metric],0)); ?></td><?php endforeach; ?>
+                    <td><?php echo esc_html(self::money((float)$row['cost'])); ?></td><td><?php echo esc_html(number_format_i18n((float)$row['conversions'],2)); ?></td><td><?php echo esc_html(is_numeric($row['cpa'])?self::money((float)$row['cpa']):'—'); ?></td>
+                    <td><?php echo esc_html(is_numeric($row['search_is'])?((float)$row['search_is']<.1?'<10%':number_format_i18n((float)$row['search_is']*100,1).'%'):'Unavailable'); ?></td>
+                <?php elseif ($type==='ngrams'): ?>
+                    <td><strong><?php echo esc_html((string)$row['ngram']); ?></strong><br><small><?php echo esc_html((string)$row['size']); ?> words</small><details><summary>Example queries</summary><ul><?php foreach ((array)($row['examples']??[]) as $example): ?><li><?php echo esc_html((string)$example); ?></li><?php endforeach; ?></ul></details><?php if (!empty($row['client_rule_context'])): ?><small class="wnq-rule-context"><?php echo esc_html(implode(' ',(array)$row['client_rule_context'])); ?></small><?php endif; ?></td>
+                    <td><?php self::pill((string)$row['classification']); ?></td>
+                    <?php foreach (['queries','impressions','clicks'] as $metric): ?><td><?php echo esc_html(number_format_i18n((float)$row[$metric],0)); ?></td><?php endforeach; ?>
+                    <td><?php echo esc_html(self::money((float)$row['cost'])); ?></td><td><?php echo esc_html(number_format_i18n((float)$row['conversions'],2)); ?></td><td><?php echo esc_html(is_numeric($row['conversion_rate'])?number_format_i18n((float)$row['conversion_rate']*100,1).'%':'—'); ?></td><td><?php echo esc_html(is_numeric($row['cpa'])?self::money((float)$row['cpa']):'—'); ?></td>
+                <?php elseif ($type==='routing'): ?>
+                    <td><strong><?php echo esc_html((string)$row['query']); ?></strong><?php if (!empty($row['client_rule_context'])): ?><p class="wnq-rule-context"><?php echo esc_html(implode(' ',(array)$row['client_rule_context'])); ?></p><?php endif; ?></td>
+                    <td><?php echo esc_html((string)$row['campaign'].' / '.(string)$row['ad_group']); ?><br><small><?php echo esc_html((string)$row['matched_keyword']); ?></small></td>
+                    <td><?php echo esc_html((string)$row['better_campaign'].' / '.(string)$row['better_ad_group']); ?><br><strong><?php echo esc_html((string)$row['better_keyword']); ?></strong></td>
+                    <td><?php echo esc_html((string)$row['existing_negative_context']); ?> potential blockers<br><small>Review destination eligibility</small></td>
+                    <td><?php echo esc_html((string)$row['clicks'].' clicks · '.self::money((float)$row['cost']).' · '.number_format_i18n((float)$row['conversions'],2).' conversions'); ?></td>
+                <?php else: ?>
+                    <td><strong><?php echo esc_html((string)$row['theme']); ?></strong><br><small><?php echo esc_html((string)($row['campaign']??'').' / '.(string)($row['ad_group']??'')); ?></small></td>
+                    <td><?php self::pill(!empty($row['claim_verified'])?'source_verified':'verification_required'); ?><?php if (!empty($row['source'])): ?><br><a href="<?php echo esc_url((string)$row['source']); ?>" target="_blank" rel="noopener noreferrer">Read supporting source</a><?php endif; ?></td>
+                    <?php foreach (['queries','clicks','conversions'] as $metric): ?><td><?php echo esc_html(number_format_i18n((float)$row[$metric],$metric==='conversions'?2:0)); ?></td><?php endforeach; ?>
+                    <td><?php echo esc_html(is_numeric($row['cpa'])?self::money((float)$row['cpa']):'—'); ?></td><td><?php echo esc_html((string)$row['recommendation']); ?></td>
+                <?php endif; ?></tr><?php endforeach; ?></tbody></table></div>
+            <?php endif; ?></details>
+            <?php endif; ?>
+        </article>
+        <?php
     }
 
     private static function renderPpcMemory(array $report,string $client_id):void
@@ -1393,7 +1438,7 @@ final class PpcIntelligenceAdmin
     private static function clearSearchCache(string $client_id): void
     {
         $connection = PpcAccount::getByClientId($client_id);
-        delete_transient('wnq_ppc_sqr_' . md5($client_id . '|' . (string)($connection['customer_id'] ?? '')));
+        delete_transient('wnq_ppc_sqr_v2_' . md5($client_id . '|' . (string)($connection['customer_id'] ?? '')));
     }
 
     private static function clearAdCache(string $client_id): void
