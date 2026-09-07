@@ -58,8 +58,8 @@ final class PpcProposal
         $table = $wpdb->prefix . self::TABLE;
         foreach ($terms as $term) {
             $action = (string)($term['recommended_action'] ?? 'human_review');
-            if (!in_array($action, ['negative_exact', 'negative_phrase', 'human_review', 'investigate'], true)) continue;
-            $key = hash('sha256', $client_id . '|' . $customer_id . '|' . strtolower((string)$term['query']) . '|' . (string)$term['campaign_id'] . '|' . $action);
+            if (!in_array($action, ['negative_exact', 'negative_phrase', 'human_review', 'investigate', 'keep', 'watch', 'no_action', 'add_as_keyword'], true)) continue;
+            $key = self::key($client_id, $customer_id, $term);
             $data = [
                 'client_id' => sanitize_text_field($client_id),
                 'customer_id' => preg_replace('/\D+/', '', $customer_id) ?: '',
@@ -71,12 +71,17 @@ final class PpcProposal
                 'classification' => sanitize_key((string)$term['classification']),
                 'confidence' => max(0, min(1, (float)$term['confidence'])),
                 'recommended_action' => sanitize_key($action),
-                'evidence_json' => wp_json_encode(['cost' => (float)$term['cost'], 'clicks' => (int)$term['clicks'], 'conversions' => (float)$term['conversions'], 'period' => 'last_30_days']),
+                'evidence_json' => wp_json_encode(['cost' => (float)$term['cost'], 'clicks' => (int)$term['clicks'], 'conversions' => (float)$term['conversions'], 'period' => 'last_30_days', 'original_ai_classification' => (string)($term['original_ai_classification'] ?? $term['classification'])]),
             ];
             $existing = $wpdb->get_var($wpdb->prepare("SELECT id FROM {$table} WHERE proposal_key = %s", $key));
             if ($existing) $wpdb->update($table, $data, ['id' => (int)$existing]);
             else $wpdb->insert($table, $data + ['status' => 'pending']);
         }
+    }
+
+    public static function key(string $client_id, string $customer_id, array $term): string
+    {
+        return hash('sha256', implode('|', [$client_id, $customer_id, strtolower((string)$term['query']), (string)$term['campaign_id'], (string)$term['ad_group_id'], (string)$term['recommended_action']]));
     }
 
     public static function statuses(string $client_id): array
@@ -117,16 +122,31 @@ final class PpcProposal
         return $result;
     }
 
-    public static function review(string $client_id, array $ids, string $status): int
+    public static function review(string $client_id, array $ids, string $status, string $reason = ''): int
     {
         global $wpdb;
         $allowed = ['approved_exact', 'approved_phrase', 'ignored', 'rejected', 'relevant'];
-        if (!in_array($status, $allowed, true)) return 0;
+        if (!in_array($status, $allowed, true) || trim($reason) === '') return 0;
         $ids = array_values(array_unique(array_filter(array_map('absint', $ids))));
         if (!$ids) return 0;
+        $connection = PpcAccount::getByClientId($client_id);
+        $customer_id = (string)($connection['customer_id'] ?? '');
+        if (!preg_match('/^\d{10}$/', $customer_id) || count($ids) > 500) return 0;
         $table = $wpdb->prefix . self::TABLE;
-        $placeholders = implode(',', array_fill(0, count($ids), '%d'));
-        $params = array_merge([$status, get_current_user_id(), current_time('mysql'), sanitize_text_field($client_id)], $ids);
-        return (int)$wpdb->query($wpdb->prepare("UPDATE {$table} SET status = %s, reviewed_by = %d, reviewed_at = %s WHERE client_id = %s AND id IN ({$placeholders})", ...$params));
+        if ($wpdb->query('START TRANSACTION') === false) return 0;
+        try {
+            foreach ($ids as $id) {
+                $proposal = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$table} WHERE id = %d AND client_id = %s AND customer_id = %s FOR UPDATE", $id, $client_id, $customer_id), ARRAY_A);
+                if (!$proposal) throw new \RuntimeException('The proposal no longer matches the linked account.');
+                $proposal['evidence'] = json_decode((string)($proposal['evidence_json'] ?? ''), true) ?: [];
+                if (!PpcMemory::recordFeedback($client_id, $customer_id, $proposal, $status, $reason)) throw new \RuntimeException('Feedback could not be stored.');
+                if ($wpdb->update($table, ['status'=>$status, 'reviewed_by'=>get_current_user_id(), 'reviewed_at'=>current_time('mysql')], ['id'=>$id, 'client_id'=>$client_id, 'customer_id'=>$customer_id]) === false) throw new \RuntimeException('Review could not be stored.');
+            }
+            if ($wpdb->query('COMMIT') === false) throw new \RuntimeException('Review could not be committed.');
+            return count($ids);
+        } catch (\Throwable $error) {
+            $wpdb->query('ROLLBACK');
+            return 0;
+        }
     }
 }

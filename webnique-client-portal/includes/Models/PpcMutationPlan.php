@@ -277,8 +277,10 @@ final class PpcMutationPlan
         global $wpdb;
         $plans = $wpdb->prefix . self::TABLE;
         $limit = max(1, min(100, $limit));
-        $rows = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$plans} WHERE client_id = %s ORDER BY id DESC LIMIT %d", sanitize_text_field($client_id), $limit), ARRAY_A);
-        foreach ((array)$rows as &$row) {
+        $connection = PpcAccount::getByClientId($client_id);
+        if (empty($connection['customer_id'])) return [];
+        $rows = (array)$wpdb->get_results($wpdb->prepare("SELECT * FROM {$plans} WHERE client_id = %s AND customer_id = %s ORDER BY id DESC LIMIT %d", sanitize_text_field($client_id), (string)$connection['customer_id'], $limit), ARRAY_A);
+        foreach ($rows as &$row) {
             if (in_array((string)$row['status'], ['awaiting_approval', 'approved'], true) && (string)$row['expires_at'] < current_time('mysql')) {
                 $row['stored_status'] = (string)$row['status'];
                 $row['status'] = 'expired';

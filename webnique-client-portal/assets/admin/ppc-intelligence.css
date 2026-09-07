@@ -11,6 +11,36 @@
     color: var(--wnq-ink);
 }
 
+/* Evidence workbench: readable periods, complete records, and accessible controls. */
+.wnq-ppc-intelligence [hidden] { display: none !important; }
+.wnq-ppc-intelligence .wnq-module { scroll-margin-top: 115px; }
+.wnq-ppc-intelligence .wnq-report-meta { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; padding:9px 12px; margin:8px 0; border:1px solid var(--wnq-line); border-radius:7px; background:var(--wnq-soft); color:#42526a; font-size:12px; }
+.wnq-ppc-intelligence .wnq-record-count { margin-left:8px; padding:2px 7px; border-radius:20px; background:#e5edf7; color:#174778; font-variant-numeric:tabular-nums; }
+.wnq-ppc-intelligence .wnq-evidence-tools { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:12px 0; }
+.wnq-ppc-intelligence .wnq-evidence-tools > label:first-child { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+.wnq-ppc-intelligence .wnq-evidence-tools input { flex:1 1 180px; min-width:130px; max-width:360px; }
+.wnq-ppc-intelligence .wnq-evidence-tools label { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--wnq-muted); }
+.wnq-ppc-intelligence .wnq-evidence-tools [role="status"] { margin-left:auto; min-width:90px; font-size:12px; font-variant-numeric:tabular-nums; color:var(--wnq-muted); }
+.wnq-ppc-intelligence .wnq-table-scroll { max-width:100%; max-height:640px; overflow:auto; overscroll-behavior:contain; }
+.wnq-ppc-intelligence .wnq-table-scroll thead th { position:sticky; top:0; z-index:1; background:#edf3fa; color:#31445f; }
+.wnq-ppc-intelligence .wnq-table-scroll tbody tr:nth-child(even) { background:#f8fafc; }
+.wnq-ppc-intelligence .wnq-table-scroll td:first-child { min-width:170px; }
+.wnq-ppc-intelligence .wnq-table-scroll td { overflow-wrap:anywhere; }
+.wnq-ppc-intelligence .wnq-table-scroll td > details { margin-top:6px; font-size:12px; }
+.wnq-ppc-intelligence .wnq-table-scroll td > details summary { color:var(--wnq-blue); cursor:pointer; }
+.wnq-ppc-intelligence .wnq-table-scroll td > details ul { padding-left:16px; list-style:disc; }
+.wnq-ppc-intelligence .wnq-pill.is-below_average,.wnq-ppc-intelligence .wnq-pill.is-waste_investigation { color:#92400e; background:#fff1cc; }
+.wnq-ppc-intelligence .wnq-pill.is-source_verified,.wnq-ppc-intelligence .wnq-pill.is-high_performing_intent { color:#166534; background:#dcfce7; }
+.wnq-ppc-intelligence .wnq-pill.is-verification_required { color:#6b21a8; background:#f3e8ff; }
+.wnq-ppc-intelligence :is(input,select,textarea,summary,a,button):focus-visible { outline:3px solid #9cc6f4; outline-offset:2px; }
+@media(max-width:782px) {
+    .wnq-ppc-intelligence .wnq-evidence-tools { gap:6px; }
+    .wnq-ppc-intelligence .wnq-evidence-tools input { flex-basis:100%; max-width:none; }
+    .wnq-ppc-intelligence .wnq-evidence-tools [role="status"] { min-width:0; }
+    .wnq-ppc-intelligence .wnq-workspace-tabs { position:static; flex-wrap:wrap; }
+    .wnq-ppc-intelligence .wnq-module { scroll-margin-top:50px; }
+}
+
 .wnq-ppc-intelligence .wnq-ppc-hero {
     display: flex;
     align-items: flex-start;

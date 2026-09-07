@@ -1,0 +1,52 @@
+/* Run: node tests/ppc-ui-regression.cjs (requires Puppeteer and Chrome). */
+const assert = require('node:assert/strict');
+const {execFileSync} = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const puppeteer = require('puppeteer');
+(async () => {
+    const html = execFileSync(process.env.PHP_BINARY || 'php',[path.join(__dirname,'ppc-ui-fixture.php')],{encoding:'utf8'});
+    const artifacts = fs.mkdtempSync(path.join(os.tmpdir(),'wnq-ppc-ui-'));
+    const filename=path.join(artifacts,'fixture.html');
+    fs.writeFileSync(filename,html);
+    const browser = await puppeteer.launch({headless:true});
+    try {
+        const page = await browser.newPage();
+        const errors=[];
+        page.on('pageerror',error=>errors.push(error.message));
+        await page.setViewport({width:1440,height:1000});
+        await page.goto('file://'+filename);
+        assert.equal(await page.$eval('#ppc-workspace-search',el=>el.hidden),true);
+        await page.click('a[href="#ppc-ngrams"]');
+        assert.equal(await page.$eval('#ppc-workspace-search',el=>el.hidden),false,'Evidence link opens its workspace');
+        await page.click('#ppc-ngrams > details > summary');
+        const visible = () => page.$$eval('#ppc-ngrams tbody > tr',rows=>rows.filter(r=>!r.hidden).length);
+        assert.equal(await visible(),10);
+        await page.click('button[aria-label^="Next page"]');
+        assert.match(await page.$eval('.wnq-evidence-tools [role="status"]',el=>el.textContent),/11–20 of 125/);
+        await page.select('.wnq-evidence-tools select','100');
+        assert.equal(await visible(),100);
+        await page.click('button[aria-label^="Next page"]');
+        assert.equal(await visible(),25,'Rows after 100 remain accessible');
+        await page.type('.wnq-evidence-tools input','theme 125');
+        assert.equal(await visible(),1);
+        await page.type('.wnq-evidence-tools input',' missing');
+        assert.equal(await visible(),0);
+        assert.equal(await page.$eval('.wnq-empty-state',el=>el.hidden),false);
+        await page.$eval('.wnq-evidence-tools input',el=>{el.value='';el.dispatchEvent(new Event('input'));});
+        await page.select('.wnq-evidence-tools select','10');
+        assert.equal(await page.evaluate(()=>window.injected),undefined,'Query text must remain escaped');
+        await page.screenshot({path:path.join(artifacts,'desktop.png'),fullPage:true});
+        await page.setViewport({width:390,height:844});
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),'Page must not overflow on mobile');
+        await page.screenshot({path:path.join(artifacts,'mobile.png'),fullPage:true});
+        await page.click('[data-wnq-workspace-tab="performance"]');
+        assert.match(await page.$eval('#ppc-workspace-performance',el=>el.textContent),/temporarily unavailable/);
+        await page.focus('[data-wnq-workspace-tab="performance"]');
+        await page.keyboard.press('ArrowRight');
+        assert.equal(await page.$eval('[data-wnq-workspace-tab="search"]',el=>el.getAttribute('aria-selected')),'true');
+        assert.deepEqual(errors,[]);
+        console.log('PPC browser regression checks passed. Screenshots: '+artifacts);
+    } finally { await browser.close(); }
+})().catch(error=>{console.error(error);process.exitCode=1;});

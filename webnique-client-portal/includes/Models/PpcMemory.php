@@ -88,11 +88,12 @@ final class PpcMemory
         if (!in_array($decision, $allowed, true)) return false;
         $query = sanitize_text_field((string)($proposal['query_text'] ?? $proposal['query'] ?? ''));
         $customer_id = self::customerId($customer_id);
-        if ($query === '' || strlen($customer_id) !== 10) return false;
+        if ($query === '' || strlen($customer_id) !== 10 || $client_id === '' || trim($reason) === '') return false;
+        if (!hash_equals($client_id, (string)($proposal['client_id'] ?? '')) || !hash_equals($customer_id, self::customerId((string)($proposal['customer_id'] ?? '')))) return false;
         $now = current_time('mysql');
         return $wpdb->insert($wpdb->prefix . self::FEEDBACK_TABLE, [
             'client_id'=>sanitize_text_field($client_id),'customer_id'=>$customer_id,'subject_type'=>'search_term','subject_key'=>self::normalize($query),
-            'original_classification'=>sanitize_key((string)($proposal['classification'] ?? 'unknown')),'human_decision'=>$decision,
+            'original_classification'=>sanitize_key((string)($proposal['evidence']['original_ai_classification'] ?? $proposal['classification'] ?? 'unknown')),'human_decision'=>$decision,
             'reason'=>sanitize_textarea_field($reason),'eventual_result'=>sanitize_textarea_field($result),
             'context_json'=>wp_json_encode(['proposal_id'=>(int)($proposal['id']??0),'campaign_id'=>(string)($proposal['campaign_id']??''),'ad_group_id'=>(string)($proposal['ad_group_id']??''),'evidence'=>(array)($proposal['evidence']??[])]),
             'actor_id'=>get_current_user_id(),'decided_at'=>$now,'result_at'=>$result!==''?$now:null,
@@ -104,10 +105,14 @@ final class PpcMemory
         global $wpdb;
         $client_id = sanitize_text_field($client_id); $customer_id = self::customerId($customer_id);
         $memory = $wpdb->prefix . self::MEMORY_TABLE; $feedback = $wpdb->prefix . self::FEEDBACK_TABLE;
-        $memories = (array)$wpdb->get_results($wpdb->prepare("SELECT * FROM {$memory} WHERE client_id=%s AND customer_id=%s AND status='active' ORDER BY last_confirmed_at DESC LIMIT 250",$client_id,$customer_id),ARRAY_A);
-        $decisions = (array)$wpdb->get_results($wpdb->prepare("SELECT * FROM {$feedback} WHERE client_id=%s AND customer_id=%s ORDER BY decided_at DESC LIMIT 500",$client_id,$customer_id),ARRAY_A);
+        $memories = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$memory} WHERE client_id=%s AND customer_id=%s AND status='active' ORDER BY last_confirmed_at DESC, id DESC LIMIT 250",$client_id,$customer_id),ARRAY_A);
+        if ($wpdb->last_error) throw new \RuntimeException('PPC memory is unavailable.');
+        $decisions = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$feedback} WHERE client_id=%s AND customer_id=%s ORDER BY decided_at DESC, id DESC LIMIT 500",$client_id,$customer_id),ARRAY_A);
+        if ($wpdb->last_error) throw new \RuntimeException('PPC feedback is unavailable.');
+        $memories = (array)$memories;
+        $decisions = (array)$decisions;
         foreach ($memories as &$row) { $row['evidence']=self::decode((string)($row['evidence_json']??'')); unset($row['evidence_json']); } unset($row);
-        foreach ($decisions as &$row) { $row['context']=self::decode((string)($row['context_json']??''));$row['is_stale']=strtotime((string)($row['decided_at']??'')) < strtotime('-365 days'); unset($row['context_json']); } unset($row);
+        foreach ($decisions as &$row) { $row['context']=self::decode((string)($row['context_json']??''));$row['is_stale']=(string)($row['decided_at']??'') < current_datetime()->modify('-365 days')->format('Y-m-d H:i:s'); unset($row['context_json']); } unset($row);
         return ['memories'=>$memories,'feedback'=>$decisions,'rules'=>array_values(array_filter($memories,static fn($r)=>(string)$r['memory_type']==='client_rule'))];
     }
 
@@ -117,10 +122,15 @@ final class PpcMemory
         return (int)$wpdb->update($wpdb->prefix.self::FEEDBACK_TABLE,['eventual_result'=>$result,'result_at'=>current_time('mysql')],['id'=>$id,'client_id'=>sanitize_text_field($client_id),'customer_id'=>self::customerId($customer_id)])>0;
     }
 
-    public static function feedbackForQuery(string $query, array $context): ?array
+    public static function feedbackForQuery(string $query, array $context, string $campaign_id = '', string $ad_group_id = ''): ?array
     {
         $key = self::normalize($query);
-        foreach ((array)($context['feedback']??[]) as $row) if (hash_equals($key,(string)($row['subject_key']??''))) return $row;
+        if ($key === '' || $campaign_id === '' || $ad_group_id === '') return null;
+        foreach ((array)($context['feedback']??[]) as $row) {
+            if (hash_equals($key,(string)($row['subject_key']??''))
+                && hash_equals($campaign_id,(string)($row['context']['campaign_id']??''))
+                && hash_equals($ad_group_id,(string)($row['context']['ad_group_id']??''))) return $row;
+        }
         return null;
     }
 
