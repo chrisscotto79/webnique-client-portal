@@ -112,7 +112,7 @@ final class AnalyticsAdmin
             </div>
 
             <section id="wnq-results-activity" aria-label="Client results activity">
-                <header class="wnq-results-header"><div><span>CLIENT RESULTS</span><h2>Lead Summary</h2><p>Verified leads for the selected reporting period, with source evidence kept separate.</p></div></header>
+                <header class="wnq-results-header"><div><span>CLIENT RESULTS</span><h2>Client results at a glance</h2><p>Verified leads for the selected reporting period, with source evidence kept separate.</p></div></header>
                 <div id="wnq-activity-feeds"></div>
                 <?php self::renderActivitySettings($current_client_id); ?>
             </section>
@@ -214,7 +214,7 @@ final class AnalyticsAdmin
                 html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">Average Position</span><span class="metric-value">' + formatNumber(search.position, 1) + '</span></div></div>';
                 html += '</div>';
 
-                html += '<div class="wnq-table-section"><h3>Top Search Queries</h3>';
+                html += '<details class="wnq-table-section wnq-report-details"><summary>Top Search Queries</summary>';
                 if (Array.isArray(search.queries) && search.queries.length) {
                     html += '<div class="wnq-table-scroll"><table class="wnq-compact-table"><thead><tr><th>Query</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Position</th></tr></thead><tbody>';
                     search.queries.forEach(query => {
@@ -224,7 +224,7 @@ final class AnalyticsAdmin
                 } else {
                     html += '<p class="wnq-empty-copy">No search queries were reported for this period.</p>';
                 }
-                return html + '</div></section>';
+                return html + '</details></section>';
             }
 
             function renderGoogleAds(provider) {
@@ -251,7 +251,7 @@ final class AnalyticsAdmin
                 html += '<div class="wnq-metric"><div class="metric-content"><span class="metric-label">Conversions</span><span class="metric-value">' + formatNumber(ads.conversions, 2) + '</span></div></div>';
                 html += '</div>';
 
-                html += '<div class="wnq-table-section"><h3>Campaign Status &amp; Performance</h3>';
+                html += '<details class="wnq-table-section wnq-report-details"><summary>Campaign Status &amp; Performance</summary>';
                 if (Array.isArray(ads.campaigns) && ads.campaigns.length) {
                     html += '<div class="wnq-table-scroll"><table class="wnq-compact-table"><thead><tr><th>Campaign</th><th>Status</th><th>Cost</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Conversions</th></tr></thead><tbody>';
                     ads.campaigns.forEach(campaign => {
@@ -262,7 +262,7 @@ final class AnalyticsAdmin
                 } else {
                     html += '<p class="wnq-empty-copy">No campaign activity was reported for this period.</p>';
                 }
-                return html + '</div></section>';
+                return html + '</details></section>';
             }
 
             function renderData(data) {
@@ -1224,20 +1224,14 @@ final class AnalyticsAdmin
         nocache_headers();
         $client=sanitize_text_field(wp_unslash($_POST['client_id']??''));
         $provider=sanitize_key($_POST['provider']??'');
-        if ($client==='' || !in_array($provider,['lead_summary','phone_events','ads_calls','gbp_summary'],true)) { wp_send_json_error(['message'=>'Invalid activity request'],400); return; }
-        $days=(int)($_POST['date_range']??30);
-        if (!in_array($days,[7,30,90,180,365,730],true)) $days=30;
+        if ($client==='' || !in_array($provider,['lead_summary','phone_events','ads_calls'],true)) { wp_send_json_error(['message'=>'Invalid activity request'],400); return; }
         $period=\WNQ\Services\AnalyticsActivity::reportingPeriod($_POST['date_range']??30);$start=$period['start'];$end=$period['end'];
         try {
             $config=AnalyticsConfig::getClientConfig($client);
             if (!$config) throw new \RuntimeException('Client not configured.');
             $connection=[];
-            try { if ($provider!=='gbp_summary') $connection=\WNQ\Models\PpcAccount::getByClientId(\WNQ\Services\AnalyticsActivity::adsClient($client))?:[]; } catch (\Throwable $e) { $connection=[]; }
-            if ($provider==='gbp_summary') {
-                $gbpClient=$client;
-                if (!\WNQ\Services\GoogleBusinessProfileClient::mappingForClient($client)) $gbpClient=\WNQ\Services\AnalyticsActivity::adsClient($client);
-                $connection=[\WNQ\Services\GoogleBusinessProfileClient::mappingForClient($gbpClient), hash('sha256', (string)get_option('wnq_gbp_refresh_token','')), \WNQ\Services\GoogleBusinessProfileClient::credentialsConfigured()];
-            }
+            try { $connection=\WNQ\Models\PpcAccount::getByClientId(\WNQ\Services\AnalyticsActivity::adsClient($client))?:[]; } catch (\Throwable $e) { $connection=[]; }
+
             $settings=\WNQ\Services\AnalyticsActivity::settings($client);
             $credentials=in_array($provider,['lead_summary','phone_events'],true)?AnalyticsConfig::getCredentials():null;
             $key='wnq_activity_report_v3_'.hash('sha256',wp_json_encode([$client,$provider,$start,$end,$config,$connection,$settings,$credentials]));
@@ -1251,8 +1245,6 @@ final class AnalyticsAdmin
                     $gaRequest=null;
                     if ($credentials && !empty($config['ga4_property_id'])) { $gaRequest=static function($body) use ($credentials,$config) { $token=self::getGoogleAccessToken($credentials['credentials']); return self::makeGARequest($token,(string)$config['ga4_property_id'],$body); }; }
                     $report=\WNQ\Services\AnalyticsActivity::leadSummary($client,$start,$end,$gaRequest);
-                } elseif ($provider==='gbp_summary') {
-                    $report=(new \WNQ\Services\GoogleBusinessProfileClient())->analyticsForClient($gbpClient,$start,$end);
                 } else $report=\WNQ\Services\AnalyticsActivity::adsCalls($client,$start,$end);
                 if (in_array($report['status'],['available','partial'],true)) set_transient($key,$report,180);
             }
