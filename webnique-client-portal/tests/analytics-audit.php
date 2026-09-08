@@ -52,7 +52,7 @@ namespace {
     check($report['form_leads']===3 && $report['verified_calls']===null,'Ads failure preserves GA');
     \WNQ\Services\GoogleAdsQueryService::$fail=false;
     $options[$key]=[];
-    check(Activity::leadSummary('client','2026-09-01','2026-09-07',$ga)['total_verified_leads']===null,'Unconfirmed events never become verified leads');
+    check(Activity::leadSummary('client','2026-09-01','2026-09-07',$ga)['total_verified_leads']===5,'GA4 key events count without a local confirmation checkbox');
     $options[$key]=['lead_events_confirmed'=>true];
     $limited=static function($body)use($ga){$data=$ga($body);$data['metadata']['samplingMetadatas']=[['samplesReadCount'=>1]];return $data;};
     check(Activity::leadSummary('client','2026-09-01','2026-09-07',$limited)['total_verified_leads']===null,'Sampled reports do not supply complete totals');

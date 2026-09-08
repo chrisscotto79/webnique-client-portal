@@ -25,5 +25,16 @@ $request = static function (array $body): array {
 $report = \WNQ\Services\AnalyticsActivity::leadEvents($client, '2026-09-01', '2026-09-07', $request);
 assert($report['status'] === 'available');
 assert($report['form_leads'] === 3 && $report['email_leads'] === 2);
-assert(strpos($report['message'], 'key events') !== false);
+assert(strpos($report['message'], 'GA4 key-event counts') !== false);
+foreach ([[], ['lead_events_confirmed'=>false]] as $settings) {
+    $GLOBALS['test_options']['wnq_activity_' . hash('sha256', $client)] = $settings;
+    $report = \WNQ\Services\AnalyticsActivity::leadEvents($client, '2026-09-01', '2026-09-07', $request);
+    assert($report['form_leads'] === 3 && $report['email_leads'] === 2);
+}
+$empty = \WNQ\Services\AnalyticsActivity::leadEvents($client, '2026-09-01', '2026-09-07', static fn($body) => ['rowCount'=>0, 'rows'=>[]]);
+assert($empty['status'] === 'available' && $empty['form_leads'] === 0 && $empty['email_leads'] === 0);
+$rawOnly = \WNQ\Services\AnalyticsActivity::leadEvents($client, '2026-09-01', '2026-09-07', static fn($body) => ['rows'=>[
+    ['dimensionValues'=>[['value'=>'generate_lead']], 'metricValues'=>[['value'=>'9'], ['value'=>'0']]],
+]]);
+assert($rawOnly['form_leads'] === 0 && $rawOnly['email_leads'] === 0);
 echo "Analytics lead summary unit checks passed.\n";

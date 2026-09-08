@@ -1183,10 +1183,9 @@ final class AnalyticsAdmin
                 <input type="hidden" name="client_id" value="<?php echo esc_attr($client); ?>">
                 <?php wp_nonce_field('wnq_activity_settings_'.$client,'wnq_nonce'); ?>
                 <label>GA4 phone-click event names <input name="phone_events" required value="<?php echo esc_attr(implode(', ',\WNQ\Services\AnalyticsActivity::phoneNames($client))); ?>"><small>Comma-separated exact names already sent by your website, such as phone_click. This does not install tracking tags.</small></label>
-                <label>GA4 form lead event names <input name="form_events" required value="<?php echo esc_attr(implode(', ',\WNQ\Services\AnalyticsActivity::formNames($client))); ?>"><small>Only events marked as GA4 key events are counted as confirmed Form Leads.</small></label>
-                <label>GA4 email lead event names <input name="email_events" required value="<?php echo esc_attr(implode(', ',\WNQ\Services\AnalyticsActivity::emailNames($client))); ?>"><small>Only events marked as GA4 key events are counted as confirmed Email Leads.</small></label>
-                <label><input type="checkbox" name="lead_events_confirmed" value="1" <?php checked(!empty($settings['lead_events_confirmed'])); ?>> I have verified these form and email events fire on completed submissions, not button clicks or opening an email app.</label>
-                <p class="description">A GA4 key-event label alone does not confirm a submitted lead. Until this setup is confirmed, form/email totals stay unavailable. Counts represent tracked submissions, not unique people.</p>
+                <label>GA4 form lead event names <input name="form_events" required value="<?php echo esc_attr(implode(', ',\WNQ\Services\AnalyticsActivity::formNames($client))); ?>"><small>Form Leads sums GA4 key events for these exact event names.</small></label>
+                <label>GA4 email lead event names <input name="email_events" required value="<?php echo esc_attr(implode(', ',\WNQ\Services\AnalyticsActivity::emailNames($client))); ?>"><small>Email Leads sums GA4 key events for these exact event names.</small></label>
+                <p class="description">Counts come directly from GA4 for the selected dates. A successful report with no matching key events shows 0. Counts represent events, not unique people; phone events remain separate.</p>
                 <label>Minimum Google Ads call duration (seconds) <input type="number" min="0" max="3600" name="min_call_duration" required value="<?php echo esc_attr((string)\WNQ\Services\AnalyticsActivity::callThreshold($client)); ?>"><small>Calls at or above this duration are Verified Calls. SNS Hauling uses the current 20-second rule.</small></label>
                 <label>Portal client with the saved Google Ads account
                     <select name="ads_portal_client_id">
@@ -1209,7 +1208,7 @@ final class AnalyticsAdmin
         check_admin_referer('wnq_activity_settings_'.$client,'wnq_nonce');
         if ($client==='' || !AnalyticsConfig::getClientConfig($client)) wp_die('Client not found.');
         try {
-            $ok=\WNQ\Services\AnalyticsActivity::save($client,sanitize_text_field(wp_unslash($_POST['ads_portal_client_id']??'')),(string)wp_unslash($_POST['phone_events']??''),(string)wp_unslash($_POST['form_events']??'generate_lead'),(string)wp_unslash($_POST['email_events']??'email_click'),wp_unslash($_POST['min_call_duration']??'20'),!empty($_POST['lead_events_confirmed']));
+            $ok=\WNQ\Services\AnalyticsActivity::save($client,sanitize_text_field(wp_unslash($_POST['ads_portal_client_id']??'')),(string)wp_unslash($_POST['phone_events']??''),(string)wp_unslash($_POST['form_events']??'generate_lead'),(string)wp_unslash($_POST['email_events']??'email_click'),wp_unslash($_POST['min_call_duration']??'20'));
         } catch (\Throwable $e) { $ok=false; }
         if (!$ok) wp_die('Settings could not be saved. Check the event names and selected portal client.');
         wp_safe_redirect(add_query_arg(['page'=>'wnq-analytics','client'=>$client,'activity_saved'=>'1'],admin_url('admin.php')));
@@ -1234,7 +1233,7 @@ final class AnalyticsAdmin
 
             $settings=\WNQ\Services\AnalyticsActivity::settings($client);
             $credentials=in_array($provider,['lead_summary','phone_events'],true)?AnalyticsConfig::getCredentials():null;
-            $key='wnq_activity_report_v3_'.hash('sha256',wp_json_encode([$client,$provider,$start,$end,$config,$connection,$settings,$credentials]));
+            $key='wnq_activity_report_v4_'.hash('sha256',wp_json_encode([$client,$provider,$start,$end,$config,$connection,$settings,$credentials]));
             $report=empty($_POST['refresh'])?get_transient($key):false;
             if (!is_array($report)) {
                 if ($provider==='phone_events') {

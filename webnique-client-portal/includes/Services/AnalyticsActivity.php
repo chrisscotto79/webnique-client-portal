@@ -98,7 +98,7 @@ final class AnalyticsActivity
         return strtolower(preg_replace('/^www\./i','',(string)$parts['host'])).(isset($parts['port'])?':'.$parts['port']:'').rtrim((string)($parts['path']??''),'/');
     }
 
-    public static function save(string $client,string $portalClient,string $events,string $formEvents='generate_lead',string $emailEvents='email_click',$threshold=20,bool $confirmed=false): bool
+    public static function save(string $client,string $portalClient,string $events,string $formEvents='generate_lead',string $emailEvents='email_click',$threshold=20): bool
     {
         if ($client==='') return false;
         $names=array_values(array_unique(array_filter(array_map('trim',preg_split('/[\s,]+/',$events)?:[]))));
@@ -119,7 +119,7 @@ final class AnalyticsActivity
         $value['phone_events']=$names;
         $value['form_events']=$form;
         $value['email_events']=$email;
-        $value['lead_events_confirmed']=$confirmed;
+        unset($value['lead_events_confirmed']); // Retired local confirmation gate.
         $value['min_call_duration']=(int)$threshold;
         $value['ads_portal_client_id']=$portalClient;
         $key='wnq_activity_'.hash('sha256',$client);
@@ -190,10 +190,9 @@ final class AnalyticsActivity
             'message'=>'Search ad call records reported by Google Ads; not all website calls or unique leads. Call reporting must be enabled. Recordings are not available through this feed.'.(count($rows)>=1000?' Showing the latest 1,000 calls.':'')];
     }
 
-    /** Report configured GA4 key events used as confirmed form and email leads. */
+    /** Count configured form and email GA4 key events directly. */
     public static function leadEvents(string $client,string $start,string $end,callable $request): array
     {
-        if (empty(self::settings($client)['lead_events_confirmed'])) return self::unavailable('Confirm that the configured form and email events record completed submissions in Tracking connections. Clicks alone cannot verify leads.');
         // Keep event categories mutually exclusive so one GA4 event cannot become two lead types.
         $phone=self::phoneNames($client);
         $formNames=array_values(array_diff(self::formNames($client),$phone));
@@ -215,7 +214,7 @@ final class AnalyticsActivity
         $form=$email=0;
         foreach ($rows as $row) { if (in_array($row['event'],$formNames,true)) $form+=(int)$row['key_events']; if (in_array($row['event'],$emailNames,true)) $email+=(int)$row['key_events']; }
         return ['status'=>$partial?'partial':'available','rows'=>$rows,'form_leads'=>$form,'email_leads'=>$email,
-            'message'=>'Form and email leads are counted only when the configured GA4 events are marked as key events; raw event counts are not treated as confirmed leads.'.($partial?' Coverage may be limited by GA4 reporting restrictions.':'')];
+            'message'=>'Form and email leads use the GA4 key-event counts for the configured event names. These counts represent events, not unique people.'.($partial?' Coverage may be limited by GA4 reporting restrictions.':'')];
     }
 
     /** Combine independent Ads call records and GA4 lead evidence for the Client Analytics summary. */
