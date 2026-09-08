@@ -71,6 +71,10 @@ namespace {
     $GLOBALS['response']=['code'=>200,'body'=>json_encode(['rows'=>[]])];
     invoke('fetchTopPages','secret','properties/123','2026-09-01','2026-09-07');
     check(end($requests)['body']['dimensions']===[['name'=>'pagePath']],'Top pages must aggregate by path, not split by titles.');
+    $GLOBALS['response']=['code'=>200,'body'=>json_encode(['rows'=>[['dimensionValues'=>[['value'=>'email_click']],'metricValues'=>[['value'=>'1'],['value'=>'0']]]]])];
+    $events=invoke('fetchKeyEvents','secret','properties/123','2026-09-01','2026-09-07');
+    check($events[0]['count']===1 && $events[0]['key_events']===0.0,'Tracked actions distinguish clicks from GA4 key events');
+    check(end($requests)['body']['metrics']===[['name'=>'eventCount'],['name'=>'keyEvents']],'Both GA4 metrics requested together');
     $class=new ReflectionClass(WNQ\API\GoogleSearchConsole::class);
     $gsc=$class->newInstanceWithoutConstructor();
     $cacheMethod=$class->getMethod('getFromCache');

@@ -37,4 +37,9 @@ $rawOnly = \WNQ\Services\AnalyticsActivity::leadEvents($client, '2026-09-01', '2
     ['dimensionValues'=>[['value'=>'generate_lead']], 'metricValues'=>[['value'=>'9'], ['value'=>'0']]],
 ]]);
 assert($rawOnly['form_leads'] === 0 && $rawOnly['email_leads'] === 0);
+$emailClick = \WNQ\Services\AnalyticsActivity::leadEvents($client, '2026-09-01', '2026-09-07', static fn($body) => ['rows'=>[
+    ['dimensionValues'=>[['value'=>'email_click']], 'metricValues'=>[['value'=>'1'], ['value'=>'0']]],
+]]);
+assert($emailClick['email_event_count'] === 1 && $emailClick['email_leads'] === 0);
+assert($emailClick['email_event_names'] === ['email_click']);
 echo "Analytics lead summary unit checks passed.\n";

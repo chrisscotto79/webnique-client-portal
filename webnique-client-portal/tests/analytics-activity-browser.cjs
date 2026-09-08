@@ -10,6 +10,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
         phone_events:{status:'available',timezone:'America/New_York',period:{start:'2026-09-01',end:'2026-09-07'},message:'Phone clicks, not confirmed calls. Rows group events within one minute by device and session attribution. These may overlap Ads calls.',rows},
         ads_calls:{status:'available',timezone:'America/New_York',period:{start:'2026-09-01',end:'2026-09-07'},message:'Search ad call records. Recordings are not available through this feed.',rows:[{time:'2026-09-07 14:20:00',source:'Google Ads',campaign:'Local Search',status:'RECEIVED',duration:85}]},
     };
+    reports.lead_summary.lead_event_evidence={emails:{events:3,key_events:2,names:['email_click']},forms:{events:4,key_events:4,names:['generate_lead']}};
     const mock=`
     window.wnqAnalytics={clientId:'fixture',ajaxUrl:'/fixture',nonce:'fixture'};
     window.fixtureReports=${JSON.stringify(reports)}; window.fixtureRequests=[];
@@ -27,6 +28,8 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
         assert.equal(await page.$$eval('#wnq-activity-feeds > article',cards=>cards.length),3);
         assert.equal(await page.$eval('#wnq-feed-lead_summary .wnq-secondary-interactions strong',el=>el.textContent),'7');
         assert.equal(await page.$eval('#wnq-feed-lead_summary .wnq-lead-metric-primary strong',el=>el.textContent),'8');
+        assert.match(await page.$eval('.wnq-lead-event-evidence',el=>el.textContent),/Email: 3 total events · 2 GA4 key events/);
+        assert.match(await page.$eval('.wnq-lead-event-evidence',el=>el.textContent),/The lead total uses GA4 key events/);
         assert.match(await page.$eval('#wnq-feed-lead_summary .wnq-lead-sentence',el=>el.textContent),/2 verified Google Ads calls, 4 tracked form leads, and 2 tracked email leads/);
         assert.match(await page.$eval('#wnq-feed-lead_summary .wnq-lead-warning',el=>el.textContent),/excluded from Verified Calls/);
         await page.click('#wnq-feed-lead_summary .wnq-lead-breakdown summary');

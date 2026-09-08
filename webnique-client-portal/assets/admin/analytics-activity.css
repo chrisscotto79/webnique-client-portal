@@ -8,6 +8,8 @@
 .wnq-analytics-wrap .wnq-compact-table th { background:#f0f5fb; position:sticky; top:0; }
 .wnq-analytics-wrap .wnq-compact-table td { font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 .wnq-analytics-wrap .wnq-tables-grid > * { min-width:0; }
+.wnq-analytics-wrap .event-content small { display:block; color:#526176; font-size:11px; margin-top:5px; overflow-wrap:anywhere; }
+#wnq-results-activity .wnq-lead-event-evidence { color:#526176; font-size:13px; overflow-wrap:anywhere; }
 #wnq-results-activity { margin:22px 0; color:#142132; }
 #wnq-results-activity * { box-sizing:border-box; }
 #wnq-results-activity .wnq-results-header { background:linear-gradient(115deg,#081e31,#12549a); color:white; border-radius:12px; padding:24px; }

@@ -211,9 +211,13 @@ final class AnalyticsActivity
             $rows[]=['event'=>$event,'count'=>max(0,(int)$m[0]),'key_events'=>max(0,(float)$m[1])];
         }
         $partial=(int)($data['rowCount']??count($rows))>count($rows) || !empty($data['metadata']['subjectToThresholding']) || !empty($data['metadata']['dataLossFromOtherRow']) || !empty($data['metadata']['samplingMetadatas']);
-        $form=$email=0;
-        foreach ($rows as $row) { if (in_array($row['event'],$formNames,true)) $form+=(int)$row['key_events']; if (in_array($row['event'],$emailNames,true)) $email+=(int)$row['key_events']; }
+        $form=$email=$formEvents=$emailEvents=0;
+        foreach ($rows as $row) {
+            if (in_array($row['event'],$formNames,true)) { $form+=(int)$row['key_events']; $formEvents+=$row['count']; }
+            if (in_array($row['event'],$emailNames,true)) { $email+=(int)$row['key_events']; $emailEvents+=$row['count']; }
+        }
         return ['status'=>$partial?'partial':'available','rows'=>$rows,'form_leads'=>$form,'email_leads'=>$email,
+            'form_event_count'=>$formEvents,'email_event_count'=>$emailEvents,'form_event_names'=>$formNames,'email_event_names'=>$emailNames,
             'message'=>'Form and email leads use the GA4 key-event counts for the configured event names. These counts represent events, not unique people.'.($partial?' Coverage may be limited by GA4 reporting restrictions.':'')];
     }
 
@@ -246,6 +250,10 @@ final class AnalyticsActivity
         $warning=$unmatchedPaid?'Some paid phone-click activity could not be attributed to the linked Google Ads account. These interactions are excluded from Verified Calls.':'';
         return ['status'=>($adsAvailable && $gaAvailable)?(($ads['status']==='partial'||$phones['status']==='partial'||$leads['status']==='partial')?'partial':'available'):($adsAvailable||$gaAvailable?'partial':'unavailable'),
             'threshold_seconds'=>$threshold,'all_recorded_calls'=>$all,'verified_calls'=>$verified,'form_leads'=>$form,'email_leads'=>$email,'total_verified_leads'=>$total,'website_phone_clicks'=>($phones&&in_array($phones['status'],['available','partial'],true))?array_sum(array_column($phones['rows'],'count')):null,
+            'lead_event_evidence'=>[
+                'forms'=>['events'=>$leads['form_event_count']??null,'key_events'=>$form,'names'=>$leads['form_event_names']??self::formNames($client)],
+                'emails'=>['events'=>$leads['email_event_count']??null,'key_events'=>$email,'names'=>$leads['email_event_names']??self::emailNames($client)],
+            ],
             'breakdown'=>$breakdown,'warning'=>$warning,'period_label'=>$periodLabel,'period'=>['start'=>$start,'end'=>$end,'timezone'=>$ads['timezone']??($phones['timezone']??'Provider reporting timezone')],
             'message'=>'Phone clicks are interactions, not calls, and are never added to Verified Calls. Calls are unique Google Ads call records; verified calls meet the configured '.$threshold.'-second minimum. '.($gaUnavailable['message']??'').' '.($ads['message']??'')];
     }

@@ -40,6 +40,18 @@
             const interactions = node('div', undefined, 'wnq-secondary-interactions');
             interactions.append(metric('Website Phone Clicks', report.website_phone_clicks, 'GA4 phone-click interactions. These are not confirmed calls and are excluded from Total Verified Leads.', false, periodText));
             card.append(metrics);
+            const evidence = node('div', undefined, 'wnq-lead-event-evidence');
+            Object.entries(report.lead_event_evidence || {}).forEach(([kind, data]) => {
+                const label = kind === 'emails' ? 'Email' : 'Form';
+                const item = node('p');
+                item.append(node('strong', label + ': ' + value(data.events) + ' total events · ' + value(data.key_events) + ' GA4 key events. '));
+                item.append(node('span', 'Event names: ' + (data.names || []).join(', ') + '.'));
+                if (data.events != null && data.key_events != null && Number(data.events) !== Number(data.key_events)) {
+                    item.append(node('span', ' The lead total uses GA4 key events. GA4 reported different event and key-event counts for these dates; review the event’s key-event setup and counting method in GA4.'));
+                }
+                evidence.append(item);
+            });
+            card.append(evidence);
             card.append(interactions);
             const sentence = report.total_verified_leads == null ? 'A complete lead total is unavailable. Review source coverage and tracking settings below.' : 'You received ' + value(report.verified_calls) + ' verified Google Ads calls, ' + value(report.form_leads) + ' tracked form leads, and ' + value(report.email_leads) + ' tracked email leads ' + (report.period_label || 'in this reporting period') + ', for ' + value(report.total_verified_leads) + ' verified leads total. Forms and emails are GA4 key events across all traffic sources; the total is not a count of unique people.';
             card.append(node('p', sentence, 'wnq-lead-sentence'));

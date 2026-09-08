@@ -316,6 +316,8 @@ final class AnalyticsAdmin
                         html += '<div class="event-content">';
                         html += '<span class="event-label">' + escapeHtml(event.display_name) + '</span>';
                         html += '<span class="event-count">' + formatNumber(event.count) + '</span>';
+                        html += '<small>Total events · GA4 key events: ' + (event.key_events == null ? 'Unavailable' : formatNumber(event.key_events)) + '</small>';
+                        html += '<small>' + escapeHtml(event.event_name) + '</small>';
                         html += '</div></div>';
                     });
 
@@ -1233,7 +1235,7 @@ final class AnalyticsAdmin
 
             $settings=\WNQ\Services\AnalyticsActivity::settings($client);
             $credentials=in_array($provider,['lead_summary','phone_events'],true)?AnalyticsConfig::getCredentials():null;
-            $key='wnq_activity_report_v4_'.hash('sha256',wp_json_encode([$client,$provider,$start,$end,$config,$connection,$settings,$credentials]));
+            $key='wnq_activity_report_v5_'.hash('sha256',wp_json_encode([$client,$provider,$start,$end,$config,$connection,$settings,$credentials]));
             $report=empty($_POST['refresh'])?get_transient($key):false;
             if (!is_array($report)) {
                 if ($provider==='phone_events') {
@@ -1535,7 +1537,7 @@ final class AnalyticsAdmin
         $data = self::makeGARequest($token, $property_id, [
             'dateRanges' => [['startDate' => $start, 'endDate' => $end]],
             'dimensions' => [['name' => 'eventName']],
-            'metrics'    => [['name' => 'eventCount']],
+            'metrics'    => [['name' => 'eventCount'], ['name' => 'keyEvents']],
             'dimensionFilter' => [
                 'filter' => [
                     'fieldName'    => 'eventName',
@@ -1571,6 +1573,7 @@ final class AnalyticsAdmin
                     'event_name'   => $eventName,
                     'display_name' => $displayNames[$eventName] ?? ucwords(str_replace('_', ' ', $eventName)),
                     'count'        => intval($row['metricValues'][0]['value']),
+                    'key_events'   => isset($row['metricValues'][1]['value']) ? (float)$row['metricValues'][1]['value'] : null,
                 ];
             }
         }
