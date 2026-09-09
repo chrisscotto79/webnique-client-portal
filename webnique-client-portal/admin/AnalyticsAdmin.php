@@ -1225,7 +1225,7 @@ final class AnalyticsAdmin
         nocache_headers();
         $client=sanitize_text_field(wp_unslash($_POST['client_id']??''));
         $provider=sanitize_key($_POST['provider']??'');
-        if ($client==='' || !in_array($provider,['lead_summary','phone_events','ads_calls'],true)) { wp_send_json_error(['message'=>'Invalid activity request'],400); return; }
+        if ($client==='' || !in_array($provider,['lead_summary','phone_events','ads_calls','recent_activity'],true)) { wp_send_json_error(['message'=>'Invalid activity request'],400); return; }
         $period=\WNQ\Services\AnalyticsActivity::reportingPeriod($_POST['date_range']??30);$start=$period['start'];$end=$period['end'];
         try {
             $config=AnalyticsConfig::getClientConfig($client);
@@ -1234,7 +1234,8 @@ final class AnalyticsAdmin
             try { $connection=\WNQ\Models\PpcAccount::getByClientId(\WNQ\Services\AnalyticsActivity::adsClient($client))?:[]; } catch (\Throwable $e) { $connection=[]; }
 
             $settings=\WNQ\Services\AnalyticsActivity::settings($client);
-            $credentials=in_array($provider,['lead_summary','phone_events'],true)?AnalyticsConfig::getCredentials():null;
+            try { $credentials=in_array($provider,['lead_summary','phone_events','recent_activity'],true)?AnalyticsConfig::getCredentials():null; }
+            catch (\Throwable $e) { $credentials=null; }
             $key='wnq_activity_report_v5_'.hash('sha256',wp_json_encode([$client,$provider,$start,$end,$config,$connection,$settings,$credentials]));
             $report=empty($_POST['refresh'])?get_transient($key):false;
             if (!is_array($report)) {
@@ -1242,10 +1243,10 @@ final class AnalyticsAdmin
                     if (!$credentials || empty($config['ga4_property_id'])) throw new \RuntimeException('GA4 not configured.');
                     $token=self::getGoogleAccessToken($credentials['credentials']);
                     $report=\WNQ\Services\AnalyticsActivity::phoneEvents($client,$start,$end,static fn($body)=>self::makeGARequest($token,(string)$config['ga4_property_id'],$body));
-                } elseif ($provider==='lead_summary') {
+                } elseif (in_array($provider,['lead_summary','recent_activity'],true)) {
                     $gaRequest=null;
                     if ($credentials && !empty($config['ga4_property_id'])) { $gaRequest=static function($body) use ($credentials,$config) { $token=self::getGoogleAccessToken($credentials['credentials']); return self::makeGARequest($token,(string)$config['ga4_property_id'],$body); }; }
-                    $report=\WNQ\Services\AnalyticsActivity::leadSummary($client,$start,$end,$gaRequest);
+                    $report=$provider==='recent_activity' ? \WNQ\Services\AnalyticsActivity::recentActivity($client,$start,$end,$gaRequest) : \WNQ\Services\AnalyticsActivity::leadSummary($client,$start,$end,$gaRequest);
                 } else $report=\WNQ\Services\AnalyticsActivity::adsCalls($client,$start,$end);
                 if (in_array($report['status'],['available','partial'],true)) set_transient($key,$report,180);
             }

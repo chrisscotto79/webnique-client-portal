@@ -11,7 +11,7 @@ namespace WNQ\Services {
         public function errors(){return [];}
         public function select($id,$query){
             if(self::$fail) throw new \RuntimeException('failure');
-            return array_map(static fn($pair)=>['callView'=>['resourceName'=>'customers/'.$id.'/callViews/'.$pair[0],'callDurationSeconds'=>$pair[1]]],[[1,19],[2,20],[3,21],[2,20]]);
+            return array_map(static fn($pair)=>['callView'=>['resourceName'=>'customers/'.$id.'/callViews/'.$pair[0],'callDurationSeconds'=>$pair[1],'startCallDateTime'=>'2026-09-06 12:00:00']],[[1,19],[2,20],[3,21],[2,20]]);
         }
     }
 }

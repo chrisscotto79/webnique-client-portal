@@ -190,6 +190,66 @@ final class AnalyticsActivity
             'message'=>'Search ad call records reported by Google Ads; not all website calls or unique leads. Call reporting must be enabled. Recordings are not available through this feed.'.(count($rows)>=1000?' Showing the latest 1,000 calls.':'')];
     }
 
+    /** Staff-only timeline; GA4 rows are minute aggregates, not customer records. */
+    public static function recentActivity(string $client,string $start,string $end,?callable $request): array
+    {
+        $rows=[]; $sources=[];
+        $timezone=current_datetime()->getTimezone();
+        $append=static function(array $row,string $sourceZone) use (&$rows,$timezone): void {
+            try {
+                $date=\DateTimeImmutable::createFromFormat('!Y-m-d H:i:s',$row['time'],new \DateTimeZone($sourceZone));
+                if (!$date || $date->format('Y-m-d H:i:s')!==$row['time']) throw new \RuntimeException('Invalid activity time.');
+                $row['timestamp']=$date->getTimestamp();
+                $row['time']=$date->setTimezone($timezone)->format('Y-m-d H:i:s');
+            } catch (\Throwable $e) { throw new \RuntimeException('Activity timezone or date unavailable.'); }
+            $rows[]=$row;
+        };
+        try {
+            $calls=self::adsCalls($client,$start,$end);
+            $sources['Google Ads']=$calls['status'];
+            foreach ($calls['rows']??[] as $call) {
+                if (empty($call['time'])) throw new \RuntimeException('Missing call time.');
+                $append(['time'=>$call['time'],'type'=>'Call','source'=>'Google Ads','device'=>'Not reported','count'=>1,
+                    'detail'=>$call['duration'].' seconds · '.($call['duration']>=self::callThreshold($client)?'Verified call':'Below duration threshold').' · '.$call['status'].' · '.$call['campaign']],$calls['timezone']);
+            }
+        } catch (\Throwable $e) { $sources['Google Ads']='unavailable'; }
+        try {
+            if (!$request) throw new \RuntimeException('GA4 unavailable.');
+            try { $connection=PpcAccount::getByClientId(self::adsClient($client))?:[]; } catch (\Throwable $e) { $connection=[]; }
+            $emails=array_values(array_diff(self::emailNames($client),array_merge(self::phoneNames($client),['generate_lead'])));
+            $data=$request([
+                'dateRanges'=>[['startDate'=>$start,'endDate'=>$end]],
+                'dimensions'=>array_map(static fn($name)=>['name'=>$name],['dateHourMinute','eventName','deviceCategory','sessionDefaultChannelGroup','sessionGoogleAdsCustomerId']),
+                'metrics'=>[['name'=>'eventCount'],['name'=>'keyEvents']],
+                'dimensionFilter'=>['filter'=>['fieldName'=>'eventName','inListFilter'=>['values'=>array_merge(['generate_lead'],$emails)]]],
+                'orderBys'=>[['dimension'=>['dimensionName'=>'dateHourMinute'],'desc'=>true]],'limit'=>1000,
+            ]);
+            $sources['GA4']=((int)($data['rowCount']??count($data['rows']??[]))>count($data['rows']??[]) || !empty($data['metadata']['subjectToThresholding']) || !empty($data['metadata']['dataLossFromOtherRow']) || !empty($data['metadata']['samplingMetadatas']))?'partial':'available';
+            foreach ($data['rows']??[] as $item) {
+                $d=array_column($item['dimensionValues']??[],'value'); $m=array_column($item['metricValues']??[],'value');
+                if (count($d)!==5 || count($m)!==2 || !preg_match('/^\d{12}$/',$d[0])) throw new \RuntimeException('Malformed lead activity.');
+                $isForm=$d[1]==='generate_lead';
+                if (!$isForm && !in_array($d[1],$emails,true)) continue;
+                $count=$isForm?max(0,(float)$m[1]):max(0,(int)$m[0]);
+                if ($count<=0) continue;
+                $zone=(string)($data['metadata']['timeZone']??'');
+                if ($zone==='') throw new \RuntimeException('GA4 timezone missing.');
+                $date=\DateTimeImmutable::createFromFormat('!YmdHi',$d[0],new \DateTimeZone($zone));
+                if (!$date || $date->format('YmdHi')!==$d[0]) throw new \RuntimeException('Invalid activity date.');
+                $append(['time'=>$date->format('Y-m-d H:i:s'),'type'=>$isForm?'Form key event':'Email event',
+                    'source'=>self::attribution($d[3],$d[4],(string)($connection['customer_id']??'')),
+                    'device'=>sanitize_text_field($d[2]),'count'=>$count,
+                    'detail'=>sanitize_text_field($d[1]).' · '.($isForm?'GA4 key events':'GA4 email interactions; '.max(0,(float)$m[1]).' key events').' · grouped within this minute'], $zone);
+            }
+        } catch (\Throwable $e) { $sources['GA4']='unavailable'; }
+        usort($rows,static fn($a,$b)=>$b['timestamp']<=>$a['timestamp']);
+        $complete=count(array_filter($sources,static fn($s)=>$s==='available'))===2;
+        return ['status'=>$complete?'available':($rows || in_array('available',$sources,true)||in_array('partial',$sources,true)?'partial':'unavailable'),
+            'rows'=>$rows,'sources'=>$sources,'timezone'=>$timezone->getName(),'today'=>current_datetime()->format('Y-m-d'),
+            'yesterday'=>current_datetime()->modify('-1 day')->format('Y-m-d'),
+            'message'=>'Newest first. Calls are Google Ads records; forms are generate_lead key events; emails are configured GA4 email interactions and may not be leads. GA4 rows group activity by minute and device. Recent Google data may be delayed. Dates are requested in each provider’s reporting timezone and displayed in '.$timezone->getName().'. This feed does not change lead totals.'];
+    }
+
     /** Count configured form and email GA4 key events directly. */
     public static function leadEvents(string $client,string $start,string $end,callable $request): array
     {
