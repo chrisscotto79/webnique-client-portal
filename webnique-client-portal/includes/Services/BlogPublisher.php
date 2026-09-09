@@ -943,10 +943,10 @@ final class BlogPublisher
 
     private static function resolvePublishedUrl(string $returned_url, string $preferred_post_url): string
     {
-        if ($preferred_post_url !== '') {
-            return $preferred_post_url;
+        if ($returned_url !== '' && filter_var($returned_url, FILTER_VALIDATE_URL) && in_array(strtolower((string)parse_url($returned_url, PHP_URL_SCHEME)), ['http', 'https'], true)) {
+            return $returned_url;
         }
-        return $returned_url;
+        return $preferred_post_url;
     }
 
     private static function generateElId(): string
@@ -1016,6 +1016,7 @@ final class BlogPublisher
 
         $response = wp_remote_post($url, [
             'timeout' => 120,
+            'redirection' => 0,
             'headers' => [
                 'X-WNQ-Api-Key' => $api_key,
                 'Content-Type'  => 'application/json',
@@ -1030,9 +1031,12 @@ final class BlogPublisher
 
         $code     = wp_remote_retrieve_response_code($response);
         $raw_body = wp_remote_retrieve_body($response);
-        $body     = json_decode($raw_body, true) ?? [];
+        $body     = json_decode($raw_body, true);
 
         if ($code === 200 || $code === 201) {
+            if (!is_array($body) || !empty($body['error']) || (array_key_exists('success', $body) && !$body['success']) || !filter_var($body['post_id'] ?? null, FILTER_VALIDATE_INT, ['options'=>['min_range'=>1]])) {
+                return ['success'=>false, 'message'=>'The client site did not confirm a published post ID. Check the agent connection and retry; the schedule ID is reused.'];
+            }
             return [
                 'success'  => true,
                 'post_id'  => $body['post_id'] ?? null,
@@ -1041,6 +1045,7 @@ final class BlogPublisher
         }
 
         // BlogReceiver returns 'error' key; WordPress REST core uses 'message'
+        $body = is_array($body) ? $body : [];
         $error_msg = $body['message'] ?? $body['error'] ?? null;
         if ($error_msg && !empty($body['context'])) {
             $error_msg .= ' [' . $body['context'] . ']';
@@ -1069,7 +1074,8 @@ final class BlogPublisher
                 ),
                 ARRAY_A
             );
-            if ($row) return $row;
+            // An explicitly selected site must never silently switch destinations.
+            return $row ?: null;
         }
 
         return $wpdb->get_row(
