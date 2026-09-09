@@ -113,7 +113,7 @@ final class BlogScheduler
     public static function addPost(string $client_id, array $data): int
     {
         global $wpdb;
-        $wpdb->insert(
+        $inserted = $wpdb->insert(
             $wpdb->prefix . 'wnq_blog_schedule',
             [
                 'client_id'      => $client_id,
@@ -126,7 +126,7 @@ final class BlogScheduler
                 'status'         => 'pending',
             ]
         );
-        return (int)$wpdb->insert_id;
+        return $inserted === false ? 0 : (int)$wpdb->insert_id;
     }
 
     /**
@@ -235,7 +235,10 @@ final class BlogScheduler
     public static function deletePost(int $id): void
     {
         global $wpdb;
-        $wpdb->delete($wpdb->prefix . 'wnq_blog_schedule', ['id' => $id]);
+        $wpdb->query($wpdb->prepare(
+            "DELETE FROM {$wpdb->prefix}wnq_blog_schedule WHERE id = %d AND status NOT IN ('generating', 'publishing')",
+            $id
+        ));
     }
 
     public static function deletePosts(array $ids, string $client_id = ''): int
@@ -256,7 +259,7 @@ final class BlogScheduler
 
         return (int)$wpdb->query(
             $wpdb->prepare(
-                "DELETE FROM {$wpdb->prefix}wnq_blog_schedule WHERE id IN ($placeholders)$where_client",
+                "DELETE FROM {$wpdb->prefix}wnq_blog_schedule WHERE id IN ($placeholders)$where_client AND status NOT IN ('generating', 'publishing')",
                 $params
             )
         );
@@ -268,7 +271,10 @@ final class BlogScheduler
         if ($client_id === '') {
             return 0;
         }
-        return (int)$wpdb->delete($wpdb->prefix . 'wnq_blog_schedule', ['client_id' => $client_id]);
+        return (int)$wpdb->query($wpdb->prepare(
+            "DELETE FROM {$wpdb->prefix}wnq_blog_schedule WHERE client_id = %s AND status NOT IN ('generating', 'publishing')",
+            $client_id
+        ));
     }
 
     public static function getPost(int $id): ?array

@@ -818,10 +818,10 @@ final class SEOOSBootstrap
         self::requireCap();
 
         $client_id = sanitize_text_field($_POST['client_id'] ?? '');
-        $title     = sanitize_text_field($_POST['title'] ?? '');
+        $title     = sanitize_text_field(wp_unslash($_POST['title'] ?? ''));
         if (empty($client_id) || empty($title)) wp_die('Missing required fields');
 
-        \WNQ\Models\BlogScheduler::addPost($client_id, [
+        $inserted = \WNQ\Models\BlogScheduler::addPost($client_id, [
             'title'          => $title,
             'category_type'  => 'Informational',
             'focus_keyword'  => sanitize_text_field($_POST['focus_keyword'] ?? ''),
@@ -829,6 +829,8 @@ final class SEOOSBootstrap
             'scheduled_date' => sanitize_text_field($_POST['scheduled_date'] ?? ''),
             'agent_key_id'   => (int)($_POST['agent_key_id'] ?? 0),
         ]);
+
+        if (!$inserted) wp_die('Could not save the scheduled post. Please try again.');
 
         wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue&client_id=' . urlencode($client_id) . '&notice=added'));
         exit;
@@ -867,7 +869,7 @@ final class SEOOSBootstrap
             $scheduled_date = $start_date
                 ? $start_date->modify('+' . ($added * 2) . ' days')->format('Y-m-d')
                 : '';
-            \WNQ\Models\BlogScheduler::addPost($client_id, [
+            $inserted = \WNQ\Models\BlogScheduler::addPost($client_id, [
                 'title'              => $title,
                 'category_type'      => 'Informational',
                 'focus_keyword'      => sanitize_text_field($_POST['focus_keyword'] ?? ''),
@@ -875,7 +877,7 @@ final class SEOOSBootstrap
                 'scheduled_date'     => $scheduled_date,
                 'agent_key_id'       => (int)($_POST['agent_key_id'] ?? 0),
             ]);
-            $added++;
+            if ($inserted) $added++;
         }
 
         wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue&client_id=' . urlencode($client_id) . '&notice=bulk_added&added=' . $added));
@@ -889,6 +891,9 @@ final class SEOOSBootstrap
         check_admin_referer('wnq_blog_featured_' . $post_id);
         self::requireCap();
 
+        $post = $post_id ? \WNQ\Models\BlogScheduler::getPost($post_id) : null;
+        if (!$post || $post['client_id'] !== $client_id) wp_die('Invalid post');
+        if (in_array($post['status'], ['generating', 'publishing'], true)) wp_die('This post is being processed. Wait for it to finish before editing.');
         if ($post_id) {
             \WNQ\Models\BlogScheduler::updatePost($post_id, [
                 'featured_image_url' => esc_url_raw($_POST['featured_image_url'] ?? ''),
@@ -910,8 +915,9 @@ final class SEOOSBootstrap
         if (!$post || $post['client_id'] !== $client_id) {
             wp_die('Invalid post');
         }
+        if (in_array($post['status'], ['generating', 'publishing'], true)) wp_die('This post is being processed. Wait for it to finish before editing.');
 
-        $new_title = sanitize_text_field($_POST['title'] ?? '');
+        $new_title = sanitize_text_field(wp_unslash($_POST['title'] ?? ''));
         if ($new_title === '') {
             wp_die('Title is required');
         }
@@ -948,6 +954,7 @@ final class SEOOSBootstrap
         self::requireCap();
 
         $client_id = sanitize_text_field($_POST['client_id'] ?? '');
+        if ($client_id === '') wp_die('Missing client');
         $ids_raw = sanitize_text_field($_POST['post_ids'] ?? '');
         $ids = array_filter(array_map('intval', explode(',', $ids_raw)));
         $deleted = \WNQ\Models\BlogScheduler::deletePosts($ids, $client_id);
@@ -975,6 +982,9 @@ final class SEOOSBootstrap
         check_admin_referer('wnq_blog_delete_' . $post_id);
         self::requireCap();
 
+        $post = $post_id ? \WNQ\Models\BlogScheduler::getPost($post_id) : null;
+        if (!$post || $post['client_id'] !== $client_id) wp_die('Invalid post');
+        if (in_array($post['status'], ['generating', 'publishing'], true)) wp_die('This post is being processed. Wait for it to finish before deleting.');
         if ($post_id) \WNQ\Models\BlogScheduler::deletePost($post_id);
 
         wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue&client_id=' . urlencode($client_id) . '&notice=deleted'));
@@ -1044,14 +1054,14 @@ final class SEOOSBootstrap
         foreach ($posts as $p) {
             $title = sanitize_text_field($p['title'] ?? '');
             if (empty($title)) continue;
-            \WNQ\Models\BlogScheduler::addPost($client_id, [
+            $inserted = \WNQ\Models\BlogScheduler::addPost($client_id, [
                 'title'          => $title,
                 'category_type'  => 'Informational',
                 'focus_keyword'  => sanitize_text_field($p['keyword'] ?? ''),
                 'scheduled_date' => sanitize_text_field($p['date'] ?? ''),
                 'agent_key_id'   => $agent_key_id,
             ]);
-            $added++;
+            if ($inserted) $added++;
         }
 
         wp_send_json_success(['added' => $added]);

@@ -97,7 +97,7 @@ final class BlogSchedulerAdmin
         if ($notice === 'added')    echo '<div class="wnq-notice success">✅ Post added to queue.</div>';
         if ($notice === 'bulk_added') echo '<div class="wnq-notice success">✅ ' . (int)($_GET['added'] ?? 0) . ' post(s) imported to queue.</div>';
         if ($notice === 'updated')  echo '<div class="wnq-notice success">✅ Scheduled post updated.</div>';
-        if ($notice === 'bulk_deleted') echo '<div class="wnq-notice success">✅ ' . (int)($_GET['deleted'] ?? 0) . ' scheduled post(s) deleted.</div>';
+        if ($notice === 'bulk_deleted') echo '<div class="wnq-notice success">✅ ' . (int)($_GET['deleted'] ?? 0) . ' scheduled post(s) deleted. Posts currently generating or publishing were kept.</div>';
         if ($notice === 'deleted')  echo '<div class="wnq-notice success">✅ Post removed from queue.</div>';
         if ($notice === 'failed')   echo '<div class="wnq-notice error">❌ Publish failed. Check error message.</div>';
         if ($notice === 'published') echo '<div class="wnq-notice success">✅ Publishing triggered. Check the post queue for status.</div>';
@@ -255,7 +255,7 @@ final class BlogSchedulerAdmin
                 if (!empty($p['generated_body'])) {
                     echo '<button class="button button-small wnq-view-content" data-id="' . (int)$p['id'] . '">View Content</button> ';
                 }
-                if ($p['status'] === 'pending') {
+                if (in_array($p['status'], ['pending', 'failed'], true)) {
                     $generate_label = empty($p['generated_body']) ? 'Generate Content' : 'Regenerate Content';
                     echo '<button class="button button-small wnq-generate-content" data-id="' . (int)$p['id'] . '" data-has-content="' . (!empty($p['generated_body']) ? '1' : '0') . '">' . esc_html($generate_label) . '</button> ';
                 }
@@ -1251,7 +1251,7 @@ jQuery(function($) {
 
         $post = BlogScheduler::getPost($schedule_id);
         if (!$post || empty($post['generated_body'])) {
-            wp_send_json_error(['message' => 'This post does not have generated content yet. Publish it first to generate the article.']);
+            wp_send_json_error(['message' => 'This post does not have generated content yet. Use Generate Content to create a draft.']);
         }
 
         wp_send_json_success([
