@@ -3,7 +3,7 @@
     $(function () {
         const root = document.getElementById('wnq-activity-feeds');
         if (!root || !window.wnqAnalytics || !wnqAnalytics.clientId) return;
-        const titles = { lead_summary: 'Lead Summary', ads_calls: 'Google Ads call records', phone_events: 'Phone-click activity · GA4' };
+        const titles = { lead_summary: 'Lead Summary', recent_activity: 'Recent lead activity', ads_calls: 'Google Ads call records', phone_events: 'Phone-click activity · GA4' };
         let generation = 0;
         const requests = {};
         function node(tag, text, className) {
@@ -75,6 +75,11 @@
             if (report.period) card.append(node('p', report.period.start + ' – ' + report.period.end + ' · ' + (report.timezone || 'Provider reporting timezone') + ' · Recent data may be incomplete.', 'wnq-feed-period'));
             card.append(node('p', report.message || 'Fetching this source independently…', 'wnq-feed-note'));
             if (!['available', 'partial'].includes(report.status)) return;
+            if (provider === 'recent_activity') {
+                Object.entries(report.sources || {}).forEach(([source, state]) => {
+                    if (state !== 'available') card.append(node('p', source + ': ' + (state === 'partial' ? 'Incomplete coverage; some activity may be missing.' : 'Unavailable; activity from this source may be missing.'), 'wnq-lead-warning'));
+                });
+            }
             const rows = Array.isArray(report.rows) ? report.rows : [];
             if (!rows.length) {
                 card.append(node('p', 'No records reported for these dates. This does not prove tracking is installed or that no leads occurred.', 'wnq-feed-empty'));
@@ -89,7 +94,7 @@
                 });
                 card.append(summary);
                 if (report.status === 'partial') card.append(node('p', 'These source counts cover the returned activity rows only; the reporting period may contain additional interactions.', 'wnq-lead-warning'));
-            } else card.append(node('p', rows.length + ' unique Google Ads call records · Duration is shown in seconds', 'wnq-feed-period'));
+            } else if (provider === 'ads_calls') card.append(node('p', rows.length + ' unique Google Ads call records · Duration is shown in seconds', 'wnq-feed-period'));
             const controls = node('div', undefined, 'wnq-feed-controls');
             const label = node('label', 'Source ');
             const filter = node('select');
@@ -104,10 +109,11 @@
             const next = node('button', 'Next', 'button'); next.type = 'button';
             controls.append(label, search, status, previous, next);
             const details = node('details', undefined, 'wnq-feed-evidence');
-            details.append(node('summary', 'Activity evidence'));
+            details.append(node('summary', provider === 'recent_activity' ? 'Latest calls, forms and emails' : 'Activity evidence'));
+            if (provider === 'recent_activity') details.open = true;
             const scroll = node('div', undefined, 'wnq-feed-scroll'); scroll.tabIndex = 0; scroll.setAttribute('role', 'region'); scroll.setAttribute('aria-label', titles[provider] + ' evidence table; scroll for more columns');
             const table = node('table'); const head = node('thead'); const tr = node('tr');
-            const columns = provider === 'phone_events' ? [['time','Date / minute'],['source','Attribution'],['event','Event'],['device','Device'],['count','Phone clicks'],['key_events','GA4 key events'],['channel','Reported channel']]
+            const columns = provider === 'recent_activity' ? [['time','Date / time'],['type','Activity'],['count','Count'],['source','Source'],['device','Device'],['detail','Details']] : provider === 'phone_events' ? [['time','Date / minute'],['source','Attribution'],['event','Event'],['device','Device'],['count','Phone clicks'],['key_events','GA4 key events'],['channel','Reported channel']]
                 : [['time','Call start'],['source','Source'],['campaign','Search campaign'],['status','Call status'],['duration','Duration (seconds)']];
             columns.forEach(([, title]) => { const th = node('th', title); th.scope = 'col'; tr.append(th); }); head.append(tr);
             const body = node('tbody'); table.append(head, body); scroll.append(table);
@@ -121,7 +127,14 @@
                 body.replaceChildren();
                 matches.slice(page * 25, page * 25 + 25).forEach(row => {
                     const rowEl = node('tr');
-                    columns.forEach(([key]) => rowEl.append(node('td', String(row[key] ?? 'Unavailable'))));
+                    columns.forEach(([key]) => {
+                        let text = String(row[key] ?? 'Unavailable');
+                        if (provider === 'recent_activity' && key === 'time') {
+                            const day = text.slice(0,10);
+                            text = (day === report.today ? 'Today · ' : day === report.yesterday ? 'Yesterday · ' : '') + text;
+                        }
+                        rowEl.append(node('td', text));
+                    });
                     body.append(rowEl);
                 });
                 status.textContent = matches.length ? (page * 25 + 1) + '–' + Math.min(page * 25 + 25, matches.length) + ' of ' + matches.length : '0 records';

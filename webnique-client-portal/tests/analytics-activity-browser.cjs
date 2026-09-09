@@ -11,6 +11,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
         ads_calls:{status:'available',timezone:'America/New_York',period:{start:'2026-09-01',end:'2026-09-07'},message:'Search ad call records. Recordings are not available through this feed.',rows:[{time:'2026-09-07 14:20:00',source:'Google Ads',campaign:'Local Search',status:'RECEIVED',duration:85}]},
     };
     reports.lead_summary.lead_event_evidence={emails:{events:3,key_events:2,names:['email_click']},forms:{events:4,key_events:4,names:['generate_lead']}};
+    reports.recent_activity={status:'partial',timezone:'America/New_York',today:'2026-09-07',yesterday:'2026-09-06',sources:{GA4:'available','Google Ads':'unavailable'},rows:[{time:'2026-09-06 14:00:00',type:'Form key event',source:'Organic search',device:'mobile',count:2,detail:'generate_lead · grouped within this minute'}]};
     const mock=`
     window.wnqAnalytics={clientId:'fixture',ajaxUrl:'/fixture',nonce:'fixture'};
     window.fixtureReports=${JSON.stringify(reports)}; window.fixtureRequests=[];
@@ -25,7 +26,10 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
         await page.setViewport({width:1440,height:1000});await page.goto('file://'+path.join(artifact,'fixture.html'));
         await page.waitForSelector('#wnq-feed-lead_summary .wnq-lead-metric-primary');
         assert.equal(await page.evaluate(()=>fixtureRequests.some(r=>r.data.provider==='gbp_summary')),false);
-        assert.equal(await page.$$eval('#wnq-activity-feeds > article',cards=>cards.length),3);
+        assert.equal(await page.$$eval('#wnq-activity-feeds > article',cards=>cards.length),4);
+        assert.equal(await page.$eval('#wnq-feed-recent_activity details',el=>el.open),true);
+        assert.match(await page.$eval('#wnq-feed-recent_activity tbody',el=>el.textContent),/Yesterday · 2026-09-06 14:00:00/);
+        assert.match(await page.$eval('#wnq-feed-recent_activity .wnq-lead-warning',el=>el.textContent),/Google Ads: Unavailable/);
         assert.equal(await page.$eval('#wnq-feed-lead_summary .wnq-secondary-interactions strong',el=>el.textContent),'7');
         assert.equal(await page.$eval('#wnq-feed-lead_summary .wnq-lead-metric-primary strong',el=>el.textContent),'8');
         assert.match(await page.$eval('.wnq-lead-event-evidence',el=>el.textContent),/Email: 3 total events · 2 GA4 key events/);
@@ -51,7 +55,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),asse
         assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No mobile page overflow');
         await page.screenshot({path:path.join(artifact,'mobile.png'),fullPage:true});
         await page.click('#wnq-refresh-data');
-        assert.equal(await page.evaluate(()=>fixtureRequests.slice(-3).every(r=>r.data.refresh===1)),true);
+        assert.equal(await page.evaluate(()=>fixtureRequests.slice(-4).every(r=>r.data.refresh===1)),true);
         assert.deepEqual(errors,[]);
         console.log('Analytics activity browser tests passed. Screenshots: '+artifact);
     } finally {await browser.close();}
