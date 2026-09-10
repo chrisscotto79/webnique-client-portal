@@ -30,6 +30,7 @@ final class LeadFinderAdmin
             return;
         }
         self::$registered = true;
+        LeadGhlAdmin::register();
 
         // Priority 22 — must run AFTER SEOHubAdmin::addMenuPages() (priority 20)
         add_action('admin_menu', [self::class, 'addMenuPage'], 22);
@@ -98,7 +99,8 @@ final class LeadFinderAdmin
         .wnq-stat{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:12px 18px;text-align:center;min-width:100px}
         .wnq-stat .num{font-size:26px;font-weight:700;color:#1e293b;line-height:1}
         .wnq-stat .lbl{font-size:10px;color:#6b7280;margin-top:3px;text-transform:uppercase;letter-spacing:.5px}
-        .wnq-lf-tabs{display:flex;gap:4px;border-bottom:2px solid #e5e7eb;margin-bottom:20px}
+        .wnq-lf-tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:2px solid #e5e7eb;margin-bottom:20px}
+        .wnq-ghl-cell{min-width:180px;max-width:270px;white-space:normal}.wnq-ghl-cell form{margin-top:6px}
         .wnq-lf-tab{padding:10px 20px;cursor:pointer;font-size:14px;font-weight:500;color:#6b7280;border:none;background:none;border-bottom:2px solid transparent;margin-bottom:-2px;text-decoration:none}
         .wnq-lf-tab.active{color:#2563eb;border-bottom-color:#2563eb}
         .wnq-card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:22px;margin-bottom:16px}
@@ -174,7 +176,7 @@ final class LeadFinderAdmin
         </div>
 
         <div class="wnq-lf-tabs">
-            <?php foreach (['browser_scraper'=>'Browser Scraper','search'=>'ZIP Sweep','backend_jobs'=>'Backend Jobs','manual'=>'Manual URLs','csv_import'=>'CSV Import','leads'=>'All Leads','settings'=>'Settings'] as $t=>$label): ?>
+            <?php foreach (['browser_scraper'=>'Browser Scraper','search'=>'ZIP Sweep','backend_jobs'=>'Backend Jobs','manual'=>'Manual URLs','csv_import'=>'CSV Import','leads'=>'All Leads','ghl'=>'GoHighLevel','settings'=>'Settings'] as $t=>$label): ?>
                 <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-lead-finder&tab='.$t)); ?>" class="wnq-lf-tab <?php echo $tab===$t?'active':''; ?>"><?php echo esc_html($label); ?></a>
             <?php endforeach; ?>
         </div>
@@ -182,6 +184,7 @@ final class LeadFinderAdmin
         <?php
         match ($tab) {
             'leads'      => self::renderLeadsTab(),
+            'ghl'        => LeadGhlAdmin::render(),
             'backend_jobs' => self::renderBackendJobsTab(),
             'settings'   => self::renderSettingsTab($settings),
             'manual'     => self::renderManualTab($settings),
@@ -1108,7 +1111,7 @@ JS;
                     <th><input type="checkbox" id="wnq-sel-all"></th>
                     <th>Company</th><th>Industry</th><th>Website</th><th>City</th><th>State</th>
                     <th>Phone</th><th>Email</th><th>Stars/Reviews</th><th>Social</th>
-                    <th>Status</th><th>Notes</th><th></th>
+                    <th>Status</th><th>Notes</th><th>GoHighLevel handoff</th><th></th>
                 </tr></thead>
                 <tbody>
                 <?php foreach($leads as $lead):?>
@@ -1132,6 +1135,7 @@ JS;
                         </div></td>
                         <td><select class="wnq-status-sel" data-id="<?php echo(int)$lead['id'];?>"><?php foreach(['new','contacted','qualified','closed'] as $s):?><option value="<?php echo $s;?>"<?php selected($lead['status'],$s);?>><?php echo ucfirst($s);?></option><?php endforeach;?></select></td>
                         <td><input type="text" class="wnq-notes-edit" data-id="<?php echo(int)$lead['id'];?>" value="<?php echo esc_attr($lead['notes']??'');?>" placeholder="Add note…"></td>
+                        <td class="wnq-ghl-cell"><?php LeadGhlAdmin::row($lead); ?></td>
                         <td><button class="wnq-btn wnq-btn-danger wnq-btn-sm" onclick="wnqDel(<?php echo(int)$lead['id'];?>)">✕</button></td>
                     </tr>
                 <?php endforeach;?>
@@ -1741,10 +1745,10 @@ npm run scrape:zip -- --keyword "plumbing" --zip 32825</textarea>
 
             // Fetch homepage if a website URL is present
             if ($website) {
-                $resp = wp_remote_get($website, [
+                $resp = wp_safe_remote_get($website, [
                     'timeout'             => 8,
                     'user-agent'          => 'Mozilla/5.0 (compatible; GoldenWebMarketing/1.0; +https://goldenwebmarketing.com)',
-                    'sslverify'           => false,
+                    'sslverify'           => true,
                     'redirection'         => 3,
                     'limit_response_size' => 300000,
                 ]);
@@ -1771,7 +1775,9 @@ npm run scrape:zip -- --keyword "plumbing" --zip 32825</textarea>
                 }
             } else {
                 // Extract email from homepage (or /contact fallback)
-                $email_result = \WNQ\Services\LeadEmailExtractor::extractEmail($website, $homepage_html);
+                $email_result = filter_var($data['email'] ?? '', FILTER_VALIDATE_EMAIL)
+                    ? ['email' => $data['email'], 'source' => $data['email_source'] ?? 'CSV import']
+                    : \WNQ\Services\LeadEmailExtractor::extractEmail($website, $homepage_html);
                 if ($email_result['email']) {
                     $data['email']        = $email_result['email'];
                     $data['email_source'] = $email_result['source'];
@@ -1999,6 +2005,10 @@ npm run scrape:zip -- --keyword "plumbing" --zip 32825</textarea>
 
         if ($done && empty($batch['imported']) && in_array($job['state'] ?? '', ['completed', 'completed_with_errors'], true)) {
             $imported = self::importBackendLeads($job_id);
+            if ($imported < 0) {
+                return ['ok' => false, 'error' => 'Backend results could not be fully imported or acknowledged. Retry this job; saved leads will be skipped.'];
+            }
+            $stats['saved'] = $imported;
             $batch['imported'] = true;
             $batch['stats'] = $stats;
             set_transient('wnq_backend_lead_batch_' . $batch_id, $batch, DAY_IN_SECONDS);
@@ -2025,8 +2035,9 @@ npm run scrape:zip -- --keyword "plumbing" --zip 32825</textarea>
     {
         $response = self::backendRequest('GET', '/v1/jobs/' . rawurlencode($job_id) . '/leads');
         if (empty($response['ok'])) {
-            return 0;
+            return -1;
         }
+        if (!isset($response['data']['leads']) || !is_array($response['data']['leads'])) { return -1; }
 
         $count = 0;
         foreach (($response['data']['leads'] ?? []) as $lead) {
@@ -2037,6 +2048,7 @@ npm run scrape:zip -- --keyword "plumbing" --zip 32825</textarea>
             if (Lead::findByPlaceId($place_id)) {
                 continue;
             }
+            if (!empty($lead['business_name']) && !empty($lead['city']) && Lead::existsByNameAndCity(trim($lead['business_name']), trim($lead['city']))) { continue; }
             $id = Lead::insert([
                 'place_id' => $place_id,
                 'business_name' => sanitize_text_field($lead['business_name'] ?? ''),
@@ -2063,10 +2075,11 @@ npm run scrape:zip -- --keyword "plumbing" --zip 32825</textarea>
             ]);
             if ($id > 0) {
                 $count++;
-            }
+            } else { return -1; }
         }
 
-        self::backendRequest('POST', '/v1/jobs/' . rawurlencode($job_id) . '/mark-imported');
+        $ack = self::backendRequest('POST', '/v1/jobs/' . rawurlencode($job_id) . '/mark-imported');
+        if (empty($ack['ok'])) { return -1; }
 
         return $count;
     }

@@ -284,7 +284,8 @@ final class LeadFinderEngine
         }
 
         // 7. Extract email and social links from homepage
-        $email  = self::extractEmail($html);
+        $email_data = LeadEmailExtractor::extractEmail($website, $html);
+        $email = $email_data['email'];
         $social = self::extractSocials($html);
 
         $place_id = md5($website ?: $name . $raw_address);
@@ -305,7 +306,7 @@ final class LeadFinderEngine
             'zip'              => sanitize_text_field($addr['zip']),
             'phone'            => sanitize_text_field($phone),
             'email'            => sanitize_email($email),
-            'email_source'     => '',
+            'email_source'     => $email_data['source'],
             'rating'           => $rating,
             'review_count'     => $review_count,
             'social_facebook'  => $social['facebook']  ? esc_url_raw($social['facebook'])  : '',
@@ -448,6 +449,7 @@ final class LeadFinderEngine
 
         // Email: use provided value if valid, else scrape the site
         $email = '';
+        $email_data = ['source' => 'Maps import'];
         if (!empty($row['email']) && filter_var($row['email'], FILTER_VALIDATE_EMAIL)) {
             $email = strtolower($row['email']);
         } elseif ($html) {
@@ -482,7 +484,7 @@ final class LeadFinderEngine
             'zip'              => sanitize_text_field($addr['zip']),
             'phone'            => sanitize_text_field($phone),
             'email'            => sanitize_email($email),
-            'email_source'     => '',
+            'email_source'     => $email_data['source'],
             'rating'           => (float)($row['rating']  ?? 0),
             'review_count'     => (int)  ($row['reviews'] ?? 0),
             'social_facebook'  => isset($social['facebook'])  && $social['facebook']  ? esc_url_raw($social['facebook'])  : '',
@@ -710,10 +712,10 @@ final class LeadFinderEngine
 
     private static function fetchHtml(string $url): string
     {
-        $response = wp_remote_get($url, [
+        $response = wp_safe_remote_get($url, [
             'timeout'             => 8,
             'user-agent'          => 'Mozilla/5.0 (compatible; GoldenWebMarketing/1.0; +https://goldenwebmarketing.com)',
-            'sslverify'           => false,
+            'sslverify'           => true,
             'redirection'         => 3,
             'limit_response_size' => 512000, // 500 KB
         ]);
@@ -723,34 +725,6 @@ final class LeadFinderEngine
         if ($code < 200 || $code >= 400) return '';
 
         return wp_remote_retrieve_body($response);
-    }
-
-    private static function extractEmail(string $html): string
-    {
-        if (!$html) return '';
-
-        if (preg_match('/mailto:([a-zA-Z0-9_.+\-]+@[a-zA-Z0-9\-]+\.[a-zA-Z0-9\-.]+)/i', $html, $m)) {
-            $email = strtolower($m[1]);
-            if (filter_var($email, FILTER_VALIDATE_EMAIL) &&
-                !preg_match('/\.(png|jpg|jpeg|gif|svg|webp|pdf|zip)$/i', $email)) {
-                return $email;
-            }
-        }
-
-        $text = strip_tags($html);
-        if (preg_match(
-            '/(?<![a-zA-Z0-9])[a-zA-Z][a-zA-Z0-9_.+\-]*@[a-zA-Z0-9][a-zA-Z0-9\-]*(?:\.[a-zA-Z0-9\-]+)*\.[a-zA-Z]{2,8}(?![a-zA-Z])/i',
-            $text, $m
-        )) {
-            $email = strtolower($m[0]);
-            if (filter_var($email, FILTER_VALIDATE_EMAIL) &&
-                !preg_match('/\.(png|jpg|jpeg|gif|svg|webp|pdf|zip)$/i', $email) &&
-                !in_array(explode('@', $email)[1] ?? '', ['example.com','test.com','domain.com'], true)) {
-                return $email;
-            }
-        }
-
-        return '';
     }
 
     /** Extract US phone from homepage HTML as a fallback. */

@@ -3,7 +3,7 @@
  * Lead Email Extractor
  *
  * Crawls a business website to find the best contact email address.
- * Tries the homepage, /contact, /contact-us, /about, /about-us in order.
+ * Tries the supplied page and one /contact fallback to bound request time.
  * Prefers non-generic addresses (owner@, firstname@) over generic ones
  * (info@, support@, admin@, etc.).
  *
@@ -36,6 +36,8 @@ final class LeadEmailExtractor
     public static function extractEmail(string $base_url, string $homepage_html = ''): array
     {
         $base_url = rtrim($base_url, '/');
+        $parts = wp_parse_url($base_url);
+        $root = !empty($parts['host']) ? ($parts['scheme'] ?? 'https') . '://' . $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '') : $base_url;
 
         // Use pre-fetched homepage HTML first
         if ($homepage_html) {
@@ -53,10 +55,11 @@ final class LeadEmailExtractor
             : ['', '/contact'];
 
         foreach ($paths as $path) {
-            $emails = self::fetchEmailsFromUrl($base_url . $path);
+            $url = $path === '' ? $base_url : $root . $path;
+            $emails = self::fetchEmailsFromUrl($url);
             if (!empty($emails)) {
                 $best = self::pickBest($emails);
-                return ['email' => $best, 'source' => $base_url . $path, 'all_found' => $emails];
+                return ['email' => $best, 'source' => $url, 'all_found' => $emails];
             }
         }
 
@@ -67,10 +70,10 @@ final class LeadEmailExtractor
 
     private static function fetchEmailsFromUrl(string $url): array
     {
-        $response = wp_remote_get($url, [
+        $response = wp_safe_remote_get($url, [
             'timeout'             => 4,
             'user-agent'          => 'Mozilla/5.0 (compatible; GoldenWebMarketing/1.0; +https://goldenwebmarketing.com)',
-            'sslverify'           => false,
+            'sslverify'           => true,
             'redirection'         => 2,
             'limit_response_size' => 256000,
         ]);
@@ -86,6 +89,8 @@ final class LeadEmailExtractor
 
     private static function extractEmailsFromHtml(string $html): array
     {
+        $html = html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $html = preg_replace('#<(script|style)\b[^>]*>.*?</\1>#is', ' ', $html);
         $emails = [];
 
         // 1. Extract from mailto: links first (most reliable)
@@ -99,9 +104,10 @@ final class LeadEmailExtractor
         // Limit TLD to letters-only, max 8 chars + negative lookahead so the greedy
         // match can't absorb a following city name ("comorlando" never matches; "com "
         // matches fine because the space fails the (?![a-zA-Z]) lookahead).
-        $text = strip_tags($html);
+        // Keep adjacent elements apart: </p><p>Call must not become .comcall.
+        $text = preg_replace('/<[^>]*>/', ' ', $html);
         if (preg_match_all(
-            '/(?<![a-zA-Z0-9])[a-zA-Z][a-zA-Z0-9_.+\-]*@[a-zA-Z0-9][a-zA-Z0-9\-]*(?:\.[a-zA-Z0-9\-]+)*\.[a-zA-Z]{2,8}(?![a-zA-Z])/i',
+            '/(?<![a-zA-Z0-9])[a-zA-Z0-9][a-zA-Z0-9_.+\-]*@[a-zA-Z0-9][a-zA-Z0-9\-]*(?:\.[a-zA-Z0-9\-]+)*\.[a-zA-Z]{2,63}(?![a-zA-Z])/i',
             $text, $m
         ) && is_array($m[0])) {
             $emails = array_merge($emails, $m[0]);
