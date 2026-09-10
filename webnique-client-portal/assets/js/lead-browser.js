@@ -10,15 +10,18 @@
     if (event.source !== window || event.origin !== location.origin || event.data?.channel !== 'wnq-leads-response') return;
     const request = pending.get(event.data.id);
     if (!request) return;
-    pending.delete(event.data.id); clearTimeout(request.timer);
+    pending.delete(event.data.id); clearTimeout(request.timer); clearInterval(request.retry);
     event.data.response?.ok ? request.resolve(event.data.response) : request.reject(new Error(event.data.response?.error || 'Companion unavailable.'));
   });
   function ask(action,payload = {}) {
     return new Promise((resolve,reject) => {
       const id = crypto.randomUUID();
-      const timer = setTimeout(() => {pending.delete(id);reject(new Error('Chrome companion did not respond. Check setup, then refresh this page.'));},20000);
-      pending.set(id,{resolve,reject,timer});
-      window.postMessage({channel:'wnq-leads-request',id,action,payload},location.origin);
+      const send = () => window.postMessage({channel:'wnq-leads-request',id,action,payload},location.origin);
+      // Only the read-only handshake is replayed. Never retry START, STEP or ACK here.
+      const retry = action === 'HELLO' ? setInterval(send,500) : null;
+      const timer = setTimeout(() => {pending.delete(id);clearInterval(retry);reject(new Error('No response from the Chrome companion. Reload it at chrome://extensions, refresh this WordPress tab, then select Reconnect.'));},20000);
+      pending.set(id,{resolve,reject,timer,retry});
+      send();
     });
   }
   function show(next) {
@@ -85,9 +88,25 @@
     try { show((await ask('STATUS')).job); if (job) await run(); else byId('lf-progress').textContent = 'No saved browser search. Enter a keyword and ZIP.'; }
     catch (error) {byId('lf-progress').textContent = error.message;}
   });
-  ask('HELLO').then(async () => {
-    byId('lf-extension-status').textContent = 'Chrome companion connected · no paid Maps API';
-    show((await ask('STATUS')).job);
-    if (job && job.phase !== 'done') byId('lf-progress').textContent = 'Unfinished search found. Select Resume to continue.';
-  }).catch(() => {byId('lf-extension-status').textContent = 'Install the Chrome companion once to start collecting.';byId('lf-setup').open = true;});
+  let connecting = false;
+  async function connect() {
+    if (connecting || looping) return;
+    connecting = true;
+    byId('lf-reconnect').disabled = true;
+    byId('lf-extension-status').textContent = 'Checking Chrome companion…';
+    try {
+      await ask('HELLO');
+      byId('lf-extension-status').textContent = 'Chrome companion connected · no paid Maps API';
+      byId('lf-setup').open = false;
+      try {
+        show((await ask('STATUS')).job);
+        if (job && job.phase !== 'done') byId('lf-progress').textContent = 'Unfinished search found. Select Resume to continue.';
+      } catch (error) { byId('lf-progress').textContent = 'Companion connected, but search status could not be read: ' + error.message; }
+    } catch (error) {
+      byId('lf-extension-status').textContent = error.message;
+      byId('lf-setup').open = true;
+    } finally { connecting = false; byId('lf-reconnect').disabled = false; }
+  }
+  byId('lf-reconnect').addEventListener('click',connect);
+  connect();
 })();

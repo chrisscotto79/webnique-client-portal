@@ -38,6 +38,7 @@ final class LeadBrowserAdmin
                 <button class="wnq-btn wnq-btn-primary" id="lf-start">Find leads</button>
             </form><p>Searches the area around your ZIP; Google may include nearby businesses. No review-count, website or franchise exclusions.</p>
             <p id="lf-extension-status" role="status">Checking Chrome companion…</p>
+            <button id="lf-reconnect" class="wnq-btn wnq-btn-secondary" type="button">Reconnect companion</button>
             <details id="lf-setup"><summary>One-time Chrome setup</summary><ol>
                 <li>In your local plugin folder, find <strong>browser-companion</strong>.</li>
                 <li>Open <strong>chrome://extensions</strong>, enable Developer mode, select <strong>Load unpacked</strong>, and choose that folder.</li>
