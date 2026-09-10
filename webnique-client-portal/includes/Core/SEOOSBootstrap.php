@@ -48,6 +48,7 @@ final class SEOOSBootstrap
 
         // Create lead finder table if not yet created
         \WNQ\Models\Lead::createTable();
+        \WNQ\Services\LeadGhlSync::register();
 
         // Register REST API routes for SEO Agent
         add_action('rest_api_init', function () {
@@ -107,6 +108,7 @@ final class SEOOSBootstrap
             'includes/Services/LeadEmailExtractor.php',
             'includes/Services/LeadEnrichmentService.php',
             'includes/Services/LeadFinderEngine.php',
+            'includes/Services/LeadGhlSync.php',
             // Controllers & Core
             'includes/Controllers/SEOAgentController.php',
             'includes/Core/CronScheduler.php',
@@ -115,6 +117,7 @@ final class SEOOSBootstrap
             'admin/BlogSchedulerAdmin.php',
             'admin/SpiderAdmin.php',
             'admin/LeadFinderAdmin.php',
+            'admin/LeadGhlAdmin.php',
             'admin/AIElementorPageBuilderAdmin.php',
             'admin/ImageOptimizerAdmin.php',
         ];
@@ -174,10 +177,12 @@ final class SEOOSBootstrap
             'includes/Services/LeadEmailExtractor.php'        => 'WNQ\\Services\\LeadEmailExtractor',
             'includes/Services/LeadEnrichmentService.php'     => 'WNQ\\Services\\LeadEnrichmentService',
             'includes/Services/LeadFinderEngine.php'          => 'WNQ\\Services\\LeadFinderEngine',
+            'includes/Services/LeadGhlSync.php'               => 'WNQ\\Services\\LeadGhlSync',
             'admin/SEOHubAdmin.php'                           => 'WNQ\\Admin\\SEOHubAdmin',
             'admin/BlogSchedulerAdmin.php'                    => 'WNQ\\Admin\\BlogSchedulerAdmin',
             'admin/SpiderAdmin.php'                           => 'WNQ\\Admin\\SpiderAdmin',
             'admin/LeadFinderAdmin.php'                       => 'WNQ\\Admin\\LeadFinderAdmin',
+            'admin/LeadGhlAdmin.php'                          => 'WNQ\\Admin\\LeadGhlAdmin',
             'admin/AIElementorPageBuilderAdmin.php'           => 'WNQ\\Admin\\AIElementorPageBuilderAdmin',
             'admin/ImageOptimizerAdmin.php'                    => 'WNQ\\Admin\\ImageOptimizerAdmin',
         ];

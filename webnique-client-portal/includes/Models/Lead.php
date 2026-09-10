@@ -115,7 +115,11 @@ final class Lead
     public static function insert(array $data): int
     {
         global $wpdb;
-        $wpdb->insert(
+        // Importers use different source IDs; also reject the same named business in a known city.
+        $data['business_name'] = trim($data['business_name'] ?? '');
+        $data['city'] = trim($data['city'] ?? '');
+        if ($data['business_name'] !== '' && $data['city'] !== '' && self::existsByNameAndCity($data['business_name'], $data['city'])) { return 0; }
+        $inserted = $wpdb->insert(
             $wpdb->prefix . 'wnq_leads',
             [
                 'place_id'         => $data['place_id']         ?? '',
@@ -146,7 +150,10 @@ final class Lead
                 'scraped_at'       => current_time('mysql'),
             ]
         );
-        return (int)$wpdb->insert_id;
+        if ($inserted !== 1) { return 0; }
+        $id = (int)$wpdb->insert_id;
+        do_action('wnq_lead_created', $id);
+        return $id;
     }
 
     public static function updateStatus(int $id, string $status, string $notes = ''): void
@@ -427,6 +434,8 @@ final class Lead
         // GHL-compatible headers
         fputcsv($out, [
             'Company Name',
+            'First Name',
+            'Last Name',
             'Email',
             'Phone',
             'Website',
@@ -455,8 +464,6 @@ final class Lead
             'Exported Date',
         ]);
 
-        $current_industry = null;
-
         foreach ($rows as $row) {
             $issues_str = implode(' | ', array_map(
                 fn($i) => \WNQ\Services\LeadSEOScorer::issueLabel($i),
@@ -474,17 +481,10 @@ final class Lead
                 'webnique-lead',
             ]);
 
-            // Insert a blank separator row + industry heading each time the industry changes
-            if ($row['industry'] !== $current_industry) {
-                if ($current_industry !== null) {
-                    fputcsv($out, []); // blank spacer row
-                }
-                fputcsv($out, ['=== ' . strtoupper($row['industry'] ?: 'UNCATEGORIZED') . ' ===']);
-                $current_industry = $row['industry'];
-            }
-
-            fputcsv($out, [
+            fputcsv($out, array_map([self::class, 'csvCell'], [
                 $row['business_name'],
+                $row['owner_first'] ?? '',
+                $row['owner_last'] ?? '',
                 $row['email'],
                 $row['phone'],
                 $row['website'],
@@ -511,10 +511,16 @@ final class Lead
                 $row['status'],
                 $row['scraped_at'],
                 $row['exported_at'] ?? '',
-            ]);
+            ]));
         }
 
         fclose($out);
         exit;
+    }
+
+    public static function csvCell($value): string
+    {
+        $value = (string)$value;
+        return preg_match('/^[\s]*[=+@-]/u', $value) ? "'" . $value : $value;
     }
 }
