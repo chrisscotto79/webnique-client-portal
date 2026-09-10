@@ -13,6 +13,12 @@ This companion works with the **WordPress plugin**. It replaces the old console-
 
 There is no extension popup or token to paste. All collection controls live in WordPress. Loading the companion is a separate one-time Chrome step; uploading a WordPress plugin cannot install a Chrome extension automatically. When companion files change in a future update, click **Reload** on its Chrome extensions card, then refresh WordPress.
 
+### Connection fix: plugin 3.8.1 / companion 1.0.1
+
+The original WordPress script sent a single HELLO before Chrome's document-idle listener could load. The listener now loads at document-start, and WordPress retries only the read-only HELLO until connected or the 20-second deadline. The new **Reconnect companion** button retries without starting collection. Search-status failures no longer report the extension as missing. An invalidated extension context asks for a WordPress refresh.
+
+After updating these local files, click **Reload** on this extension's card, upload plugin 3.8.1 to WordPress, and refresh Lead Finder. The update does not expand host access or permissions. `node tests/lead-handshake.cjs` tests delayed listener startup, timer cleanup, reconnect, search-status failure isolation and invalidated contexts with the actual bridge script and mocked Chrome runtime. Existing browser-intake, collection UI and GHL regressions also pass. The live user installation must still be verified after reload.
+
 ## Use
 
 Enter a keyword such as `Plumbers` and ZIP `32825`, then click **Find leads**. Keep Chrome and the WordPress tab open, with the computer awake. The companion opens its own Maps search tab, scrolls and collects up to 100 listing URLs, then uses a second owned tab for individual listing details. Do not navigate these Maps tabs elsewhere during collection.

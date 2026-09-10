@@ -33,7 +33,7 @@ async function snapshot(id, mode) {
 }
 async function handle(msg, sender) {
   const key = 'wnq_' + sender.tab.id;
-  if (msg.action === 'HELLO') return {ok:true,version:'1.0.0'};
+  if (msg.action === 'HELLO') return {ok:true,version:'1.0.1'};
   if (busy.has(key)) return {ok:false,error:'A collection step is still running. Wait a moment, then resume.'};
   busy.add(key);
   try {
