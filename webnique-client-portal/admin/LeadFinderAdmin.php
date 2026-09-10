@@ -31,6 +31,7 @@ final class LeadFinderAdmin
         }
         self::$registered = true;
         LeadGhlAdmin::register();
+        LeadBrowserAdmin::register();
 
         // Priority 22 — must run AFTER SEOHubAdmin::addMenuPages() (priority 20)
         add_action('admin_menu', [self::class, 'addMenuPage'], 22);
@@ -84,7 +85,7 @@ final class LeadFinderAdmin
         if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
             wp_die('Access denied');
         }
-        $tab      = sanitize_key($_GET['tab'] ?? 'browser_scraper');
+        $tab      = sanitize_key($_GET['tab'] ?? 'find');
         $settings = get_option('wnq_lead_finder_settings', []);
         $backend_enabled = self::backendEnabled();
         $stats    = Lead::getStats();
@@ -166,33 +167,40 @@ final class LeadFinderAdmin
 
         <div class="wnq-lf-header">
             <h1>Lead Finder</h1>
-            <span class="wnq-lf-badge"><?php echo $backend_enabled ? 'Backend Active' : 'Browser Mode'; ?></span>
+            <span class="wnq-lf-badge">Maps + Website Contacts</span>
         </div>
 
         <div class="wnq-lf-stats">
-            <?php foreach (['Total Leads'=>$stats['total']??0,'New'=>$stats['new']??0,'Contacted'=>$stats['contacted']??0,'Qualified'=>$stats['qualified']??0,'With Email'=>$stats['with_email']??0] as $label=>$num): ?>
+            <?php foreach (['Saved Businesses'=>$stats['total']??0,'With Email'=>$stats['with_email']??0,'Contacted'=>$stats['contacted']??0] as $label=>$num): ?>
                 <div class="wnq-stat"><div class="num"><?php echo esc_html(number_format($num)); ?></div><div class="lbl"><?php echo esc_html($label); ?></div></div>
             <?php endforeach; ?>
         </div>
 
         <div class="wnq-lf-tabs">
-            <?php foreach (['browser_scraper'=>'Browser Scraper','search'=>'ZIP Sweep','backend_jobs'=>'Backend Jobs','manual'=>'Manual URLs','csv_import'=>'CSV Import','leads'=>'All Leads','ghl'=>'GoHighLevel','settings'=>'Settings'] as $t=>$label): ?>
+            <?php foreach (['find'=>'Find Leads','leads'=>'Lead List','ghl'=>'GoHighLevel'] as $t=>$label): ?>
                 <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-lead-finder&tab='.$t)); ?>" class="wnq-lf-tab <?php echo $tab===$t?'active':''; ?>"><?php echo esc_html($label); ?></a>
             <?php endforeach; ?>
         </div>
 
         <?php
         match ($tab) {
-            'leads'      => self::renderLeadsTab(),
+            'find'       => LeadBrowserAdmin::render(),
+            'leads'      => LeadBrowserAdmin::leads(),
+            'manage'     => self::renderLeadsTab(),
             'ghl'        => LeadGhlAdmin::render(),
             'backend_jobs' => self::renderBackendJobsTab(),
             'settings'   => self::renderSettingsTab($settings),
             'manual'     => self::renderManualTab($settings),
             'csv_import' => self::renderCsvImportTab($settings),
             'browser_scraper' => self::renderBrowserScraperTab($settings),
-            default      => self::renderZipSweepTab($settings),
+            'search'     => self::renderZipSweepTab($settings),
+            default      => LeadBrowserAdmin::render(),
         };
         ?>
+        <details class="wnq-card"><summary>Advanced / legacy tools</summary><p>The new Find Leads workflow replaces the separate scraper/import steps. Existing data and maintenance tools are preserved here.</p>
+        <?php foreach (['manage'=>'Manage statuses / delete leads','csv_import'=>'Import existing CSV','browser_scraper'=>'Legacy copy-and-paste scraper','settings'=>'Legacy backend settings','backend_jobs'=>'Legacy backend jobs','search'=>'Legacy Florida-wide ZIP sweep','manual'=>'Manual website imports'] as $target=>$label): ?>
+        <p><a href="<?php echo esc_url(admin_url('admin.php?page=wnq-lead-finder&tab='.$target)); ?>"><?php echo esc_html($label); ?></a></p>
+        <?php endforeach; ?></details>
         </div>
         <?php
     }
@@ -1079,11 +1087,11 @@ JS;
         $cities     = Lead::getDistinctValues('city');
         $states     = Lead::getDistinctValues('state');
         $nonce      = wp_create_nonce('wnq_lead_actions');
-        $base_url   = admin_url('admin.php?page=wnq-lead-finder&tab=leads');
+        $base_url   = admin_url('admin.php?page=wnq-lead-finder&tab=manage');
         $export_url = wp_nonce_url(admin_url('admin-post.php?'.http_build_query(array_filter(['action'=>'wnq_lead_export_csv','industry'=>$f_industry,'city'=>$f_city,'state'=>$f_state,'status'=>$f_status,'has_email'=>$f_email?'1':'']))), 'wnq_lead_export_csv');
         ?>
         <form method="get" class="wnq-filters">
-            <input type="hidden" name="page" value="wnq-lead-finder"><input type="hidden" name="tab" value="leads">
+            <input type="hidden" name="page" value="wnq-lead-finder"><input type="hidden" name="tab" value="manage">
             <select name="industry"><option value="">All Industries</option><?php foreach($industries as $v):?><option value="<?php echo esc_attr($v);?>"<?php selected($f_industry,$v);?>><?php echo esc_html($v);?></option><?php endforeach;?></select>
             <select name="city"><option value="">All Cities</option><?php foreach($cities as $v):?><option value="<?php echo esc_attr($v);?>"<?php selected($f_city,$v);?>><?php echo esc_html($v);?></option><?php endforeach;?></select>
             <select name="state"><option value="">All States</option><?php foreach($states as $v):?><option value="<?php echo esc_attr($v);?>"<?php selected($f_state,$v);?>><?php echo esc_html($v);?></option><?php endforeach;?></select>
