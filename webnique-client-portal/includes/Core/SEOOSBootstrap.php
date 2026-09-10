@@ -109,6 +109,7 @@ final class SEOOSBootstrap
             'includes/Services/LeadEnrichmentService.php',
             'includes/Services/LeadFinderEngine.php',
             'includes/Services/LeadGhlSync.php',
+            'includes/Services/LeadBrowserIntake.php',
             // Controllers & Core
             'includes/Controllers/SEOAgentController.php',
             'includes/Core/CronScheduler.php',
@@ -118,6 +119,7 @@ final class SEOOSBootstrap
             'admin/SpiderAdmin.php',
             'admin/LeadFinderAdmin.php',
             'admin/LeadGhlAdmin.php',
+            'admin/LeadBrowserAdmin.php',
             'admin/AIElementorPageBuilderAdmin.php',
             'admin/ImageOptimizerAdmin.php',
         ];
@@ -178,11 +180,13 @@ final class SEOOSBootstrap
             'includes/Services/LeadEnrichmentService.php'     => 'WNQ\\Services\\LeadEnrichmentService',
             'includes/Services/LeadFinderEngine.php'          => 'WNQ\\Services\\LeadFinderEngine',
             'includes/Services/LeadGhlSync.php'               => 'WNQ\\Services\\LeadGhlSync',
+            'includes/Services/LeadBrowserIntake.php'         => 'WNQ\\Services\\LeadBrowserIntake',
             'admin/SEOHubAdmin.php'                           => 'WNQ\\Admin\\SEOHubAdmin',
             'admin/BlogSchedulerAdmin.php'                    => 'WNQ\\Admin\\BlogSchedulerAdmin',
             'admin/SpiderAdmin.php'                           => 'WNQ\\Admin\\SpiderAdmin',
             'admin/LeadFinderAdmin.php'                       => 'WNQ\\Admin\\LeadFinderAdmin',
             'admin/LeadGhlAdmin.php'                          => 'WNQ\\Admin\\LeadGhlAdmin',
+            'admin/LeadBrowserAdmin.php'                      => 'WNQ\\Admin\\LeadBrowserAdmin',
             'admin/AIElementorPageBuilderAdmin.php'           => 'WNQ\\Admin\\AIElementorPageBuilderAdmin',
             'admin/ImageOptimizerAdmin.php'                    => 'WNQ\\Admin\\ImageOptimizerAdmin',
         ];

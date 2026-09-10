@@ -3,7 +3,7 @@
  * Lead Email Extractor
  *
  * Crawls a business website to find the best contact email address.
- * Tries the supplied page and one /contact fallback to bound request time.
+ * Tries the supplied page and up to three contact/about fallback pages.
  * Prefers non-generic addresses (owner@, firstname@) over generic ones
  * (info@, support@, admin@, etc.).
  *
@@ -43,22 +43,20 @@ final class LeadEmailExtractor
         if ($homepage_html) {
             $emails = self::extractEmailsFromHtml($homepage_html);
             if (!empty($emails)) {
-                return ['email' => self::pickBest($emails), 'source' => $base_url, 'all_found' => $emails];
+                return ['email' => self::pickBest($emails, $base_url), 'source' => $base_url, 'all_found' => $emails];
             }
         }
 
-        // Only try /contact as the one fallback page.
-        // Additional pages (/contact-us, /about, /about-us) rarely add anything
-        // and each burns a 4s timeout, pushing us past PHP's execution limit.
+        // Bounded public-page lookup; no login, form submission or mailbox probing.
         $paths = $homepage_html
-            ? ['/contact']
-            : ['', '/contact'];
+            ? ['/contact', '/contact-us', '/about']
+            : ['', '/contact', '/contact-us', '/about'];
 
         foreach ($paths as $path) {
             $url = $path === '' ? $base_url : $root . $path;
             $emails = self::fetchEmailsFromUrl($url);
             if (!empty($emails)) {
-                $best = self::pickBest($emails);
+                $best = self::pickBest($emails, $base_url);
                 return ['email' => $best, 'source' => $url, 'all_found' => $emails];
             }
         }
@@ -90,8 +88,17 @@ final class LeadEmailExtractor
     private static function extractEmailsFromHtml(string $html): array
     {
         $html = html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        // Structured-data emails are legitimate page-source evidence, unlike arbitrary script strings.
+        $schemaEmails = [];
+        preg_match_all('#<script\b[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>#is', $html, $scripts);
+        $walk = static function ($node) use (&$walk, &$schemaEmails): void {
+            if (!is_array($node)) { return; }
+            if (is_string($node['email'] ?? null)) { $schemaEmails[] = preg_replace('/^mailto:/i', '', trim($node['email'])); }
+            foreach ($node as $child) { if (is_array($child)) { $walk($child); } }
+        };
+        foreach ($scripts[1] ?? [] as $json) { $walk(json_decode($json, true)); }
         $html = preg_replace('#<(script|style)\b[^>]*>.*?</\1>#is', ' ', $html);
-        $emails = [];
+        $emails = $schemaEmails;
 
         // 1. Extract from mailto: links first (most reliable)
         if (preg_match_all('/mailto:([a-zA-Z0-9_.+\-]+@[a-zA-Z0-9\-]+\.[a-zA-Z0-9\-.]+)/i', $html, $m) && is_array($m[1])) {
@@ -99,11 +106,6 @@ final class LeadEmailExtractor
         }
 
         // 2. Extract from visible text (strip tags).
-        // Require local part to start with a letter — prevents bleeding from adjacent
-        // phone digits (e.g. strip_tags turns "1092<br>info@..." into "1092info@...").
-        // Limit TLD to letters-only, max 8 chars + negative lookahead so the greedy
-        // match can't absorb a following city name ("comorlando" never matches; "com "
-        // matches fine because the space fails the (?![a-zA-Z]) lookahead).
         // Keep adjacent elements apart: </p><p>Call must not become .comcall.
         $text = preg_replace('/<[^>]*>/', ' ', $html);
         if (preg_match_all(
@@ -125,6 +127,7 @@ final class LeadEmailExtractor
     private static function isValidEmail(string $email): bool
     {
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) return false;
+        if (preg_match('/^(?:no[._-]?reply|donotreply)@/i', $email)) return false;
 
         // Filter image/file extensions that sometimes get caught by the regex
         if (preg_match('/\.(png|jpg|jpeg|gif|svg|webp|pdf|zip)$/i', $email)) return false;
@@ -138,15 +141,18 @@ final class LeadEmailExtractor
         return true;
     }
 
-    private static function pickBest(array $emails): string
+    private static function pickBest(array $emails, string $website = ''): string
     {
         if (count($emails) === 1) return $emails[0];
 
         // Score: 0 = likely decision-maker, 1 = generic
         $scored = [];
+        $host = preg_replace('/^www\./i', '', (string)(wp_parse_url($website)['host'] ?? ''));
         foreach ($emails as $email) {
             $prefix         = explode('@', $email)[0];
-            $scored[$email] = in_array($prefix, self::GENERIC_PREFIXES, true) ? 1 : 0;
+            $domain = explode('@', $email)[1] ?? '';
+            $scored[$email] = ($host && strcasecmp($domain, $host) === 0 ? 0 : 10)
+                + (in_array($prefix, self::GENERIC_PREFIXES, true) ? 1 : 0);
         }
 
         asort($scored);

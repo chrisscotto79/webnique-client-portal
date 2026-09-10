@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Golden Web Marketing Lead Finder",
+  "version": "1.0.0",
+  "minimum_chrome_version": "102",
+  "description": "Read Google Maps listings for a search started in the Golden Web Marketing WordPress Lead Finder.",
+  "permissions": ["scripting", "storage"],
+  "host_permissions": ["https://www.google.com/maps/*"],
+  "background": {"service_worker": "worker.js"},
+  "content_scripts": [{
+    "matches": ["https://goldenwebmarketing.com/wp-admin/admin.php*", "https://www.goldenwebmarketing.com/wp-admin/admin.php*"],
+    "js": ["bridge.js"],
+    "run_at": "document_idle"
+  }]
+}
