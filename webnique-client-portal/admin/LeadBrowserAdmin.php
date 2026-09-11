@@ -101,7 +101,7 @@ final class LeadBrowserAdmin
                 <p id="lf-progress" role="status" aria-live="polite">Enter a keyword and ZIP to begin.</p>
                 <p id="lf-bulk-progress" role="status"></p><small>Counts below are for the current ZIP. Search history is saved in WordPress; the remaining bulk queue stays in this Chrome tab.</small>
                 <div class="lf-counts"><div><strong id="lf-count-found">0</strong><span>Listings collected</span></div><div><strong id="lf-count-saved">0</strong><span>New leads saved</span></div><div><strong id="lf-count-email">0</strong><span>New leads with email</span></div><div><strong id="lf-count-duplicate">0</strong><span>Already in your list</span></div></div>
-                <p class="lf-note">Up to 100 listings per search. Missing emails and names stay blank. Email found does not mean mailbox-verified. Pause stops after the current request; close neither tab while a request is saving.</p>
+                <p class="lf-note">Up to three reusable Maps tabs load listing details ahead; leads are saved one at a time. All collection tabs close when the ZIP finishes. Temporary Chrome errors retry with a cooldown until you Pause. Keep Chrome, this WordPress tab and your computer awake. Google verification or expired login may still need your attention. Up to 100 listings per ZIP; found emails are not mailbox-verified.</p>
                 <ul id="lf-activity" aria-label="Recent collection activity"></ul>
                 <a class="wnq-btn wnq-btn-primary" href="<?php echo esc_url(admin_url('admin.php?page=wnq-lead-finder&tab=leads')); ?>">View combined lead list</a>
             </section>

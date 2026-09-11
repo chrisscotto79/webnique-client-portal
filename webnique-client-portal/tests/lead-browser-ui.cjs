@@ -8,7 +8,8 @@ const row = {name:'Business',maps_url:maps,website:'https://business.example',ph
 let checks = 0;
 function check(value,label) {assert(value,label);checks++;}
 async function workerTests() {
-  const storage = {}, tabs = new Map(); let listener, injected = 0, nextId = 0, peak = 0, stalled = false;
+  const storage = {}, tabs = new Map(); let listener, injected = 0, nextId = 0, peak = 0, stalled = false, manyRows = false;
+  const poolRows=Array.from({length:10},(_,i)=>({...row,name:'Business '+i,maps_url:maps+'-'+i}));
   const sender = {frameId:0,tab:{id:20},url:'https://goldenwebmarketing.com/wp-admin/admin.php?page=wnq-lead-finder'};
   const chrome = {
     storage:{session:{get:async key => ({[key]:structuredClone(storage[key])}),set:async obj => Object.assign(storage,structuredClone(obj))}},
@@ -16,7 +17,7 @@ async function workerTests() {
       remove:async id => {tabs.delete(id);},
       get:async id => {if(!tabs.has(id)) throw Error('closed');return tabs.get(id);},update:async(id,data) => Object.assign(tabs.get(id),data)},
     scripting:{executeScript:async options => {injected++;check(options.injectImmediately===true,'Maps read does not wait for document idle');if(stalled)return new Promise(()=>{});return [{result:options.args[0]==='search'
-      ? {ready:true,rows:[row,row],end:true} : {ready:true,row}}];}},
+      ? {ready:true,rows:manyRows?poolRows:[row,row],end:true} : {ready:true,row:manyRows?poolRows.find(r=>r.maps_url===tabs.get(options.target.tabId).url):row}}];}},
     runtime:{onMessage:{addListener:fn => {listener=fn;}}}
   };
   const boot = () => {
@@ -63,6 +64,20 @@ async function workerTests() {
   check((await call('STATUS')).working===false,'Read timeout releases collection lock');
   stalled=false;
   check((await call('STEP')).job.found===1,'Next step recovers without reloading extension');
+  manyRows=true;peak=0;
+  for(let zip=0;zip<100;zip++) {
+    check((await call('START',{keyword:'Plumbers',zip:String(33000+zip),replace:true})).ok,'Pool ZIP starts');
+    await call('STEP');
+    for(let i=0;i<poolRows.length;i++) {
+      await call('STEP');const detail=await call('STEP');
+      check(detail.job.pending.name===poolRows[i].name,'Pool evidence remains assigned to exact listing');
+      if(zip===0 && i===2){boot();check((await call('STATUS')).job.pending.name===poolRows[i].name,'Pool survives worker restart');}
+      const result=await call('ACK',{maps_key:'abc:123-'+i,outcome:'saved'});
+      check(result.ok && result.job.stats.saved===i+1,'Pool ACK advances only one lead');
+    }
+    check(tabs.size===0,'All three pool tabs closed after ZIP');
+  }
+  check(peak===3,'100 ZIPs / 1000 listings peak at three Maps tabs');
 }
 async function browserTests() {
   const browser = await puppeteer.launch({headless:true});
@@ -102,13 +117,13 @@ async function browserTests() {
       window.pacing=[];
       const nativeTimeout=window.setTimeout;
       window.setTimeout=(fn,ms,...args)=>{
-        if(window.recoveryTest && [45000,5000,10000,20000,30000].includes(ms))return nativeTimeout(fn,window.pauseTest && ms===5000?500:25,...args);
+        if(window.recoveryTest && [45000,5000,10000,20000,30000,40000,60000].includes(ms))return nativeTimeout(fn,window.pauseTest && ms===5000?500:25,...args);
         if(window.speedTest && [200,1800].includes(ms)){window.pacing.push(ms);return nativeTimeout(fn,1,...args);}return nativeTimeout(fn,ms,...args);
       };
       window.addEventListener('message',event => {
         const m=event.data;if(m?.channel!=='wnq-leads-request') return;
         if((window.dropStep || window.dropAllSteps) && m.action==='STEP'){window.dropStep=false;return;}
-        let response={ok:true,version:'1.0.5'};
+        let response={ok:true,version:'1.0.6'};
         if(m.action==='START') job={runId:m.payload.runId,keyword:m.payload.keyword,zip:m.payload.zip,phase:'details',found:1,index:0,stats:{saved:0,email:0,duplicate:0},pending:row};
         if(window.speedTest && m.action==='STEP' && job?.index===1 && !job.pending){
           if(job.waited)job.pending={...row,maps_url:row.maps_url+'second'};
@@ -174,8 +189,11 @@ async function browserTests() {
     await new Promise(resolve=>setTimeout(resolve,650));
     check(saves===beforePause && (await page.$eval('#lf-progress',e=>e.textContent)).includes('Paused by you'),'Pause cancels pending recovery');
     await page.evaluate(()=>{window.pauseTest=false;window.dropAllSteps=true;});await page.click('#lf-resume');
-    await page.waitForFunction(()=>document.getElementById('lf-progress').textContent.startsWith('Needs attention: STEP'));
-    check(saves===beforePause && !(await page.$eval('#lf-resume',e=>e.disabled)),'Sustained outage stops after bounded retries without sends');
+    await page.waitForFunction(()=>document.getElementById('lf-activity').textContent.includes('Automatic recovery 7:'));
+    check(saves===beforePause,'Sustained outage keeps retrying past six without duplicate saves');
+    await page.click('#lf-pause');
+    await page.waitForFunction(()=>!document.getElementById('lf-resume').disabled);
+    check(!(await page.$eval('#lf-resume',e=>e.disabled)),'Pause stops continuous retries');
     check(errors.length===0,'No browser JavaScript errors');
   } finally {await browser.close();}
 }
