@@ -88,9 +88,14 @@
       if (bulk && bulk.index < bulk.zips.length && !bulk.started) await nextZip();
       if (bulk && bulk.index < bulk.zips.length && job?.runId !== bulk.run) throw new Error('The browser search does not match this saved bulk queue. Check ZIPs again to start a new batch.');
       while (running) {
+        let delay = 1800; // Keep Maps polling/scroll pacing unchanged.
+        const previousPhase = job?.phase;
         show((await ask('STEP')).job);
+        if (previousPhase === 'collect' && job.phase === 'details') delay = 200;
         if (job.pending) {
           const row = job.pending;
+          byId('lf-progress').textContent = `Checking ${row.name}'s website for email and saving the lead… No additional Chrome tabs are opened.`;
+          const saveStarted = performance.now();
           const receiptKey = 'wnq-lead-receipt-' + job.runId;
           let receipt;
           try { receipt = JSON.parse(sessionStorage.getItem(receiptKey)); } catch (_) {}
@@ -99,7 +104,8 @@
           sessionStorage.setItem(receiptKey,JSON.stringify({key:mapsKey(row.maps_url),result:saved}));
           show((await ask('ACK',{maps_key:mapsKey(row.maps_url),outcome:saved.outcome,has_email:!!saved.email})).job);
           sessionStorage.removeItem(receiptKey);
-          log(`${saved.name}: ${saved.message}`);
+          log(`${saved.name}: ${saved.message} · Save/check ${Math.round((performance.now()-saveStarted)/1000)}s`);
+          delay = 200; // Receipt is saved and ACK completed; no load is pending.
         }
         if (job.phase === 'done') {
           if (bulk && bulk.index < bulk.zips.length) {
@@ -110,7 +116,7 @@
           }
           break;
         }
-        await new Promise(resolve => setTimeout(resolve,1800));
+        await new Promise(resolve => setTimeout(resolve,delay));
       }
       if (!running && job?.phase !== 'done') byId('lf-progress').textContent = 'Paused. Saved leads are safe; Resume continues this search.';
     } catch (error) { byId('lf-progress').textContent = error.message; log('Paused: ' + error.message); }

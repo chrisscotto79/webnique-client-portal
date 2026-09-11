@@ -99,12 +99,20 @@ async function browserTests() {
     });
     await page.evaluateOnNewDocument(row => {
       window.ajaxurl='/wp-admin/admin-ajax.php';let job=null, ackFail=true;
+      window.pacing=[];
+      const nativeTimeout=window.setTimeout;
+      window.setTimeout=(fn,ms,...args)=>{if(window.speedTest && [200,1800].includes(ms)){window.pacing.push(ms);return nativeTimeout(fn,1,...args);}return nativeTimeout(fn,ms,...args);};
       window.addEventListener('message',event => {
         const m=event.data;if(m?.channel!=='wnq-leads-request') return;
         let response={ok:true,version:'1.0.3'};
         if(m.action==='START') job={runId:m.payload.runId,keyword:m.payload.keyword,zip:m.payload.zip,phase:'details',found:1,index:0,stats:{saved:0,email:0,duplicate:0},pending:row};
+        if(window.speedTest && m.action==='STEP' && job?.index===1 && !job.pending){
+          if(job.waited)job.pending={...row,maps_url:row.maps_url+'second'};
+          else job.waited=true;
+        }
         if(m.action==='ACK') {
           if(ackFail) {ackFail=false;response={ok:false,error:'Simulated interrupted acknowledgement. Resume to reconcile.'};}
+          else if(window.speedTest && job.index===0){job={...job,index:1,found:2,pending:null};}
           else {job={...job,phase:'done',pending:null,index:1,stats:{saved:1,email:1,duplicate:0},note:'End of fixture list.'};}
         }
         response.job=job;
@@ -135,6 +143,11 @@ async function browserTests() {
     await page.click('#lf-bulk-start');
     await page.waitForFunction(()=>document.getElementById('lf-bulk-progress').textContent.includes('2 ZIPs processed'));
     check(saves===3,'Two new ZIPs processed sequentially; prior ZIP skipped');
+    await page.evaluate(()=>window.speedTest=true);
+    await page.$eval('#lf-postcode',e=>e.value='32830');await page.click('#lf-start');
+    await page.waitForSelector('#lf-zip-review:not([hidden])');await page.click('#lf-bulk-start');
+    await page.waitForFunction(()=>document.getElementById('lf-bulk-progress').textContent.includes('1 ZIPs processed'));
+    check(await page.evaluate(()=>window.pacing[0]===200 && window.pacing[1]===1800),'Fast post-ACK transition retains conservative Maps wait');
     check(errors.length===0,'No browser JavaScript errors');
   } finally {await browser.close();}
 }

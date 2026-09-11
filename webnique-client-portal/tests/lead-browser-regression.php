@@ -59,7 +59,9 @@ namespace {
     $row['maps_url'].='c';$row['website']='https://business.com';$failHttp=true;
     Intake::accept($row,'Plumbers','32825');
     check(Lead::$rows[2]['email']==='' && str_contains(Lead::$rows[2]['notes'],'could not be read'),'Failed website retains listing with warning');
-    check(count($fetches)-$n<=5,'Website attempts bounded');
+    check(count($fetches)-$n<=4,'Website attempts bounded to homepage plus three fallback pages');
+    $recent = array_slice($fetches, $n);
+    check(count(array_filter($recent, fn($f)=>$f[0]==='https://business.com'))===1, 'Failed homepage is requested only once during intake');
     foreach ($fetches as [$u,$args]) {check($args['sslverify']===true && $args['redirection']===2,'Safe fetch TLS and redirect limit');}
     $failHttp=false;$row['maps_url'].='d';$row['closed']=true;
     Intake::accept($row,'Plumbers','32825');check(Lead::$rows[3]['status']==='closed','Closed listing excluded from GHL eligibility');
