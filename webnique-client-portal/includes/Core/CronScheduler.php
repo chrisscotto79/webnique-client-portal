@@ -78,7 +78,7 @@ final class CronScheduler
 
         // Blog publisher daily at 8am — processes posts due today
         if (!wp_next_scheduled('wnq_blog_publisher')) {
-            $next_8am = strtotime('tomorrow 8:00am');
+            $next_8am = self::nextBlogCheck(time(), wp_timezone());
             wp_schedule_event($next_8am, 'daily', 'wnq_blog_publisher');
         }
 
@@ -102,6 +102,14 @@ final class CronScheduler
         if (!wp_next_scheduled('wnq_tasks_weekly_archive')) {
             wp_schedule_event(self::nextSundayNightTimestamp(), 'weekly', 'wnq_tasks_weekly_archive');
         }
+    }
+
+    public static function nextBlogCheck(int $now, \DateTimeZone $timezone): int
+    {
+        $local = (new \DateTimeImmutable('@' . $now))->setTimezone($timezone);
+        $next = $local->setTime(8, 0);
+        if ($next->getTimestamp() <= $now) { $next = $next->modify('+1 day'); }
+        return $next->getTimestamp();
     }
 
     public static function unscheduleAll(): void

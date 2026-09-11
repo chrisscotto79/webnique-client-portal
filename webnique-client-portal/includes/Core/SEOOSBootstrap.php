@@ -831,6 +831,7 @@ final class SEOOSBootstrap
         $client_id = sanitize_text_field($_POST['client_id'] ?? '');
         $title     = sanitize_text_field(wp_unslash($_POST['title'] ?? ''));
         if (empty($client_id) || empty($title)) wp_die('Missing required fields');
+        self::validateBlogDestination($client_id);
 
         $inserted = \WNQ\Models\BlogScheduler::addPost($client_id, [
             'title'          => $title,
@@ -859,6 +860,7 @@ final class SEOOSBootstrap
         }
 
         $titles = array_filter(array_map('trim', explode(',', $raw_titles)));
+        self::validateBlogDestination($client_id);
         $start_date_raw = sanitize_text_field($_POST['scheduled_date'] ?? '');
         $start_date = null;
         if (!empty($start_date_raw)) {
@@ -929,6 +931,7 @@ final class SEOOSBootstrap
         if (in_array($post['status'], ['generating', 'publishing'], true)) wp_die('This post is being processed. Wait for it to finish before editing.');
 
         $new_title = sanitize_text_field(wp_unslash($_POST['title'] ?? ''));
+        self::validateBlogDestination($client_id);
         if ($new_title === '') {
             wp_die('Title is required');
         }
@@ -942,7 +945,8 @@ final class SEOOSBootstrap
             'agent_key_id'       => !empty($_POST['agent_key_id']) ? (int)$_POST['agent_key_id'] : null,
         ];
 
-        $content_changed = $new_title !== ($post['title'] ?? '')
+        $content_changed = (int)$updates['agent_key_id'] !== (int)($post['agent_key_id'] ?? 0)
+            || $new_title !== ($post['title'] ?? '')
             || $updates['focus_keyword'] !== ($post['focus_keyword'] ?? '');
         if ($content_changed && in_array($post['status'], ['pending', 'failed'], true)) {
             $updates['generated_title'] = null;
@@ -957,6 +961,16 @@ final class SEOOSBootstrap
 
         wp_redirect(admin_url('admin.php?page=wnq-seo-hub-blog&tab=queue&client_id=' . urlencode($client_id) . '&notice=updated'));
         exit;
+    }
+
+    private static function validateBlogDestination(string $client_id): void
+    {
+        if (!\WNQ\Models\BlogScheduler::validDate((string)($_POST['scheduled_date'] ?? ''))) { wp_die('Invalid scheduled date. Use YYYY-MM-DD or leave blank for an unscheduled draft.'); }
+        $id = (int)($_POST['agent_key_id'] ?? 0);
+        if ($id > 0) {
+            $agents = \WNQ\Models\BlogScheduler::getClientAgents($client_id);
+            if (!in_array($id, array_map('intval', array_column($agents, 'id')), true)) { wp_die('Selected site is not active for this client.'); }
+        }
     }
 
     public static function handleBlogBulkDelete(): void

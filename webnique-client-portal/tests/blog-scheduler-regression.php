@@ -17,7 +17,8 @@ function current_user_can($v){return $GLOBALS['allowed']??true;}
 function wp_die($message){throw new RuntimeException($message);}
 final class DatabaseFixture {
     public $prefix='wp_', $insert_id=42, $reads=[], $queries=[], $row=null, $writes=0;
-    function prepare($sql,...$args){return $sql;}
+    function prepare($sql,...$args){$GLOBALS['params']=$args;return $sql;}
+    function get_results($sql,$format){$this->reads[]=$sql;return [];}
     function get_row($sql,$format){$this->reads[]=$sql;return $this->row;}
     function query($sql){$this->queries[]=$sql;return 1;}
     function insert($table,$values){return false;}
@@ -28,6 +29,7 @@ $wpdb=new DatabaseFixture();
 require dirname(__DIR__).'/includes/Services/BlogPublisher.php';
 require dirname(__DIR__).'/includes/Models/BlogScheduler.php';
 require dirname(__DIR__).'/includes/Core/SEOOSBootstrap.php';
+require dirname(__DIR__).'/includes/Core/CronScheduler.php';
 function invoke($method,...$args){return (new ReflectionMethod(\WNQ\Services\BlogPublisher::class,$method))->invoke(null,...$args);}
 $agent=['site_url'=>'https://client.example','api_key'=>'fixture'];
 foreach (['<html>Login</html>','null','[]','{"success":false,"post_id":123}','{"post_id":0}','{"post_id":"bad"}'] as $body) {
@@ -56,4 +58,20 @@ foreach (['handleBlogSaveFeaturedImage','handleBlogDeletePost','handleBlogUpdate
     catch(RuntimeException $e){check(str_contains($e->getMessage(),'being processed'),'Running job guarded');}
 }
 check($wpdb->writes===0 && $GLOBALS['nonce'],'Guards run before modifications with nonce checks');
+foreach (['2026-02-30','2026-13-01','tomorrow','2026-1-1'] as $date) { check(!\WNQ\Models\BlogScheduler::validDate($date),'Invalid date rejected'); }
+foreach (['','2028-02-29','2026-09-10'] as $date) { check(\WNQ\Models\BlogScheduler::validDate($date),'Valid date accepted'); }
+\WNQ\Models\BlogScheduler::getPostsByClient('client',50,100);
+check($GLOBALS['params']===['client',50,100] && str_contains(end($wpdb->reads),'OFFSET %d'),'Pagination is client scoped with stable offset');
+$before=strtotime('2026-09-10 11:00:00 UTC');
+check(\WNQ\Core\CronScheduler::nextBlogCheck($before,new DateTimeZone('America/New_York'))===strtotime('2026-09-10 12:00:00 UTC'),'First schedule uses today 8am portal time');
+check(\WNQ\Core\CronScheduler::nextBlogCheck(strtotime('2026-09-10 13:00:00 UTC'),new DateTimeZone('America/New_York'))===strtotime('2026-09-11 12:00:00 UTC'),'After 8am schedules next day');
+$notes=\WNQ\Services\BlogPublisher::seoReview(['generated_body'=>'<h1>A</h1><h1>B</h1><p>Text</p><img src="x">']);
+check(in_array('Missing meta description.',$notes,true),'Missing metadata surfaced');
+check(in_array('No H2 section headings found.',$notes,true),'Heading review');
+check(count($notes)>=6,'Image, topic, links and duplicate H1 reviews');
+$sent=null;check(!invoke('pushToAgent',['site_url'=>'http://client.example','api_key'=>'fixture'],[])['success'] && $sent===null,'No credentials over HTTP');
+$response=['code'=>500,'body'=>'{"message":"fixture-secret","context":"private"}'];
+$error=invoke('pushToAgent',$agent,[]);
+check(!str_contains($error['message'],'fixture-secret') && !str_contains($error['message'],'private'),'Remote errors not echoed');
+check($sent[1]['sslverify']===true,'TLS verification explicit');
 echo "Blog Scheduler regression checks passed.\n";

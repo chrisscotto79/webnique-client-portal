@@ -90,7 +90,9 @@ final class BlogSchedulerAdmin
     {
         $clients    = Client::getByStatus('active');
         $client_id  = sanitize_text_field($_GET['client_id'] ?? ($clients[0]['client_id'] ?? ''));
-        $posts      = $client_id ? BlogScheduler::getPostsByClient($client_id) : [];
+        $total = $client_id ? BlogScheduler::countPosts($client_id) : 0;
+        $queue_page = min(max(1, (int)($_GET['queue_page'] ?? 1)), max(1, (int)ceil($total / 50)));
+        $posts = $client_id ? BlogScheduler::getPostsByClient($client_id, 50, ($queue_page - 1) * 50) : [];
 
         // Status notice
         $notice = sanitize_text_field($_GET['notice'] ?? '');
@@ -182,7 +184,18 @@ final class BlogSchedulerAdmin
 
         // Post queue table
         echo '<div class="wnq-blog-card">';
-        echo '<h3>📋 Scheduled Posts (' . count($posts) . ')</h3>';
+        echo '<h3>📋 Scheduled Posts — ' . (int)$total . ' total</h3>';
+        $next_run = wp_next_scheduled('wnq_blog_publisher');
+        echo '<p>Scheduling uses the portal timezone: <strong>' . esc_html(wp_timezone_string()) . '</strong>, not each client’s timezone. Blank dates are unscheduled. Publish Now bypasses the date.</p>';
+        echo '<p>Next queue check: <strong>' . esc_html($next_run ? wp_date('M j, Y g:i a T', $next_run) : 'Not scheduled — check cron configuration') . '</strong>. WordPress cron requires site traffic or a server cron; this is not a guaranteed publication time.</p>';
+        if ($total > 50) {
+            echo '<nav aria-label="Blog queue pages"><span>Page ' . (int)$queue_page . ' of ' . (int)ceil($total / 50) . '</span> ';
+            foreach (['Previous'=>$queue_page - 1,'Next'=>$queue_page + 1] as $label=>$target) {
+                if ($target < 1 || $target > ceil($total / 50)) { continue; }
+                echo '<a class="button" href="' . esc_url(add_query_arg(['page'=>'wnq-seo-hub-blog','tab'=>'queue','client_id'=>$client_id,'queue_page'=>$target], admin_url('admin.php'))) . '">' . esc_html($label) . '</a> ';
+            }
+            echo '</nav>';
+        }
         if (empty($posts)) {
             echo '<p style="color:#6b7280;">No posts in queue. Add titles above or use the Title Generator tab.</p>';
         } else {
@@ -226,6 +239,10 @@ final class BlogSchedulerAdmin
                 echo '<td><input type="checkbox" class="wnq-post-select" value="' . (int)$p['id'] . '"></td>';
                 echo '<td>';
                 echo esc_html($p['generated_title'] ?: $p['title']);
+                $seo_notes = \WNQ\Services\BlogPublisher::seoReview($p);
+                echo '<details style="margin-top:8px;max-width:420px"><summary>SEO review — ' . count($seo_notes) . ' checks to review</summary><ul>';
+                foreach ($seo_notes as $note) { echo '<li>' . esc_html($note) . '</li>'; }
+                echo '</ul><small>Advisory only. Verify factual claims, originality and usefulness; these checks do not predict rankings.</small></details>';
                 if (!empty($p['wp_post_url'])) {
                     echo ' <a href="' . esc_url($p['wp_post_url']) . '" target="_blank" style="font-size:11px;">[view]</a>';
                 }
@@ -248,7 +265,7 @@ final class BlogSchedulerAdmin
                 echo '</td>';
                 $site_label = !empty($p['agent_key_id']) ? ($agent_map[(int)$p['agent_key_id']] ?? '—') : '<span style="color:#9ca3af;">Any</span>';
                 echo '<td style="font-size:12px;">' . esc_html(strip_tags($site_label)) . (!empty($p['agent_key_id']) ? '' : ' <span style="color:#9ca3af;">(any)</span>') . '</td>';
-                echo '<td>' . esc_html($p['scheduled_date'] ?? '—') . '</td>';
+                echo '<td>' . esc_html($p['scheduled_date'] ?: 'Unscheduled') . (($p['status'] === 'pending' && !empty($p['scheduled_date']) && $p['scheduled_date'] < current_time('Y-m-d')) ? '<br><strong style="color:#b45309">Overdue</strong>' : '') . '</td>';
                 echo '<td><span class="wnq-status-badge ' . $status_class . '">' . esc_html($p['status']) . '</span></td>';
                 echo '<td>';
                 echo '<button type="button" class="button button-small wnq-edit-post" data-id="' . (int)$p['id'] . '">Edit</button> ';
