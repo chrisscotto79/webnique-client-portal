@@ -7,6 +7,36 @@
   let looping = false;
   let preparing = false;
   let job = null;
+  let recoveryTimer = null, recoveryAttempts = 0, recoveryEpoch = 0, recovering = false;
+  function stopRecovery() {
+    recoveryEpoch++;clearTimeout(recoveryTimer);recoveryTimer=null;recovering=false;
+  }
+  function retryError(message) {return Object.assign(new Error(message),{retryable:true});}
+  function scheduleRecovery(error) {
+    if (!error.retryable || recoveryAttempts >= 6) return false;
+    const epoch=recoveryEpoch;
+    const wait=Math.min(30000,5000*Math.pow(2,recoveryAttempts++));
+    recovering=true;
+    byId('lf-progress').textContent=`Temporary companion interruption. Automatic recovery ${recoveryAttempts}/6 in ${wait/1000}s. Saved leads are safe; Pause cancels recovery.`;
+    log(`Automatic recovery ${recoveryAttempts}/6: checking saved state before continuing.`);
+    recoveryTimer=setTimeout(async()=>{
+      recoveryTimer=null;
+      try {
+        const status=await ask('STATUS');
+        if(epoch!==recoveryEpoch)return;
+        if(status.working)throw retryError('Companion still finishing its previous request.');
+        const expected=bulk?.run || job?.runId;
+        if(!status.job || (expected && status.job.runId!==expected))throw new Error('Saved browser job changed or is missing. Review the queue before resuming.');
+        show(status.job);recovering=false;
+        byId('lf-extension-status').textContent='Companion recovered · continuing the saved search.';
+        await run(true);
+      } catch(e) {
+        if(epoch!==recoveryEpoch)return;
+        if(!scheduleRecovery(e)){recovering=false;byId('lf-progress').textContent='Needs attention: '+e.message;log('Automatic recovery stopped. Review the error and use Resume when ready.');}
+      } finally {controls();}
+    },wait);
+    return true;
+  }
   const bulkKey = 'wnq-lead-bulk-' + (app.dataset.user || 'staff');
   let bulk = null, review = null;
   try { bulk = JSON.parse(sessionStorage.getItem(bulkKey)); } catch (_) {}
@@ -27,8 +57,9 @@
     if (!bulk || bulk.index >= bulk.zips.length) return false;
     if (!bulk.run) { bulk.run = crypto.randomUUID(); keepBulk(); }
     await history('begin',{run:bulk.run,keyword:bulk.keyword,zip:bulk.zips[bulk.index]});
+    if(!running)return false;
     const next = (await ask('START',{keyword:bulk.keyword,zip:bulk.zips[bulk.index],runId:bulk.run,replace:true})).job;
-    if (next?.runId !== bulk.run) throw new Error('Reload Chrome companion version 1.0.3 or newer before using bulk ZIPs.');
+    if (next?.runId !== bulk.run) throw new Error('Reload Chrome companion version 1.0.5 or newer before using automatic recovery.');
     bulk.started = true; keepBulk(); show(next); bulkLabel(); return true;
   }
   window.addEventListener('message', event => {
@@ -36,7 +67,7 @@
     const request = pending.get(event.data.id);
     if (!request) return;
     pending.delete(event.data.id); clearTimeout(request.timer); clearInterval(request.retry);
-    event.data.response?.ok ? request.resolve(event.data.response) : request.reject(new Error(event.data.response?.error || 'Companion unavailable.'));
+    event.data.response?.ok ? request.resolve(event.data.response) : request.reject(Object.assign(new Error(event.data.response?.error || 'Companion unavailable.'),{retryable:event.data.response?.retryable===true}));
   });
   function ask(action,payload = {}) {
     return new Promise((resolve,reject) => {
@@ -47,7 +78,7 @@
       const timer = setTimeout(() => {
         pending.delete(id);clearInterval(retry);
         byId('lf-extension-status').textContent='Companion response delayed — connection needs checking.';
-        reject(new Error(`${action} response timed out. Saved leads and the bulk queue are retained. Select Resume / retry to reconcile the current search; do not reload the extension first.`));
+        reject(Object.assign(new Error(`${action} response timed out. Saved leads and the bulk queue are retained.`),{retryable:['STEP','ACK','STATUS','HELLO'].includes(action)}));
       }, action==='HELLO' ? 20000 : 45000);
       pending.set(id,{resolve,reject,timer,retry});
       send();
@@ -77,14 +108,16 @@
   }
   function mapsKey(value) {const u = new URL(value);return decodeURIComponent((u.pathname.match(/!1s([^!\/]+)/) || [])[1] || u.pathname);}
   function controls() {
-    byId('lf-start').disabled = looping || preparing; byId('lf-resume').disabled = looping || preparing; byId('lf-pause').disabled = !running;
-    byId('lf-bulk-start').disabled = looping || preparing;
+    byId('lf-start').disabled = looping || preparing || recovering; byId('lf-resume').disabled = looping || preparing || recovering; byId('lf-pause').disabled = !running && !recovering;
+    byId('lf-bulk-start').disabled = looping || preparing || recovering;
   }
-  async function run() {
+  async function run(isRecovery = false) {
     if (looping) return;
+    if(!isRecovery){stopRecovery();recoveryAttempts=0;}
     running = true; looping = true; controls();
     try {
       await safeCompanion();
+      if(!running)return;
       if (bulk && bulk.index < bulk.zips.length && !bulk.started) await nextZip();
       if (bulk && bulk.index < bulk.zips.length && job?.runId !== bulk.run) throw new Error('The browser search does not match this saved bulk queue. Check ZIPs again to start a new batch.');
       while (running) {
@@ -106,6 +139,7 @@
           sessionStorage.removeItem(receiptKey);
           log(`${saved.name}: ${saved.message} · Save/check ${Math.round((performance.now()-saveStarted)/1000)}s`);
           delay = 200; // Receipt is saved and ACK completed; no load is pending.
+          recoveryAttempts=0;
         }
         if (job.phase === 'done') {
           if (bulk && bulk.index < bulk.zips.length) {
@@ -119,7 +153,9 @@
         await new Promise(resolve => setTimeout(resolve,delay));
       }
       if (!running && job?.phase !== 'done') byId('lf-progress').textContent = 'Paused. Saved leads are safe; Resume continues this search.';
-    } catch (error) { byId('lf-progress').textContent = error.message; log('Paused: ' + error.message); }
+    } catch (error) {
+      if(!running || !scheduleRecovery(error)){byId('lf-progress').textContent = 'Needs attention: ' + error.message;log('Needs attention: ' + error.message);}
+    }
     finally { running = false; looping = false; controls(); }
   }
   byId('lf-search-form').addEventListener('submit',async event => {
@@ -152,7 +188,7 @@
     } catch(error){byId('lf-progress').textContent=error.message;}
     finally {preparing=false;controls();}
   });
-  byId('lf-pause').addEventListener('click',() => {running = false;controls();byId('lf-progress').textContent = 'Pausing after the current request…';});
+  byId('lf-pause').addEventListener('click',() => {stopRecovery();running = false;controls();byId('lf-progress').textContent = 'Paused by you. Any in-flight save will finish; automatic recovery is off until Resume.';});
   byId('lf-resume').addEventListener('click',async () => {
     try {
       const status=await ask('STATUS');
@@ -165,7 +201,7 @@
   async function safeCompanion() {
     const hello=await ask('HELLO');
     const v=(hello.version||'0').split('.').map(Number);
-    if(!(v[0]>1 || (v[0]===1 && (v[1]>0 || v[2]>=3))))throw new Error('Bulk search paused for safety. Reload Chrome companion 1.0.3 or newer at chrome://extensions, then refresh WordPress. This update prevents accumulating Maps tabs.');
+    if(!(v[0]>1 || (v[0]===1 && (v[1]>0 || v[2]>=5))))throw new Error('Reload Chrome companion 1.0.5 or newer at chrome://extensions, then refresh WordPress once. This version supports automatic recovery and the one-tab limit.');
   }
   let connecting = false;
   async function connect() {

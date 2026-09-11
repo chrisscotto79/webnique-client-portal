@@ -59,9 +59,9 @@ async function snapshot(id, mode) {
 }
 async function handle(msg, sender) {
   const key = 'wnq_' + sender.tab.id;
-  if (msg.action === 'HELLO') return {ok:true,version:'1.0.4',working:busy.size > 0};
+  if (msg.action === 'HELLO') return {ok:true,version:'1.0.5',working:busy.size > 0};
   if (msg.action === 'STATUS') return {...summary((await chrome.storage.session.get(key))[key]),working:busy.size > 0};
-  if (busy.size) return {ok:false,error:'A collection step is still running. Wait a moment, then resume.'};
+  if (busy.size) return {ok:false,retryable:true,error:'A collection step is still running. Waiting for the saved search.'};
   busy.add(key);
   try {
     let job = (await chrome.storage.session.get(key))[key];
