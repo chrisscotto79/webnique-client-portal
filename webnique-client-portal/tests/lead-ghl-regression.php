@@ -49,6 +49,7 @@ final class GhlDbFixture {
     }
     function get_var($sql) { if (str_contains($sql, 'MAX(id)')) { return $this->leads ? max(array_keys($this->leads)) : 0; } return str_contains($sql, 'GET_LOCK') ? (int)$this->lock : (str_contains($sql, 'RELEASE_LOCK') ? 1 : null); }
     function get_results($sql, $format) {
+        if (str_contains($sql, "contact_id <> ''")) { return array_slice(array_values(array_filter($this->jobs, static fn($j) => $j['contact_id'] !== '' && in_array($j['status'], ['review','failed','queued'], true))), 0, 3); }
         if (str_contains($sql, 'GROUP BY status')) {
             $counts = []; foreach ($this->jobs as $job) { $counts[$job['status']] = ($counts[$job['status']] ?? 0) + 1; }
             $rows = []; foreach ($counts as $status => $total) { $rows[] = compact('status','total'); } return $rows;
@@ -280,6 +281,16 @@ $transport = static function ($url, $args) {
     return ['code'=>200,'body'=>json_encode($body)];
 };
 Sync::batch(); check(Sync::progress()['sent'] === 3, 'Cron batch handles multiple contacts in one tick');
+resetFixture(); Sync::enqueue(1, true, true);
+$wpdb->jobs[1]['contact_id'] = 'contact1'; $wpdb->jobs[1]['status'] = 'review';
+foreach (['false', null, false] as $value) {
+    $contact['dnd'] = $value;
+    $report = implode(' ', Sync::diagnose());
+    check(str_contains($report, 'DND ' . gettype($value)), 'Diagnostic distinguishes live DND type');
+    check(!str_contains($report, $contact['email']) && !str_contains($report, 'fixture-private-token-only'), 'Diagnostic excludes PII and token');
+}
+unset($contact['dnd']); check(str_contains(implode(' ', Sync::diagnose()), 'DND missing'), 'Diagnostic distinguishes absent DND');
+check(!writes() && $wpdb->jobs[1]['status'] === 'review', 'Diagnostics cannot write contacts or requeue');
 resetFixture(); $wpdb->lock=false;
 try { WNQ\Models\Lead::deleteAll(); check(false,'Delete during handoff accepted'); }
 catch (RuntimeException $e) { check(str_contains($e->getMessage(),'progress'),'Deletion serialized against handoffs'); }

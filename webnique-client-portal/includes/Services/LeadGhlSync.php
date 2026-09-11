@@ -235,6 +235,34 @@ final class LeadGhlSync
         return self::contactBlockReason($contact, $email) === '';
     }
 
+    /** Read-only inspection of stored contact IDs; never creates, tags or requeues. */
+    public static function diagnose(): array
+    {
+        global $wpdb;
+        $rows = $wpdb->get_results('SELECT * FROM ' . self::table() . " WHERE status IN ('review','failed','queued') AND contact_id <> '' ORDER BY updated_at DESC LIMIT 3", ARRAY_A) ?: [];
+        $reports = [];
+        foreach ($rows as $job) {
+            $lead = self::lead((int)$job['lead_id']);
+            $data = self::request('GET', '/contacts/' . rawurlencode($job['contact_id']));
+            $contact = $data['contact'] ?? [];
+            if (!is_array($contact)) { $reports[] = 'Lead #' . (int)$job['lead_id'] . ': invalid contact response'; continue; }
+            $value = $contact['dnd'] ?? null;
+            $dnd = !array_key_exists('dnd', $contact) ? 'missing' : gettype($value);
+            if (is_bool($value) || $value === 0 || $value === 1 || in_array($value, ['true','false','0','1'], true)) { $dnd .= '=' . json_encode($value); }
+            $channels = [];
+            foreach (is_array($contact['dndSettings'] ?? null) ? $contact['dndSettings'] : [] as $key => $settings) {
+                if (!in_array(strtolower((string)$key), ['email','all'], true)) { continue; }
+                $status = is_array($settings) ? ($settings['status'] ?? null) : null;
+                $channels[] = strtolower((string)$key) . '=' . (in_array($status, ['active','inactive','permanent'], true) ? $status : 'missing/unrecognized');
+            }
+            $reports[] = 'Lead #' . (int)$job['lead_id'] . ': DND ' . $dnd
+                . '; channel DND ' . ($channels ? implode(', ', $channels) : 'not supplied')
+                . '; tags ' . (is_array($contact['tags'] ?? null) ? 'array' : 'missing/invalid')
+                . '; check: ' . (self::contactBlockReason($contact, $lead['email'] ?? '') ?: 'passed');
+        }
+        return $reports ?: ['No stored GHL contact IDs available to inspect.'];
+    }
+
     public static function contactBlockReason(array $contact, string $email): string
     {
         if (empty($contact['id'])) { return 'GHL returned no contact ID'; }
@@ -245,7 +273,9 @@ final class LeadGhlSync
         foreach (['deleted', 'unsubscribeEmail', 'bounceEmail'] as $flag) {
             if (!empty($contact[$flag])) { return 'GHL contact is blocked: ' . $flag; }
         }
+        if (isset($contact['dndSettings']) && !is_array($contact['dndSettings'])) { return 'GHL returned invalid channel DND settings'; }
         foreach (($contact['dndSettings'] ?? []) as $channel => $settings) {
+            if (!is_array($settings)) { return 'GHL returned invalid channel DND settings'; }
             if (in_array(strtolower((string)$channel), ['email', 'all'], true)
                 && !in_array(strtolower((string)($settings['status'] ?? '')), ['inactive', ''], true)) {
                 return 'GHL email DND is active or unrecognized';
