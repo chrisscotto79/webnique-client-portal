@@ -182,6 +182,21 @@ check(str_contains($html, 'role="switch"') && !str_contains($html, 'value="1" ch
 check(str_contains($html, '_wpnonce'), 'Settings form protected by nonce');
 ob_start(); WNQ\Admin\LeadGhlAdmin::row($wpdb->leads[1]); $rowHtml = ob_get_clean();
 check(str_contains($rowHtml, 'Approve &amp; Send') && str_contains($rowHtml, 'confirm('), 'Explicit live-send confirmation');
+resetFixture();
+$bulk = WNQ\Admin\LeadGhlAdmin::approveList([1, 1, 999]);
+check($bulk === ['queued' => 1, 'skipped' => 1], 'Bulk approval deduplicates IDs and skips missing leads');
+check(count(writes()) === 0, 'Bulk approval only queues; preflight does not enroll contacts');
+check(WNQ\Admin\LeadGhlAdmin::approveList([1])['skipped'] === 1, 'Bulk does not requeue pending lead');
+foreach ([[], range(1,51), ['bad'], [[1]]] as $invalid) {
+    try { WNQ\Admin\LeadGhlAdmin::approveList($invalid); check(false, 'Invalid bulk accepted'); }
+    catch (RuntimeException $e) { check(true, 'Invalid bulk rejected'); }
+}
+resetFixture(); $transport = static fn() => ['code' => 200, 'body' => '{"tags":[]}'];
+try { WNQ\Admin\LeadGhlAdmin::approveList([1]); check(false, 'Missing tag accepted'); }
+catch (RuntimeException $e) { check(str_contains($e->getMessage(), Sync::LOCATION) && !$wpdb->jobs, 'Missing tag explains location and queues nothing'); }
+$transport = static fn() => ['code' => 200, 'body' => '{}'];
+try { Sync::test(); check(false, 'Invalid tags accepted'); }
+catch (RuntimeException $e) { check(str_contains($e->getMessage(), 'valid tag list'), 'Malformed tag response distinguished'); }
 $allowed = false;
 try { WNQ\Admin\LeadGhlAdmin::handle(); check(false, 'Unauthorized request accepted'); } catch (RuntimeException $e) { check($e->getMessage() === 'Access denied', 'Handler checks staff capability'); }
 $allowed = true;

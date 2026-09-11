@@ -31,8 +31,12 @@ final class LeadGhlAdmin
                 LeadGhlSync::test();
                 $message = 'Location access and campaign tag verified. No contacts changed; no emails triggered.';
             } elseif ($action === 'approve') {
+                LeadGhlSync::test();
                 $ok = LeadGhlSync::enqueue(absint($_POST['lead_id'] ?? 0));
                 $message = $ok ? 'Approved and queued. The background worker will apply the campaign tag.' : 'Not queued: check token, email, lead status, suppression, or existing handoff.';
+            } elseif ($action === 'approve_bulk') {
+                $result = self::approveList($_POST['lead_ids'] ?? []);
+                $message = $result['queued'] . ' leads approved and queued; ' . $result['skipped'] . ' skipped (ineligible, suppressed, or already queued/sent). Background processing applies the campaign tag; queued does not mean delivered.';
             } elseif ($action === 'suppress') {
                 LeadGhlSync::suppress(absint($_POST['lead_id'] ?? 0));
                 $message = 'Email suppressed for future plugin handoffs. This does not cancel a workflow already running in GHL.';
@@ -47,6 +51,27 @@ final class LeadGhlAdmin
     {
         echo '<input type="hidden" name="action" value="wnq_lead_ghl"><input type="hidden" name="operation" value="' . esc_attr($operation) . '"><input type="hidden" name="lead_id" value="' . (int)$id . '">';
         wp_nonce_field('wnq_lead_ghl');
+    }
+
+    public static function approveList($ids): array
+    {
+        if (!self::allowed()) { throw new \RuntimeException('Access denied'); }
+        if (!is_array($ids) || !$ids || count($ids) > 50) { throw new \RuntimeException('Select between 1 and 50 leads from the current page.'); }
+        foreach ($ids as $id) {
+            if (!is_scalar($id) || !preg_match('/^[1-9][0-9]*$/D', (string)$id)) { throw new \RuntimeException('Invalid lead selection.'); }
+        }
+        $ids = array_unique(array_map('intval', $ids));
+        LeadGhlSync::test(); // Read-only preflight before any jobs are queued.
+        $queued = 0;
+        foreach ($ids as $id) { if (LeadGhlSync::enqueue($id)) { $queued++; } }
+        return ['queued' => $queued, 'skipped' => count($ids) - $queued];
+    }
+
+    public static function listForm(): void
+    {
+        echo '<form id="lf-ghl-list" method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(\'Approve selected leads for Land Clearing Cold Email? Applying this tag can start live emails.\')">';
+        self::fields('approve_bulk');
+        echo '<p>Select reviewed leads below, then <button class="wnq-btn wnq-btn-primary" type="submit">Approve &amp; queue selected for GHL</button></p><p>Uses the saved private token and Land Clearing Cold Email tag. Only selected eligible leads are queued; existing suppression and duplicate checks still apply.</p></form>';
     }
 
     public static function row(array $lead): void

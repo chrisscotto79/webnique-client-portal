@@ -102,6 +102,7 @@ final class SEOOSBootstrap
             'includes/Services/ServiceCoverageEngine.php',
             // Lead Finder
             'includes/Models/Lead.php',
+            'includes/Models/LeadSearchHistory.php',
             'includes/Data/FloridaZips.php',
             'includes/Services/GoogleMapsClient.php',
             'includes/Services/LeadSEOScorer.php',
@@ -173,6 +174,7 @@ final class SEOOSBootstrap
             'includes/Services/ServiceCoverageEngine.php'     => 'WNQ\\Services\\ServiceCoverageEngine',
             // Lead Finder
             'includes/Models/Lead.php'                        => 'WNQ\\Models\\Lead',
+            'includes/Models/LeadSearchHistory.php'           => 'WNQ\\Models\\LeadSearchHistory',
             'includes/Data/FloridaZips.php'                   => 'WNQ\\Data\\FloridaZips',
             'includes/Services/GoogleMapsClient.php'          => 'WNQ\\Services\\GoogleMapsClient',
             'includes/Services/LeadSEOScorer.php'             => 'WNQ\\Services\\LeadSEOScorer',

@@ -174,11 +174,14 @@ final class LeadGhlSync
     public static function test(): void
     {
         $data = self::request('GET', '/locations/' . self::LOCATION . '/tags');
+        if (!isset($data['tags']) || !is_array($data['tags'])) {
+            throw new \RuntimeException('GHL did not return a valid tag list. Check locations/tags.readonly permission and location access. No contacts changed.');
+        }
         foreach (($data['tags'] ?? []) as $tag) {
             if (strcasecmp((string)($tag['name'] ?? ''), self::TAG) === 0
                 && ($tag['locationId'] ?? self::LOCATION) === self::LOCATION) { return; }
         }
-        throw new \RuntimeException('The campaign tag was not found in the configured location. Check it in GoHighLevel.');
+        throw new \RuntimeException('Connection reached location ' . self::LOCATION . ', but the exact tag "' . self::TAG . '" was not found among ' . count($data['tags']) . ' returned tags. Check the tag in this sub-account, not the agency account. No contacts changed.');
     }
 
     private static function lookup(string $field, string $value): array

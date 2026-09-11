@@ -62,15 +62,23 @@ async function browserTests() {
       if(u.pathname.endsWith('admin.php')) return request.respond({contentType:'text/html',body:html});
       if(u.pathname.endsWith('lead-browser.js')) return request.respond({contentType:'application/javascript',body:fs.readFileSync(path.join(root,'assets/js/lead-browser.js'),'utf8')});
       if(u.pathname.endsWith('lead-browser.css')) return request.respond({contentType:'text/css',body:fs.readFileSync(path.join(root,'assets/css/lead-browser.css'),'utf8')});
-      if(u.pathname.endsWith('admin-ajax.php')) {saves++;return request.respond({contentType:'application/json',body:JSON.stringify({success:true,data:{name:'Business',outcome:'saved',email:'info@business.example',message:'Website email found.'}})});}
+      if(u.pathname.endsWith('admin-ajax.php')) {
+        const body=request.postData()||'';
+        if(body.includes('wnq_browser_search_history')) {
+          const field=name=>(body.match(new RegExp('name="'+name+'"\\r\\n\\r\\n([^\\r]*)'))||[])[1]||'';
+          const items=[...new Set(field('zips').split(/[\s,;]+/).filter(Boolean))].map(zip=>({zip,previous:zip==='32825'&&saves>0?{status:'completed',finished_at:'2026-09-10 12:00:00',saved:1}:null}));
+          return request.respond({contentType:'application/json',body:JSON.stringify({success:true,data:field('operation')==='check'?{keyword:field('keyword').toLowerCase(),items}:{}})});
+        }
+        saves++;return request.respond({contentType:'application/json',body:JSON.stringify({success:true,data:{name:'Business',outcome:'saved',email:'info@business.example',message:'Website email found.'}})});
+      }
       return request.abort();
     });
     await page.evaluateOnNewDocument(row => {
       window.ajaxurl='/wp-admin/admin-ajax.php';let job=null, ackFail=true;
       window.addEventListener('message',event => {
         const m=event.data;if(m?.channel!=='wnq-leads-request') return;
-        let response={ok:true};
-        if(m.action==='START') job={runId:'test-run',keyword:m.payload.keyword,zip:m.payload.zip,phase:'details',found:1,index:0,stats:{saved:0,email:0,duplicate:0},pending:row};
+        let response={ok:true,version:'1.0.2'};
+        if(m.action==='START') job={runId:m.payload.runId,keyword:m.payload.keyword,zip:m.payload.zip,phase:'details',found:1,index:0,stats:{saved:0,email:0,duplicate:0},pending:row};
         if(m.action==='ACK') {
           if(ackFail) {ackFail=false;response={ok:false,error:'Simulated interrupted acknowledgement. Resume to reconcile.'};}
           else {job={...job,phase:'done',pending:null,index:1,stats:{saved:1,email:1,duplicate:0},note:'End of fixture list.'};}
@@ -87,12 +95,22 @@ async function browserTests() {
       if(process.env.WNQ_UI_OUTPUT) await page.screenshot({path:path.join(process.env.WNQ_UI_OUTPUT,`lead-finder-${width}.png`),fullPage:true});
     }
     await page.type('#lf-niche','Plumbers');await page.type('#lf-postcode','32825');await page.click('#lf-start');
+    await page.waitForSelector('#lf-zip-review:not([hidden])');
+    check(saves===0,'History review happens before scraping');
+    await page.click('#lf-bulk-start');
     await page.waitForFunction(()=>document.getElementById('lf-progress').textContent.includes('Simulated'));
     check(saves===1,'Listing saved before acknowledgement');await page.click('#lf-resume');
     await page.waitForFunction(()=>document.getElementById('lf-progress').textContent.includes('Search complete'));
     check(saves===1,'Resume reuses saved receipt, not another website request');
     check(await page.$eval('#lf-count-saved',e=>e.textContent)==='1','Saved counter preserved across interrupted acknowledgement');
     check(await page.$eval('#lf-count-email',e=>e.textContent)==='1','Email counter reflects saved result');
+    await page.$eval('#lf-postcode',e=>e.value='32825,32826,32826,32828');await page.click('#lf-start');
+    await page.waitForSelector('#lf-zip-review:not([hidden])');
+    check(await page.$$eval('#lf-zip-items input',els=>els.length)===3,'Bulk ZIP duplicates removed');
+    check(await page.$eval('#lf-zip-items input[value="32825"]',e=>!e.checked),'Previously searched ZIP unchecked');
+    await page.click('#lf-bulk-start');
+    await page.waitForFunction(()=>document.getElementById('lf-bulk-progress').textContent.includes('2 ZIPs processed'));
+    check(saves===3,'Two new ZIPs processed sequentially; prior ZIP skipped');
     check(errors.length===0,'No browser JavaScript errors');
   } finally {await browser.close();}
 }
