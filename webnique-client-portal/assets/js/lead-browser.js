@@ -44,7 +44,11 @@
       const send = () => window.postMessage({channel:'wnq-leads-request',id,action,payload},location.origin);
       // Only the read-only handshake is replayed. Never retry START, STEP or ACK here.
       const retry = action === 'HELLO' ? setInterval(send,500) : null;
-      const timer = setTimeout(() => {pending.delete(id);clearInterval(retry);reject(new Error('No response from the Chrome companion. Reload it at chrome://extensions, refresh this WordPress tab, then select Reconnect.'));},20000);
+      const timer = setTimeout(() => {
+        pending.delete(id);clearInterval(retry);
+        byId('lf-extension-status').textContent='Companion response delayed — connection needs checking.';
+        reject(new Error(`${action} response timed out. Saved leads and the bulk queue are retained. Select Resume / retry to reconcile the current search; do not reload the extension first.`));
+      }, action==='HELLO' ? 20000 : 45000);
       pending.set(id,{resolve,reject,timer,retry});
       send();
     });
@@ -144,7 +148,12 @@
   });
   byId('lf-pause').addEventListener('click',() => {running = false;controls();byId('lf-progress').textContent = 'Pausing after the current request…';});
   byId('lf-resume').addEventListener('click',async () => {
-    try { show((await ask('STATUS')).job); if (job || (bulk && bulk.index<bulk.zips.length)) await run(); else byId('lf-progress').textContent = 'No saved browser search. Enter a keyword and ZIP.'; }
+    try {
+      const status=await ask('STATUS');
+      if(status.working){byId('lf-progress').textContent='The companion is still finishing the last request. Wait a moment, then Resume; no duplicate search has started.';return;}
+      show(status.job);
+      if (job || (bulk && bulk.index<bulk.zips.length)) await run(); else byId('lf-progress').textContent = 'No saved browser search. Enter a keyword and ZIP.';
+    }
     catch (error) {byId('lf-progress').textContent = error.message;}
   });
   async function safeCompanion() {
@@ -159,8 +168,8 @@
     byId('lf-reconnect').disabled = true;
     byId('lf-extension-status').textContent = 'Checking Chrome companion…';
     try {
-      await ask('HELLO');
-      byId('lf-extension-status').textContent = 'Chrome companion connected · no paid Maps API';
+      const hello=await ask('HELLO');
+      byId('lf-extension-status').textContent = 'Chrome companion connected' + (hello.version ? ' · v'+hello.version : '') + ' · no paid Maps API';
       byId('lf-setup').open = false;
       try {
         show((await ask('STATUS')).job);

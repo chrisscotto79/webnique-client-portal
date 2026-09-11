@@ -8,19 +8,19 @@ const row = {name:'Business',maps_url:maps,website:'https://business.example',ph
 let checks = 0;
 function check(value,label) {assert(value,label);checks++;}
 async function workerTests() {
-  const storage = {}, tabs = new Map(); let listener, injected = 0, nextId = 0, peak = 0;
+  const storage = {}, tabs = new Map(); let listener, injected = 0, nextId = 0, peak = 0, stalled = false;
   const sender = {frameId:0,tab:{id:20},url:'https://goldenwebmarketing.com/wp-admin/admin.php?page=wnq-lead-finder'};
   const chrome = {
     storage:{session:{get:async key => ({[key]:structuredClone(storage[key])}),set:async obj => Object.assign(storage,structuredClone(obj))}},
     tabs:{create:async options => {const t={id:++nextId,status:'complete',...options};tabs.set(t.id,t);peak=Math.max(peak,tabs.size);return t;},
       remove:async id => {tabs.delete(id);},
       get:async id => {if(!tabs.has(id)) throw Error('closed');return tabs.get(id);},update:async(id,data) => Object.assign(tabs.get(id),data)},
-    scripting:{executeScript:async options => {injected++;return [{result:options.args[0]==='search'
+    scripting:{executeScript:async options => {injected++;check(options.injectImmediately===true,'Maps read does not wait for document idle');if(stalled)return new Promise(()=>{});return [{result:options.args[0]==='search'
       ? {ready:true,rows:[row,row],end:true} : {ready:true,row}}];}},
     runtime:{onMessage:{addListener:fn => {listener=fn;}}}
   };
   const boot = () => {
-    const ctx = vm.createContext({chrome,URL,Set,crypto:require('node:crypto').webcrypto,console});
+    const ctx = vm.createContext({chrome,URL,Set,setTimeout:(fn,ms)=>setTimeout(fn,ms===8000?30:ms),clearTimeout,crypto:require('node:crypto').webcrypto,console});
     ctx.importScripts = name => vm.runInContext(fs.readFileSync(path.join(root,'browser-companion',name),'utf8'),ctx);
     vm.runInContext(fs.readFileSync(path.join(root,'browser-companion/worker.js'),'utf8'),ctx);
   };
@@ -55,6 +55,14 @@ async function workerTests() {
   tabs.delete(20);
   await call('START',{keyword:'Plumbers',zip:'32826',replace:true});
   check(tabs.size===1,'Replacing unfinished ZIP closes prior owned tab');
+  stalled=true;
+  const step=call('STEP');
+  await new Promise(resolve=>setTimeout(resolve,5));
+  check((await call('STATUS')).working===true,'STATUS remains available during hung Maps read');
+  check((await step).ok,'Stalled read returns not-ready instead of permanent lock');
+  check((await call('STATUS')).working===false,'Read timeout releases collection lock');
+  stalled=false;
+  check((await call('STEP')).job.found===1,'Next step recovers without reloading extension');
 }
 async function browserTests() {
   const browser = await puppeteer.launch({headless:true});
