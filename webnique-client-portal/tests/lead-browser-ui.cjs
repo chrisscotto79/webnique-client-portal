@@ -8,11 +8,12 @@ const row = {name:'Business',maps_url:maps,website:'https://business.example',ph
 let checks = 0;
 function check(value,label) {assert(value,label);checks++;}
 async function workerTests() {
-  const storage = {}, tabs = new Map(); let listener, injected = 0;
+  const storage = {}, tabs = new Map(); let listener, injected = 0, nextId = 0, peak = 0;
   const sender = {frameId:0,tab:{id:20},url:'https://goldenwebmarketing.com/wp-admin/admin.php?page=wnq-lead-finder'};
   const chrome = {
     storage:{session:{get:async key => ({[key]:structuredClone(storage[key])}),set:async obj => Object.assign(storage,structuredClone(obj))}},
-    tabs:{create:async options => {const t={id:tabs.size+1,status:'complete',...options};tabs.set(t.id,t);return t;},
+    tabs:{create:async options => {const t={id:++nextId,status:'complete',...options};tabs.set(t.id,t);peak=Math.max(peak,tabs.size);return t;},
+      remove:async id => {tabs.delete(id);},
       get:async id => {if(!tabs.has(id)) throw Error('closed');return tabs.get(id);},update:async(id,data) => Object.assign(tabs.get(id),data)},
     scripting:{executeScript:async options => {injected++;return [{result:options.args[0]==='search'
       ? {ready:true,rows:[row,row],end:true} : {ready:true,row}}];}},
@@ -39,6 +40,21 @@ async function workerTests() {
   r=await call('ACK',{maps_key:'abc:123',outcome:'saved',has_email:true});
   check(r.job.phase==='done' && r.job.stats.saved===1 && r.job.stats.email===1,'Save acknowledgement advances once');
   check(!(await call('ACK',{maps_key:'abc:123',outcome:'saved'})).ok,'Repeated acknowledgement cannot double-count');
+  check(tabs.size===0,'Completed ZIP closes its owned Maps tab');
+  for(let i=0;i<100;i++) {
+    await call('START',{keyword:'Plumbers',zip:String(32000+i)});
+    await call('STEP');await call('STEP');await call('STEP');
+    const result=await call('ACK',{maps_key:'abc:123',outcome:'saved'});
+    check(result.job.phase==='done' && tabs.size===0,'Bulk ZIP cleanup '+i);
+  }
+  check(peak===1,'100 ZIP stress run never exceeds one Maps tab');
+  await call('START',{keyword:'Plumbers',zip:'32825'});
+  const other={...sender,tab:{id:99}}; tabs.set(20,{id:20,url:sender.url});
+  const blocked=await new Promise(resolve=>listener({action:'START',payload:{keyword:'Other',zip:'32826'}},other,resolve));
+  check(!blocked.ok,'Second portal cannot start concurrent batch');
+  tabs.delete(20);
+  await call('START',{keyword:'Plumbers',zip:'32826',replace:true});
+  check(tabs.size===1,'Replacing unfinished ZIP closes prior owned tab');
 }
 async function browserTests() {
   const browser = await puppeteer.launch({headless:true});
@@ -77,7 +93,7 @@ async function browserTests() {
       window.ajaxurl='/wp-admin/admin-ajax.php';let job=null, ackFail=true;
       window.addEventListener('message',event => {
         const m=event.data;if(m?.channel!=='wnq-leads-request') return;
-        let response={ok:true,version:'1.0.2'};
+        let response={ok:true,version:'1.0.3'};
         if(m.action==='START') job={runId:m.payload.runId,keyword:m.payload.keyword,zip:m.payload.zip,phase:'details',found:1,index:0,stats:{saved:0,email:0,duplicate:0},pending:row};
         if(m.action==='ACK') {
           if(ackFail) {ackFail=false;response={ok:false,error:'Simulated interrupted acknowledgement. Resume to reconcile.'};}

@@ -28,7 +28,7 @@
     if (!bulk.run) { bulk.run = crypto.randomUUID(); keepBulk(); }
     await history('begin',{run:bulk.run,keyword:bulk.keyword,zip:bulk.zips[bulk.index]});
     const next = (await ask('START',{keyword:bulk.keyword,zip:bulk.zips[bulk.index],runId:bulk.run,replace:true})).job;
-    if (next?.runId !== bulk.run) throw new Error('Reload Chrome companion version 1.0.2 or newer before using bulk ZIPs.');
+    if (next?.runId !== bulk.run) throw new Error('Reload Chrome companion version 1.0.3 or newer before using bulk ZIPs.');
     bulk.started = true; keepBulk(); show(next); bulkLabel(); return true;
   }
   window.addEventListener('message', event => {
@@ -80,6 +80,7 @@
     if (looping) return;
     running = true; looping = true; controls();
     try {
+      await safeCompanion();
       if (bulk && bulk.index < bulk.zips.length && !bulk.started) await nextZip();
       if (bulk && bulk.index < bulk.zips.length && job?.runId !== bulk.run) throw new Error('The browser search does not match this saved bulk queue. Check ZIPs again to start a new batch.');
       while (running) {
@@ -136,9 +137,7 @@
     if ((job && job.phase!=='done') && !confirm('Replace the unfinished search? Saved leads and search history remain.')) return;
     preparing=true;controls();
     try {
-      const hello=await ask('HELLO');
-      const v=(hello.version||'0').split('.').map(Number);
-      if(!(v[0]>1 || (v[0]===1 && (v[1]>0 || v[2]>=2))))throw new Error('Reload the updated Chrome companion (1.0.2 or newer), then refresh WordPress.');
+      await safeCompanion();
       bulk={keyword:review.keyword,zips,index:0,run:null,started:false};keepBulk();review=null;byId('lf-zip-review').hidden=true;bulkLabel();await run();
     } catch(error){byId('lf-progress').textContent=error.message;}
     finally {preparing=false;controls();}
@@ -148,6 +147,11 @@
     try { show((await ask('STATUS')).job); if (job || (bulk && bulk.index<bulk.zips.length)) await run(); else byId('lf-progress').textContent = 'No saved browser search. Enter a keyword and ZIP.'; }
     catch (error) {byId('lf-progress').textContent = error.message;}
   });
+  async function safeCompanion() {
+    const hello=await ask('HELLO');
+    const v=(hello.version||'0').split('.').map(Number);
+    if(!(v[0]>1 || (v[0]===1 && (v[1]>0 || v[2]>=3))))throw new Error('Bulk search paused for safety. Reload Chrome companion 1.0.3 or newer at chrome://extensions, then refresh WordPress. This update prevents accumulating Maps tabs.');
+  }
   let connecting = false;
   async function connect() {
     if (connecting || looping) return;
