@@ -25,6 +25,10 @@ const puppeteer = require('puppeteer');
     page.once('dialog', async dialog => { confirmed = dialog.message().includes('live emails'); await dialog.dismiss(); });
     await page.click('input[value=approve] ~ button');
     assert(confirmed, 'Live-send confirmation displayed');
+    confirmed = false;
+    page.once('dialog', async dialog => { confirmed = dialog.message().includes('entire list') && dialog.message().includes('overrides'); await dialog.dismiss(); });
+    await page.click('input[value=approve_all] ~ button');
+    assert(confirmed, 'All-list approval clearly confirms scope and outreach override');
     assert.deepEqual(errors, []);
     console.log('PASS: desktop/mobile layout, switch, empty token field, live-send confirmation, no JS errors.');
   } finally { await browser.close(); }

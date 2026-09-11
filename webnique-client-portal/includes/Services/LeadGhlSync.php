@@ -92,9 +92,27 @@ final class LeadGhlSync
     public static function eligible(array $lead): bool
     {
         return self::qualification($lead) === ''
-            && (bool)filter_var(trim($lead['email'] ?? ''), FILTER_VALIDATE_EMAIL)
+            && self::manualEligible($lead);
+    }
+
+    public static function manualEligible(array $lead): bool
+    {
+        return (bool)filter_var(trim($lead['email'] ?? ''), FILTER_VALIDATE_EMAIL)
             && in_array($lead['status'] ?? '', ['new', 'qualified'], true)
             && stripos($lead['notes'] ?? '', 'temporarily closed') === false;
+    }
+
+    public static function manualBlockReason(array $lead): string
+    {
+        if (!$lead) { return 'Lead no longer exists'; }
+        if (!filter_var(trim($lead['email'] ?? ''), FILTER_VALIDATE_EMAIL)) { return 'Missing or invalid email'; }
+        if (!in_array($lead['status'] ?? '', ['new', 'qualified'], true)) { return 'Status is not New/Qualified'; }
+        if (stripos($lead['notes'] ?? '', 'temporarily closed') !== false) { return 'Temporarily closed'; }
+        $state = self::state($lead);
+        if ($state && !in_array($state['status'], ['failed', 'held', 'review'], true)) {
+            return 'Existing handoff: ' . ($state['status'] ?? 'unknown');
+        }
+        return '';
     }
 
     public static function qualification(array $lead): string
@@ -130,25 +148,26 @@ final class LeadGhlSync
         if (!empty(self::settings()['automatic']) && self::configured()) { self::enqueue($id, false); }
     }
 
-    public static function enqueue(int $id, bool $manual = true): bool
+    public static function enqueue(int $id, bool $manual = true, bool $override = false): bool
     {
         global $wpdb;
         $lead = self::lead($id);
-        if (!self::configured() || !self::eligible($lead)) { return false; }
+        $override = $manual && $override;
+        if (!self::configured() || !($override ? self::manualEligible($lead) : self::eligible($lead))) { return false; }
         $state = self::state($lead);
         if ($state) {
             // A suppressed or sent email stays blocked even after deleting/reimporting a lead.
             if (!$manual || !in_array($state['status'], ['failed', 'held', 'review'], true)) { return false; }
             return $wpdb->update(self::table(), [
-                'status' => 'queued', 'lead_id' => $id, 'mode' => 'manual', 'approved_by' => get_current_user_id(),
+                'status' => 'queued', 'lead_id' => $id, 'mode' => $override ? 'override' : 'manual', 'approved_by' => get_current_user_id(),
                 'attempts' => 0, 'next_at' => gmdate('Y-m-d H:i:s'), 'updated_at' => gmdate('Y-m-d H:i:s'),
                 'message' => 'Approved for retry; uncertain writes will only be reconciled.',
-            ], ['id' => $state['id']]) !== false;
+            ], ['id' => $state['id'], 'status' => $state['status']]) === 1;
         }
         $now = gmdate('Y-m-d H:i:s');
         return $wpdb->insert(self::table(), [
             'email_key' => self::emailKey($lead['email']), 'lead_id' => $id,
-            'mode' => $manual ? 'manual' : 'auto', 'approved_by' => $manual ? get_current_user_id() : 0,
+            'mode' => $override ? 'override' : ($manual ? 'manual' : 'auto'), 'approved_by' => $manual ? get_current_user_id() : 0,
             'created_at' => $now, 'updated_at' => $now, 'next_at' => $now,
         ]) === 1;
     }
@@ -254,7 +273,7 @@ final class LeadGhlSync
                 self::save($id, ['status' => 'held', 'message' => 'Automatic sync is off. Manual approval required.']); return;
             }
             $lead = self::lead((int)$job['lead_id']);
-            if (!self::eligible($lead) || self::emailKey($lead['email'] ?? '') !== $job['email_key']) {
+            if (!(($job['mode'] === 'override') ? self::manualEligible($lead) : self::eligible($lead)) || self::emailKey($lead['email'] ?? '') !== $job['email_key']) {
                 self::save($id, ['status' => 'held', 'message' => 'Lead deleted, email changed, or no longer eligible.']); return;
             }
             self::save($id, ['status' => 'processing', 'attempts' => (int)$job['attempts'] + 1]);
@@ -296,7 +315,7 @@ final class LeadGhlSync
             $latest = self::state($lead);
             if (($latest['status'] ?? '') === 'suppressed') { return; }
             $freshLead = self::lead((int)$job['lead_id']);
-            if (!self::eligible($freshLead) || self::emailKey($freshLead['email'] ?? '') !== $job['email_key'] || ($job['mode'] === 'auto' && empty(self::settings()['automatic']))) {
+            if (!(($job['mode'] === 'override') ? self::manualEligible($freshLead) : self::eligible($freshLead)) || self::emailKey($freshLead['email'] ?? '') !== $job['email_key'] || ($job['mode'] === 'auto' && empty(self::settings()['automatic']))) {
                 self::save($id, ['status' => 'held', 'message' => 'Handoff paused before tagging.']); return;
             }
             $job['stage'] = 'tag_started';
