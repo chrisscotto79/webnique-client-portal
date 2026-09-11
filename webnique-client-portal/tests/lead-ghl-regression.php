@@ -43,8 +43,15 @@ final class GhlDbFixture {
         foreach ($args as $arg) { $sql = preg_replace('/%[sd]/', is_int($arg) ? (string)$arg : "'" . addslashes((string)$arg) . "'", $sql, 1); }
         return $sql;
     }
-    function get_var($sql) { return str_contains($sql, 'GET_LOCK') ? (int)$this->lock : (str_contains($sql, 'RELEASE_LOCK') ? 1 : null); }
-    function get_results($sql, $format) { return []; }
+    function get_var($sql) { if (str_contains($sql, 'MAX(id)')) { return $this->leads ? max(array_keys($this->leads)) : 0; } return str_contains($sql, 'GET_LOCK') ? (int)$this->lock : (str_contains($sql, 'RELEASE_LOCK') ? 1 : null); }
+    function get_results($sql, $format) {
+        if (preg_match('/WHERE id > (\d+) AND id <= (\d+)/', $sql, $m)) {
+            $rows = []; ksort($this->leads);
+            foreach ($this->leads as $id => $lead) { if ($id > $m[1] && $id <= $m[2]) { $rows[] = ['id'=>$id]; } }
+            return array_slice($rows, 0, 500);
+        }
+        return [];
+    }
     function get_row($sql, $format) {
         if (str_contains($sql, 'FROM wp_wnq_leads WHERE id')) { preg_match('/id = (\d+)/', $sql, $m); return $this->leads[(int)$m[1]] ?? null; }
         if (str_contains($sql, 'email_key =')) { preg_match("/email_key = '([^']+)'/", $sql, $m); foreach ($this->jobs as $j) { if ($j['email_key'] === $m[1]) { return $j; } } return null; }
@@ -182,10 +189,12 @@ check(!str_contains($html, 'fixture-private-token-only') && !str_contains($html,
 check(str_contains($html, 'role="switch"') && !str_contains($html, 'value="1" checked'), 'Rendered switch defaults off');
 check(str_contains($html, '_wpnonce'), 'Settings form protected by nonce');
 ob_start(); WNQ\Admin\LeadGhlAdmin::row($wpdb->leads[1]); $rowHtml = ob_get_clean();
+ob_start(); WNQ\Admin\LeadGhlAdmin::listForm(); $listHtml = ob_get_clean();
+$rowHtml .= $listHtml;
 check(str_contains($rowHtml, 'Approve &amp; Send') && str_contains($rowHtml, 'confirm('), 'Explicit live-send confirmation');
 resetFixture();
 $bulk = WNQ\Admin\LeadGhlAdmin::approveList([1, 1, 999]);
-check($bulk === ['queued' => 1, 'skipped' => 1], 'Bulk approval deduplicates IDs and skips missing leads');
+check($bulk === ['queued' => 1, 'skipped' => 1, 'reasons'=>['Lead no longer exists'=>1]], 'Bulk approval deduplicates IDs and explains missing leads');
 check(count(writes()) === 0, 'Bulk approval only queues; preflight does not enroll contacts');
 check(WNQ\Admin\LeadGhlAdmin::approveList([1])['skipped'] === 1, 'Bulk does not requeue pending lead');
 foreach ([[], range(1,51), ['bad'], [[1]]] as $invalid) {
@@ -208,6 +217,34 @@ check(!Sync::eligible($wpdb->leads[1]), 'Missing SEO assessment fails enabled th
 check(!Sync::eligible(array_replace($wpdb->leads[1], ['seo_checked'=>1,'seo_score'=>2])), 'Too few SEO issues fails threshold');
 check(Sync::eligible(array_replace($wpdb->leads[1], ['seo_checked'=>1,'seo_score'=>3])), 'SEO issue threshold correct direction');
 resetFixture(); Sync::enqueue(1); $wpdb->leads[1]['company_fit']='chain'; Sync::work(); check(!writes(), 'Queued prospect rechecked before handoff');
+resetFixture();
+$wpdb->leads[1]['company_fit'] = 'unknown';
+$wpdb->leads[1]['review_count'] = 100;
+$options['wnq_lead_seo_min'] = 7;
+check(!Sync::enqueue(1, false, true), 'Automatic imports cannot override outreach rules');
+check(WNQ\Admin\LeadGhlAdmin::approveList([1])['queued'] === 1, 'Explicit approval overrides outreach rules');
+check($wpdb->jobs[1]['mode'] === 'override' && $wpdb->jobs[1]['approved_by'] === 17, 'Override approval audited');
+Sync::work(); check($wpdb->jobs[1]['status'] === 'sent', 'Worker honors explicit override through tag confirmation: ' . $wpdb->jobs[1]['message']);
+foreach ([['email'=>''], ['status'=>'closed'], ['notes'=>'temporarily closed']] as $change) {
+    resetFixture(); check(Sync::enqueue(1, true, true), 'Override queued');
+    $wpdb->leads[1] = array_replace($wpdb->leads[1], $change);
+    Sync::work(); check(!writes(), 'Worker retains hard safety checks for overrides');
+}
+resetFixture();
+for ($i = 2; $i <= 503; $i++) { $wpdb->leads[$i] = array_replace($wpdb->leads[1], ['id'=>$i, 'email'=>"owner{$i}@business.com", 'company_fit'=>'unknown']); }
+$wpdb->leads[502]['email'] = '';
+$wpdb->leads[503]['email'] = $wpdb->leads[1]['email'];
+$all = WNQ\Admin\LeadGhlAdmin::approveAll();
+check($all['queued'] === 501 && $all['skipped'] === 2, 'All-list approval spans multiple pages, skips invalid and duplicate emails');
+check($all['reasons']['Missing or invalid email'] === 1 && $all['reasons']['Existing handoff: queued'] === 1, 'Exact skip reasons counted');
+check(!writes(), 'All-list approval does not issue live-write requests');
+check(WNQ\Admin\LeadGhlAdmin::approveAll()['queued'] === 0, 'Repeated all-list approval is idempotent');
+$wpdb->jobs[1]['status'] = 'suppressed';
+check(!Sync::enqueue(1, true, true), 'Manual override cannot bypass suppression');
+$allowed = false;
+try { WNQ\Admin\LeadGhlAdmin::approveAll(); check(false, 'Unauthorized all-list approval accepted'); }
+catch (RuntimeException $e) { check($e->getMessage() === 'Access denied', 'All-list approval enforces permission'); }
+$allowed = true;
 resetFixture(); $wpdb->lock=false;
 try { WNQ\Models\Lead::deleteAll(); check(false,'Delete during handoff accepted'); }
 catch (RuntimeException $e) { check(str_contains($e->getMessage(),'progress'),'Deletion serialized against handoffs'); }

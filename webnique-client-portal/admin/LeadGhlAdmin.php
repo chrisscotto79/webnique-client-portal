@@ -32,11 +32,14 @@ final class LeadGhlAdmin
                 $message = 'Location access and campaign tag verified. No contacts changed; no emails triggered.';
             } elseif ($action === 'approve') {
                 LeadGhlSync::test();
-                $ok = LeadGhlSync::enqueue(absint($_POST['lead_id'] ?? 0));
+                $ok = LeadGhlSync::enqueue(absint($_POST['lead_id'] ?? 0), true, true);
                 $message = $ok ? 'Approved and queued. The background worker will apply the campaign tag.' : 'Not queued: check token, email, lead status, suppression, or existing handoff.';
             } elseif ($action === 'approve_bulk') {
                 $result = self::approveList($_POST['lead_ids'] ?? []);
-                $message = $result['queued'] . ' leads approved and queued; ' . $result['skipped'] . ' skipped (ineligible, suppressed, or already queued/sent). Background processing applies the campaign tag; queued does not mean delivered.';
+                $message = self::resultMessage($result);
+            } elseif ($action === 'approve_all') {
+                $result = self::approveAll();
+                $message = self::resultMessage($result);
             } elseif ($action === 'suppress') {
                 LeadGhlSync::suppress(absint($_POST['lead_id'] ?? 0));
                 $message = 'Email suppressed for future plugin handoffs. This does not cancel a workflow already running in GHL.';
@@ -53,6 +56,23 @@ final class LeadGhlAdmin
         wp_nonce_field('wnq_lead_ghl');
     }
 
+    private static function resultMessage(array $result): string
+    {
+        $reasons = [];
+        foreach ($result['reasons'] ?? [] as $reason => $count) { $reasons[] = $reason . ': ' . $count; }
+        return $result['queued'] . ' leads approved and queued; ' . $result['skipped'] . ' skipped. '
+            . ($reasons ? implode('; ', $reasons) . '. ' : '') . 'Manual approval overrides outreach rules. Background processing applies the campaign tag; queued does not mean email delivered.';
+    }
+
+    private static function queueOne(int $id, array &$result): void
+    {
+        $reason = LeadGhlSync::manualBlockReason(LeadGhlSync::lead($id));
+        if ($reason === '' && LeadGhlSync::enqueue($id, true, true)) { $result['queued']++; return; }
+        $reason = $reason ?: 'Could not queue (configuration, concurrent update or database error)';
+        $result['skipped']++;
+        $result['reasons'][$reason] = ($result['reasons'][$reason] ?? 0) + 1;
+    }
+
     public static function approveList($ids): array
     {
         if (!self::allowed()) { throw new \RuntimeException('Access denied'); }
@@ -62,16 +82,40 @@ final class LeadGhlAdmin
         }
         $ids = array_unique(array_map('intval', $ids));
         LeadGhlSync::test(); // Read-only preflight before any jobs are queued.
-        $queued = 0;
-        foreach ($ids as $id) { if (LeadGhlSync::enqueue($id)) { $queued++; } }
-        return ['queued' => $queued, 'skipped' => count($ids) - $queued];
+        $result = ['queued' => 0, 'skipped' => 0];
+        foreach ($ids as $id) { self::queueOne($id, $result); }
+        return $result;
+    }
+
+    public static function approveAll(): array
+    {
+        if (!self::allowed()) { throw new \RuntimeException('Access denied'); }
+        LeadGhlSync::test();
+        global $wpdb;
+        // A fixed upper ID prevents incoming scraper results extending this approval.
+        $last = 0;
+        $upper = (int)$wpdb->get_var("SELECT MAX(id) FROM {$wpdb->prefix}wnq_leads");
+        $result = ['queued' => 0, 'skipped' => 0];
+        while ($last < $upper) {
+            $rows = $wpdb->get_results($wpdb->prepare("SELECT id FROM {$wpdb->prefix}wnq_leads WHERE id > %d AND id <= %d ORDER BY id LIMIT 500", $last, $upper), ARRAY_A);
+            if (!is_array($rows)) { throw new \RuntimeException('Lead scan failed. Previously queued leads are retained; retry will skip them.'); }
+            if (!$rows) { break; }
+            foreach ($rows as $row) {
+                $last = (int)$row['id'];
+                self::queueOne($last, $result);
+            }
+        }
+        return $result;
     }
 
     public static function listForm(): void
     {
-        echo '<form id="lf-ghl-list" method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(\'Approve selected leads for Land Clearing Cold Email? Applying this tag can start live emails.\')">';
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(\'Send all valid-email New/Qualified leads across the entire list to GHL, regardless of current filters? This overrides review-count, company-type and SEO outreach rules, including unreviewed companies. Suppression and duplicate protections remain. Applying the tag can start live emails.\')">';
+        self::fields('approve_all');
+        echo '<button class="wnq-btn wnq-btn-primary" type="submit">Send all valid companies to GHL</button><p>Entire saved list, not just this page. Requires a valid email and New/Qualified status. Manual approval overrides outreach rules; suppressed, already queued/sent and temporarily closed leads are not sent. Queues background handoffs, not immediate email delivery.</p></form>';
+        echo '<form id="lf-ghl-list" method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(\'Approve selected leads, overriding review-count, company-type and SEO outreach rules? Applying the tag can start live emails. Suppression and duplicate protections remain.\')">';
         self::fields('approve_bulk');
-        echo '<p>Select reviewed leads below, then <button class="wnq-btn wnq-btn-primary" type="submit">Approve &amp; queue selected for GHL</button></p><p>Uses the saved private token and Land Clearing Cold Email tag. Only selected eligible leads are queued; existing suppression and duplicate checks still apply.</p></form>';
+        echo '<p>Or select leads below, then <button class="wnq-btn wnq-btn-primary" type="submit">Approve &amp; queue selected for GHL</button></p><p>Manual approval overrides outreach qualification, but still requires a valid email and New/Qualified status. Suppression and duplicate checks still apply.</p></form>';
     }
 
     public static function row(array $lead): void
@@ -79,8 +123,8 @@ final class LeadGhlAdmin
         $state = LeadGhlSync::state($lead);
         echo '<div><strong>' . esc_html(ucfirst($state['status'] ?? 'Not sent')) . '</strong></div>';
         if (!empty($state['message'])) { echo '<small>' . esc_html($state['message']) . '</small>'; }
-        if (LeadGhlSync::eligible($lead) && (!$state || in_array($state['status'], ['failed', 'held', 'review'], true))) {
-            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(\'Apply the campaign tag? This can immediately start live emails in GoHighLevel.\')">';
+        if (LeadGhlSync::manualEligible($lead) && (!$state || in_array($state['status'], ['failed', 'held', 'review'], true))) {
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" onsubmit="return confirm(\'Override outreach qualification and apply the campaign tag? This can start live emails in GoHighLevel.\')">';
             self::fields('approve', (int)$lead['id']);
             echo '<button class="wnq-btn wnq-btn-primary wnq-btn-sm" type="submit">' . ($state ? 'Approve retry / reconcile' : 'Approve &amp; Send') . '</button></form>';
         }
@@ -117,7 +161,7 @@ final class LeadGhlAdmin
         <div class="wnq-card wnq-ghl-copy">
             <div class="wnq-ghl-grid"><div><small>Destination location</small><br><strong><?php echo esc_html(LeadGhlSync::LOCATION); ?></strong></div><div><small>Workflow trigger tag</small><br><strong><?php echo esc_html(LeadGhlSync::TAG); ?></strong></div><div><small>Private token</small><br><strong><?php echo LeadGhlSync::configured() ? 'Saved securely' : 'Not configured'; ?></strong></div></div>
             <p><strong>Testing uses real contacts and real emails.</strong> Keep automatic sync off and use <strong>Approve &amp; Send</strong> in All Leads for an address you control. Applying the tag can start your existing workflow immediately. The connection test below only checks location/tag access.</p>
-            <p>Qualification defaults: fewer than 50 confirmed reviews and staff-reviewed small independent business. Unknown company types, franchises/chains, large companies and unconfirmed review counts are held. An optional minimum SEO-issue threshold can be set in Lead List. Reviewing a company does not automatically send it: use Approve &amp; Send afterward.</p>
+            <p>Automatic imports use the outreach rules: fewer than 50 confirmed reviews, a reviewed small independent business, and the optional SEO threshold. Manual approval overrides these rules, including unknown company type. Use Send all valid companies in Lead List to approve the entire saved list. Invalid emails, suppression and duplicate protections cannot be overridden. Email delivery is managed by your published GHL workflow.</p>
             <p>Email-ready also requires a valid email format and a New or Qualified lead. It does not prove mailbox deliverability, consent, or business ownership. Review sourced emails before enabling automation. Contacted, Closed, locally suppressed and GHL email-DND/unsubscribed contacts are excluded.</p>
             <?php if (current_user_can('manage_options')): ?>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
