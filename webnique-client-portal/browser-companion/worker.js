@@ -41,7 +41,17 @@ async function snapshot(id, mode) {
   const tab = await chrome.tabs.get(id);
   if (tab.status !== 'complete') return {ready:false};
   if (!tab.url?.startsWith('https://www.google.com/maps/')) throw new Error('Maps tab was closed, redirected or navigated away. Check the tab before resuming.');
-  const result = await chrome.scripting.executeScript({target:{tabId:id},func:collectMapsPage,args:[mode]});
+  // A delayed injection must not hold the worker's collection lock indefinitely.
+  // Only this read/scroll operation is bounded; never race storage or tab writes.
+  let timer;
+  let result;
+  try {
+    result = await Promise.race([
+      chrome.scripting.executeScript({target:{tabId:id},injectImmediately:true,func:collectMapsPage,args:[mode]}),
+      new Promise(resolve => { timer=setTimeout(()=>resolve(null),8000); })
+    ]);
+  } finally { clearTimeout(timer); }
+  if (!result) return {ready:false};
   const data = result?.[0]?.result;
   if (!data) throw new Error('Maps could not be read. Open its tab and retry.');
   if (data.blocked) throw new Error(data.error);
@@ -49,7 +59,8 @@ async function snapshot(id, mode) {
 }
 async function handle(msg, sender) {
   const key = 'wnq_' + sender.tab.id;
-  if (msg.action === 'HELLO') return {ok:true,version:'1.0.3'};
+  if (msg.action === 'HELLO') return {ok:true,version:'1.0.4',working:busy.size > 0};
+  if (msg.action === 'STATUS') return {...summary((await chrome.storage.session.get(key))[key]),working:busy.size > 0};
   if (busy.size) return {ok:false,error:'A collection step is still running. Wait a moment, then resume.'};
   busy.add(key);
   try {
