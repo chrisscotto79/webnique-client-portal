@@ -40,7 +40,7 @@ final class LeadBrowserIntake
             } else { $websiteFailed = true; }
         }
         $email = ['email' => '', 'source' => ''];
-        if ($website !== '') { $email = LeadEmailExtractor::extractEmail($website, $html); }
+        if ($website !== '') { $email = LeadEmailExtractor::extractEmail($website, $html, true); }
         $owner = self::founder($html);
         $seo = LeadSEOScorer::scoreWebsiteFromHtml($html);
         $address = sanitize_text_field($row['address'] ?? '');

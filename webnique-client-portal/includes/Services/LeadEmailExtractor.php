@@ -31,9 +31,10 @@ final class LeadEmailExtractor
      *
      * @param  string $base_url      Root URL of the website (scheme + domain)
      * @param  string $homepage_html Already-fetched homepage HTML to avoid refetch
+     * @param  bool $homepage_attempted Caller already requested homepage, even if empty/failed
      * @return array{email: string, source: string, all_found: string[]}
      */
-    public static function extractEmail(string $base_url, string $homepage_html = ''): array
+    public static function extractEmail(string $base_url, string $homepage_html = '', bool $homepage_attempted = false): array
     {
         $base_url = rtrim($base_url, '/');
         $parts = wp_parse_url($base_url);
@@ -48,7 +49,7 @@ final class LeadEmailExtractor
         }
 
         // Bounded public-page lookup; no login, form submission or mailbox probing.
-        $paths = $homepage_html
+        $paths = ($homepage_html || $homepage_attempted)
             ? ['/contact', '/contact-us', '/about']
             : ['', '/contact', '/contact-us', '/about'];
 
