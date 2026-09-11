@@ -39,6 +39,7 @@ function wp_safe_remote_get($url, $args) {
 final class GhlDbFixture {
     public $prefix = 'wp_', $insert_id = 91, $jobs = [], $leads = [], $insertFail = false, $lock = true;
     function prepare($sql, ...$args) {
+        if (count($args) === 1 && is_array($args[0])) { $args = $args[0]; }
         foreach ($args as $arg) { $sql = preg_replace('/%[sd]/', is_int($arg) ? (string)$arg : "'" . addslashes((string)$arg) . "'", $sql, 1); }
         return $sql;
     }
@@ -78,7 +79,7 @@ use WNQ\Services\LeadGhlSync as Sync;
 function resetFixture() {
     global $wpdb, $requests, $transport, $contact, $lookup, $options;
     $wpdb = new GhlDbFixture(); $requests = []; $options = [];
-    $wpdb->leads[1] = ['id' => 1, 'email' => 'owner@business.com', 'phone' => '', 'status' => 'new', 'business_name' => 'Test Business', 'city' => '', 'owner_first' => 'Owner'];
+    $wpdb->leads[1] = ['id' => 1, 'email' => 'owner@business.com', 'phone' => '', 'status' => 'new', 'business_name' => 'Test Business', 'city' => '', 'owner_first' => 'Owner', 'review_count'=>12, 'company_fit'=>'independent'];
     $contact = ['id' => 'contact1', 'email' => 'owner@business.com', 'locationId' => Sync::LOCATION, 'dnd' => false, 'tags' => ['existing-tag']];
     $lookup = null;
     $transport = static function ($url, $args) {
@@ -197,6 +198,19 @@ catch (RuntimeException $e) { check(str_contains($e->getMessage(), Sync::LOCATIO
 $transport = static fn() => ['code' => 200, 'body' => '{}'];
 try { Sync::test(); check(false, 'Invalid tags accepted'); }
 catch (RuntimeException $e) { check(str_contains($e->getMessage(), 'valid tag list'), 'Malformed tag response distinguished'); }
+resetFixture();
+foreach ([['review_count'=>50], ['review_count'=>0], ['company_fit'=>'unknown'], ['company_fit'=>'chain'], ['company_fit'=>'large']] as $change) {
+    check(!Sync::eligible(array_replace($wpdb->leads[1], $change)), 'Qualification gate holds excluded or uncertain prospect');
+}
+check(Sync::eligible(array_replace($wpdb->leads[1], ['review_count'=>49])), '49 reviews qualifies');
+$options['wnq_lead_seo_min'] = 3;
+check(!Sync::eligible($wpdb->leads[1]), 'Missing SEO assessment fails enabled threshold');
+check(!Sync::eligible(array_replace($wpdb->leads[1], ['seo_checked'=>1,'seo_score'=>2])), 'Too few SEO issues fails threshold');
+check(Sync::eligible(array_replace($wpdb->leads[1], ['seo_checked'=>1,'seo_score'=>3])), 'SEO issue threshold correct direction');
+resetFixture(); Sync::enqueue(1); $wpdb->leads[1]['company_fit']='chain'; Sync::work(); check(!writes(), 'Queued prospect rechecked before handoff');
+resetFixture(); $wpdb->lock=false;
+try { WNQ\Models\Lead::deleteAll(); check(false,'Delete during handoff accepted'); }
+catch (RuntimeException $e) { check(str_contains($e->getMessage(),'progress'),'Deletion serialized against handoffs'); }
 $allowed = false;
 try { WNQ\Admin\LeadGhlAdmin::handle(); check(false, 'Unauthorized request accepted'); } catch (RuntimeException $e) { check($e->getMessage() === 'Access denied', 'Handler checks staff capability'); }
 $allowed = true;

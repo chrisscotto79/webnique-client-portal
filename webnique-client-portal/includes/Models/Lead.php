@@ -49,6 +49,8 @@ final class Lead
             social_youtube   VARCHAR(500)     NOT NULL DEFAULT '',
             social_tiktok    VARCHAR(500)     NOT NULL DEFAULT '',
             seo_score        TINYINT UNSIGNED NOT NULL DEFAULT 0,
+            seo_checked      TINYINT UNSIGNED NOT NULL DEFAULT 0,
+            company_fit      VARCHAR(20) NOT NULL DEFAULT 'unknown',
             seo_issues       TEXT,
             status           VARCHAR(20)      NOT NULL DEFAULT 'new',
             notes            TEXT,
@@ -77,7 +79,8 @@ final class Lead
         $cols = $wpdb->get_col("DESCRIBE {$wpdb->prefix}wnq_leads", 0);
         if (empty($cols)) return false; // table doesn't exist yet
         return !in_array('owner_first', $cols, true)
-            || !in_array('exported_at', $cols, true);
+            || !in_array('exported_at', $cols, true)
+            || !in_array('company_fit', $cols, true) || !in_array('seo_checked', $cols, true);
     }
 
     /**
@@ -90,6 +93,8 @@ final class Lead
         $existing = $wpdb->get_col("DESCRIBE {$table}", 0);
 
         $columns = [
+            'company_fit'      => "VARCHAR(20) NOT NULL DEFAULT 'unknown'",
+            'seo_checked'      => "TINYINT UNSIGNED NOT NULL DEFAULT 0",
             'owner_first'      => "VARCHAR(100) NOT NULL DEFAULT '' AFTER industry",
             'owner_last'       => "VARCHAR(100) NOT NULL DEFAULT '' AFTER owner_first",
             'state'            => "VARCHAR(50)  NOT NULL DEFAULT '' AFTER city",
@@ -144,6 +149,8 @@ final class Lead
                 'social_youtube'   => $data['social_youtube']   ?? '',
                 'social_tiktok'    => $data['social_tiktok']    ?? '',
                 'seo_score'        => (int)($data['seo_score']  ?? 0),
+                'seo_checked'      => !empty($data['seo_checked']) ? 1 : 0,
+                'company_fit'      => 'unknown',
                 'seo_issues'       => wp_json_encode($data['seo_issues'] ?? []),
                 'status'           => $data['status']           ?? 'new',
                 'notes'            => $data['notes']            ?? '',
@@ -241,8 +248,15 @@ final class Lead
     {
         global $wpdb;
         $table = $wpdb->prefix . 'wnq_leads';
-        $deleted = $wpdb->query("DELETE FROM {$table}");
-        return is_numeric($deleted) ? (int)$deleted : 0;
+        $lock = 'wnq_ghl_' . md5(\WNQ\Services\LeadGhlSync::table());
+        if ((int)$wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s,0)', $lock)) !== 1) {
+            throw new \RuntimeException('A GHL handoff is in progress. Try again after it finishes.');
+        }
+        try {
+            $deleted = $wpdb->query("DELETE FROM {$table}");
+            if ($deleted === false) { throw new \RuntimeException('Could not delete leads. Check the database and retry.'); }
+            return (int)$deleted;
+        } finally { $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock)); }
     }
 
     /**
@@ -303,6 +317,7 @@ final class Lead
         $table  = $wpdb->prefix . 'wnq_leads';
         $where  = ['1=1'];
         $params = [];
+        self::listFilters($args, $where, $params);
 
         if (!empty($args['industry'])) {
             $where[]  = 'industry = %s';
@@ -361,6 +376,7 @@ final class Lead
         $table  = $wpdb->prefix . 'wnq_leads';
         $where  = ['1=1'];
         $params = [];
+        self::listFilters($args, $where, $params);
 
         if (!empty($args['industry'])) { $where[] = 'industry = %s'; $params[] = $args['industry']; }
         if (!empty($args['city']))     { $where[] = 'city = %s';     $params[] = $args['city']; }
@@ -374,6 +390,20 @@ final class Lead
         $sql = "SELECT COUNT(*) FROM {$table} WHERE {$where_sql}";
 
         return (int)$wpdb->get_var(empty($params) ? $sql : $wpdb->prepare($sql, $params));
+    }
+
+    private static function listFilters(array $args, array &$where, array &$params): void
+    {
+        global $wpdb;
+        if (!empty($args['search'])) { $where[] = 'business_name LIKE %s'; $params[] = '%' . $wpdb->esc_like($args['search']) . '%'; }
+        foreach (['zip','company_fit'] as $field) {
+            if (!empty($args[$field])) { $where[] = "$field = %s"; $params[] = $args[$field]; }
+        }
+        if (isset($args['max_reviews'])) { $where[] = 'review_count > 0 AND review_count <= %d'; $params[] = (int)$args['max_reviews']; }
+        if (isset($args['seo_issues_min'])) { $where[] = 'seo_checked = 1 AND seo_score >= %d'; $params[] = (int)$args['seo_issues_min']; }
+        if (!empty($args['no_email'])) { $where[] = "email = ''"; }
+        if (!empty($args['has_phone'])) { $where[] = "phone != ''"; }
+        if (!empty($args['no_website'])) { $where[] = "website = ''"; }
     }
 
     public static function getStats(): array
