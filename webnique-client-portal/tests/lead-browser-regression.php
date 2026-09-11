@@ -27,6 +27,7 @@ namespace {
     function esc_attr($v) { return esc_html($v); }
     function esc_url($v) { return esc_html($v); }
     function wp_create_nonce($v) { return 'fixture-nonce'; }
+    function get_current_user_id() { return 17; }
     function current_user_can($v) { return $GLOBALS['allowed'] ?? true; }
     function check_ajax_referer(...$args) { return $GLOBALS['nonceValid'] ?? true; }
     function wp_send_json_error($data,$status=null) { throw new \RuntimeException($data['message']); }

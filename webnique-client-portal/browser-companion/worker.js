@@ -33,7 +33,7 @@ async function snapshot(id, mode) {
 }
 async function handle(msg, sender) {
   const key = 'wnq_' + sender.tab.id;
-  if (msg.action === 'HELLO') return {ok:true,version:'1.0.1'};
+  if (msg.action === 'HELLO') return {ok:true,version:'1.0.2'};
   if (busy.has(key)) return {ok:false,error:'A collection step is still running. Wait a moment, then resume.'};
   busy.add(key);
   try {
@@ -41,10 +41,15 @@ async function handle(msg, sender) {
     if (msg.action === 'STATUS') return summary(job);
     const p = msg.payload || {};
     if (msg.action === 'START') {
+      if (p.runId && !/^[a-f0-9-]{36}$/.test(p.runId)) throw new Error('Invalid bulk run identifier.');
       if (!/^[0-9]{5}$/.test(p.zip || '') || typeof p.keyword !== 'string' || !p.keyword.trim() || p.keyword.length > 100) throw new Error('Enter a keyword and five-digit ZIP.');
+      if (p.runId && job?.runId === p.runId) {
+        if (job.keyword !== p.keyword.trim() || job.zip !== p.zip) throw new Error('Run identity mismatch.');
+        return summary(job);
+      }
       if (job && job.phase !== 'done' && !p.replace) throw new Error('Resume the existing search or confirm starting a new one.');
       const tab = await chrome.tabs.create({url:'https://www.google.com/maps/search/' + encodeURIComponent(p.keyword.trim() + ' in ' + p.zip) + '?hl=en',active:false});
-      job = {runId:crypto.randomUUID(),keyword:p.keyword.trim(),zip:p.zip,phase:'collect',mapsId:tab.id,rows:[],round:0,stable:0,index:0,waits:0,
+      job = {runId:p.runId || crypto.randomUUID(),keyword:p.keyword.trim(),zip:p.zip,phase:'collect',mapsId:tab.id,rows:[],round:0,stable:0,index:0,waits:0,
         stats:{saved:0,email:0,duplicate:0}};
       await put(key,job); return summary(job);
     }
