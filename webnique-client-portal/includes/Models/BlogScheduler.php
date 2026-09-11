@@ -113,6 +113,7 @@ final class BlogScheduler
     public static function addPost(string $client_id, array $data): int
     {
         global $wpdb;
+        if (!self::validDate((string)($data['scheduled_date'] ?? ''))) { return 0; }
         $inserted = $wpdb->insert(
             $wpdb->prefix . 'wnq_blog_schedule',
             [
@@ -287,17 +288,30 @@ final class BlogScheduler
         return $row ?: null;
     }
 
-    public static function getPostsByClient(string $client_id, int $limit = 50): array
+    public static function validDate(string $date): bool
+    {
+        if ($date === '') { return true; }
+        $parsed = \DateTimeImmutable::createFromFormat('!Y-m-d', $date);
+        return $parsed && $parsed->format('Y-m-d') === $date;
+    }
+
+    public static function countPosts(string $client_id): int
+    {
+        global $wpdb;
+        return (int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->prefix}wnq_blog_schedule WHERE client_id = %s", $client_id));
+    }
+
+    public static function getPostsByClient(string $client_id, int $limit = 50, int $offset = 0): array
     {
         global $wpdb;
         return $wpdb->get_results(
             $wpdb->prepare(
                 "SELECT * FROM {$wpdb->prefix}wnq_blog_schedule
                  WHERE client_id = %s
-                 ORDER BY scheduled_date ASC, created_at DESC
-                 LIMIT %d",
+                 ORDER BY scheduled_date ASC, created_at DESC, id DESC
+                 LIMIT %d OFFSET %d",
                 $client_id,
-                $limit
+                max(1, min(500, $limit)), max(0, $offset)
             ),
             ARRAY_A
         ) ?: [];

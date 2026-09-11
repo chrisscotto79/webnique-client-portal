@@ -1011,12 +1011,16 @@ final class BlogPublisher
         if (empty($site_url) || empty($api_key)) {
             return ['success' => false, 'message' => 'Missing agent site_url or api_key'];
         }
+        if (parse_url($site_url, PHP_URL_SCHEME) !== 'https' || parse_url($site_url, PHP_URL_USER) || parse_url($site_url, PHP_URL_PASS)) {
+            return ['success'=>false, 'message'=>'Publishing requires an HTTPS client site URL without embedded credentials.'];
+        }
 
         $url = $site_url . '/wp-json/wnq-agent/v1/publish-post';
 
         $response = wp_remote_post($url, [
             'timeout' => 120,
             'redirection' => 0,
+            'sslverify' => true,
             'headers' => [
                 'X-WNQ-Api-Key' => $api_key,
                 'Content-Type'  => 'application/json',
@@ -1026,7 +1030,7 @@ final class BlogPublisher
         ]);
 
         if (is_wp_error($response)) {
-            return ['success' => false, 'message' => $response->get_error_message()];
+            return ['success' => false, 'message' => 'Client site request failed. Check connectivity and TLS; verify the remote post before retrying.'];
         }
 
         $code     = wp_remote_retrieve_response_code($response);
@@ -1044,14 +1048,7 @@ final class BlogPublisher
             ];
         }
 
-        // BlogReceiver returns 'error' key; WordPress REST core uses 'message'
-        $body = is_array($body) ? $body : [];
-        $error_msg = $body['message'] ?? $body['error'] ?? null;
-        if ($error_msg && !empty($body['context'])) {
-            $error_msg .= ' [' . $body['context'] . ']';
-        }
-        // Fallback: include truncated raw body so we can diagnose unexpected responses
-        return ['success' => false, 'message' => $error_msg ?? "HTTP $code — " . substr($raw_body, 0, 300)];
+        return ['success' => false, 'message' => 'Client site returned HTTP ' . (int)$code . '. Check the client agent logs and connection. Remote response details are withheld to protect credentials.'];
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
@@ -1137,6 +1134,27 @@ final class BlogPublisher
      * title field (e.g. via AI hallucination or agent round-tripping) this
      * removes them so the saved title is always clean human-readable text.
      */
+    /** Advisory checks, not a ranking score or factual-accuracy verification. */
+    public static function seoReview(array $post): array
+    {
+        $warnings = [];
+        if (empty($post['focus_keyword'])) { $warnings[] = 'Choose an intentional focus topic; automatic keyword fallback may repeat other posts.'; }
+        if (empty($post['featured_image_url'])) { $warnings[] = 'Choose a relevant featured image; the client may otherwise use an unrelated media-library image.'; }
+        if (empty($post['generated_body'])) { $warnings[] = 'Generate and review the draft before its scheduled day.'; return $warnings; }
+        if (trim(strip_tags($post['generated_meta'] ?? '')) === '') { $warnings[] = 'Missing meta description.'; }
+        $body = $post['generated_body'];
+        if (!preg_match('/<h2\b/i', $body)) { $warnings[] = 'No H2 section headings found.'; }
+        if (preg_match_all('/<h1\b/i', $body) > 1) { $warnings[] = 'Multiple H1 headings; review the article hierarchy.'; }
+        if (!preg_match('/<a\b[^>]*href=/i', $body)) { $warnings[] = 'No contextual links in the generated body. Review relevant internal links on the published page.'; }
+        if (preg_match('/<img\b[^>]*>/i', $body)) {
+            preg_match_all('/<img\b[^>]*>/i', $body, $images);
+            foreach ($images[0] as $image) {
+                if (!preg_match('/\balt\s*=/i', $image)) { $warnings[] = 'An inline image has no alt attribute; describe informative images and use empty alt for decorative ones.'; break; }
+            }
+        }
+        return $warnings;
+    }
+
     private static function sanitizeTitle(string $title): string
     {
         // Remove %token% patterns (Yoast / RankMath template variables)
