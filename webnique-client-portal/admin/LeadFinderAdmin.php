@@ -1172,7 +1172,7 @@ JS;
             window.wnqBulkClear=function(){document.querySelectorAll('.wnq-sel').forEach(c=>c.checked=false);if(selAll)selAll.checked=false;upd();};
             window.wnqBulkApply=function(){const status=document.getElementById('wnq-bulk-status').value;if(!status){alert('Select a status.');return;}const ids=[...document.querySelectorAll('.wnq-sel:checked')].map(c=>c.value);if(!ids.length)return;const b=new FormData();b.append('action','wnq_lead_bulk_action');b.append('nonce',nonce);b.append('bulk_action',status);ids.forEach(id=>b.append('ids[]',id));fetch(ajaxurl,{method:'POST',body:b}).then(r=>r.json()).then(d=>{if(!d.success){alert('Error: '+(d.data?.message||'?'));return;}document.querySelectorAll('.wnq-sel:checked').forEach(c=>{const s=c.closest('tr').querySelector('.wnq-status-sel');if(s)s.value=status;});wnqBulkClear();});};
             window.wnqBulkDelete=function(){const ids=[...document.querySelectorAll('.wnq-sel:checked')].map(c=>c.value);if(!ids.length||!confirm('Delete '+ids.length+' lead(s)?'))return;const b=new FormData();b.append('action','wnq_lead_bulk_action');b.append('nonce',nonce);b.append('bulk_action','delete');ids.forEach(id=>b.append('ids[]',id));fetch(ajaxurl,{method:'POST',body:b}).then(r=>r.json()).then(d=>{if(!d.success){alert('Error: '+(d.data?.message||'?'));return;}document.querySelectorAll('.wnq-sel:checked').forEach(c=>{const r=c.closest('tr');if(r)r.remove();});wnqBulkClear();});};
-            window.wnqDeleteAllLeads=function(){const typed=prompt('This permanently deletes every saved lead. Type DELETE ALL to confirm.');if(typed!=='DELETE ALL')return;const b=new FormData();b.append('action','wnq_lead_delete_all');b.append('nonce',nonce);fetch(ajaxurl,{method:'POST',body:b}).then(r=>r.json()).then(d=>{if(!d.success){alert('Error: '+(d.data?.message||'?'));return;}alert('Deleted '+(d.data?.deleted||0)+' lead(s).');window.location.href=<?php echo wp_json_encode($base_url);?>;});};
+            window.wnqDeleteAllLeads=function(){const typed=prompt('This permanently deletes every saved lead. Type DELETE ALL to confirm.');if(typed!=='DELETE ALL')return;const b=new FormData();b.append('action','wnq_lead_delete_all');b.append('nonce',nonce);b.append('confirmation',typed);fetch(ajaxurl,{method:'POST',body:b}).then(r=>r.json()).then(d=>{if(!d.success){alert('Error: '+(d.data?.message||'?'));return;}alert('Deleted '+(d.data?.deleted||0)+' lead(s).');window.location.href=<?php echo wp_json_encode($base_url);?>;});};
         })();
         </script>
         <?php
@@ -1422,7 +1422,9 @@ npm run scrape:zip -- --keyword "plumbing" --zip 32825</textarea>
     {
         check_ajax_referer('wnq_lead_actions', 'nonce');
         self::requireCap();
-        $deleted = Lead::deleteAll();
+        if (!current_user_can('manage_options') || ($_POST['confirmation'] ?? '') !== 'DELETE ALL') { wp_send_json_error(['message'=>'Administrator access and DELETE ALL confirmation required.'], 403); return; }
+        try { $deleted = Lead::deleteAll(); }
+        catch (\RuntimeException $e) { wp_send_json_error(['message'=>$e->getMessage()], 409); return; }
         wp_send_json_success(['deleted' => $deleted]);
     }
 

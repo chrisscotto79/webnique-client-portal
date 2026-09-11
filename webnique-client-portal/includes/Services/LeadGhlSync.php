@@ -91,9 +91,26 @@ final class LeadGhlSync
 
     public static function eligible(array $lead): bool
     {
-        return (bool)filter_var(trim($lead['email'] ?? ''), FILTER_VALIDATE_EMAIL)
+        return self::qualification($lead) === ''
+            && (bool)filter_var(trim($lead['email'] ?? ''), FILTER_VALIDATE_EMAIL)
             && in_array($lead['status'] ?? '', ['new', 'qualified'], true)
             && stripos($lead['notes'] ?? '', 'temporarily closed') === false;
+    }
+
+    public static function qualification(array $lead): string
+    {
+        $reviews = (int)($lead['review_count'] ?? 0);
+        if ($reviews <= 0) { return 'Review count unconfirmed; review required.'; }
+        if ($reviews >= 50) { return 'Excluded: 50 or more Google reviews.'; }
+        if (($lead['company_fit'] ?? 'unknown') !== 'independent') {
+            return in_array($lead['company_fit'] ?? '', ['chain','large'], true)
+                ? 'Excluded: franchise/chain or large company.' : 'Review required: confirm small independent business.';
+        }
+        $minimum = (int)get_option('wnq_lead_seo_min', 0);
+        if ($minimum > 0 && (empty($lead['seo_checked']) || (int)($lead['seo_score'] ?? 0) < $minimum)) {
+            return 'SEO issue threshold not met or website not assessed.';
+        }
+        return '';
     }
 
     public static function lead(int $id): array

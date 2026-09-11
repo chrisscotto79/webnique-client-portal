@@ -33,6 +33,7 @@ namespace {
     function wp_send_json_error($data,$status=null) { throw new \RuntimeException($data['message']); }
     function wp_unslash($v) { return $v; }
     require dirname(__DIR__).'/includes/Services/LeadEmailExtractor.php';
+    require dirname(__DIR__).'/includes/Services/LeadSEOScorer.php';
     require dirname(__DIR__).'/includes/Services/LeadBrowserIntake.php';
     require dirname(__DIR__).'/admin/LeadBrowserAdmin.php';
     use WNQ\Services\LeadBrowserIntake as Intake;

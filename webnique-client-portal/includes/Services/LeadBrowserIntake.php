@@ -42,6 +42,7 @@ final class LeadBrowserIntake
         $email = ['email' => '', 'source' => ''];
         if ($website !== '') { $email = LeadEmailExtractor::extractEmail($website, $html); }
         $owner = self::founder($html);
+        $seo = LeadSEOScorer::scoreWebsiteFromHtml($html);
         $address = sanitize_text_field($row['address'] ?? '');
         $city = ''; $state = ''; $actualZip = '';
         if (preg_match('/,\s*([^,]+),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b/', $address, $m)) {
@@ -57,6 +58,7 @@ final class LeadBrowserIntake
             'website' => $website, 'address' => $address, 'city' => trim($city), 'state' => $state, 'zip' => $actualZip,
             'phone' => sanitize_text_field($row['phone'] ?? ''), 'email' => $email['email'], 'email_source' => $email['source'],
             'owner_first' => $owner['first'], 'owner_last' => $owner['last'],
+            'seo_score' => $seo['score'], 'seo_issues' => $seo['issues'], 'seo_checked' => $seo['ok'],
             'rating' => max(0, min(5, (float)($row['rating'] ?? 0))), 'review_count' => max(0, (int)($row['reviews'] ?? 0)),
             'status' => !empty($row['closed']) ? 'closed' : 'new', 'notes' => $notes,
         ];
