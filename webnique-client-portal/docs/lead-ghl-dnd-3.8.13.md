@@ -1,0 +1,7 @@
+# 3.8.13 — omitted DND handling and targeted recovery
+
+Per staff authorization, missing global/channel DND fields no longer block tagging. Missing means unknown, not confirmed false: delivery suppression is delegated to GHL. Present non-Boolean global DND (including null, strings and integers), malformed channel settings, explicit global/email/all DND, unsubscribe/bounce/deleted flags, missing tags and account/email mismatches remain blocked. No DND fields are written or cleared.
+
+Deploy plugin 3.8.13 and open Lead Finder → GoHighLevel. Click **Retry DND-check holds** once and confirm the live-email warning. This only requeues review/failed rows with the exact previous DND error, a stored contact ID and no uncertain tag attempt. Original approval/mode, contact ID and write stage are preserved. The worker fetches fresh contact data before tagging; malformed responses remain held under the new error. Suppressed, sent, already queued, phone/email conflicts and other review jobs are not requeued. Keep the page open to drain approved jobs. No token or extension changes needed.
+
+Tests: 135 offline GHL assertions, including missing global DND with active channel suppression, malformed values, targeted retry exclusions/idempotency, contact reuse and tag-only recovery; desktop/mobile UI tests; PHP syntax and diff validation. No live writes or email delivery verified. Existing cron fallback and page-runner constraints remain unchanged.

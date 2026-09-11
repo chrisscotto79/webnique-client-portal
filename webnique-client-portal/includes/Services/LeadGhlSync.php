@@ -268,16 +268,18 @@ final class LeadGhlSync
         if (empty($contact['id'])) { return 'GHL returned no contact ID'; }
         if (($contact['locationId'] ?? '') !== self::LOCATION) { return 'GHL contact location is missing or does not match'; }
         if (strtolower(trim($contact['email'] ?? '')) !== strtolower(trim($email))) { return 'GHL contact email does not match the approved lead'; }
-        if (!array_key_exists('dnd', $contact) || !is_bool($contact['dnd'])) { return 'GHL did not return a confirmed boolean DND status'; }
-        if ($contact['dnd']) { return 'GHL contact has Do Not Disturb enabled'; }
+        // Missing is unknown, not false: delivery suppression remains with GHL.
+        // Never set DND or coerce a supplied malformed value.
+        if (array_key_exists('dnd', $contact) && !is_bool($contact['dnd'])) { return 'GHL returned a malformed DND status'; }
+        if (($contact['dnd'] ?? false) === true) { return 'GHL contact has Do Not Disturb enabled'; }
         foreach (['deleted', 'unsubscribeEmail', 'bounceEmail'] as $flag) {
             if (!empty($contact[$flag])) { return 'GHL contact is blocked: ' . $flag; }
         }
-        if (isset($contact['dndSettings']) && !is_array($contact['dndSettings'])) { return 'GHL returned invalid channel DND settings'; }
+        if (array_key_exists('dndSettings', $contact) && !is_array($contact['dndSettings'])) { return 'GHL returned invalid channel DND settings'; }
         foreach (($contact['dndSettings'] ?? []) as $channel => $settings) {
             if (!is_array($settings)) { return 'GHL returned invalid channel DND settings'; }
             if (in_array(strtolower((string)$channel), ['email', 'all'], true)
-                && !in_array(strtolower((string)($settings['status'] ?? '')), ['inactive', ''], true)) {
+                && (!is_string($settings['status'] ?? null) || strtolower($settings['status']) !== 'inactive')) {
                 return 'GHL email DND is active or unrecognized';
             }
         }
@@ -293,6 +295,17 @@ final class LeadGhlSync
             if (isset($counts[$row['status']])) { $counts[$row['status']] = (int)$row['total']; }
         }
         return $counts;
+    }
+
+    /** Retry only the old DND-specific hold; worker re-fetches all safety fields. */
+    public static function retryMissingDnd(): int
+    {
+        global $wpdb;
+        self::test();
+        $count = $wpdb->query($wpdb->prepare('UPDATE ' . self::table() . " SET status='queued', attempts=0, next_at=UTC_TIMESTAMP(), updated_at=UTC_TIMESTAMP() WHERE status IN ('review','failed') AND contact_id <> '' AND stage <> 'tag_started' AND message=%s",
+            'GHL did not return a confirmed boolean DND status. No campaign tag applied.'));
+        if ($count === false) { throw new \RuntimeException('Could not queue DND retries. Try again.'); }
+        return (int)$count;
     }
 
     /** Small bounded cron batch. Browser processing has no one-minute delay. */

@@ -42,6 +42,8 @@ final class LeadGhlAdmin
                 $message = 'Location access and campaign tag verified. No contacts changed; no emails triggered.';
             } elseif ($action === 'diagnose') {
                 $message = 'Read-only contact diagnostics — ' . implode(' | ', LeadGhlSync::diagnose()) . '. No contacts changed or tags applied.';
+            } elseif ($action === 'retry_dnd') {
+                $message = LeadGhlSync::retryMissingDnd() . ' DND-check holds queued for fresh safety checks. Existing contact IDs and approvals retained. Phone/email conflicts and other review jobs untouched.';
             } elseif ($action === 'approve') {
                 LeadGhlSync::test();
                 $ok = LeadGhlSync::enqueue(absint($_POST['lead_id'] ?? 0), true, true);
@@ -189,6 +191,10 @@ final class LeadGhlAdmin
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><?php self::fields('diagnose'); ?><p><button class="wnq-btn wnq-btn-secondary">Diagnose blocked contacts (read-only)</button></p><p>Checks up to three saved contact responses. Reports safety-field types only; no customer details or tokens. Does not retry or send contacts.</p></form>
         </div>
         <div class="wnq-card"><h3>Transfer progress</h3><p>Already-approved contacts transfer one after another while this page stays open. No one-minute delay. GHL controls your email drip timing. Closing this page leaves cron as a slower fallback. Review/failed jobs are not automatically retried.</p><p id="wnq-ghl-progress" role="status" aria-live="polite">Checking approved queue…</p><button type="button" id="wnq-ghl-pause" class="wnq-btn wnq-btn-secondary">Pause page transfers</button><p>Pause stops this page after its current request; it does not cancel approved cron jobs.</p></div>
+        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" onsubmit="return confirm('Retry contacts held by the old DND-field check? Missing DND will defer to GHL delivery suppression. Applying tags can start live emails. Other holds stay untouched.')">
+            <?php self::fields('retry_dnd'); ?><p><button class="wnq-btn wnq-btn-primary">Retry DND-check holds</button></p>
+            <p>Reuses existing contacts. Explicit DND, unsubscribe, identity conflicts and malformed responses remain blocked. Omitted DND fields no longer prevent tagging; GHL enforces email delivery restrictions.</p>
+        </form>
         <script>
         (() => {
             const status = document.getElementById('wnq-ghl-progress');

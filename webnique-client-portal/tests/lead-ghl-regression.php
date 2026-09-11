@@ -68,6 +68,15 @@ final class GhlDbFixture {
         return null;
     }
     function query($sql) {
+        if (str_contains($sql, "stage <> 'tag_started'")) {
+            $count = 0;
+            foreach ($this->jobs as &$j) {
+                if (in_array($j['status'], ['review','failed'], true) && $j['contact_id'] !== '' && $j['stage'] !== 'tag_started' && $j['message'] === 'GHL did not return a confirmed boolean DND status. No campaign tag applied.') {
+                    $j['status']='queued'; $j['attempts']=0; $count++;
+                }
+            }
+            return $count;
+        }
         if (str_contains($sql, "WHERE status='processing'")) {
             foreach ($this->jobs as &$j) { if ($j['status'] === 'processing') { $j['status'] = 'review'; } }
         } elseif (str_contains($sql, "WHERE status='queued' AND mode='auto'")) {
@@ -146,7 +155,7 @@ check(count(writes()) === 0, 'Wrong-location contact blocked');
 resetFixture(); $lookup = $contact; $contact['email'] = 'different@business.com'; Sync::enqueue(1); Sync::work();
 check(count(writes()) === 0, 'Wrong-email contact blocked');
 resetFixture(); $lookup = $contact; unset($contact['dnd']); Sync::enqueue(1); Sync::work();
-check(count(writes()) === 0, 'Incomplete safety response fails closed');
+check(count(writes()) === 1 && $wpdb->jobs[1]['status'] === 'sent', 'Omitted DND permits tagging without changing DND');
 resetFixture(); $wpdb->leads[1]['phone'] = '(555) 123-4567'; $delegate = $transport;
 $transport = static fn($url, $args) => str_contains($url, 'number=') ? ['code' => 200, 'body' => '{"contact":{"id":"phone-other"}}'] : $delegate($url, $args);
 Sync::enqueue(1); Sync::work(); check(count(writes()) === 0, 'Phone conflict blocks create');
@@ -255,7 +264,7 @@ try { WNQ\Admin\LeadGhlAdmin::approveAll(); check(false, 'Unauthorized all-list 
 catch (RuntimeException $e) { check($e->getMessage() === 'Access denied', 'All-list approval enforces permission'); }
 $allowed = true;
 resetFixture();
-check(str_contains(Sync::contactBlockReason(array_diff_key($contact, ['dnd'=>1]), $contact['email']), 'DND status'), 'Missing DND explained, not bypassed');
+check(Sync::contactBlockReason(array_diff_key($contact, ['dnd'=>1]), $contact['email']) === '', 'Omitted DND defers delivery suppression to GHL');
 $contact['dndSettings'] = ['email'=>['status'=>'active']];
 check(!Sync::contactSafe($contact, $contact['email']), 'Lowercase email DND blocks handoff');
 $contact['dndSettings'] = ['Email'=>['status'=>'permanent']];
@@ -291,6 +300,27 @@ foreach (['false', null, false] as $value) {
 }
 unset($contact['dnd']); check(str_contains(implode(' ', Sync::diagnose()), 'DND missing'), 'Diagnostic distinguishes absent DND');
 check(!writes() && $wpdb->jobs[1]['status'] === 'review', 'Diagnostics cannot write contacts or requeue');
+resetFixture();
+foreach ([null, 'false', 0, [], 'unknown'] as $value) {
+    $contact['dnd']=$value; check(!Sync::contactSafe($contact, $contact['email']), 'Present malformed DND is blocked');
+}
+unset($contact['dnd']);
+foreach ([['Email'=>['status'=>'active']], ['email'=>['status'=>'permanent']], ['all'=>[]]] as $settings) {
+    $contact['dndSettings']=$settings; check(!Sync::contactSafe($contact, $contact['email']), 'Channel suppression enforced even without global DND');
+}
+resetFixture(); Sync::enqueue(1, true, true);
+$old = 'GHL did not return a confirmed boolean DND status. No campaign tag applied.';
+$wpdb->jobs[1] = array_replace($wpdb->jobs[1], ['status'=>'review','contact_id'=>'contact1','stage'=>'create_started','message'=>$old]);
+foreach (['suppressed','sent','queued','review','review'] as $n=>$state) {
+    $wpdb->jobs[$n+2] = array_replace($wpdb->jobs[1], ['id'=>$n+2,'status'=>$state]);
+}
+$wpdb->jobs[5]['message']='Phone/email contact conflict.';
+$wpdb->jobs[6]['stage']='tag_started';
+check(Sync::retryMissingDnd() === 1, 'Targeted retry excludes conflicts, suppression, sent, queued and uncertain tags');
+check(Sync::retryMissingDnd() === 0 && !writes(), 'Targeted retry is idempotent and only queues');
+check($wpdb->jobs[1]['contact_id']==='contact1' && $wpdb->jobs[1]['mode']==='override', 'Existing identity and approval retained');
+unset($contact['dnd']); Sync::work();
+check($wpdb->jobs[1]['status']==='sent' && count(writes())===1 && str_ends_with(writes()[0][0], '/tags'), 'Recovered job reuses contact, applies tag only');
 resetFixture(); $wpdb->lock=false;
 try { WNQ\Models\Lead::deleteAll(); check(false,'Delete during handoff accepted'); }
 catch (RuntimeException $e) { check(str_contains($e->getMessage(),'progress'),'Deletion serialized against handoffs'); }
