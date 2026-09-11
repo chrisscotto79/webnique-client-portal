@@ -13,12 +13,12 @@
   }
   function retryError(message) {return Object.assign(new Error(message),{retryable:true});}
   function scheduleRecovery(error) {
-    if (!error.retryable || recoveryAttempts >= 6) return false;
+    if (!error.retryable) return false;
     const epoch=recoveryEpoch;
-    const wait=Math.min(30000,5000*Math.pow(2,recoveryAttempts++));
+    const wait=Math.min(60000,5000*Math.pow(2,Math.min(recoveryAttempts++,4)));
     recovering=true;
-    byId('lf-progress').textContent=`Temporary companion interruption. Automatic recovery ${recoveryAttempts}/6 in ${wait/1000}s. Saved leads are safe; Pause cancels recovery.`;
-    log(`Automatic recovery ${recoveryAttempts}/6: checking saved state before continuing.`);
+    byId('lf-progress').textContent=`Temporary companion interruption. Automatic recovery ${recoveryAttempts} in ${wait/1000}s. Retries continue with a cooldown; Pause cancels recovery.`;
+    log(`Automatic recovery ${recoveryAttempts}: ${error.message} Checking saved state before continuing.`);
     recoveryTimer=setTimeout(async()=>{
       recoveryTimer=null;
       try {
@@ -59,7 +59,7 @@
     await history('begin',{run:bulk.run,keyword:bulk.keyword,zip:bulk.zips[bulk.index]});
     if(!running)return false;
     const next = (await ask('START',{keyword:bulk.keyword,zip:bulk.zips[bulk.index],runId:bulk.run,replace:true})).job;
-    if (next?.runId !== bulk.run) throw new Error('Reload Chrome companion version 1.0.5 or newer before using automatic recovery.');
+    if (next?.runId !== bulk.run) throw new Error('Reload Chrome companion version 1.0.6 or newer before using the three-tab pool.');
     bulk.started = true; keepBulk(); show(next); bulkLabel(); return true;
   }
   window.addEventListener('message', event => {
@@ -127,7 +127,7 @@
         if (previousPhase === 'collect' && job.phase === 'details') delay = 200;
         if (job.pending) {
           const row = job.pending;
-          byId('lf-progress').textContent = `Checking ${row.name}'s website for email and saving the lead… No additional Chrome tabs are opened.`;
+          byId('lf-progress').textContent = `Checking ${row.name}'s website for email and saving the lead… Up to three Maps tabs load ahead; saves remain sequential.`;
           const saveStarted = performance.now();
           const receiptKey = 'wnq-lead-receipt-' + job.runId;
           let receipt;
@@ -201,7 +201,7 @@
   async function safeCompanion() {
     const hello=await ask('HELLO');
     const v=(hello.version||'0').split('.').map(Number);
-    if(!(v[0]>1 || (v[0]===1 && (v[1]>0 || v[2]>=5))))throw new Error('Reload Chrome companion 1.0.5 or newer at chrome://extensions, then refresh WordPress once. This version supports automatic recovery and the one-tab limit.');
+    if(!(v[0]>1 || (v[0]===1 && (v[1]>0 || v[2]>=6))))throw new Error('Reload Chrome companion 1.0.6 or newer at chrome://extensions, then refresh WordPress once. This version supports the bounded three-tab pool.');
   }
   let connecting = false;
   async function connect() {
