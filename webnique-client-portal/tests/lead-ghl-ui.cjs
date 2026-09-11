@@ -8,11 +8,22 @@ const puppeteer = require('puppeteer');
   const browser = await puppeteer.launch({headless:true});
   try {
     const page = await browser.newPage();
+    let transfers = 0;
+    await page.setRequestInterception(true);
+    page.on('request', request => {
+      if (request.url().includes('admin-ajax.php')) {
+        transfers++;
+        return request.respond({status:200, contentType:'application/json', headers:{'Access-Control-Allow-Origin':'null','Access-Control-Allow-Credentials':'true'}, body:JSON.stringify({success:true,data:{sent:1,queued:1,processing:0,review:0,failed:0,held:0}})});
+      }
+      request.abort();
+    });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     for (const width of [1280,390]) {
       await page.setViewport({width,height:1000});
       await page.setContent(html);
+      await page.waitForFunction(() => document.getElementById('wnq-ghl-progress').textContent.includes('1 tagged'));
+      await page.click('#wnq-ghl-pause');
       assert.equal(await page.$eval('[role=switch]', e => e.checked), false);
       await page.click('[role=switch]');
       assert.equal(await page.$eval('[role=switch]', e => e.checked), true);
@@ -30,6 +41,7 @@ const puppeteer = require('puppeteer');
     await page.click('input[value=approve_all] ~ button');
     assert(confirmed, 'All-list approval clearly confirms scope and outreach override');
     assert.deepEqual(errors, []);
+    assert(transfers >= 2, 'Existing queue begins transferring automatically on page load');
     console.log('PASS: desktop/mobile layout, switch, empty token field, live-send confirmation, no JS errors.');
   } finally { await browser.close(); }
 })().catch(e => { console.error(e); process.exit(1); });

@@ -10,6 +10,16 @@ final class LeadGhlAdmin
     public static function register(): void
     {
         add_action('admin_post_wnq_lead_ghl', [self::class, 'handle']);
+        add_action('wp_ajax_wnq_ghl_drain', [self::class, 'drain']);
+    }
+
+    public static function drain(): void
+    {
+        if (!self::allowed()) { wp_send_json_error(['message'=>'Access denied'], 403); return; }
+        check_ajax_referer('wnq_ghl_drain');
+        // Only previously approved jobs; never creates new approval or retries review jobs.
+        LeadGhlSync::work();
+        wp_send_json_success(LeadGhlSync::progress());
     }
 
     private static function allowed(): bool
@@ -175,7 +185,43 @@ final class LeadGhlAdmin
             <?php endif; ?>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><?php self::fields('test'); ?><button class="wnq-btn wnq-btn-secondary">Test connection &amp; tag (read-only)</button></form>
         </div>
-        <div class="wnq-card"><h3>Recent handoffs</h3><p>Sent means the campaign tag is present, not that email was delivered. Times below are UTC. Background processing depends on WordPress cron; configure a server cron for reliable processing on a quiet site.</p>
+        <div class="wnq-card"><h3>Transfer progress</h3><p>Already-approved contacts transfer one after another while this page stays open. No one-minute delay. GHL controls your email drip timing. Closing this page leaves cron as a slower fallback. Review/failed jobs are not automatically retried.</p><p id="wnq-ghl-progress" role="status" aria-live="polite">Checking approved queue…</p><button type="button" id="wnq-ghl-pause" class="wnq-btn wnq-btn-secondary">Pause page transfers</button><p>Pause stops this page after its current request; it does not cancel approved cron jobs.</p></div>
+        <script>
+        (() => {
+            const status = document.getElementById('wnq-ghl-progress');
+            const button = document.getElementById('wnq-ghl-pause');
+            let paused = false, timer, running = false;
+            const run = async () => {
+                if (paused || running) return;
+                running = true;
+                let delay = 1500;
+                try {
+                    const body = new URLSearchParams({action:'wnq_ghl_drain', _ajax_nonce:<?php echo wp_json_encode(wp_create_nonce('wnq_ghl_drain')); ?>});
+                    const response = await fetch(<?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>, {method:'POST', credentials:'same-origin', body});
+                    if (response.status === 403 || response.status === 401) { paused = true; throw new Error('Session expired or access denied. Refresh this page.'); }
+                    if (!response.ok) throw new Error('Transfer response delayed. Retrying safely in 15 seconds.');
+                    const result = await response.json();
+                    if (!result.success) throw new Error('Transfer unavailable. Retrying in 15 seconds.');
+                    const c = result.data;
+                    status.textContent = `${c.sent} tagged · ${c.queued} queued · ${c.processing} processing · ${c.review + c.failed + c.held} need review. Refresh status below for contact details.`;
+                    if (!c.queued && !c.processing) delay = 15000;
+                } catch (error) {
+                    status.textContent = error.message || 'Connection interrupted. Retrying in 15 seconds.';
+                    delay = 15000;
+                } finally {
+                    running = false;
+                    if (!paused) timer = setTimeout(run, delay);
+                }
+            };
+            button.addEventListener('click', () => {
+                paused = !paused; clearTimeout(timer);
+                button.textContent = paused ? 'Resume page transfers' : 'Pause page transfers';
+                if (!paused) run();
+            });
+            run();
+        })();
+        </script>
+        <div class="wnq-card"><h3>Recent handoffs</h3><p>Sent means the campaign tag is present, not that email was delivered. Times below are UTC. Refresh this page to update the individual rows.</p>
         <div class="wnq-tbl-wrap"><table class="wnq-tbl"><thead><tr><th>Lead</th><th>Status</th><th>Mode / approver</th><th>Attempts</th><th>Updated (UTC)</th><th>Result</th></tr></thead><tbody>
         <?php
         $rows = $wpdb->get_results('SELECT q.*, l.business_name FROM ' . LeadGhlSync::table() . " q LEFT JOIN {$wpdb->prefix}wnq_leads l ON q.lead_id=l.id ORDER BY q.updated_at DESC, q.id DESC LIMIT 100", ARRAY_A) ?: [];

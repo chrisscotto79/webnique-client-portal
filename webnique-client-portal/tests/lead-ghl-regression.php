@@ -20,6 +20,10 @@ function admin_url($v) { return 'https://wordpress.example/wp-admin/' . $v; }
 function checked($v) { if ($v) { echo 'checked'; } }
 function wp_nonce_field($v) { echo '<input type="hidden" name="_wpnonce" value="fixture-nonce">'; }
 function get_transient($v) { return false; }
+function wp_create_nonce($v) { return 'fixture-nonce'; }
+function check_ajax_referer($v) { if (empty($GLOBALS['validNonce'])) { throw new RuntimeException('nonce rejected'); } }
+function wp_send_json_success($v) { $GLOBALS['ajaxResult'] = $v; }
+function wp_send_json_error($v, $status) { $GLOBALS['ajaxError'] = $status; }
 function check_admin_referer($v) { if (empty($GLOBALS['validNonce'])) { throw new RuntimeException('nonce rejected'); } }
 function wp_die($v, ...$args) { throw new RuntimeException($v); }
 function wp_parse_url($url) { return parse_url($url); }
@@ -45,6 +49,10 @@ final class GhlDbFixture {
     }
     function get_var($sql) { if (str_contains($sql, 'MAX(id)')) { return $this->leads ? max(array_keys($this->leads)) : 0; } return str_contains($sql, 'GET_LOCK') ? (int)$this->lock : (str_contains($sql, 'RELEASE_LOCK') ? 1 : null); }
     function get_results($sql, $format) {
+        if (str_contains($sql, 'GROUP BY status')) {
+            $counts = []; foreach ($this->jobs as $job) { $counts[$job['status']] = ($counts[$job['status']] ?? 0) + 1; }
+            $rows = []; foreach ($counts as $status => $total) { $rows[] = compact('status','total'); } return $rows;
+        }
         if (preg_match('/WHERE id > (\d+) AND id <= (\d+)/', $sql, $m)) {
             $rows = []; ksort($this->leads);
             foreach ($this->leads as $id => $lead) { if ($id > $m[1] && $id <= $m[2]) { $rows[] = ['id'=>$id]; } }
@@ -245,6 +253,33 @@ $allowed = false;
 try { WNQ\Admin\LeadGhlAdmin::approveAll(); check(false, 'Unauthorized all-list approval accepted'); }
 catch (RuntimeException $e) { check($e->getMessage() === 'Access denied', 'All-list approval enforces permission'); }
 $allowed = true;
+resetFixture();
+check(str_contains(Sync::contactBlockReason(array_diff_key($contact, ['dnd'=>1]), $contact['email']), 'DND status'), 'Missing DND explained, not bypassed');
+$contact['dndSettings'] = ['email'=>['status'=>'active']];
+check(!Sync::contactSafe($contact, $contact['email']), 'Lowercase email DND blocks handoff');
+$contact['dndSettings'] = ['Email'=>['status'=>'permanent']];
+check(!Sync::contactSafe($contact, $contact['email']), 'Uppercase email DND blocks handoff');
+resetFixture(); Sync::enqueue(1, true, true);
+$validNonce = true;
+WNQ\Admin\LeadGhlAdmin::drain();
+check($ajaxResult['sent'] === 1 && $ajaxResult['queued'] === 0, 'AJAX drains previously approved contact and returns progress');
+$before = count(writes()); WNQ\Admin\LeadGhlAdmin::drain();
+check(count(writes()) === $before, 'Repeated AJAX cannot resend completed job');
+$allowed = false; WNQ\Admin\LeadGhlAdmin::drain();
+check($ajaxError === 403, 'AJAX requires capability');
+$allowed = true; $validNonce = false;
+try { WNQ\Admin\LeadGhlAdmin::drain(); check(false, 'AJAX accepted missing nonce'); }
+catch (RuntimeException $e) { check($e->getMessage() === 'nonce rejected', 'AJAX requires nonce'); }
+resetFixture();
+for ($i = 1; $i <= 3; $i++) { $wpdb->leads[$i] = array_replace($wpdb->leads[1], ['id'=>$i,'email'=>"batch{$i}@business.com"]); Sync::enqueue($i, true, true); }
+$transport = static function ($url, $args) {
+    if (str_contains($url, '/locations/')) { $body = ['tags'=>[['name'=>Sync::TAG]]]; }
+    elseif (str_contains($url, '/search/duplicate')) { parse_str(parse_url($url, PHP_URL_QUERY), $q); $body = ['contact'=>['id'=>$q['email']]]; }
+    elseif (str_ends_with($url, '/tags')) { $body = ['tags'=>[Sync::TAG]]; }
+    else { $id = rawurldecode(basename(parse_url($url, PHP_URL_PATH))); $body = ['contact'=>['id'=>$id,'email'=>$id,'locationId'=>Sync::LOCATION,'dnd'=>false,'tags'=>[]]]; }
+    return ['code'=>200,'body'=>json_encode($body)];
+};
+Sync::batch(); check(Sync::progress()['sent'] === 3, 'Cron batch handles multiple contacts in one tick');
 resetFixture(); $wpdb->lock=false;
 try { WNQ\Models\Lead::deleteAll(); check(false,'Delete during handoff accepted'); }
 catch (RuntimeException $e) { check(str_contains($e->getMessage(),'progress'),'Deletion serialized against handoffs'); }

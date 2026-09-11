@@ -1,0 +1,9 @@
+# GHL transfer runner — 3.8.11
+
+The GHL handoff page now drains already-approved jobs with sequential authenticated, nonce-protected POST requests, 1.5 seconds after each completed response. It does not approve new leads or retry review/failed jobs. Existing saved queues work without reapproval. Aggregate status is live; individual rows update on refresh. Pause stops the page runner, not cron or an in-flight request. Cron now attempts up to ten contacts per tick, stopping before another contact when its 15-second batch budget is exhausted. A single contact may take longer due to provider latency. Existing per-job database locks serialize browser tabs and cron; uncertain writes remain review-only.
+
+Replaced the ambiguous contact safety failure with specific missing ID, location mismatch, email mismatch, missing/invalid DND, suppression and missing tags reasons. Missing DND is NOT assumed safe. Both lowercase and uppercase email DND keys are checked. The screenshot alone cannot establish which field failed for ABC Land Clearing. Its saved review job requires an explicit retry/reconcile; if blocked, the new message explains why. A contact may have been created before tagging was blocked.
+
+Validation: 115 mocked PHP assertions, AJAX authorization and nonce checks, repeat-drain idempotency, multi-contact cron batch, lowercase/uppercase DND checks, desktop/mobile browser runner and approval controls, PHP syntax and diff checks. No live GHL writes or emails during development. Provider delivery and the actual blocked contact still need live verification by staff.
+
+Deployment: upload plugin 3.8.11 and open Lead Finder → GHL. Leave this page open for prompt transfer of the approved queue. No extension update. Closing the page uses the cron fallback; disabled cron still needs server configuration. Progress means tag confirmation, not email delivery. GHL controls the drip sequence.

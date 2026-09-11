@@ -44,7 +44,7 @@ final class LeadGhlSync
             $s['wnq_ghl_minute'] = ['interval' => 60, 'display' => 'Lead handoff every minute'];
             return $s;
         });
-        add_action(self::HOOK, [self::class, 'work']);
+        add_action(self::HOOK, [self::class, 'batch']);
         if (!wp_next_scheduled(self::HOOK)) {
             wp_schedule_event(time() + 60, 'wnq_ghl_minute', self::HOOK);
         }
@@ -232,12 +232,46 @@ final class LeadGhlSync
 
     public static function contactSafe(array $contact, string $email): bool
     {
-        return !empty($contact['id']) && ($contact['locationId'] ?? '') === self::LOCATION
-            && strtolower(trim($contact['email'] ?? '')) === strtolower(trim($email))
-            && array_key_exists('dnd', $contact) && !$contact['dnd']
-            && empty($contact['deleted']) && empty($contact['unsubscribeEmail']) && empty($contact['bounceEmail'])
-            && !in_array(strtolower($contact['dndSettings']['Email']['status'] ?? ''), ['active', 'permanent'], true)
-            && isset($contact['tags']) && is_array($contact['tags']);
+        return self::contactBlockReason($contact, $email) === '';
+    }
+
+    public static function contactBlockReason(array $contact, string $email): string
+    {
+        if (empty($contact['id'])) { return 'GHL returned no contact ID'; }
+        if (($contact['locationId'] ?? '') !== self::LOCATION) { return 'GHL contact location is missing or does not match'; }
+        if (strtolower(trim($contact['email'] ?? '')) !== strtolower(trim($email))) { return 'GHL contact email does not match the approved lead'; }
+        if (!array_key_exists('dnd', $contact) || !is_bool($contact['dnd'])) { return 'GHL did not return a confirmed boolean DND status'; }
+        if ($contact['dnd']) { return 'GHL contact has Do Not Disturb enabled'; }
+        foreach (['deleted', 'unsubscribeEmail', 'bounceEmail'] as $flag) {
+            if (!empty($contact[$flag])) { return 'GHL contact is blocked: ' . $flag; }
+        }
+        foreach (($contact['dndSettings'] ?? []) as $channel => $settings) {
+            if (in_array(strtolower((string)$channel), ['email', 'all'], true)
+                && !in_array(strtolower((string)($settings['status'] ?? '')), ['inactive', ''], true)) {
+                return 'GHL email DND is active or unrecognized';
+            }
+        }
+        if (!isset($contact['tags']) || !is_array($contact['tags'])) { return 'GHL did not return the contact tag list'; }
+        return '';
+    }
+
+    public static function progress(): array
+    {
+        global $wpdb;
+        $counts = ['queued'=>0, 'processing'=>0, 'sent'=>0, 'review'=>0, 'failed'=>0, 'held'=>0, 'suppressed'=>0];
+        foreach ($wpdb->get_results('SELECT status, COUNT(*) AS total FROM ' . self::table() . ' GROUP BY status', ARRAY_A) ?: [] as $row) {
+            if (isset($counts[$row['status']])) { $counts[$row['status']] = (int)$row['total']; }
+        }
+        return $counts;
+    }
+
+    /** Small bounded cron batch. Browser processing has no one-minute delay. */
+    public static function batch(): void
+    {
+        $start = microtime(true);
+        for ($i = 0; $i < 10 && microtime(true) - $start < 15; $i++) {
+            self::work();
+        }
     }
 
     public static function hasTag(array $tags): bool
@@ -306,7 +340,8 @@ final class LeadGhlSync
             self::save($id, ['contact_id' => $contactId]);
             $data = self::request('GET', '/contacts/' . rawurlencode($contactId));
             $contact = $data['contact'] ?? [];
-            if (!self::contactSafe($contact, $email)) { throw new \RuntimeException('Contact is suppressed, mismatched, or missing safety fields. No campaign tag applied.'); }
+            $reason = self::contactBlockReason($contact, $email);
+            if ($reason !== '') { throw new \RuntimeException($reason . '. No campaign tag applied.'); }
             if (self::hasTag($contact['tags'])) {
                 self::save($id, ['status' => 'sent', 'message' => 'Campaign tag already present; not applied again.']); return;
             }
