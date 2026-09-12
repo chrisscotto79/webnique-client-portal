@@ -20,7 +20,8 @@ function ok($v) { global $checks; $checks++; if (!$v) { throw new RuntimeExcepti
 function rejects($fn) { try { $fn(); } catch (RuntimeException $e) { ok(true); return; } ok(false); }
 ok(H::keyword('  PLUMBERS   Near Me ') === 'plumbers near me');
 ok(H::zips("01234,32825\n32825;32826") === ['01234','32825','32826']);
-foreach (['', '1234', '32825bad', implode(',', range(10000,10100))] as $bad) { rejects(fn() => H::zips($bad)); }
+ok(count(H::zips(implode(',', range(10000,10249)))) === 250);
+foreach (['', '1234', '32825bad', implode(',', range(10000,10250))] as $bad) { rejects(fn() => H::zips($bad)); }
 $run = '12345678-1234-1234-1234-123456789012';
 H::begin($run, 'Plumbers', '01234'); ok(count($wpdb->writes) === 1);
 $wpdb->row = $wpdb->writes[0] + ['status'=>'started'];
