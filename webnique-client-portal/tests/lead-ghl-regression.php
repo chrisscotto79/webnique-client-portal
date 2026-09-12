@@ -79,8 +79,8 @@ final class GhlDbFixture {
         }
         if (str_contains($sql, "WHERE status='processing'")) {
             foreach ($this->jobs as &$j) { if ($j['status'] === 'processing') { $j['status'] = 'review'; } }
-        } elseif (str_contains($sql, "WHERE status='queued' AND mode='auto'")) {
-            foreach ($this->jobs as &$j) { if ($j['status'] === 'queued' && $j['mode'] === 'auto') { $j['status'] = 'held'; } }
+        } elseif (str_contains($sql, "WHERE status='queued' AND mode IN")) {
+            foreach ($this->jobs as &$j) { if ($j['status'] === 'queued' && in_array($j['mode'], ['auto','auto_fast'], true)) { $j['status'] = 'held'; } }
         }
         return 1;
     }
@@ -160,7 +160,7 @@ resetFixture(); $wpdb->leads[1]['phone'] = '(555) 123-4567'; $delegate = $transp
 $transport = static fn($url, $args) => str_contains($url, 'number=') ? ['code' => 200, 'body' => '{"contact":{"id":"phone-other"}}'] : $delegate($url, $args);
 Sync::enqueue(1); Sync::work(); check(count(writes()) === 0, 'Phone conflict blocks create');
 resetFixture(); Sync::saveSettings('', true); check(!$wpdb->jobs, 'Enabling automatic mode does not backfill');
-Sync::onCreated(1); check($wpdb->jobs[1]['mode'] === 'auto', 'New lead auto queued');
+Sync::onCreated(1); check($wpdb->jobs[1]['mode'] === 'auto_fast', 'New lead auto queued');
 Sync::saveSettings('', false); check($wpdb->jobs[1]['status'] === 'held', 'Off holds automatic backlog');
 Sync::saveSettings('', true); Sync::work(); check(count(writes()) === 0, 'Re-enable does not resume held backlog');
 check(Sync::enqueue(1), 'Held job requires manual approval'); Sync::work(); check($wpdb->jobs[1]['status'] === 'sent', 'Approved held job processes');
@@ -321,6 +321,22 @@ check(Sync::retryMissingDnd() === 0 && !writes(), 'Targeted retry is idempotent 
 check($wpdb->jobs[1]['contact_id']==='contact1' && $wpdb->jobs[1]['mode']==='override', 'Existing identity and approval retained');
 unset($contact['dnd']); Sync::work();
 check($wpdb->jobs[1]['status']==='sent' && count(writes())===1 && str_ends_with(writes()[0][0], '/tags'), 'Recovered job reuses contact, applies tag only');
+resetFixture(); Sync::enableHandsFreeOnce();
+check(!empty(Sync::settings()['automatic']), 'Authorized upgrade enables automatic mode once');
+$wpdb->leads[1]['company_fit']='unknown'; $wpdb->leads[1]['review_count']=0;
+Sync::onCreated(1); Sync::work(); check($wpdb->jobs[1]['status']==='sent', 'Fresh unknown-company lead transfers without approval');
+$wpdb->leads[2] = array_replace($wpdb->leads[1], ['id'=>2,'email'=>' OWNER@business.com ','keyword'=>'different','zip'=>'99999']);
+Sync::onCreated(2); check(count($wpdb->jobs)===1, 'Different keyword and ZIP share normalized email ledger');
+unset($wpdb->leads[1]); Sync::onCreated(2); check(count($wpdb->jobs)===1, 'Deleting original lead does not erase sent ledger');
+Sync::saveSettings('', false); Sync::enableHandsFreeOnce(); check(empty(Sync::settings()['automatic']), 'Later emergency off survives future loads');
+resetFixture(); Sync::saveSettings('', true);
+$wpdb->leads[1]['company_fit']='unknown';
+$wpdb->leads[2]=array_replace($wpdb->leads[1], ['id'=>2,'email'=>' OWNER@business.com ']);
+$wpdb->leads[3]=array_replace($wpdb->leads[1], ['id'=>3,'email'=>'bad']);
+$scan=Sync::queueBacklog(0,0);
+check($scan['done'] && $scan['queued']===1, 'Unapproved saved leads queued automatically, duplicate/invalid email skipped');
+check(Sync::queueBacklog(0,0)['queued']===0, 'Backlog scan replay cannot duplicate handoffs');
+check(!writes(), 'Backlog scan only queues');
 resetFixture(); $wpdb->lock=false;
 try { WNQ\Models\Lead::deleteAll(); check(false,'Delete during handoff accepted'); }
 catch (RuntimeException $e) { check(str_contains($e->getMessage(),'progress'),'Deletion serialized against handoffs'); }

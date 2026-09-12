@@ -27,6 +27,8 @@ namespace {
     function esc_attr($v) { return esc_html($v); }
     function esc_url($v) { return esc_html($v); }
     function wp_create_nonce($v) { return 'fixture-nonce'; }
+    function get_option($key, $default=false) { return $default; }
+    require dirname(__DIR__).'/includes/Services/LeadGhlSync.php';
     function get_current_user_id() { return 17; }
     function current_user_can($v) { return $GLOBALS['allowed'] ?? true; }
     function check_ajax_referer(...$args) { return $GLOBALS['nonceValid'] ?? true; }

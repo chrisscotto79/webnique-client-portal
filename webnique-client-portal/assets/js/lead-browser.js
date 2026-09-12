@@ -50,6 +50,11 @@
     return data.data;
   }
   function bulkLabel() {
+    const totals = document.getElementById('lf-bulk-totals');
+    if (totals && bulk) {
+      const current = bulk.started && job?.runId === bulk.run ? job.stats : {};
+      totals.textContent = `This bulk search: ${(bulk.totalSaved || 0) + (current?.saved || 0)} new leads · ${(bulk.totalEmail || 0) + (current?.email || 0)} new leads with email · ${bulk.index} of ${bulk.zips.length} ZIPs completed`;
+    }
     byId('lf-bulk-progress').textContent = bulk ? (bulk.index >= bulk.zips.length ? `Bulk search complete: ${bulk.zips.length} ZIPs processed.` :
       `ZIP ${bulk.index + 1} of ${bulk.zips.length}: ${bulk.zips[bulk.index]} · ${bulk.keyword}`) : '';
   }
@@ -89,6 +94,7 @@
     if (!job) return;
     if (!review) { byId('lf-niche').value = bulk?.keyword || job.keyword; byId('lf-postcode').value = bulk ? bulk.zips.join(', ') : job.zip; }
     for (const [key,value] of Object.entries({found:job.found,...job.stats})) byId('lf-count-'+key).textContent = value;
+    bulkLabel();
     byId('lf-progress').textContent = job.phase === 'done' ? 'Search complete. ' + job.note :
       job.phase === 'collect' ? `Collecting Maps listings for ${job.keyword} in ${job.zip}…` :
       `Checking listing ${job.index + 1} of ${job.found}, then its website for email…`;
@@ -145,6 +151,8 @@
           if (bulk && bulk.index < bulk.zips.length) {
             await history('finish',{run:bulk.run,stats:JSON.stringify({found:job.found,saved:job.stats.saved,emails:job.stats.email,duplicates:job.stats.duplicate,limited:job.note !== 'Google reported the end of the list.'})});
             log(`${job.keyword} in ${job.zip}: search history saved.`);
+            bulk.totalSaved = (bulk.totalSaved || 0) + job.stats.saved;
+            bulk.totalEmail = (bulk.totalEmail || 0) + job.stats.email;
             bulk.index++;bulk.run=null;bulk.started=false;keepBulk();bulkLabel();
             if (running && bulk.index < bulk.zips.length) {await nextZip();continue;}
           }
@@ -184,7 +192,9 @@
     preparing=true;controls();
     try {
       await safeCompanion();
-      bulk={keyword:review.keyword,zips,index:0,run:null,started:false};keepBulk();review=null;byId('lf-zip-review').hidden=true;bulkLabel();await run();
+      bulk={keyword:review.keyword,zips,index:0,run:null,started:false,totalSaved:0,totalEmail:0};keepBulk();
+      window.dispatchEvent(new Event('wnq-search-start'));
+      review=null;byId('lf-zip-review').hidden=true;bulkLabel();await run();
     } catch(error){byId('lf-progress').textContent=error.message;}
     finally {preparing=false;controls();}
   });
