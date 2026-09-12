@@ -17,7 +17,7 @@ final class LeadGhlAdmin
     {
         if (!self::allowed()) { wp_send_json_error(['message'=>'Access denied'], 403); return; }
         check_ajax_referer('wnq_ghl_drain');
-        if (($_POST['operation'] ?? '') === 'backfill_location') {
+        if (in_array($_POST['operation'] ?? '', ['backfill_location','backfill_niche'], true)) {
             global $wpdb;
             $after = max(0, (int)($_POST['after'] ?? 0));
             $upper = max(0, (int)($_POST['upper'] ?? 0)) ?: (int)$wpdb->get_var("SELECT MAX(id) FROM {$wpdb->prefix}wnq_leads");
@@ -26,7 +26,8 @@ final class LeadGhlAdmin
                 if (!is_array($rows)) throw new \RuntimeException('Could not read lead list.');
                 if (!$rows) { wp_send_json_success(['done'=>true,'after'=>$after,'upper'=>$upper,'message'=>'Location pass complete']); return; }
                 $id = (int)$rows[0]['id'];
-                wp_send_json_success(['done'=>$id >= $upper,'after'=>$id,'upper'=>$upper,'message'=>'Lead #' . $id . ': ' . LeadGhlSync::backfillLocation($id)]);
+                $message = $_POST['operation'] === 'backfill_niche' ? LeadGhlSync::backfillNiche($id) : LeadGhlSync::backfillLocation($id);
+                wp_send_json_success(['done'=>$id >= $upper,'after'=>$id,'upper'=>$upper,'message'=>'Lead #' . $id . ': ' . $message]);
             } catch (\RuntimeException $e) { wp_send_json_error(['message'=>$e->getMessage()]); }
             return;
         }
@@ -60,6 +61,10 @@ final class LeadGhlAdmin
                 $message = 'Location access and campaign tag verified. No contacts changed; no emails triggered.';
             } elseif ($action === 'diagnose') {
                 $message = 'Read-only contact diagnostics — ' . implode(' | ', LeadGhlSync::diagnose()) . '. No contacts changed or tags applied.';
+            } elseif ($action === 'setup_niche') {
+                if (!current_user_can('manage_options')) throw new \RuntimeException('Only administrators can set up the niche field.');
+                $field = LeadGhlSync::setupNiche();
+                $message = 'Lead Niche ready. Email merge field: {{ ' . $field['key'] . ' }}. Future handoffs fill it before tagging.';
             } elseif ($action === 'retry_dnd') {
                 $message = LeadGhlSync::retryMissingDnd() . ' DND-check holds queued for fresh safety checks. Existing contact IDs and approvals retained. Phone/email conflicts and other review jobs untouched.';
             } elseif ($action === 'approve') {
@@ -196,6 +201,8 @@ final class LeadGhlAdmin
             <p>New valid-email New/Qualified leads transfer automatically, including unreviewed companies. Review-count, company-type and SEO filters are informational in this mode. Suppression, account matching and email deduplication still apply. Keep the Find Leads page open while collecting; GHL controls the drip sequence. Existing historical holds are not automatically retried.</p>
             <p>Email-ready also requires a valid email format and a New or Qualified lead. It does not prove mailbox deliverability, consent, or business ownership. Review sourced emails before enabling automation. Contacted, Closed, locally suppressed and GHL email-DND/unsubscribed contacts are excluded.</p>
             <?php if (current_user_can('manage_options')): ?>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><?php self::fields('setup_niche'); ?><p><button class="wnq-btn wnq-btn-secondary">Set up Lead Niche field</button></p><p>Add locations/customFields.readonly and locations/customFields.write to the private integration first. Uses the original search keyword; category is a fallback. Existing niche values are preserved.</p></form>
+            <?php $nicheField = get_option('wnq_ghl_niche_field', []); if (!empty($nicheField['key'])): ?><p>Email merge field: <code><?php echo esc_html('{{ ' . $nicheField['key'] . ' }}'); ?></code></p><?php endif; ?>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <?php self::fields('settings'); ?>
                 <div class="wnq-field"><label for="wnq-ghl-token">Private integration token</label><input id="wnq-ghl-token" type="password" name="token" value="" autocomplete="new-password" placeholder="Leave blank to keep saved token"><small>Encrypted server-side. Never included in page HTML, exports or API error messages.</small></div>
@@ -215,16 +222,22 @@ final class LeadGhlAdmin
         </form>
         <div class="wnq-card"><h3>Backfill missing locations</h3><p>Checks saved listing addresses and matching business website city data. Hidden street addresses stay blank. Fills only empty fields in already-linked, sent GHL contacts; no tags or DND settings are changed. Other GHL contact-update automations may still react.</p>
         <button type="button" class="wnq-btn wnq-btn-secondary" id="wnq-location-start">Start / resume location backfill</button><p id="wnq-location-status" role="status">No location updates started.</p></div>
+        <button type="button" class="wnq-btn wnq-btn-secondary" id="wnq-niche-backfill">Backfill Lead Niche on existing GHL contacts</button><p>Setup required. Fills empty niche values only; no tags reapplied. Contact-field-change automations may react.</p>
         <script>
         (() => {
             let after=0, upper=0, busy=false;
             const button=document.getElementById('wnq-location-start'), status=document.getElementById('wnq-location-status');
-            button.addEventListener('click', async () => {
-                if (busy || !confirm('Fill missing location fields in WordPress and existing GHL contacts? No tags will be applied.')) return;
+            let operation='backfill_location';
+            document.getElementById('wnq-niche-backfill').addEventListener('click', () => start('backfill_niche'));
+            button.addEventListener('click', () => start('backfill_location'));
+            async function start(mode) {
+                if (busy) return;
+                if (operation!==mode) { after=0; upper=0; operation=mode; }
+                if (busy || !confirm(operation==='backfill_niche' ? 'Fill missing niche values on existing GHL contacts? No tags will be applied.' : 'Fill missing location fields in WordPress and existing GHL contacts? No tags will be applied.')) return;
                 busy=true; button.disabled=true;
                 try {
                     while (true) {
-                        const response=await fetch(<?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>, {method:'POST',credentials:'same-origin',body:new URLSearchParams({action:'wnq_ghl_drain',operation:'backfill_location',_ajax_nonce:<?php echo wp_json_encode(wp_create_nonce('wnq_ghl_drain')); ?>,after,upper})});
+                        const response=await fetch(<?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>, {method:'POST',credentials:'same-origin',body:new URLSearchParams({action:'wnq_ghl_drain',operation,_ajax_nonce:<?php echo wp_json_encode(wp_create_nonce('wnq_ghl_drain')); ?>,after,upper})});
                         if (!response.ok) throw new Error('Request failed. Refresh for an expired session; otherwise retry.');
                         const result=await response.json();
                         if (!result.success) throw new Error(result.data?.message || 'Location update failed.');
@@ -234,7 +247,7 @@ final class LeadGhlAdmin
                     }
                 } catch (e) { status.textContent='Paused: '+e.message; }
                 finally { busy=false; button.disabled=false; }
-            });
+            }
         })();
         </script>
         <script>
