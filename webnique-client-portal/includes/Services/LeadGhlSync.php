@@ -49,6 +49,15 @@ final class LeadGhlSync
             wp_schedule_event(time() + 60, 'wnq_ghl_minute', self::HOOK);
         }
         add_action('wnq_lead_created', [self::class, 'onCreated']);
+        self::enableHandsFreeOnce();
+    }
+
+    public static function enableHandsFreeOnce(): void
+    {
+        if (!get_option('wnq_ghl_hands_free_v1', false) && self::configured()) {
+            update_option(self::SETTINGS, ['automatic'=>true], false);
+            update_option('wnq_ghl_hands_free_v1', true, false);
+        }
     }
 
     public static function table(): string { global $wpdb; return $wpdb->prefix . 'wnq_lead_ghl_queue'; }
@@ -77,7 +86,7 @@ final class LeadGhlSync
         update_option(self::SETTINGS, ['automatic' => $automatic], false);
         if (!$automatic) {
             global $wpdb;
-            $wpdb->query('UPDATE ' . self::table() . " SET status='held', message='Automatic sync disabled; manual approval required.' WHERE status='queued' AND mode='auto'");
+            $wpdb->query('UPDATE ' . self::table() . " SET status='held', message='Automatic sync disabled; manual approval required.' WHERE status='queued' AND mode IN ('auto','auto_fast')");
         }
     }
 
@@ -145,15 +154,28 @@ final class LeadGhlSync
 
     public static function onCreated(int $id): void
     {
-        if (!empty(self::settings()['automatic']) && self::configured()) { self::enqueue($id, false); }
+        if (!empty(self::settings()['automatic']) && self::configured()) { self::enqueue($id, false, false, true); }
     }
 
-    public static function enqueue(int $id, bool $manual = true, bool $override = false): bool
+    public static function queueBacklog(int $after, int $upper): array
+    {
+        global $wpdb;
+        if (empty(self::settings()['automatic']) || !self::configured()) { throw new \RuntimeException('Enable automatic GHL sync and save its token first.'); }
+        if (!$upper) { $upper = (int)$wpdb->get_var("SELECT MAX(id) FROM {$wpdb->prefix}wnq_leads"); }
+        $rows = $wpdb->get_results($wpdb->prepare("SELECT id FROM {$wpdb->prefix}wnq_leads WHERE id > %d AND id <= %d ORDER BY id LIMIT 100", $after, $upper), ARRAY_A);
+        if (!is_array($rows)) { throw new \RuntimeException('Could not scan saved leads. Retry safely.'); }
+        $queued = 0;
+        foreach ($rows as $row) { $after = (int)$row['id']; if (self::enqueue($after, false, false, true)) $queued++; }
+        return ['after'=>$after,'upper'=>$upper,'done'=>!$rows || $after >= $upper,'queued'=>$queued];
+    }
+
+    public static function enqueue(int $id, bool $manual = true, bool $override = false, bool $handsFree = false): bool
     {
         global $wpdb;
         $lead = self::lead($id);
         $override = $manual && $override;
-        if (!self::configured() || !($override ? self::manualEligible($lead) : self::eligible($lead))) { return false; }
+        $handsFree = !$manual && $handsFree && !empty(self::settings()['automatic']);
+        if (!self::configured() || !(($override || $handsFree) ? self::manualEligible($lead) : self::eligible($lead))) { return false; }
         $state = self::state($lead);
         if ($state) {
             // A suppressed or sent email stays blocked even after deleting/reimporting a lead.
@@ -167,7 +189,7 @@ final class LeadGhlSync
         $now = gmdate('Y-m-d H:i:s');
         return $wpdb->insert(self::table(), [
             'email_key' => self::emailKey($lead['email']), 'lead_id' => $id,
-            'mode' => $override ? 'override' : ($manual ? 'manual' : 'auto'), 'approved_by' => $manual ? get_current_user_id() : 0,
+            'mode' => $handsFree ? 'auto_fast' : ($override ? 'override' : ($manual ? 'manual' : 'auto')), 'approved_by' => $manual ? get_current_user_id() : 0,
             'created_at' => $now, 'updated_at' => $now, 'next_at' => $now,
         ]) === 1;
     }
@@ -346,11 +368,11 @@ final class LeadGhlSync
             $job = $wpdb->get_row('SELECT * FROM ' . self::table() . " WHERE status='queued' AND next_at <= UTC_TIMESTAMP() ORDER BY id LIMIT 1", ARRAY_A);
             if (!$job) { return; }
             $id = (int)$job['id'];
-            if ($job['mode'] === 'auto' && empty(self::settings()['automatic'])) {
+            if (in_array($job['mode'], ['auto','auto_fast'], true) && empty(self::settings()['automatic'])) {
                 self::save($id, ['status' => 'held', 'message' => 'Automatic sync is off. Manual approval required.']); return;
             }
             $lead = self::lead((int)$job['lead_id']);
-            if (!(($job['mode'] === 'override') ? self::manualEligible($lead) : self::eligible($lead)) || self::emailKey($lead['email'] ?? '') !== $job['email_key']) {
+            if (!(in_array($job['mode'], ['override','auto_fast'], true) ? self::manualEligible($lead) : self::eligible($lead)) || self::emailKey($lead['email'] ?? '') !== $job['email_key']) {
                 self::save($id, ['status' => 'held', 'message' => 'Lead deleted, email changed, or no longer eligible.']); return;
             }
             self::save($id, ['status' => 'processing', 'attempts' => (int)$job['attempts'] + 1]);
@@ -393,7 +415,7 @@ final class LeadGhlSync
             $latest = self::state($lead);
             if (($latest['status'] ?? '') === 'suppressed') { return; }
             $freshLead = self::lead((int)$job['lead_id']);
-            if (!(($job['mode'] === 'override') ? self::manualEligible($freshLead) : self::eligible($freshLead)) || self::emailKey($freshLead['email'] ?? '') !== $job['email_key'] || ($job['mode'] === 'auto' && empty(self::settings()['automatic']))) {
+            if (!(in_array($job['mode'], ['override','auto_fast'], true) ? self::manualEligible($freshLead) : self::eligible($freshLead)) || self::emailKey($freshLead['email'] ?? '') !== $job['email_key'] || (in_array($job['mode'], ['auto','auto_fast'], true) && empty(self::settings()['automatic']))) {
                 self::save($id, ['status' => 'held', 'message' => 'Handoff paused before tagging.']); return;
             }
             $job['stage'] = 'tag_started';

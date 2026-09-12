@@ -17,6 +17,11 @@ final class LeadGhlAdmin
     {
         if (!self::allowed()) { wp_send_json_error(['message'=>'Access denied'], 403); return; }
         check_ajax_referer('wnq_ghl_drain');
+        if (($_POST['operation'] ?? '') === 'collect_backlog') {
+            try { wp_send_json_success(LeadGhlSync::queueBacklog(max(0, (int)($_POST['after'] ?? 0)), max(0, (int)($_POST['upper'] ?? 0)))); }
+            catch (\RuntimeException $e) { wp_send_json_error(['message'=>$e->getMessage()]); }
+            return;
+        }
         // Only previously approved jobs; never creates new approval or retries review jobs.
         LeadGhlSync::work();
         wp_send_json_success(LeadGhlSync::progress());
@@ -171,11 +176,11 @@ final class LeadGhlAdmin
         .wnq-ghl-grid div{padding:14px;background:#f5f7fb;border-radius:8px;overflow-wrap:anywhere}
         .wnq-lf-tabs{flex-wrap:wrap}.wnq-ghl-cell{min-width:180px;max-width:270px}.wnq-ghl-cell form{margin-top:6px}
         </style>
-        <section class="wnq-ghl-hero"><h2>GoHighLevel lead handoff</h2><p>Review first. Automate when you’re ready.</p><strong><?php echo empty($settings['automatic']) ? 'Manual approval mode — automatic sync OFF' : 'Automatic sync ON — newly saved eligible leads only'; ?></strong></section>
+        <section class="wnq-ghl-hero"><h2>GoHighLevel lead handoff</h2><p>Search → collect → transfer. No individual approval for new valid-email leads.</p><strong><?php echo empty($settings['automatic']) ? 'Automatic sync OFF' : 'Automatic sync ON — newly saved valid-email leads'; ?></strong></section>
         <div class="wnq-card wnq-ghl-copy">
             <div class="wnq-ghl-grid"><div><small>Destination location</small><br><strong><?php echo esc_html(LeadGhlSync::LOCATION); ?></strong></div><div><small>Workflow trigger tag</small><br><strong><?php echo esc_html(LeadGhlSync::TAG); ?></strong></div><div><small>Private token</small><br><strong><?php echo LeadGhlSync::configured() ? 'Saved securely' : 'Not configured'; ?></strong></div></div>
             <p><strong>Testing uses real contacts and real emails.</strong> Keep automatic sync off and use <strong>Approve &amp; Send</strong> in All Leads for an address you control. Applying the tag can start your existing workflow immediately. The connection test below only checks location/tag access.</p>
-            <p>Automatic imports use the outreach rules: fewer than 50 confirmed reviews, a reviewed small independent business, and the optional SEO threshold. Manual approval overrides these rules, including unknown company type. Use Send all valid companies in Lead List to approve the entire saved list. Invalid emails, suppression and duplicate protections cannot be overridden. Email delivery is managed by your published GHL workflow.</p>
+            <p>New valid-email New/Qualified leads transfer automatically, including unreviewed companies. Review-count, company-type and SEO filters are informational in this mode. Suppression, account matching and email deduplication still apply. Keep the Find Leads page open while collecting; GHL controls the drip sequence. Existing historical holds are not automatically retried.</p>
             <p>Email-ready also requires a valid email format and a New or Qualified lead. It does not prove mailbox deliverability, consent, or business ownership. Review sourced emails before enabling automation. Contacted, Closed, locally suppressed and GHL email-DND/unsubscribed contacts are excluded.</p>
             <?php if (current_user_can('manage_options')): ?>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">

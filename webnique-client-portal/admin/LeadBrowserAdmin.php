@@ -27,7 +27,7 @@ final class LeadBrowserAdmin
             } elseif ($op === 'rules') {
                 if (!current_user_can('manage_options')) { throw new \RuntimeException('Only administrators can change qualification rules.'); }
                 update_option('wnq_lead_seo_min', max(0, min(7, (int)($_POST['seo_min'] ?? 0))), false);
-                $message = 'Qualification rules saved. They also apply to pending GHL handoffs.';
+                $message = 'Qualification filters saved. Hands-free GHL transfers use valid email and safety checks, not these filters.';
             } elseif ($op === 'review') {
                 $fit = sanitize_key($_POST['company_fit'] ?? '');
                 $reason = sanitize_textarea_field(wp_unslash($_POST['reason'] ?? ''));
@@ -81,6 +81,14 @@ final class LeadBrowserAdmin
     {
         $base = plugins_url('../assets/', __FILE__);
         ?>
+        <div class="wnq-card" id="lf-ghl-auto" data-url="<?php echo esc_url(admin_url('admin-ajax.php')); ?>" data-nonce="<?php echo esc_attr(wp_create_nonce('wnq_ghl_drain')); ?>">
+            <strong>Automatic GHL handoff</strong>
+            <p><?php echo !empty(\WNQ\Services\LeadGhlSync::settings()['automatic']) && \WNQ\Services\LeadGhlSync::configured() ? 'ON — new valid-email leads are queued automatically. No individual approval. Outreach score/review filters do not block this mode. Suppression and identity checks still apply.' : 'OFF or not configured — check GoHighLevel settings before starting.'; ?></p>
+            <p data-progress role="status">Keep this page and Chrome open. Email deduplication is shared across all keywords and ZIP codes.</p>
+            <p id="lf-bulk-totals" role="status">This bulk search: 0 new leads · 0 new leads with email</p>
+            <p data-backlog role="status">Start a search to also queue valid unsent leads already in your list.</p>
+        </div>
+        <script src="<?php echo esc_url($base . 'js/lead-ghl-auto.js?v=' . WNQ_PORTAL_VERSION); ?>"></script>
         <link rel="stylesheet" href="<?php echo esc_url($base . 'css/lead-browser.css?v=' . WNQ_PORTAL_VERSION); ?>">
         <section class="lf-hero"><span>GOOGLE MAPS → YOUR LEAD LIST</span><h2>Find the right businesses. Build your list.</h2><p>Search a niche and ZIP. Chrome reads listings; WordPress checks their websites for public emails.</p></section>
         <div id="lf-browser-app" data-user="<?php echo (int)get_current_user_id(); ?>" data-nonce="<?php echo esc_attr(wp_create_nonce('wnq_browser_leads')); ?>">
@@ -88,7 +96,7 @@ final class LeadBrowserAdmin
                 <div class="wnq-field"><label for="lf-niche">Niche keyword</label><input id="lf-niche" name="keyword" maxlength="100" placeholder="Plumbers" required></div>
                 <div class="wnq-field"><label for="lf-postcode">ZIP codes (up to 100)</label><textarea id="lf-postcode" name="zip" maxlength="4000" placeholder="32825, 32826, 32828" required style="min-height:70px"></textarea></div>
                 <button class="wnq-btn wnq-btn-primary" id="lf-start">Check ZIPs first</button>
-            </form><p>Searches the area around your ZIP; Google may include nearby businesses. All listings are saved. Automatic GHL outreach uses your qualification rules. In Lead List, manual approval can override those rules, while retaining email, suppression and duplicate protections.</p>
+            </form><p>Searches the area around your ZIP; Google may include nearby businesses. All listings are saved. When automatic GHL sync is on, new valid-email leads transfer without approval. Email deduplication spans all keywords and ZIPs.</p>
             <div id="lf-zip-review" hidden><h3>Review ZIP history before starting</h3><p>Previously searched ZIPs are unchecked. Select one to intentionally rerun it. Times are UTC; old imported leads may only establish that a search happened, not that it finished.</p><div id="lf-zip-items"></div><button id="lf-bulk-start" class="wnq-btn wnq-btn-primary" type="button">Start selected ZIPs</button></div>
             <p id="lf-extension-status" role="status">Checking Chrome companion…</p>
             <button id="lf-reconnect" class="wnq-btn wnq-btn-secondary" type="button">Reconnect companion</button>
@@ -124,7 +132,7 @@ final class LeadBrowserAdmin
         ?>
         <link rel="stylesheet" href="<?php echo esc_url(plugins_url('../assets/css/lead-browser.css', __FILE__) . '?v=' . WNQ_PORTAL_VERSION); ?>">
         <?php $notice = get_transient('wnq_lead_list_notice_' . get_current_user_id()); if ($notice) { delete_transient('wnq_lead_list_notice_' . get_current_user_id()); echo '<div class="notice notice-info"><p>' . esc_html($notice) . '</p></div>'; } ?>
-        <section class="wnq-card"><h2>Automatic outreach qualification</h2><p><strong>Automatic imports: fewer than 50 reviews, reviewed small independent businesses only.</strong> Manual approval overrides these rules, including unknown company type and the SEO threshold. Use Send all valid companies below to approve the entire saved list without selecting rows. Valid email, New/Qualified status, suppression and duplicate protections still apply.</p>
+        <section class="wnq-card"><h2>Prospect filters</h2><p>These filters help review your list. Hands-free GHL transfers do not require review-count, company-type or SEO approval. Valid email, New/Qualified status, suppression and duplicate protections still apply. Old holds can be reviewed separately.</p>
         <p>SEO issues: 0–7 homepage checks, higher = more problems (not a ranking or traffic score). Missing assessments never pass an enabled SEO filter. Existing rows may need a fresh assessment.</p>
         <?php if (current_user_can('manage_options')): ?><form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="wnq_lead_qualify"><input type="hidden" name="operation" value="rules"><?php wp_nonce_field('wnq_lead_qualify'); ?><label>Minimum SEO issues for GHL (0 = optional) <input name="seo_min" type="number" min="0" max="7" value="<?php echo (int)get_option('wnq_lead_seo_min',0); ?>"></label> <button class="wnq-btn wnq-btn-secondary">Save rule</button></form><?php endif; ?></section>
         <section class="wnq-card"><h2>Your combined lead list</h2><p>All saved searches in one place. Review email sources before outreach; businesses without email can still be called. Existing GHL approval and automatic-sync settings are unchanged.</p>
