@@ -50,6 +50,9 @@ namespace {
     $result=Intake::accept($row,'Plumbers','32825');
     check($result['email']==='info@business.com','Email from website HTML');
     check(Lead::$rows[0]['zip']==='32825','Actual address ZIP extracted');
+    check(Intake::addressParts('Orlando, FL 32825, USA') === ['city'=>'Orlando','state'=>'FL','zip'=>'32825'], 'City-only address with country');
+    check(Intake::addressParts('123 Main St, Orlando, FL') === ['city'=>'Orlando','state'=>'FL','zip'=>''], 'Address without ZIP');
+    check(Intake::addressParts('Service area')['city'] === '', 'No fabricated city');
     check(Lead::$rows[0]['review_count']===450,'High-review businesses retained');
     check(Lead::$rows[0]['owner_first']==='','Names never guessed from email');
     $n=count($fetches);check(Intake::accept($row,'Plumbers','32825')['outcome']==='duplicate','Repeated listing skipped');

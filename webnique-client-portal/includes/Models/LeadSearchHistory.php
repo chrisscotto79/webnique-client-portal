@@ -40,12 +40,12 @@ final class LeadSearchHistory
     }
     public static function zips(string $value): array
     {
-        if (strlen($value) > 4000) { throw new \RuntimeException('Enter no more than 100 ZIP codes.'); }
+        if (strlen($value) > 4000) { throw new \RuntimeException('Enter no more than 250 ZIP codes.'); }
         $items = preg_split('/[\s,;]+/', trim($value), -1, PREG_SPLIT_NO_EMPTY);
         if (!$items) { throw new \RuntimeException('Enter at least one five-digit ZIP code.'); }
         foreach ($items as $zip) { if (!preg_match('/^\d{5}$/D', $zip)) { throw new \RuntimeException('Use five-digit ZIP codes separated by commas, spaces or new lines.'); } }
         $items = array_values(array_unique($items));
-        if (count($items) > 100) { throw new \RuntimeException('Use up to 100 unique ZIP codes per batch.'); }
+        if (count($items) > 250) { throw new \RuntimeException('Use up to 250 unique ZIP codes per batch.'); }
         return $items;
     }
     public static function check(string $keyword, array $zips): array

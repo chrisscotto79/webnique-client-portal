@@ -8,6 +8,16 @@ if (!defined('ABSPATH')) { exit; }
 /** Browser-sourced Maps listings; website requests remain server-side and URL-safe. */
 final class LeadBrowserIntake
 {
+    public static function addressParts(string $address): array
+    {
+        $address = trim(preg_replace('/\s+/u', ' ', $address));
+        // US Maps addresses may be city-only, or omit ZIP. Never use the search ZIP.
+        $address = preg_replace('/,\s*(?:USA|United States(?: of America)?)\s*$/i', '', $address);
+        if (preg_match('/(?:^|,\s*)([^,\d]+),\s*([A-Z]{2})(?:\s+(\d{5})(?:-\d{4})?)?\s*$/', $address, $m)) {
+            return ['city'=>trim($m[1]), 'state'=>$m[2], 'zip'=>$m[3] ?? ''];
+        }
+        return ['city'=>'','state'=>'','zip'=>''];
+    }
     public static function identity(string $url): string
     {
         $parts = wp_parse_url($url);
@@ -44,10 +54,8 @@ final class LeadBrowserIntake
         $owner = self::founder($html);
         $seo = LeadSEOScorer::scoreWebsiteFromHtml($html);
         $address = sanitize_text_field($row['address'] ?? '');
-        $city = ''; $state = ''; $actualZip = '';
-        if (preg_match('/,\s*([^,]+),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b/', $address, $m)) {
-            [, $city, $state, $actualZip] = $m;
-        }
+        $parts = self::addressParts($address);
+        $city = $parts['city']; $state = $parts['state']; $actualZip = $parts['zip'];
         $notes = 'Maps: ' . $maps . "\nSearch: " . $keyword . ' in ' . $zip . "\n";
         $notes .= $email['email'] ? 'Email found in website HTML; not mailbox-verified.' : ($websiteFailed ? 'Website could not be read; no email found.' : ($website ? 'No public email found on checked pages.' : 'No website on listing; retained for cold calling.'));
         if ($owner['first']) { $notes .= "\nFounder name from website structured data: " . $website; }

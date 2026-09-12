@@ -94,7 +94,7 @@ final class LeadBrowserAdmin
         <div id="lf-browser-app" data-user="<?php echo (int)get_current_user_id(); ?>" data-nonce="<?php echo esc_attr(wp_create_nonce('wnq_browser_leads')); ?>">
             <section class="wnq-card lf-search"><form id="lf-search-form">
                 <div class="wnq-field"><label for="lf-niche">Niche keyword</label><input id="lf-niche" name="keyword" maxlength="100" placeholder="Plumbers" required></div>
-                <div class="wnq-field"><label for="lf-postcode">ZIP codes (up to 100)</label><textarea id="lf-postcode" name="zip" maxlength="4000" placeholder="32825, 32826, 32828" required style="min-height:70px"></textarea></div>
+                <div class="wnq-field"><label for="lf-postcode">ZIP codes (up to 250)</label><textarea id="lf-postcode" name="zip" maxlength="4000" placeholder="32825, 32826, 32828" required style="min-height:70px"></textarea></div>
                 <button class="wnq-btn wnq-btn-primary" id="lf-start">Check ZIPs first</button>
             </form><p>Searches the area around your ZIP; Google may include nearby businesses. All listings are saved. When automatic GHL sync is on, new valid-email leads transfer without approval. Email deduplication spans all keywords and ZIPs.</p>
             <div id="lf-zip-review" hidden><h3>Review ZIP history before starting</h3><p>Previously searched ZIPs are unchecked. Select one to intentionally rerun it. Times are UTC; old imported leads may only establish that a search happened, not that it finished.</p><div id="lf-zip-items"></div><button id="lf-bulk-start" class="wnq-btn wnq-btn-primary" type="button">Start selected ZIPs</button></div>
@@ -144,9 +144,14 @@ final class LeadBrowserAdmin
         <a class="wnq-btn wnq-btn-secondary" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=wnq_lead_export_csv' . ($filter === 'email' ? '&has_email=1' : '')), 'wnq_lead_export_csv')); ?>">Export <?php echo $filter === 'email' ? 'all leads with email' : 'all leads'; ?> (ignores other filters)</a></form>
         <?php LeadGhlAdmin::listForm(); ?>
         <div class="wnq-tbl-wrap"><table class="wnq-tbl lf-leads"><thead><tr><th>Business</th><th>Phone</th><th>Email &amp; source</th><th>Outreach</th></tr></thead><tbody>
-        <?php foreach ($rows as $row): ?>
+        <?php foreach ($rows as $row):
+            $location = \WNQ\Services\LeadBrowserIntake::addressParts((string)($row['address'] ?? ''));
+            foreach ($location as $field => $value) { if (empty($row[$field])) { $row[$field] = $value; } }
+        ?>
         <tr><td><label><input type="checkbox" form="lf-ghl-list" name="lead_ids[]" value="<?php echo (int)$row['id']; ?>"> <strong><?php echo esc_html($row['business_name']); ?></strong></label><div><?php echo esc_html($row['industry']); ?></div><small>Status: <?php echo esc_html(ucfirst($row['status'])); ?></small><br>
         <?php if ($row['website']): ?><a target="_blank" rel="noopener noreferrer" href="<?php echo esc_url($row['website']); ?>">Website ↗</a><?php endif; ?>
+        <div class="lf-contact-address"><strong>Address:</strong> <?php echo esc_html(($row['address'] ?? '') ?: 'Not publicly listed / not collected'); ?><br>
+        <strong>City:</strong> <?php echo esc_html(($row['city'] ?? '') ?: 'Not collected'); ?> · <strong>State:</strong> <?php echo esc_html(($row['state'] ?? '') ?: '—'); ?> · <strong>ZIP:</strong> <?php echo esc_html(($row['zip'] ?? '') ?: '—'); ?></div>
         <details><summary>Listing details</summary><p><?php echo esc_html($row['address']); ?></p><p>Contact name: <?php echo esc_html(trim(($row['owner_first'] ?? '') . ' ' . ($row['owner_last'] ?? '')) ?: 'Not found'); ?></p><p><?php echo esc_html($row['rating'] . ' stars · ' . $row['review_count'] . ' reviews'); ?></p><p class="lf-source-notes"><?php echo esc_html($row['notes'] ?? ''); ?></p></details></td>
         <td><?php if ($row['phone']): ?><a href="<?php echo esc_url('tel:' . preg_replace('/[^+0-9]/', '', $row['phone'])); ?>"><?php echo esc_html($row['phone']); ?></a><?php else: ?>Not found<?php endif; ?></td>
         <td><?php if ($row['email']): ?><a href="<?php echo esc_url('mailto:' . $row['email']); ?>"><?php echo esc_html($row['email']); ?></a><div><small>Found, not mailbox-verified</small></div><?php if (filter_var($row['email_source'] ?? '', FILTER_VALIDATE_URL)): ?><a href="<?php echo esc_url($row['email_source']); ?>" target="_blank" rel="noopener noreferrer">Email source ↗</a><?php endif; ?><?php else: ?><span>No email found</span><div><small>Keep for cold calling</small></div><?php endif; ?></td>
