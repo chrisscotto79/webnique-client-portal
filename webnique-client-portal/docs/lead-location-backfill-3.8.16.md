@@ -1,0 +1,9 @@
+# Location backfill 3.8.16
+
+GoHighLevel tab adds **Start / resume location backfill**. Processes one historical lead per request. Saved Google address supplies missing city/state/ZIP. If city is absent, the public website homepage is fetched via WordPress safe HTTP (6 seconds, bounded response, TLS). Only unambiguous JSON-LD address locality attached to the same business name is accepted. Website streets are deliberately not extracted: hidden street addresses remain blank. New intake uses the same city fallback.
+
+Existing sent handoff contact IDs are reused and exact location/account/email identity verified. Only empty city/state/postalCode/address1 fields are sent via PUT; no contact creation, tags, DND, workflow actions or queue-state changes. Existing differing locality stops the remote update. Street repair is limited to visibly numbered stored listing addresses. The response is read back to verify each field. A shared DB lock serializes this with handoffs. Capabilities and nonce are checked; no credentials appear in browser output.
+
+This is not a Maps rescrape. Unknown cities remain unknown when the homepage lacks matching structured data, multiple locations conflict, or a website is unavailable. No guessed city from search ZIP. Existing GHL field-change automations may react to location updates even though the tag-added outreach trigger is not invoked. Review these before starting. If the runner reports another active handoff, pause page transfers and retry. Cursor is retained while the page remains open; after refresh a new pass safely checks existing values again.
+
+Tests: 150 mocked GHL assertions including location-only update, existing value preservation, repeat pass, wrong identity and website ambiguity; PHP syntax and desktop/mobile UI tests. No production GHL writes performed. Upload plugin 3.8.16; no extension/token change required.

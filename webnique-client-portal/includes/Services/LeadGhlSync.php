@@ -319,6 +319,59 @@ final class LeadGhlSync
         return $counts;
     }
 
+    /** Location-only repair. Does not enqueue, create contacts, or touch tags/DND. */
+    public static function backfillLocation(int $id): string
+    {
+        global $wpdb;
+        $lock = 'wnq_ghl_' . md5(self::table());
+        if ((int)$wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s,0)', $lock)) !== 1) { throw new \RuntimeException('A handoff is active. Retry location backfill shortly.'); }
+        try {
+            $lead = self::lead($id);
+            if (!$lead) return 'Lead no longer exists';
+            $parts = LeadBrowserIntake::addressParts((string)($lead['address'] ?? ''));
+            $source = 'stored listing address';
+            if (empty($lead['city']) && $parts['city'] === '' && !empty($lead['website'])) {
+                $response = wp_safe_remote_get($lead['website'], ['timeout'=>6,'redirection'=>2,'sslverify'=>true,'limit_response_size'=>350000]);
+                if (is_wp_error($response) || wp_remote_retrieve_response_code($response) !== 200) { throw new \RuntimeException('Website unavailable; location unchanged.'); }
+                $parts['city'] = LeadBrowserIntake::websiteCity(wp_remote_retrieve_body($response), $lead['business_name']);
+                $source = 'business website structured address';
+            }
+            $changed = [];
+            foreach ($parts as $field=>$value) {
+                if (empty($lead[$field]) && $value !== '') {
+                    if ($wpdb->update($wpdb->prefix . 'wnq_leads', [$field=>$value], ['id'=>$id,$field=>$lead[$field] ?? '']) === false) { throw new \RuntimeException('Could not save location.'); }
+                    $changed[] = $field;
+                }
+            }
+            $lead = self::lead($id);
+            $job = self::state($lead);
+            if (empty($job['contact_id'])) return ($changed ? 'Local location filled from ' . $source : 'No verified missing location found') . '; no linked GHL contact';
+            if (($job['status'] ?? '') !== 'sent') return 'Local location checked; GHL contact not confirmed sent, left untouched';
+            $path = '/contacts/' . rawurlencode($job['contact_id']);
+            $contact = self::request('GET', $path)['contact'] ?? [];
+            if (($contact['id'] ?? '') !== $job['contact_id'] || ($contact['locationId'] ?? '') !== self::LOCATION
+                || self::emailKey($contact['email'] ?? '') !== self::emailKey($lead['email'] ?? '') || !empty($contact['deleted'])) {
+                throw new \RuntimeException('GHL contact identity could not be confirmed. No update.');
+            }
+            $payload = [];
+            foreach (['city'=>'city','state'=>'state','zip'=>'postalCode'] as $local=>$remote) {
+                if (!empty($contact[$remote]) && !empty($lead[$local]) && strcasecmp(trim($contact[$remote]), trim($lead[$local])) !== 0) {
+                    return 'Existing GHL location differs; left untouched for review';
+                }
+            }
+            foreach (['city'=>'city','state'=>'state','zip'=>'postalCode'] as $local=>$remote) {
+                if (empty($contact[$remote]) && !empty($lead[$local])) $payload[$remote] = $lead[$local];
+            }
+            // Only a stored, visibly numbered street address; never expose website street data.
+            if (empty($contact['address1']) && preg_match('/^\d+\s+[^,]+/', $lead['address'] ?? '', $m)) $payload['address1'] = $m[0];
+            if (!$payload) return 'Location checked; existing GHL values preserved';
+            self::request('PUT', $path, $payload);
+            $verified = self::request('GET', $path)['contact'] ?? [];
+            foreach ($payload as $field=>$value) { if (($verified[$field] ?? null) !== $value) throw new \RuntimeException('GHL location update not confirmed. Check contact before retrying.'); }
+            return 'Filled missing GHL location fields: ' . implode(', ', array_keys($payload)) . '; no tags changed';
+        } finally { $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock)); }
+    }
+
     /** Retry only the old DND-specific hold; worker re-fetches all safety fields. */
     public static function retryMissingDnd(): int
     {

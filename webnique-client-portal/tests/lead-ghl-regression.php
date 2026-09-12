@@ -21,6 +21,7 @@ function checked($v) { if ($v) { echo 'checked'; } }
 function wp_nonce_field($v) { echo '<input type="hidden" name="_wpnonce" value="fixture-nonce">'; }
 function get_transient($v) { return false; }
 function wp_create_nonce($v) { return 'fixture-nonce'; }
+function sanitize_text_field($v) { return trim(strip_tags((string)$v)); }
 function check_ajax_referer($v) { if (empty($GLOBALS['validNonce'])) { throw new RuntimeException('nonce rejected'); } }
 function wp_send_json_success($v) { $GLOBALS['ajaxResult'] = $v; }
 function wp_send_json_error($v, $status) { $GLOBALS['ajaxError'] = $status; }
@@ -93,10 +94,12 @@ final class GhlDbFixture {
         return 1;
     }
     function update($table, $data, $where) {
+        if ($table === 'wp_wnq_leads') { $this->leads[$where['id']] = array_replace($this->leads[$where['id']], $data); return 1; }
         $this->jobs[$where['id']] = array_merge($this->jobs[$where['id']], $data); return 1;
     }
 }
 require dirname(__DIR__) . '/includes/Services/LeadGhlSync.php';
+require dirname(__DIR__) . '/includes/Services/LeadBrowserIntake.php';
 require dirname(__DIR__) . '/includes/Services/LeadEmailExtractor.php';
 require dirname(__DIR__) . '/includes/Models/Lead.php';
 require dirname(__DIR__) . '/admin/LeadGhlAdmin.php';
@@ -337,6 +340,25 @@ $scan=Sync::queueBacklog(0,0);
 check($scan['done'] && $scan['queued']===1, 'Unapproved saved leads queued automatically, duplicate/invalid email skipped');
 check(Sync::queueBacklog(0,0)['queued']===0, 'Backlog scan replay cannot duplicate handoffs');
 check(!writes(), 'Backlog scan only queues');
+resetFixture(); Sync::enqueue(1); $wpdb->jobs[1]['status']='sent'; $wpdb->jobs[1]['contact_id']='contact1';
+$wpdb->leads[1]['address']='123 Main St, Orlando, FL 32825';
+$delegate=$transport;
+$transport=static function($url,$args) use($delegate) {
+    if ($args['method']==='PUT') { $GLOBALS['contact']=array_replace($GLOBALS['contact'],json_decode($args['body'],true)); }
+    return $delegate($url,$args);
+};
+Sync::backfillLocation(1);
+check($wpdb->leads[1]['city']==='Orlando', 'Historical address fills local city');
+$puts=array_values(array_filter($requests,static fn($r)=>$r[1]['method']==='PUT'));
+check(count($puts)===1 && json_decode($puts[0][1]['body'],true)===['city'=>'Orlando','state'=>'FL','postalCode'=>'32825','address1'=>'123 Main St'], 'Location-only payload excludes tag/DND/identity');
+$before=count($requests); Sync::backfillLocation(1);
+check(count(array_filter(array_slice($requests,$before),static fn($r)=>$r[1]['method']==='PUT'))===0, 'Repeat pass preserves existing GHL fields');
+$contact['email']='wrong@business.com';
+try { Sync::backfillLocation(1); check(false,'Wrong contact updated'); } catch (RuntimeException $e) { check(str_contains($e->getMessage(),'identity'), 'Wrong contact blocked'); }
+$schema='<script type="application/ld+json">{"name":"Test Business","address":{"addressLocality":"Orlando","streetAddress":"Hidden St"}}</script>';
+check(WNQ\Services\LeadBrowserIntake::websiteCity($schema,'Test Business')==='Orlando','Website city from matching business');
+check(WNQ\Services\LeadBrowserIntake::websiteCity($schema,'Other')==='','Different business rejected');
+check(WNQ\Services\LeadBrowserIntake::websiteCity($schema.str_replace('Orlando','Miami',$schema),'Test Business')==='','Ambiguous cities rejected');
 resetFixture(); $wpdb->lock=false;
 try { WNQ\Models\Lead::deleteAll(); check(false,'Delete during handoff accepted'); }
 catch (RuntimeException $e) { check(str_contains($e->getMessage(),'progress'),'Deletion serialized against handoffs'); }

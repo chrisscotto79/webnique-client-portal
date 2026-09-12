@@ -29,6 +29,25 @@ final class LeadBrowserIntake
         return 'maps_' . hash('sha256', rawurldecode($m[1] ?? $parts['path']));
     }
 
+    /** Require a matching named business and a single unambiguous locality. */
+    public static function websiteCity(string $html, string $name): string
+    {
+        preg_match_all('~<script\b[^>]*type=["\x27]application/ld\+json["\x27][^>]*>(.*?)</script>~is', $html, $blocks);
+        $cities = [];
+        $normalize = static fn($v) => strtolower(trim(preg_replace('/\s+/', ' ', $v)));
+        $walk = function ($node) use (&$walk, &$cities, $name, $normalize) {
+            if (!is_array($node)) return;
+            if (is_string($node['name'] ?? null) && $normalize($node['name']) === $normalize($name)
+                && is_array($node['address'] ?? null) && is_string($node['address']['addressLocality'] ?? null)) {
+                $city = sanitize_text_field($node['address']['addressLocality']);
+                if ($city !== '' && strlen($city) <= 100) $cities[$normalize($city)] = $city;
+            }
+            foreach ($node as $value) { if (is_array($value)) $walk($value); }
+        };
+        foreach ($blocks[1] as $json) { $walk(json_decode($json, true, 32)); }
+        return count($cities) === 1 ? reset($cities) : '';
+    }
+
     public static function accept(array $row, string $keyword, string $zip): array
     {
         $keyword = sanitize_text_field($keyword);
@@ -55,6 +74,7 @@ final class LeadBrowserIntake
         $seo = LeadSEOScorer::scoreWebsiteFromHtml($html);
         $address = sanitize_text_field($row['address'] ?? '');
         $parts = self::addressParts($address);
+        if ($parts['city'] === '') { $parts['city'] = self::websiteCity($html, $name); }
         $city = $parts['city']; $state = $parts['state']; $actualZip = $parts['zip'];
         $notes = 'Maps: ' . $maps . "\nSearch: " . $keyword . ' in ' . $zip . "\n";
         $notes .= $email['email'] ? 'Email found in website HTML; not mailbox-verified.' : ($websiteFailed ? 'Website could not be read; no email found.' : ($website ? 'No public email found on checked pages.' : 'No website on listing; retained for cold calling.'));

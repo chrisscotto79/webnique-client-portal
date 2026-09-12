@@ -17,6 +17,19 @@ final class LeadGhlAdmin
     {
         if (!self::allowed()) { wp_send_json_error(['message'=>'Access denied'], 403); return; }
         check_ajax_referer('wnq_ghl_drain');
+        if (($_POST['operation'] ?? '') === 'backfill_location') {
+            global $wpdb;
+            $after = max(0, (int)($_POST['after'] ?? 0));
+            $upper = max(0, (int)($_POST['upper'] ?? 0)) ?: (int)$wpdb->get_var("SELECT MAX(id) FROM {$wpdb->prefix}wnq_leads");
+            $rows = $wpdb->get_results($wpdb->prepare("SELECT id FROM {$wpdb->prefix}wnq_leads WHERE id > %d AND id <= %d ORDER BY id LIMIT 1", $after, $upper), ARRAY_A);
+            try {
+                if (!is_array($rows)) throw new \RuntimeException('Could not read lead list.');
+                if (!$rows) { wp_send_json_success(['done'=>true,'after'=>$after,'upper'=>$upper,'message'=>'Location pass complete']); return; }
+                $id = (int)$rows[0]['id'];
+                wp_send_json_success(['done'=>$id >= $upper,'after'=>$id,'upper'=>$upper,'message'=>'Lead #' . $id . ': ' . LeadGhlSync::backfillLocation($id)]);
+            } catch (\RuntimeException $e) { wp_send_json_error(['message'=>$e->getMessage()]); }
+            return;
+        }
         if (($_POST['operation'] ?? '') === 'collect_backlog') {
             try { wp_send_json_success(LeadGhlSync::queueBacklog(max(0, (int)($_POST['after'] ?? 0)), max(0, (int)($_POST['upper'] ?? 0)))); }
             catch (\RuntimeException $e) { wp_send_json_error(['message'=>$e->getMessage()]); }
@@ -200,6 +213,30 @@ final class LeadGhlAdmin
             <?php self::fields('retry_dnd'); ?><p><button class="wnq-btn wnq-btn-primary">Retry DND-check holds</button></p>
             <p>Reuses existing contacts. Explicit DND, unsubscribe, identity conflicts and malformed responses remain blocked. Omitted DND fields no longer prevent tagging; GHL enforces email delivery restrictions.</p>
         </form>
+        <div class="wnq-card"><h3>Backfill missing locations</h3><p>Checks saved listing addresses and matching business website city data. Hidden street addresses stay blank. Fills only empty fields in already-linked, sent GHL contacts; no tags or DND settings are changed. Other GHL contact-update automations may still react.</p>
+        <button type="button" class="wnq-btn wnq-btn-secondary" id="wnq-location-start">Start / resume location backfill</button><p id="wnq-location-status" role="status">No location updates started.</p></div>
+        <script>
+        (() => {
+            let after=0, upper=0, busy=false;
+            const button=document.getElementById('wnq-location-start'), status=document.getElementById('wnq-location-status');
+            button.addEventListener('click', async () => {
+                if (busy || !confirm('Fill missing location fields in WordPress and existing GHL contacts? No tags will be applied.')) return;
+                busy=true; button.disabled=true;
+                try {
+                    while (true) {
+                        const response=await fetch(<?php echo wp_json_encode(admin_url('admin-ajax.php')); ?>, {method:'POST',credentials:'same-origin',body:new URLSearchParams({action:'wnq_ghl_drain',operation:'backfill_location',_ajax_nonce:<?php echo wp_json_encode(wp_create_nonce('wnq_ghl_drain')); ?>,after,upper})});
+                        if (!response.ok) throw new Error('Request failed. Refresh for an expired session; otherwise retry.');
+                        const result=await response.json();
+                        if (!result.success) throw new Error(result.data?.message || 'Location update failed.');
+                        after=result.data.after; upper=result.data.upper; status.textContent=result.data.message;
+                        if (result.data.done) { status.textContent+=' · Pass complete.'; break; }
+                        await new Promise(resolve=>setTimeout(resolve,1500));
+                    }
+                } catch (e) { status.textContent='Paused: '+e.message; }
+                finally { busy=false; button.disabled=false; }
+            });
+        })();
+        </script>
         <script>
         (() => {
             const status = document.getElementById('wnq-ghl-progress');
