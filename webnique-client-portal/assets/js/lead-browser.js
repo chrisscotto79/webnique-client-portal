@@ -12,12 +12,33 @@
     recoveryEpoch++;clearTimeout(recoveryTimer);recoveryTimer=null;recovering=false;
   }
   function retryError(message) {return Object.assign(new Error(message),{retryable:true});}
+  async function wordpressRequest(body) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 90000);
+    try {
+      const response = await fetch(ajaxurl, {method:'POST',body,credentials:'same-origin',signal:controller.signal});
+      if ([401,403].includes(response.status) || /\/wp-login\.php(?:\?|$)/.test(response.url || '')) throw new Error('WordPress access/session needs attention. Sign in or check security restrictions, then refresh and resume.');
+      if (response.status === 429 || response.status >= 500) throw retryError(`WordPress temporarily unavailable (HTTP ${response.status}). Saved state retained.`);
+      if (!response.ok) throw new Error(`WordPress rejected the request (HTTP ${response.status}). Resume after resolving the server error.`);
+      const raw = await response.text();
+      if (raw.trim() === '-1' || /id=["']loginform["']|name=["']log["']/.test(raw)) throw new Error('WordPress session expired. Sign in, refresh and resume.');
+      if (raw.trim() === '0') throw new Error('WordPress AJAX action unavailable. Check the plugin/session, then resume.');
+      let result;
+      try { result = JSON.parse(raw); } catch (_) { throw retryError('WordPress returned a non-JSON page. Retrying safely; no listing acknowledged.'); }
+      if (!result || typeof result.success !== 'boolean') throw retryError('WordPress returned incomplete data. Retrying safely.');
+      if (result.success && (!result.data || typeof result.data !== 'object')) throw retryError('WordPress omitted the response data. Retrying safely.');
+      return result;
+    } catch (error) {
+      if (error.name === 'AbortError' || error instanceof TypeError) throw retryError('WordPress connection timed out or was interrupted. Retrying saved request.');
+      throw error;
+    } finally { clearTimeout(timer); }
+  }
   function scheduleRecovery(error) {
     if (!error.retryable) return false;
     const epoch=recoveryEpoch;
     const wait=Math.min(60000,5000*Math.pow(2,Math.min(recoveryAttempts++,4)));
     recovering=true;
-    byId('lf-progress').textContent=`Temporary companion interruption. Automatic recovery ${recoveryAttempts} in ${wait/1000}s. Retries continue with a cooldown; Pause cancels recovery.`;
+    byId('lf-progress').textContent=`Temporary connection interruption. Automatic recovery ${recoveryAttempts} in ${wait/1000}s. Retries continue with a cooldown; Pause cancels recovery.`;
     log(`Automatic recovery ${recoveryAttempts}: ${error.message} Checking saved state before continuing.`);
     recoveryTimer=setTimeout(async()=>{
       recoveryTimer=null;
@@ -25,6 +46,7 @@
         const status=await ask('STATUS');
         if(epoch!==recoveryEpoch)return;
         if(status.working)throw retryError('Companion still finishing its previous request.');
+        if (bulk && !bulk.started && error.wordpressRequest) { recovering=false; await run(true); return; }
         const expected=bulk?.run || job?.runId;
         if(!status.job || (expected && status.job.runId!==expected))throw new Error('Saved browser job changed or is missing. Review the queue before resuming.');
         show(status.job);recovering=false;
@@ -44,8 +66,7 @@
   async function history(operation,values = {}) {
     const body = new FormData();
     Object.entries({action:'wnq_browser_search_history',nonce:app.dataset.nonce,operation,...values}).forEach(([k,v])=>body.append(k,v));
-    const response = await fetch(ajaxurl,{method:'POST',body,credentials:'same-origin'});
-    const data = await response.json();
+    const data = await wordpressRequest(body).catch(error => { error.wordpressRequest=true; throw error; });
     if (!data.success) throw new Error(data.data?.message || 'Search history unavailable. No next ZIP started.');
     return data.data;
   }
@@ -107,8 +128,7 @@
   async function save(row) {
     const body = new FormData();
     Object.entries({action:'wnq_browser_lead_save',nonce:app.dataset.nonce,row:JSON.stringify(row),keyword:job.keyword,zip:job.zip}).forEach(([k,v]) => body.append(k,v));
-    const response = await fetch(ajaxurl,{method:'POST',body,credentials:'same-origin'});
-    const data = await response.json();
+    const data = await wordpressRequest(body).catch(error => { error.wordpressRequest=true; throw error; });
     if (!data.success) throw new Error(data.data?.message || 'WordPress could not save this listing. Resume to retry.');
     return data.data;
   }
