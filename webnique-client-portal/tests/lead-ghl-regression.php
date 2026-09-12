@@ -359,6 +359,29 @@ $schema='<script type="application/ld+json">{"name":"Test Business","address":{"
 check(WNQ\Services\LeadBrowserIntake::websiteCity($schema,'Test Business')==='Orlando','Website city from matching business');
 check(WNQ\Services\LeadBrowserIntake::websiteCity($schema,'Other')==='','Different business rejected');
 check(WNQ\Services\LeadBrowserIntake::websiteCity($schema.str_replace('Orlando','Miami',$schema),'Test Business')==='','Ambiguous cities rejected');
+resetFixture();
+$field=['id'=>'niche1','name'=>'Lead Niche','model'=>'contact','dataType'=>'TEXT','locationId'=>Sync::LOCATION,'fieldKey'=>'contact.lead_niche'];
+$delegate=$transport; $createdField=false;
+$transport=static function($url,$args) use($delegate,$field,&$createdField) {
+    if (str_ends_with($url,'/customFields')) {
+        if ($args['method']==='POST') { $createdField=true; return ['code'=>200,'body'=>json_encode(['customField'=>$field])]; }
+        return ['code'=>200,'body'=>json_encode(['customFields'=>$createdField?[$field]:[]])];
+    }
+    if ($args['method']==='PUT') { $body=json_decode($args['body'],true); $GLOBALS['contact']['customFields']=[['id'=>'niche1','value'=>$body['customFields'][0]['field_value']]]; }
+    return $delegate($url,$args);
+};
+check(Sync::setupNiche()['key']==='contact.lead_niche','Setup stores actual merge key');
+$before=count($requests); Sync::setupNiche();
+check(!array_filter(array_slice($requests,$before),static fn($r)=>$r[1]['method']==='POST'),'Repeated setup reuses field');
+$wpdb->leads[1]['notes']="Search: land clearing in 32825\n"; $contact['customFields']=[];
+Sync::enqueue(1); Sync::work();
+check($wpdb->jobs[1]['status']==='sent' && $contact['customFields'][0]['value']==='land clearing','Niche verified before workflow tag');
+$methods=array_column(array_column($requests,1),'method');
+$putIndex=array_search('PUT',$methods,true);
+$last=end($requests); check($putIndex!==false && str_ends_with($last[0],'/tags'),'Custom field updated before tag request');
+$before=count($requests); $wpdb->leads[1]['notes']='Search: plumbers in 32825'; Sync::backfillNiche(1);
+check(!array_filter(array_slice($requests,$before),static fn($r)=>$r[1]['method']!=='GET'),'Existing niche preserved for repeated keyword');
+check(Sync::niche(['industry'=>'Excavation contractor'])==='Excavation contractor','Category fallback');
 resetFixture(); $wpdb->lock=false;
 try { WNQ\Models\Lead::deleteAll(); check(false,'Delete during handoff accepted'); }
 catch (RuntimeException $e) { check(str_contains($e->getMessage(),'progress'),'Deletion serialized against handoffs'); }

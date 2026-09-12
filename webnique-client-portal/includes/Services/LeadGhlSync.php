@@ -65,6 +65,73 @@ final class LeadGhlSync
     public static function configured(): bool { return self::token() !== ''; }
     public static function emailKey(string $email): string { return hash('sha256', self::LOCATION . '|' . strtolower(trim($email))); }
 
+    public static function setupNiche(): array
+    {
+        global $wpdb;
+        $lock = 'wnq_ghl_' . md5(self::table());
+        if ((int)$wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s,0)', $lock)) !== 1) throw new \RuntimeException('Handoff active. Retry setup shortly.');
+        try {
+            $path = '/locations/' . self::LOCATION . '/customFields';
+            $data = self::request('GET', $path);
+            if (!is_array($data['customFields'] ?? null)) throw new \RuntimeException('Custom field list unavailable. Check customFields scopes.');
+            $matches = array_values(array_filter($data['customFields'], static fn($f) => ($f['name'] ?? '') === 'Lead Niche' && ($f['model'] ?? '') === 'contact'));
+            if (count($matches) > 1) throw new \RuntimeException('Multiple Lead Niche fields exist. Resolve duplicates in GHL first.');
+            $field = $matches[0] ?? null;
+            if (!$field) {
+                if (get_option('wnq_ghl_niche_create_pending', false)) throw new \RuntimeException('Previous field creation is uncertain. Check GHL for Lead Niche; setup will reuse it once visible.');
+                update_option('wnq_ghl_niche_create_pending', true, false);
+                $field = self::request('POST', $path, ['name'=>'Lead Niche','dataType'=>'TEXT','model'=>'contact'])['customField'] ?? [];
+            }
+            if (empty($field['id']) || ($field['model'] ?? '') !== 'contact' || ($field['locationId'] ?? '') !== self::LOCATION || ($field['dataType'] ?? '') !== 'TEXT'
+                || !preg_match('/^contact\.[a-zA-Z0-9_]+$/D', $field['fieldKey'] ?? '')) throw new \RuntimeException('Niche field identity/type could not be verified. Check GHL.');
+            $saved = ['id'=>$field['id'],'key'=>$field['fieldKey']];
+            update_option('wnq_ghl_niche_field', $saved, false);
+            delete_option('wnq_ghl_niche_create_pending');
+            return $saved;
+        } finally { $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock)); }
+    }
+
+    public static function niche(array $lead): string
+    {
+        if (preg_match('/^Search: (.+) in \d{5}\s*$/m', $lead['notes'] ?? '', $m)) return sanitize_text_field($m[1]);
+        return sanitize_text_field($lead['industry'] ?? '');
+    }
+
+    public static function backfillNiche(int $id): string
+    {
+        global $wpdb;
+        $lock = 'wnq_ghl_' . md5(self::table());
+        if ((int)$wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s,0)', $lock)) !== 1) throw new \RuntimeException('Handoff active. Retry shortly.');
+        try {
+            if (empty(get_option('wnq_ghl_niche_field', [])['id'])) throw new \RuntimeException('Set up Lead Niche first.');
+            $lead = self::lead($id); $job = self::state($lead);
+            if (!$lead || empty($job['contact_id']) || ($job['status'] ?? '') !== 'sent') return 'Skipped: no confirmed sent contact';
+            $contact = self::request('GET', '/contacts/' . rawurlencode($job['contact_id']))['contact'] ?? [];
+            if (($contact['id'] ?? '') !== $job['contact_id'] || ($contact['locationId'] ?? '') !== self::LOCATION || self::emailKey($contact['email'] ?? '') !== self::emailKey($lead['email'] ?? '') || !empty($contact['deleted'])) throw new \RuntimeException('Contact identity mismatch; no niche updated.');
+            self::fillNiche($contact, $lead);
+            return 'Niche checked/filled; existing value preserved, no tags applied';
+        } finally { $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $lock)); }
+    }
+
+    private static function fillNiche(array $contact, array $lead): void
+    {
+        $field = get_option('wnq_ghl_niche_field', []);
+        if (empty($field['id'])) return;
+        $value = self::niche($lead);
+        if ($value === '') throw new \RuntimeException('Lead niche is missing; no new workflow tag applied.');
+        if (!is_array($contact['customFields'] ?? null)) throw new \RuntimeException('GHL custom fields unavailable; niche cannot be checked.');
+        foreach ($contact['customFields'] as $existing) {
+            if (($existing['id'] ?? '') === $field['id'] && trim((string)($existing['value'] ?? '')) !== '') return;
+        }
+        $path = '/contacts/' . rawurlencode($contact['id']);
+        self::request('PUT', $path, ['customFields'=>[['id'=>$field['id'],'field_value'=>$value]]]);
+        $check = self::request('GET', $path)['contact'] ?? [];
+        foreach ($check['customFields'] ?? [] as $existing) {
+            if (($existing['id'] ?? '') === $field['id'] && ($existing['value'] ?? null) === $value) return;
+        }
+        throw new \RuntimeException('Niche update not confirmed. No new workflow tag applied.');
+    }
+
     /** Authenticated encryption, separate from every other provider's credentials. */
     public static function saveSettings(string $token, bool $automatic, bool $clear = false): void
     {
@@ -460,6 +527,7 @@ final class LeadGhlSync
             $contact = $data['contact'] ?? [];
             $reason = self::contactBlockReason($contact, $email);
             if ($reason !== '') { throw new \RuntimeException($reason . '. No campaign tag applied.'); }
+            self::fillNiche($contact, $lead);
             if (self::hasTag($contact['tags'])) {
                 self::save($id, ['status' => 'sent', 'message' => 'Campaign tag already present; not applied again.']); return;
             }
