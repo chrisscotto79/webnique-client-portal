@@ -40,6 +40,13 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../facebook
         assert.equal((await page.evaluate(submit, job)).status, 'submitted', 'Only confirmed submission succeeds');
         await page.evaluate(() => {document.querySelector('[role=dialog]').style.display='block'; document.querySelector('[contenteditable]').innerText='Existing draft';});
         assert.equal((await page.evaluate(submit, job)).status, 'not_started', 'Preserves existing drafts');
+        // Rich-text normalization plus a preview-triggered rerender and delayed,
+        // aria-labelled Post control reproduce the failure before the final click.
+        await page.setContent(`<button role="button" onclick="document.querySelector('[role=dialog]').style.display='block'">Write something...</button>
+          <div role="dialog" style="display:none"><div contenteditable="true" role="textbox" oninput="if(!window.changed){window.changed=true;setTimeout(()=>{const d=document.querySelector('[role=dialog]');d.innerHTML='<div contenteditable=true role=textbox>Hey everyone!We help businesses.</div><div role=button aria-label=Post aria-disabled=true><span role=button aria-label=Post></span></div>';setTimeout(()=>{const b=d.querySelector('[aria-label=Post]');b.setAttribute('aria-disabled','false');b.onclick=()=>{window.postClicks=(window.postClicks||0)+1;d.style.display=\'none\';document.querySelector('[role=status]').textContent=\'Your post was published\';};},1600);},20);}"></div></div><div role="status"></div>`);
+        const formatted = {...job, message: 'Hey everyone!\n\nWe help businesses.'};
+        assert.equal((await page.evaluate(submit, formatted)).status, 'submitted', 'Rerender, whitespace, delayed button and aria-label supported');
+        assert.equal(await page.evaluate(() => window.postClicks), 1, 'Exactly one click');
         await page.goto('https://www.facebook.com/login');
         assert.equal((await page.evaluate(submit, job)).status, 'not_started', 'Redirect/login guard');
     } finally { await browser.close(); }
