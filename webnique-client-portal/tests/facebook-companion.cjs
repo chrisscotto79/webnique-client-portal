@@ -18,7 +18,7 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../facebook
     const request = message => new Promise(resolve => listener(message, sender, resolve));
     assert.equal(listener({op: 'login'}, {...sender, url: 'https://evil.test/'}, () => {}), false);
     await request({op: 'login'});
-    const job = {key: 'wnq_fb_job_' + 'a'.repeat(64), token: 'token', url: 'https://www.facebook.com/groups/123/', message: 'Hello'};
+    const job = {key: 'wnq_fb_job_' + 'a'.repeat(64), token: 'token', url: 'https://www.facebook.com/groups/123/', message: 'Hello', expires_at: Date.now() / 1000 + 120};
     assert.equal((await request({op: 'publish', job})).result.status, 'submitted');
     await request({op: 'publish', job});
     assert.equal(executions, 1, 'No duplicate dispatch');
