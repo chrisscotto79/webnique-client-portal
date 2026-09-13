@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Golden Web Marketing Facebook Publisher",
+  "version": "1.0.0",
+  "minimum_chrome_version": "102",
+  "description": "Publish saved WordPress group messages through your local Facebook session.",
+  "permissions": ["scripting", "storage"],
+  "host_permissions": ["https://www.facebook.com/*"],
+  "background": {"service_worker": "worker.js"},
+  "content_scripts": [{
+    "matches": ["https://goldenwebmarketing.com/wp-admin/admin.php*", "https://www.goldenwebmarketing.com/wp-admin/admin.php*"],
+    "js": ["bridge.js"], "run_at": "document_start"
+  }]
+}
