@@ -32,12 +32,34 @@
             return result.data;
         } finally { clearTimeout(timeout); }
     }
+    async function progress() {
+        const data = await api('progress', {mode});
+        const c = data.counts;
+        document.getElementById('fb-progress').textContent = `${c.submitted + c.pending + c.skipped + c.review} of ${c.total} processed · ${c.submitted} submitted · ${c.pending} awaiting approval · ${c.skipped} skipped · ${c.review} need review`;
+        const panel = document.getElementById('fb-review');
+        panel.replaceChildren();
+        for (const item of data.review) {
+            const row = document.createElement('p'), link = document.createElement('a');
+            link.href = item.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'Check Facebook group'; row.append(link);
+            for (const [resolution, label] of [['submitted', 'Already posted'], ['skipped', 'Definitely not posted — skip']]) {
+                const button = document.createElement('button'); button.type = 'button'; button.className = 'button'; button.textContent = label;
+                button.onclick = async () => {
+                    if (busy || running) return show('Pause the run before resolving a submission.');
+                    if (!confirm('Have you checked this group in Facebook? This marks it “' + label + '” and does not publish another post.')) return;
+                    button.disabled = true;
+                    try { await api('resolve', {key: item.key, resolution}); await progress(); show('Review saved. No post was sent.'); }
+                    catch (error) { show(error.message); button.disabled = false; }
+                }; row.append(' ', button);
+            }
+            panel.append(row);
+        }
+    }
     async function tick() {
         if (!running || busy) return;
         busy = true;
         try {
             const connection = await companion('ping');
-            if (!connection.version || connection.version.localeCompare('1.0.2', undefined, {numeric: true}) < 0) throw new Error('Update and reload Facebook companion 1.0.2 or newer before publishing.');
+            if (!connection.version || connection.version.localeCompare('1.0.4', undefined, {numeric: true}) < 0) throw new Error('Update and reload Facebook companion 1.0.4 or newer before publishing.');
             const next = await api('next', {mode});
             if (next.waiting || next.finished) {
                 show(next.message || 'Waiting for the saved daily start time.');
@@ -50,10 +72,11 @@
                     return;
                 }
                 const result = await companion('publish', job);
-                await api('result', {key: job.key, token: job.token, status: result.status});
+                await api('result', {key: job.key, token: job.token, status: result.status, scope: result.scope || 'account'});
                 show(result.message);
-                if (!['submitted', 'pending'].includes(result.status) || mode === 'test') running = false;
+                if ((!['submitted', 'pending'].includes(result.status) && result.scope !== 'group') || mode === 'test') running = false;
             }
+            await progress();
         } catch (error) { running = false; show('Paused: ' + error.message); }
         finally { busy = false; if (running) timer = setTimeout(tick, 60000); }
     }
@@ -76,4 +99,5 @@
     document.getElementById('fb-connect').onclick = connect;
     window.addEventListener('beforeunload', event => { if (running || busy) { event.preventDefault(); event.returnValue = ''; } });
     connect();
+    progress().catch(() => {});
 })();

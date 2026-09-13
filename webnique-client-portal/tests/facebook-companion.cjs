@@ -53,8 +53,14 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../facebook
         const formatted = {...job, message: 'Hey everyone!\n\nWe help businesses.'};
         assert.equal((await page.evaluate(submit, formatted)).status, 'submitted', 'Rerender, whitespace, delayed button and aria-label supported');
         assert.equal(await page.evaluate(() => window.postClicks), 1, 'Exactly one click');
+        await page.setContent('<p role="alert">You cannot post in this group</p>');
+        const blocked = await page.evaluate(submit, job);
+        assert.equal(blocked.scope, 'group', 'Group-local restrictions can be skipped');
+        assert.equal(blocked.status, 'not_started');
         await page.goto('https://www.facebook.com/login');
-        assert.equal((await page.evaluate(submit, job)).status, 'not_started', 'Redirect/login guard');
+        const login = await page.evaluate(submit, job);
+        assert.equal(login.status, 'not_started', 'Redirect/login guard');
+        assert.equal(login.scope, 'account', 'Login failures pause the whole run');
     } finally { await browser.close(); }
     console.log('PASS: origin validation, one tab, duplicate prevention, restart persistence, confirmed composer submission, draft and login guards. All Facebook pages mocked.');
 })().catch(error => {console.error(error); process.exitCode = 1;});

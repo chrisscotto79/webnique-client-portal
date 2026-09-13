@@ -39,7 +39,41 @@ final class FacebookGroupsAdmin
         }
         $now = new \DateTimeImmutable('now', new \DateTimeZone($plan['timezone']));
         $week = $now->format('o-W');
+        $mode = sanitize_key($_POST['mode'] ?? 'today');
+        $groups = $mode === 'test' ? array_slice($plan['groups'], 0, 1) : FacebookGroupPlan::batches($plan['groups'])[$now->format('l')];
+        if ($op === 'progress') {
+            $counts = ['total' => count($groups), 'submitted' => 0, 'pending' => 0, 'skipped' => 0, 'review' => 0];
+            $review = [];
+            foreach ($plan['groups'] as $url) {
+                $key = 'wnq_fb_job_' . hash('sha256', $week . '|' . strtolower($url));
+                $state = get_option($key, []);
+                $status = $state['status'] ?? '';
+                $held = $status === 'unknown' || ($status === 'reserved' && ($state['expires_at'] ?? PHP_INT_MAX) < time());
+                if (in_array($url, $groups, true)) {
+                    if (isset($counts[$status]) && $status !== 'total') $counts[$status]++;
+                    elseif ($held) $counts['review']++;
+                }
+                if ($held) $review[] = ['key' => $key, 'url' => $url];
+            }
+            wp_send_json_success(['counts' => $counts, 'review' => $review]);
+        }
+        if ($op === 'resolve') {
+            $key = sanitize_key($_POST['key'] ?? '');
+            $valid = false;
+            foreach ($plan['groups'] as $url) if ($key === 'wnq_fb_job_' . hash('sha256', $week . '|' . strtolower($url))) $valid = true;
+            $state = $valid ? get_option($key, []) : [];
+            if (!$state || !($state['status'] === 'unknown' || ($state['status'] === 'reserved' && ($state['expires_at'] ?? PHP_INT_MAX) < time()))) {
+                wp_send_json_error(['message' => 'This job is not ready for manual review.']);
+            }
+            $resolution = sanitize_key($_POST['resolution'] ?? '');
+            if (!in_array($resolution, ['submitted', 'skipped'], true)) wp_send_json_error(['message' => 'Invalid resolution.']);
+            // Keep both daily exclusion and weekly record even when the user says not posted.
+            update_option($key, array_merge($state, ['status' => $resolution]), false);
+            wp_send_json_success([]);
+        }
         if ($op === 'next') {
+            $cutoff = $plan['cutoff'] ?? '18:00';
+            if ($now->format('H:i') >= $cutoff) wp_send_json_success(['finished' => true, 'message' => 'Daily cutoff reached. No more posts will start today.']);
             $mode = sanitize_key($_POST['mode'] ?? 'today');
             if ($mode === 'scheduled' && $now->format('H:i') < $plan['start_time']) {
                 wp_send_json_success(['waiting' => true]);
@@ -53,23 +87,24 @@ final class FacebookGroupsAdmin
             if ($mode === 'test') $groups = array_slice($plan['groups'], 0, 1);
             foreach ($groups as $url) {
                 $groupId = FacebookDailyGuard::groupId($url);
-                if (!$groupId) wp_send_json_error(['message' => 'Publishing requires a numeric Facebook group-ID link to reliably prevent duplicates: ' . $url]);
                 $key = 'wnq_fb_job_' . hash('sha256', $week . '|' . strtolower($url));
+                if (!$groupId) { add_option($key, ['status' => 'skipped'], '', false); continue; }
                 $state = get_option($key, []);
                 if (in_array($state['status'] ?? '', ['submitted', 'pending'], true)) continue;
-                if ($state) wp_send_json_error(['message' => 'A previous submission needs checking in Facebook. It will not be posted again automatically: ' . $url]);
+                if ($state) continue;
                 $token = wp_generate_uuid4();
                 if (!FacebookDailyGuard::reserve($groupId, $token)) {
-                    wp_send_json_error(['message' => 'Daily safety limit: this group has a submission or reservation within the last 24 hours. No repeat post will be sent.']);
+                    add_option($key, ['status' => 'skipped'], '', false); continue;
                 }
                 // Atomic unique option reserves this group before any browser-side click.
-                if (!add_option($key, ['status' => 'reserved', 'token' => $token, 'group_id' => $groupId], '', false)) {
+                $expires = min(time() + 120, $now->setTime((int)substr($cutoff, 0, 2), (int)substr($cutoff, 3, 2))->getTimestamp());
+                if (!add_option($key, ['status' => 'reserved', 'token' => $token, 'group_id' => $groupId, 'expires_at' => $expires], '', false)) {
                     FacebookDailyGuard::release($groupId, $token);
-                    wp_send_json_error(['message' => 'Another publishing tab claimed this group.']);
+                    continue;
                 }
                 add_option('wnq_fb_first_week', $week, '', false);
                 wp_send_json_success(['job' => ['key' => $key, 'token' => $token,
-                    'expires_at' => time() + 120,
+                    'expires_at' => $expires,
                     'url' => $url, 'message' => $plan['message']]]);
             }
             wp_send_json_success(['finished' => true, 'message' => 'Today’s batch is complete or has no groups.']);
@@ -85,7 +120,8 @@ final class FacebookGroupsAdmin
             if (in_array($state['status'], ['submitted', 'pending'], true)) wp_send_json_success([]);
             if ($status === 'not_started' && $state['status'] === 'reserved') {
                 if (!empty($state['group_id'])) FacebookDailyGuard::release($state['group_id'], $token);
-                delete_option($key);
+                if (($_POST['scope'] ?? '') === 'group') update_option($key, array_merge($state, ['status' => 'skipped']), false);
+                else delete_option($key);
             } else update_option($key, array_merge($state, ['status' => $status === 'not_started' ? 'unknown' : $status]), false);
             wp_send_json_success([]);
         }
@@ -124,11 +160,14 @@ final class FacebookGroupsAdmin
                 throw new \InvalidArgumentException('Choose a valid timezone.');
             }
             $message = sanitize_textarea_field(wp_unslash($_POST['message']));
+            $cutoff = isset($_POST['cutoff']) && is_string($_POST['cutoff']) ? wp_unslash($_POST['cutoff']) : '18:00';
+            if (!preg_match('/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/D', $cutoff) || $cutoff <= $time) throw new \InvalidArgumentException('Cutoff must be later than the start time on the same day.');
             if (strlen($message) > 20000) throw new \InvalidArgumentException('Keep the message under 20,000 bytes.');
             // Saving a draft cannot activate posting or change any Facebook account.
             update_option('wnq_facebook_group_plan', [
                 'groups' => $parsed['groups'], 'message' => $message,
                 'start_time' => $time, 'timezone' => $timezone,
+                'cutoff' => $cutoff,
                 'repeat' => isset($_POST['repeat']), 'enabled' => false,
             ], false);
             $notice = 'Draft saved. ' . count($parsed['groups']) . ' groups; ' . $parsed['duplicates'] . ' duplicate links removed. No posts sent.';
@@ -167,6 +206,8 @@ final class FacebookGroupsAdmin
                 <button type="button" class="button" id="fb-now">Publish today’s batch now</button>
                 <button type="button" class="button" id="fb-stop">Pause</button>
                 <p id="fb-status" role="status" aria-live="polite">Checking companion…</p>
+                <p id="fb-progress" role="status">Progress will appear after saving a plan.</p>
+                <details><summary>Submissions needing review</summary><p>Check the group first. Marking “not posted” skips it for this week and does not retry or remove the daily guard.</p><div id="fb-review"></div></details>
                 <p>Uses one reusable Facebook tab. Test publishes the saved message to the first group, even if today is not Monday.
                     Daily safety: maximum one submission per numeric group ID per rolling 24 hours, in addition to the weekly limit. Named group links must be replaced with numeric group-ID links before publishing.
                     A group is reserved before publishing to prevent automatic duplicate retries. Login prompts or uncertain submissions pause the run.
@@ -183,6 +224,7 @@ final class FacebookGroupsAdmin
                 <textarea id="fb-message" name="message" rows="7" class="large-text" maxlength="20000"><?php echo esc_textarea($plan['message']); ?></textarea>
                 <p><label for="fb-time">Daily start time</label>
                     <input id="fb-time" name="start_time" type="time" required value="<?php echo esc_attr($plan['start_time']); ?>">
+                    <label for="fb-cutoff">Daily cutoff</label><input id="fb-cutoff" name="cutoff" type="time" required value="<?php echo esc_attr($plan['cutoff'] ?? '18:00'); ?>">
                     <label for="fb-timezone">Timezone</label>
                     <select id="fb-timezone" name="timezone">
                     <?php foreach (\DateTimeZone::listIdentifiers() as $zone): ?>

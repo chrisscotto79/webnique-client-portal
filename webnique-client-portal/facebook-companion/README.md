@@ -1,4 +1,16 @@
-# Facebook Publisher companion 1.0.3
+# Facebook Publisher companion 1.0.4
+
+Version 1.0.4 (WordPress 3.8.21) distinguishes explicit group-local restriction
+notices from account/login or ambiguous errors. Group-local restrictions skip the
+group; account/security or ambiguous errors pause the runner. Existing held groups
+are skipped by the server queue. WordPress shows aggregate progress and a compact
+review panel. Review decisions retain daily protection and never initiate retries.
+
+Daily cutoff defaults to 18:00 in the saved timezone. It applies to tests, immediate
+batches and scheduled publishing. It must be later than the start time; overnight
+windows are not supported. Publishing authorizations expire at the cutoff, so a
+composer prepared earlier cannot be submitted afterward. An already-clicked post
+cannot be recalled. Keep the page open for progress updates and daily scheduling.
 
 Version 1.0.3 creates and reuses the publishing tab in the background without
 activating it. Only the explicit sign-in button brings Facebook forward. Keep
