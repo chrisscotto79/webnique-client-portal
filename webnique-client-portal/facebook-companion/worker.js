@@ -61,19 +61,41 @@ async function submit(job) {
         editor.focus();
         if (!document.execCommand('insertText', false, job.message)) throw new Error('Could not fill the Facebook composer.');
         await sleep(1000);
-        const normalize = value => value.replace(/\r\n/g, '\n').replace(/\u00a0/g, ' ').trim();
-        if (normalize(text(editor)) !== normalize(job.message)) throw new Error('Composer content did not match the saved message. No post sent.');
-        const buttons = [...dialog.querySelectorAll('[role="button"],button')].filter(el => visible(el) && text(el) === 'Post');
-        if (buttons.length !== 1 || buttons[0].getAttribute('aria-disabled') === 'true' || buttons[0].disabled) throw new Error('Post button unavailable or ambiguous.');
+        // Facebook's rich-text editor rewrites paragraph breaks, NBSP and zero-width
+        // formatting characters. Verify all non-whitespace content, not its DOM layout.
+        const normalize = value => value.replace(/[\s\u200b\ufeff]+/gu, '');
+        let postButton, activeDialog;
+        const readyUntil = Date.now() + 15000;
+        let reason = 'Post button unavailable or ambiguous.';
+        while (Date.now() < readyUntil) {
+            const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(el => visible(el) && el.querySelector('[contenteditable="true"][role="textbox"]'));
+            if (dialogs.length !== 1) { reason = 'The Facebook composer is ambiguous.'; await sleep(250); continue; }
+            activeDialog = dialogs[0];
+            const liveEditors = [...activeDialog.querySelectorAll('[contenteditable="true"][role="textbox"]')].filter(visible);
+            if (liveEditors.length !== 1 || normalize(text(liveEditors[0])) !== normalize(job.message)) {
+                reason = 'Composer content did not match the saved message.'; await sleep(250); continue;
+            }
+            const matches = [...activeDialog.querySelectorAll('[role="button"],button')].filter(el => visible(el) &&
+                (el.getAttribute('aria-label')?.trim() || text(el)) === 'Post');
+            // A nested role=button wrapper is one control, not two competing posts.
+            const buttons = matches.filter(el => !matches.some(other => other !== el && other.contains(el)));
+            if (buttons.length === 1 && buttons[0].getAttribute('aria-disabled') !== 'true' && !buttons[0].disabled && buttons[0].getAttribute('aria-busy') !== 'true') {
+                postButton = buttons[0]; break;
+            }
+            reason = 'Post button did not become ready; the link preview may still be loading.';
+            await sleep(250);
+        }
+        if (!postButton) throw new Error(reason + ' No post sent.');
+        postButton.scrollIntoView({block: 'center'});
         // After this line every uncertainty must remain held, never blindly retried.
         const oldNotices = new Set([...document.querySelectorAll('[role="alert"],[role="status"]')].filter(visible).map(text));
         clicked = true;
-        buttons[0].click();
+        postButton.click();
         const deadline = Date.now() + 20000;
         while (Date.now() < deadline) {
             await sleep(500);
             const notices = [...document.querySelectorAll('[role="alert"],[role="status"]')].filter(visible).map(text).filter(value => !oldNotices.has(value)).join('\n');
-            if (!visible(dialog)) {
+            if (!visible(activeDialog)) {
                 if (/submitted.*approval|pending.*approval|post.*pending/i.test(notices)) return {status: 'pending', message: 'Submitted for group approval.'};
                 if (/your post (?:has been |was )?(?:published|shared)|post (?:published|shared) successfully/i.test(notices)) return {status: 'submitted', message: 'Facebook confirmed the post submission.'};
             }
@@ -84,7 +106,7 @@ async function submit(job) {
     }
 }
 async function handle(message) {
-    if (message.op === 'ping') return {version: '1.0.0'};
+    if (message.op === 'ping') return {version: '1.0.1'};
     if (busy) throw new Error('A Facebook request is already running.');
     busy = true;
     try {

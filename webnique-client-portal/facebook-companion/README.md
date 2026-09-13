@@ -1,4 +1,10 @@
-# Facebook Publisher companion 1.0.0
+# Facebook Publisher companion 1.0.1
+
+Version 1.0.1 waits for the Post button while link previews load, reacquires the
+composer after Facebook rerenders it, recognizes aria-labelled Post controls, and
+tolerates whitespace-only rich-text changes. Non-whitespace message differences
+still block posting. Reload this extension in Chrome and refresh WordPress after
+updating; WordPress plugin files do not need to change for this patch.
 
 This is a separate Chrome extension, not an update to the Google Maps companion.
 
