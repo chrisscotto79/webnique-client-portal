@@ -5,13 +5,79 @@ use WNQ\Services\FacebookGroupPlan;
 
 if (!defined('ABSPATH')) exit;
 
-/** Draft configuration only: publishing must be explicitly enabled in a later runner. */
+/** Configuration and browser publishing controller. Facebook login stays in Chrome. */
 final class FacebookGroupsAdmin
 {
     public static function register(): void
     {
         add_action('admin_menu', [self::class, 'menu'], 25);
         add_action('admin_post_wnq_facebook_plan', [self::class, 'save']);
+        add_action('wp_ajax_wnq_facebook_publish', [self::class, 'publish']);
+        add_action('admin_enqueue_scripts', [self::class, 'assets']);
+    }
+
+    public static function assets(): void
+    {
+        if (($_GET['page'] ?? '') !== 'wnq-facebook-groups' || !self::allowed()) return;
+        wp_enqueue_script('wnq-facebook-publish', WNQ_PORTAL_URL . 'assets/js/facebook-publish.js', [], WNQ_PORTAL_VERSION, true);
+        wp_localize_script('wnq-facebook-publish', 'WNQFacebook', [
+            'ajax' => admin_url('admin-ajax.php'), 'nonce' => wp_create_nonce('wnq_facebook_publish'),
+        ]);
+    }
+
+    public static function publish(): void
+    {
+        if (!self::allowed()) wp_send_json_error(['message' => 'Not authorized.'], 403);
+        check_ajax_referer('wnq_facebook_publish', 'nonce');
+        $plan = get_option('wnq_facebook_group_plan', []);
+        $op = sanitize_key($_POST['op'] ?? '');
+        if (empty($plan['groups']) || trim($plan['message'] ?? '') === '') {
+            wp_send_json_error(['message' => 'Save your group links and message first.']);
+        }
+        $now = new \DateTimeImmutable('now', new \DateTimeZone($plan['timezone']));
+        $week = $now->format('o-W');
+        if ($op === 'next') {
+            $mode = sanitize_key($_POST['mode'] ?? 'today');
+            if ($mode === 'scheduled' && $now->format('H:i') < $plan['start_time']) {
+                wp_send_json_success(['waiting' => true]);
+            }
+            $first = get_option('wnq_fb_first_week', '');
+            if (!$plan['repeat'] && $first && $first !== $week) {
+                wp_send_json_success(['finished' => true, 'message' => 'One-time week finished. Enable repeat and save to run another week.']);
+            }
+            $groups = FacebookGroupPlan::batches($plan['groups'])[$now->format('l')];
+            // A single saved group can be tested immediately, regardless of weekday.
+            if ($mode === 'test') $groups = array_slice($plan['groups'], 0, 1);
+            foreach ($groups as $url) {
+                $key = 'wnq_fb_job_' . hash('sha256', $week . '|' . strtolower($url));
+                $state = get_option($key, []);
+                if (in_array($state['status'] ?? '', ['submitted', 'pending'], true)) continue;
+                if ($state) wp_send_json_error(['message' => 'A previous submission needs checking in Facebook. It will not be posted again automatically: ' . $url]);
+                $token = wp_generate_uuid4();
+                // Atomic unique option reserves this group before any browser-side click.
+                if (!add_option($key, ['status' => 'reserved', 'token' => $token], '', false)) {
+                    wp_send_json_error(['message' => 'Another publishing tab claimed this group.']);
+                }
+                add_option('wnq_fb_first_week', $week, '', false);
+                wp_send_json_success(['job' => ['key' => $key, 'token' => $token,
+                    'url' => $url, 'message' => $plan['message']]]);
+            }
+            wp_send_json_success(['finished' => true, 'message' => 'Today’s batch is complete or has no groups.']);
+        }
+        if ($op === 'result') {
+            $key = sanitize_key($_POST['key'] ?? '');
+            $token = sanitize_text_field($_POST['token'] ?? '');
+            if (!preg_match('/^wnq_fb_job_[a-f0-9]{64}$/D', $key)) wp_send_json_error(['message' => 'Invalid job.']);
+            $state = get_option($key, []);
+            if (!$state || !hash_equals($state['token'], $token)) wp_send_json_error(['message' => 'Job ownership mismatch.']);
+            $status = sanitize_key($_POST['status'] ?? 'unknown');
+            if (!in_array($status, ['submitted', 'pending', 'unknown', 'not_started'], true)) $status = 'unknown';
+            if (in_array($state['status'], ['submitted', 'pending'], true)) wp_send_json_success([]);
+            if ($status === 'not_started') delete_option($key);
+            else update_option($key, ['status' => $status, 'token' => $token], false);
+            wp_send_json_success([]);
+        }
+        wp_send_json_error(['message' => 'Unknown action.']);
     }
 
     private static function allowed(): bool
@@ -75,9 +141,24 @@ final class FacebookGroupsAdmin
             <h1>Facebook Groups</h1>
             <p>One group list. Seven daily batches. Up to 50 groups per day.</p>
             <?php if ($notice): ?><div class="notice notice-info"><p><?php echo esc_html($notice); ?></p></div><?php endif; ?>
-            <div class="notice notice-warning inline"><p><strong>Draft setup — posting is not connected yet.</strong>
-                Saving this plan does not post or schedule live Facebook actions. Only include groups that permit your message.
+            <div class="notice notice-warning inline"><p><strong>Facebook browser publishing.</strong>
+                Saving alone does not publish. Only include groups that permit your message.
                 Group approval and Facebook restrictions still apply; 50 per day is a planning limit, not a guaranteed safe posting rate.</p></div>
+            <div style="background:white;padding:20px;margin:16px 0">
+                <h2>Connect & publish</h2>
+                <p>Install the separate <strong>facebook-companion</strong> folder with Chrome → Extensions → Developer mode → Load unpacked, then refresh this page.</p>
+                <p>Keep Chrome, this WordPress tab, and your computer awake. Facebook login stays in Chrome; WordPress never receives your password or cookies.</p>
+                <button type="button" class="button" id="fb-connect">Check connection</button>
+                <button type="button" class="button" id="fb-login">Open Facebook / sign in</button>
+                <button type="button" class="button" id="fb-test">Publish to first saved group</button>
+                <button type="button" class="button button-primary" id="fb-start">Start daily schedule</button>
+                <button type="button" class="button" id="fb-now">Publish today’s batch now</button>
+                <button type="button" class="button" id="fb-stop">Pause</button>
+                <p id="fb-status" role="status" aria-live="polite">Checking companion…</p>
+                <p>Uses one reusable Facebook tab. Test publishes the saved message to the first group, even if today is not Monday.
+                    A group is reserved before publishing to prevent automatic duplicate retries. Login prompts or uncertain submissions pause the run.
+                    Submitted does not necessarily mean publicly visible; group moderators may need to approve it.</p>
+            </div>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="wnq_facebook_plan">
                 <?php wp_nonce_field('wnq_facebook_plan'); ?>
