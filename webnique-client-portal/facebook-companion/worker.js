@@ -8,7 +8,7 @@ const allowed = sender => {
             url.pathname === '/wp-admin/admin.php' && url.searchParams.get('page') === 'wnq-facebook-groups';
     } catch { return false; }
 };
-async function facebookTab(url) {
+async function facebookTab(url, foreground = false) {
     const saved = await chrome.storage.local.get('tabId');
     let tab;
     if (saved.tabId) {
@@ -17,8 +17,8 @@ async function facebookTab(url) {
             if (existing.url?.startsWith('https://www.facebook.com/')) tab = existing;
         } catch { /* The owned tab was closed. */ }
     }
-    if (tab) tab = await chrome.tabs.update(tab.id, {url, active: true});
-    else tab = await chrome.tabs.create({url, active: true});
+    if (tab) tab = await chrome.tabs.update(tab.id, {url, active: foreground});
+    else tab = await chrome.tabs.create({url, active: foreground});
     await chrome.storage.local.set({tabId: tab.id});
     return tab;
 }
@@ -107,11 +107,11 @@ async function submit(job) {
     }
 }
 async function handle(message) {
-    if (message.op === 'ping') return {version: '1.0.2'};
+    if (message.op === 'ping') return {version: '1.0.3'};
     if (busy) throw new Error('A Facebook request is already running.');
     busy = true;
     try {
-        if (message.op === 'login') { await facebookTab('https://www.facebook.com/'); return {opened: true}; }
+        if (message.op === 'login') { await facebookTab('https://www.facebook.com/', true); return {opened: true}; }
         const job = message.job;
         if (message.op !== 'publish' || !job || !/^https:\/\/www\.facebook\.com\/groups\/[a-zA-Z0-9._-]+\/$/.test(job.url) ||
             !/^wnq_fb_job_[a-f0-9]{64}$/.test(job.key) || typeof job.token !== 'string' ||

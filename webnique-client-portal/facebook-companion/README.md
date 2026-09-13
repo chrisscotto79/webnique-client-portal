@@ -1,4 +1,8 @@
-# Facebook Publisher companion 1.0.2
+# Facebook Publisher companion 1.0.3
+
+Version 1.0.3 creates and reuses the publishing tab in the background without
+activating it. Only the explicit sign-in button brings Facebook forward. Keep
+Chrome and the WordPress scheduler open; background tabs may be throttled by Chrome.
 
 Version 1.0.2 requires WordPress plugin 3.8.20 and expires a publishing authorization
 after two minutes. The server adds an independent rolling 24-hour group-ID guard
