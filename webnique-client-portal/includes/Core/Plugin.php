@@ -46,6 +46,7 @@ final class Plugin
       \WNQ\Admin\ClientPortalAdmin::register();
       \WNQ\Admin\KnowledgeBaseAdmin::register();
       \WNQ\Admin\PpcIntelligenceAdmin::register();
+      \WNQ\Admin\FacebookGroupsAdmin::register();
     }
   }
 
@@ -140,6 +141,8 @@ final class Plugin
      * Admin
      */
     require_once WNQ_PORTAL_PATH . 'admin/AdminMenu.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Services/FacebookGroupPlan.php';
+    require_once WNQ_PORTAL_PATH . 'admin/FacebookGroupsAdmin.php';
     require_once WNQ_PORTAL_PATH . 'admin/AdminSettings.php';
     require_once WNQ_PORTAL_PATH . 'admin/ClientPortalAdmin.php';
     require_once WNQ_PORTAL_PATH . 'admin/KnowledgeBaseAdmin.php';
