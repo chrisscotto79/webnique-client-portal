@@ -2,6 +2,9 @@
 namespace WNQ\Admin;
 
 use WNQ\Services\FacebookGroupPlan;
+use WNQ\Services\FacebookDailyGuard;
+
+require_once __DIR__ . '/../includes/Services/FacebookDailyGuard.php';
 
 if (!defined('ABSPATH')) exit;
 
@@ -49,17 +52,24 @@ final class FacebookGroupsAdmin
             // A single saved group can be tested immediately, regardless of weekday.
             if ($mode === 'test') $groups = array_slice($plan['groups'], 0, 1);
             foreach ($groups as $url) {
+                $groupId = FacebookDailyGuard::groupId($url);
+                if (!$groupId) wp_send_json_error(['message' => 'Publishing requires a numeric Facebook group-ID link to reliably prevent duplicates: ' . $url]);
                 $key = 'wnq_fb_job_' . hash('sha256', $week . '|' . strtolower($url));
                 $state = get_option($key, []);
                 if (in_array($state['status'] ?? '', ['submitted', 'pending'], true)) continue;
                 if ($state) wp_send_json_error(['message' => 'A previous submission needs checking in Facebook. It will not be posted again automatically: ' . $url]);
                 $token = wp_generate_uuid4();
+                if (!FacebookDailyGuard::reserve($groupId, $token)) {
+                    wp_send_json_error(['message' => 'Daily safety limit: this group has a submission or reservation within the last 24 hours. No repeat post will be sent.']);
+                }
                 // Atomic unique option reserves this group before any browser-side click.
-                if (!add_option($key, ['status' => 'reserved', 'token' => $token], '', false)) {
+                if (!add_option($key, ['status' => 'reserved', 'token' => $token, 'group_id' => $groupId], '', false)) {
+                    FacebookDailyGuard::release($groupId, $token);
                     wp_send_json_error(['message' => 'Another publishing tab claimed this group.']);
                 }
                 add_option('wnq_fb_first_week', $week, '', false);
                 wp_send_json_success(['job' => ['key' => $key, 'token' => $token,
+                    'expires_at' => time() + 120,
                     'url' => $url, 'message' => $plan['message']]]);
             }
             wp_send_json_success(['finished' => true, 'message' => 'Today’s batch is complete or has no groups.']);
@@ -73,8 +83,10 @@ final class FacebookGroupsAdmin
             $status = sanitize_key($_POST['status'] ?? 'unknown');
             if (!in_array($status, ['submitted', 'pending', 'unknown', 'not_started'], true)) $status = 'unknown';
             if (in_array($state['status'], ['submitted', 'pending'], true)) wp_send_json_success([]);
-            if ($status === 'not_started') delete_option($key);
-            else update_option($key, ['status' => $status, 'token' => $token], false);
+            if ($status === 'not_started' && $state['status'] === 'reserved') {
+                if (!empty($state['group_id'])) FacebookDailyGuard::release($state['group_id'], $token);
+                delete_option($key);
+            } else update_option($key, array_merge($state, ['status' => $status === 'not_started' ? 'unknown' : $status]), false);
             wp_send_json_success([]);
         }
         wp_send_json_error(['message' => 'Unknown action.']);
@@ -156,6 +168,7 @@ final class FacebookGroupsAdmin
                 <button type="button" class="button" id="fb-stop">Pause</button>
                 <p id="fb-status" role="status" aria-live="polite">Checking companion…</p>
                 <p>Uses one reusable Facebook tab. Test publishes the saved message to the first group, even if today is not Monday.
+                    Daily safety: maximum one submission per numeric group ID per rolling 24 hours, in addition to the weekly limit. Named group links must be replaced with numeric group-ID links before publishing.
                     A group is reserved before publishing to prevent automatic duplicate retries. Login prompts or uncertain submissions pause the run.
                     Submitted does not necessarily mean publicly visible; group moderators may need to approve it.</p>
             </div>

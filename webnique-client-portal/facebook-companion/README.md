@@ -1,4 +1,11 @@
-# Facebook Publisher companion 1.0.1
+# Facebook Publisher companion 1.0.2
+
+Version 1.0.2 requires WordPress plugin 3.8.20 and expires a publishing authorization
+after two minutes. The server adds an independent rolling 24-hour group-ID guard
+(with three minutes of dispatch padding). Numeric group-ID links are required to
+avoid alias duplicates. The weekly guard remains in force. Tests, scheduled jobs,
+and unknown outcomes all share the limit. A proven pre-click failure releases its
+own reservation. This cannot track posts made manually or by unrelated software.
 
 Version 1.0.1 waits for the Post button while link previews load, reacquires the
 composer after Facebook rerenders it, recognizes aria-labelled Post controls, and

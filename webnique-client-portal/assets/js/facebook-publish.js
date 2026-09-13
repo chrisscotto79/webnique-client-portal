@@ -36,7 +36,8 @@
         if (!running || busy) return;
         busy = true;
         try {
-            await companion('ping');
+            const connection = await companion('ping');
+            if (!connection.version || connection.version.localeCompare('1.0.2', undefined, {numeric: true}) < 0) throw new Error('Update and reload Facebook companion 1.0.2 or newer before publishing.');
             const next = await api('next', {mode});
             if (next.waiting || next.finished) {
                 show(next.message || 'Waiting for the saved daily start time.');

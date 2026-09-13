@@ -87,6 +87,7 @@ async function submit(job) {
         }
         if (!postButton) throw new Error(reason + ' No post sent.');
         postButton.scrollIntoView({block: 'center'});
+        if (!Number.isFinite(job.expires_at) || Date.now() >= job.expires_at * 1000) throw new Error('Publishing authorization expired. No post sent; return to WordPress and retry.');
         // After this line every uncertainty must remain held, never blindly retried.
         const oldNotices = new Set([...document.querySelectorAll('[role="alert"],[role="status"]')].filter(visible).map(text));
         clicked = true;
@@ -106,7 +107,7 @@ async function submit(job) {
     }
 }
 async function handle(message) {
-    if (message.op === 'ping') return {version: '1.0.1'};
+    if (message.op === 'ping') return {version: '1.0.2'};
     if (busy) throw new Error('A Facebook request is already running.');
     busy = true;
     try {
