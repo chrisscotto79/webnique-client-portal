@@ -54,6 +54,7 @@ final class FacebookGroupsAdmin
                     elseif ($held) $counts['review']++;
                 }
                 if ($held) $review[] = ['key' => $key, 'url' => $url];
+                elseif ($status === 'skipped' && !empty($state['message'])) $review[] = ['key' => $key, 'url' => $url, 'skipped' => true, 'message' => $state['message']];
             }
             wp_send_json_success(['counts' => $counts, 'review' => $review]);
         }
@@ -120,7 +121,7 @@ final class FacebookGroupsAdmin
             if (in_array($state['status'], ['submitted', 'pending'], true)) wp_send_json_success([]);
             if ($status === 'not_started' && $state['status'] === 'reserved') {
                 if (!empty($state['group_id'])) FacebookDailyGuard::release($state['group_id'], $token);
-                if (($_POST['scope'] ?? '') === 'group') update_option($key, array_merge($state, ['status' => 'skipped']), false);
+                if (($_POST['scope'] ?? '') === 'group') update_option($key, array_merge($state, ['status' => 'skipped', 'message' => substr(sanitize_text_field(wp_unslash($_POST['message'] ?? '')), 0, 500)]), false);
                 else delete_option($key);
             } else update_option($key, array_merge($state, ['status' => $status === 'not_started' ? 'unknown' : $status]), false);
             wp_send_json_success([]);

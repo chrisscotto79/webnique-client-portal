@@ -28,6 +28,7 @@ function wp_send_json_error($data, $status = 200) { throw new Response(['success
 function check_ajax_referer(...$args) {}
 function sanitize_key($value) { return preg_replace('/[^a-z0-9_-]/', '', strtolower($value)); }
 function sanitize_text_field($value) { return $value; }
+function wp_unslash($value) { return $value; }
 function get_option($key, $default = false) { global $options; return $options[$key] ?? $default; }
 function add_option($key, $value, ...$args) { global $options; if (isset($options[$key])) return false; $options[$key] = $value; return true; }
 function update_option($key, $value, ...$args) { global $options; $options[$key] = $value; }

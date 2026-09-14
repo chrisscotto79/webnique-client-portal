@@ -41,6 +41,7 @@
         for (const item of data.review) {
             const row = document.createElement('p'), link = document.createElement('a');
             link.href = item.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'Check Facebook group'; row.append(link);
+            if (item.skipped) { row.append(' — ' + item.message); panel.append(row); continue; }
             for (const [resolution, label] of [['submitted', 'Already posted'], ['skipped', 'Definitely not posted — skip']]) {
                 const button = document.createElement('button'); button.type = 'button'; button.className = 'button'; button.textContent = label;
                 button.onclick = async () => {
@@ -59,7 +60,7 @@
         busy = true;
         try {
             const connection = await companion('ping');
-            if (!connection.version || connection.version.localeCompare('1.0.4', undefined, {numeric: true}) < 0) throw new Error('Update and reload Facebook companion 1.0.4 or newer before publishing.');
+            if (!connection.version || connection.version.localeCompare('1.0.5', undefined, {numeric: true}) < 0) throw new Error('Update and reload Facebook companion 1.0.5 or newer before publishing.');
             const next = await api('next', {mode});
             if (next.waiting || next.finished) {
                 show(next.message || 'Waiting for the saved daily start time.');
@@ -72,7 +73,7 @@
                     return;
                 }
                 const result = await companion('publish', job);
-                await api('result', {key: job.key, token: job.token, status: result.status, scope: result.scope || 'account'});
+                await api('result', {key: job.key, token: job.token, status: result.status, scope: result.scope || 'account', message: result.message || ''});
                 show(result.message);
                 if ((!['submitted', 'pending'].includes(result.status) && result.scope !== 'group') || mode === 'test') running = false;
             }
