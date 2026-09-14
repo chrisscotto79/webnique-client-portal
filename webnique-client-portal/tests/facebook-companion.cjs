@@ -6,10 +6,11 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../facebook
 (async () => {
     let listener, created = 0, executions = 0;
     const storage = {};
+    const tabActions = [];
     const chrome = {
         runtime: {id: 'test-extension', onMessage: {addListener(fn) { listener = fn; }}},
         storage: {local: {async get(key) { return {[key]: storage[key]}; }, async set(values) { Object.assign(storage, values); }, async remove(key) { delete storage[key]; }}},
-        tabs: {async create({url}) { created++; return {id: 1, url}; }, async get() {return {id: 1, url: 'https://www.facebook.com/', status: 'complete'}; }, async update(id, values) {return {id, ...values}; }},
+        tabs: {async create(values) { tabActions.push(values); created++; return {id: 1, ...values}; }, async get() {return {id: 1, url: 'https://www.facebook.com/', status: 'complete'}; }, async update(id, values) {tabActions.push(values); return {id, ...values}; }},
         scripting: {async executeScript() {executions++; return [{result: {status: 'submitted', message: 'Confirmed'}}]; }}
     };
     const context = vm.createContext({chrome, URL, setTimeout});
@@ -18,8 +19,10 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../facebook
     const request = message => new Promise(resolve => listener(message, sender, resolve));
     assert.equal(listener({op: 'login'}, {...sender, url: 'https://evil.test/'}, () => {}), false);
     await request({op: 'login'});
+    assert.equal(tabActions.at(-1).active, true, 'Explicit login opens in foreground');
     const job = {key: 'wnq_fb_job_' + 'a'.repeat(64), token: 'token', url: 'https://www.facebook.com/groups/123/', message: 'Hello', expires_at: Date.now() / 1000 + 120};
     assert.equal((await request({op: 'publish', job})).result.status, 'submitted');
+    assert.equal(tabActions.at(-1).active, false, 'Publishing reuses tab without stealing focus');
     await request({op: 'publish', job});
     assert.equal(executions, 1, 'No duplicate dispatch');
     assert.equal(created, 1, 'Reuses one tab');
@@ -27,6 +30,9 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../facebook
     vm.runInContext(source, vm.createContext({chrome, URL, setTimeout}));
     await request({op: 'publish', job});
     assert.equal(executions, 1, 'Persisted outcome survives worker restart');
+    delete storage.tabId;
+    await request({op: 'publish', job: {...job, key: 'wnq_fb_job_' + 'b'.repeat(64)}});
+    assert.equal(tabActions.at(-1).active, false, 'New publishing tab opens in background');
     const submit = vm.runInContext('submit', context);
     const browser = await puppeteer.launch({headless: true});
     try {
@@ -47,8 +53,14 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../facebook
         const formatted = {...job, message: 'Hey everyone!\n\nWe help businesses.'};
         assert.equal((await page.evaluate(submit, formatted)).status, 'submitted', 'Rerender, whitespace, delayed button and aria-label supported');
         assert.equal(await page.evaluate(() => window.postClicks), 1, 'Exactly one click');
+        await page.setContent('<p role="alert">You cannot post in this group</p>');
+        const blocked = await page.evaluate(submit, job);
+        assert.equal(blocked.scope, 'group', 'Group-local restrictions can be skipped');
+        assert.equal(blocked.status, 'not_started');
         await page.goto('https://www.facebook.com/login');
-        assert.equal((await page.evaluate(submit, job)).status, 'not_started', 'Redirect/login guard');
+        const login = await page.evaluate(submit, job);
+        assert.equal(login.status, 'not_started', 'Redirect/login guard');
+        assert.equal(login.scope, 'account', 'Login failures pause the whole run');
     } finally { await browser.close(); }
     console.log('PASS: origin validation, one tab, duplicate prevention, restart persistence, confirmed composer submission, draft and login guards. All Facebook pages mocked.');
 })().catch(error => {console.error(error); process.exitCode = 1;});

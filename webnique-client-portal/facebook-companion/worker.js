@@ -8,7 +8,7 @@ const allowed = sender => {
             url.pathname === '/wp-admin/admin.php' && url.searchParams.get('page') === 'wnq-facebook-groups';
     } catch { return false; }
 };
-async function facebookTab(url) {
+async function facebookTab(url, foreground = false) {
     const saved = await chrome.storage.local.get('tabId');
     let tab;
     if (saved.tabId) {
@@ -17,8 +17,8 @@ async function facebookTab(url) {
             if (existing.url?.startsWith('https://www.facebook.com/')) tab = existing;
         } catch { /* The owned tab was closed. */ }
     }
-    if (tab) tab = await chrome.tabs.update(tab.id, {url, active: true});
-    else tab = await chrome.tabs.create({url, active: true});
+    if (tab) tab = await chrome.tabs.update(tab.id, {url, active: foreground});
+    else tab = await chrome.tabs.create({url, active: foreground});
     await chrome.storage.local.set({tabId: tab.id});
     return tab;
 }
@@ -50,6 +50,13 @@ async function submit(job) {
         }
         if (document.querySelector('input[type="password"]') || /checkpoint|challenge/.test(location.pathname)) {
             throw new Error('Facebook needs you to sign in or complete a security prompt.');
+        }
+        // Only explicit group-local restrictions allow proceeding to the next group.
+        // Generic selector failures, login and security prompts pause the account.
+        const groupNotice = [...document.querySelectorAll('[role="alert"],[role="status"],h1,h2')]
+            .filter(el => visible(el) && !el.closest('[role="article"]')).map(text).join('\n');
+        if (/you (?:can't|cannot|are not allowed to) post in this group|this group (?:is no longer available|has been removed)|this content isn't available right now/i.test(groupNotice)) {
+            return {status: 'not_started', scope: 'group', message: 'Group unavailable or posting restricted. Skipped without posting.'};
         }
         const trigger = await wait(() => [...document.querySelectorAll('[role="button"]')].find(el => visible(el) && /^Write something(?:\.\.\.|…)?$/i.test(text(el))));
         trigger.click();
@@ -101,17 +108,17 @@ async function submit(job) {
                 if (/your post (?:has been |was )?(?:published|shared)|post (?:published|shared) successfully/i.test(notices)) return {status: 'submitted', message: 'Facebook confirmed the post submission.'};
             }
         }
-        return {status: 'unknown', message: 'Post was clicked, but Facebook did not clearly confirm the result. Check the group; this submission will not be automatically repeated.'};
+        return {status: 'unknown', scope: 'account', message: 'Post was clicked, but Facebook did not clearly confirm the result. Check the group; this submission will not be automatically repeated.'};
     } catch (error) {
-        return {status: clicked ? 'unknown' : 'not_started', message: error.message};
+        return {status: clicked ? 'unknown' : 'not_started', scope: 'account', message: error.message};
     }
 }
 async function handle(message) {
-    if (message.op === 'ping') return {version: '1.0.2'};
+    if (message.op === 'ping') return {version: '1.0.4'};
     if (busy) throw new Error('A Facebook request is already running.');
     busy = true;
     try {
-        if (message.op === 'login') { await facebookTab('https://www.facebook.com/'); return {opened: true}; }
+        if (message.op === 'login') { await facebookTab('https://www.facebook.com/', true); return {opened: true}; }
         const job = message.job;
         if (message.op !== 'publish' || !job || !/^https:\/\/www\.facebook\.com\/groups\/[a-zA-Z0-9._-]+\/$/.test(job.url) ||
             !/^wnq_fb_job_[a-f0-9]{64}$/.test(job.key) || typeof job.token !== 'string' ||
