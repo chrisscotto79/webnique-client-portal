@@ -1,4 +1,12 @@
-# Facebook Publisher companion 1.0.4
+# Facebook Publisher companion 1.0.5
+
+Version 1.0.5 (WordPress 3.8.22) checks the current group's heading area for Join
+group before publishing. A join attempt is saved locally before clicking, so a
+restart will not blindly repeat it. Already-pending requests are skipped. Immediate
+membership confirmation permits posting; approval, questions, rule acceptance,
+identity selection or ambiguous results skip the group for manual attention.
+Questions and checkboxes are never completed automatically. Join attempts use the
+currently logged-in Facebook identity. No real-group join test has been performed.
 
 Version 1.0.4 (WordPress 3.8.21) distinguishes explicit group-local restriction
 notices from account/login or ambiguous errors. Group-local restrictions skip the

@@ -51,6 +51,40 @@ async function submit(job) {
         if (document.querySelector('input[type="password"]') || /checkpoint|challenge/.test(location.pathname)) {
             throw new Error('Facebook needs you to sign in or complete a security prompt.');
         }
+        // Restrict membership actions to the current group's heading area, never
+        // Join buttons on suggested groups or feed posts.
+        const membership = () => {
+            const heading = [...document.querySelectorAll('h1')].find(visible);
+            let root = heading?.parentElement;
+            for (let depth = 0; root && depth < 6; depth++, root = root.parentElement) {
+                if (root === document.body || root.querySelector('[role="feed"],[role="article"]')) break;
+                const buttons = [...root.querySelectorAll('button,[role="button"]')].filter(el => visible(el));
+                const pending = buttons.some(el => /^(Cancel request|Cancel join request|Requested|Request pending)$/i.test(el.getAttribute('aria-label') || text(el)));
+                const joined = buttons.some(el => /^(Joined|Member)$/i.test(el.getAttribute('aria-label') || text(el)));
+                const joins = buttons.filter(el => /^Join group$/i.test(el.getAttribute('aria-label') || text(el)));
+                if (pending || joined || joins.length) return {pending, joined, joins};
+            }
+            return {joins: []};
+        };
+        let member = membership();
+        const joinHold = message => ({status: 'not_started', scope: 'group', message});
+        if (member.pending) return joinHold('Membership request already pending. Skipped until the group approves it.');
+        if (member.joins.length > 1) return joinHold('Membership controls are ambiguous. Check this group manually.');
+        if (member.joins.length === 1 && !member.joined) {
+            if (!job.joinAuthorized) return {status: 'join_required'};
+            if (!Number.isFinite(job.expires_at) || Date.now() >= job.expires_at * 1000) return joinHold('Join authorization expired. No request sent.');
+            member.joins[0].click();
+            const until = Date.now() + 15000;
+            while (Date.now() < until) {
+                await sleep(300);
+                if (document.querySelector('input[type="password"]') || /checkpoint|challenge/.test(location.pathname)) throw new Error('Facebook needs login or security verification.');
+                if ([...document.querySelectorAll('[role="dialog"]')].some(visible)) return joinHold('Joining needs questions, rules, or identity confirmation. Complete it manually in Facebook.');
+                member = membership();
+                if (member.pending) return joinHold('Join request sent. Waiting for group approval; no post sent.');
+                if (member.joined) break;
+            }
+            if (!member.joined) return joinHold('Join was attempted but membership is not confirmed. Check Facebook; no repeat join request or post was sent.');
+        }
         // Only explicit group-local restrictions allow proceeding to the next group.
         // Generic selector failures, login and security prompts pause the account.
         const groupNotice = [...document.querySelectorAll('[role="alert"],[role="status"],h1,h2')]
@@ -114,7 +148,7 @@ async function submit(job) {
     }
 }
 async function handle(message) {
-    if (message.op === 'ping') return {version: '1.0.4'};
+    if (message.op === 'ping') return {version: '1.0.5'};
     if (busy) throw new Error('A Facebook request is already running.');
     busy = true;
     try {
@@ -132,8 +166,18 @@ async function handle(message) {
             const tab = await facebookTab(job.url);
             await loaded(tab.id);
             dispatched = true;
-            const results = await chrome.scripting.executeScript({target: {tabId: tab.id}, func: submit, args: [job]});
+            const results = await chrome.scripting.executeScript({target: {tabId: tab.id}, func: submit, args: [{...job, joinAuthorized: false}]});
             result = results[0]?.result || {status: 'unknown', message: 'Facebook returned no result. Check the group.'};
+            if (result.status === 'join_required') {
+                const joinKey = 'join_' + new URL(job.url).pathname;
+                const attempted = (await chrome.storage.local.get(joinKey))[joinKey];
+                if (attempted) result = {status: 'not_started', scope: 'group', message: 'A join request was already attempted. Check membership manually; no repeat request sent.'};
+                else {
+                    await chrome.storage.local.set({[joinKey]: {attemptedAt: Date.now()}});
+                    const joined = await chrome.scripting.executeScript({target: {tabId: tab.id}, func: submit, args: [{...job, joinAuthorized: true}]});
+                    result = joined[0]?.result || {status: 'unknown', scope: 'account', message: 'Join response interrupted. Check Facebook before continuing.'};
+                }
+            }
         } catch {
             result = {status: dispatched ? 'unknown' : 'not_started', message: dispatched ? 'The browser request was interrupted. Check Facebook; automatic retries are disabled for this submission.' : 'Facebook did not load. No publishing script was dispatched; check the connection and try again.'};
         }
