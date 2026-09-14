@@ -4,7 +4,7 @@
     window.addEventListener('message', async event => {
         const data = event.data;
         if (event.source !== window || event.origin !== location.origin || data?.source !== 'wnq-facebook-page' ||
-            typeof data.id !== 'string' || !['ping', 'login', 'publish'].includes(data.op)) return;
+            typeof data.id !== 'string' || !['ping', 'login', 'publish', 'cancel'].includes(data.op)) return;
         const reply = result => window.postMessage({source: 'wnq-facebook-extension', id: data.id, ...result}, location.origin);
         try {
             // Reloading an unpacked extension invalidates scripts in already-open

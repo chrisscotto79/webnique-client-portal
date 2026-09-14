@@ -1,5 +1,6 @@
 'use strict';
 let busy = false;
+let activeToken = null, cancelled = false;
 const allowed = sender => {
     try {
         const url = new URL(sender.url);
@@ -73,6 +74,7 @@ async function submit(job) {
         if (member.joins.length === 1 && !member.joined) {
             if (!job.joinAuthorized) return {status: 'join_required'};
             if (!Number.isFinite(job.expires_at) || Date.now() >= job.expires_at * 1000) return joinHold('Join authorization expired. No request sent.');
+            if (window.__wnqFbCancelled === job.token) return joinHold('Stopped before joining.');
             member.joins[0].click();
             const until = Date.now() + 15000;
             while (Date.now() < until) {
@@ -128,6 +130,7 @@ async function submit(job) {
         }
         if (!postButton) throw new Error(reason + ' No post sent.');
         postButton.scrollIntoView({block: 'center'});
+        if (window.__wnqFbCancelled === job.token) throw new Error('Stopped before clicking Post.');
         if (!Number.isFinite(job.expires_at) || Date.now() >= job.expires_at * 1000) throw new Error('Publishing authorization expired. No post sent; return to WordPress and retry.');
         // After this line every uncertainty must remain held, never blindly retried.
         const oldNotices = new Set([...document.querySelectorAll('[role="alert"],[role="status"]')].filter(visible).map(text));
@@ -142,13 +145,20 @@ async function submit(job) {
                 if (/your post (?:has been |was )?(?:published|shared)|post (?:published|shared) successfully/i.test(notices)) return {status: 'submitted', message: 'Facebook confirmed the post submission.'};
             }
         }
-        return {status: 'unknown', scope: 'account', message: 'Post was clicked, but Facebook did not clearly confirm the result. Check the group; this submission will not be automatically repeated.'};
+        const accountBlocked = document.querySelector('input[type="password"]') || /checkpoint|challenge/.test(location.pathname);
+        return {status: 'unknown', scope: accountBlocked ? 'account' : 'group', message: 'Post was clicked, but Facebook did not clearly confirm the result. Held for review; this group will not be automatically repeated.'};
     } catch (error) {
         return {status: clicked ? 'unknown' : 'not_started', scope: 'account', message: error.message};
     }
 }
 async function handle(message) {
-    if (message.op === 'ping') return {version: '1.0.6'};
+    if (message.op === 'ping') return {version: '1.0.7'};
+    if (message.op === 'cancel') {
+        cancelled = true;
+        const tabId = (await chrome.storage.local.get('tabId')).tabId;
+        if (tabId && activeToken) await chrome.scripting.executeScript({target: {tabId}, func: token => { window.__wnqFbCancelled = token; }, args: [activeToken]});
+        return {stopped: true};
+    }
     if (busy) throw new Error('A Facebook request is already running.');
     busy = true;
     try {
@@ -157,6 +167,7 @@ async function handle(message) {
         if (message.op !== 'publish' || !job || !/^https:\/\/www\.facebook\.com\/groups\/[a-zA-Z0-9._-]+\/$/.test(job.url) ||
             !/^wnq_fb_job_[a-f0-9]{64}$/.test(job.key) || typeof job.token !== 'string' ||
             typeof job.message !== 'string' || !job.message.trim() || job.message.length > 20000) throw new Error('Invalid publishing job.');
+        activeToken = job.token; cancelled = false;
         const existing = (await chrome.storage.local.get(job.key))[job.key];
         if (existing) return existing.result || {status: 'unknown', message: 'This group has a previous browser submission. Check Facebook before taking further action.'};
         // Durable before dispatch, so a service-worker restart cannot replay a click.
@@ -165,6 +176,7 @@ async function handle(message) {
         try {
             const tab = await facebookTab(job.url);
             await loaded(tab.id);
+            if (cancelled) throw new Error('Stopped before dispatch');
             dispatched = true;
             const results = await chrome.scripting.executeScript({target: {tabId: tab.id}, func: submit, args: [{...job, joinAuthorized: false}]});
             result = results[0]?.result || {status: 'unknown', message: 'Facebook returned no result. Check the group.'};
@@ -184,7 +196,7 @@ async function handle(message) {
         if (result.status === 'not_started') await chrome.storage.local.remove(job.key);
         else await chrome.storage.local.set({[job.key]: {result}});
         return result;
-    } finally { busy = false; }
+    } finally { busy = false; activeToken = null; }
 }
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (!allowed(sender)) return false;

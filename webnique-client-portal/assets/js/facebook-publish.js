@@ -6,6 +6,11 @@
     const requests = new Map();
     let running = false, busy = false, mode = 'scheduled', timer;
     const show = text => { status.textContent = text; };
+    const errorBox = document.getElementById('fb-errors');
+    const error = text => { errorBox.textContent = text; errorBox.hidden = !text; };
+    function controls() {
+        for (const id of ['fb-start', 'fb-test', 'fb-resume', 'fb-login']) document.getElementById(id).disabled = busy || running;
+    }
     window.addEventListener('message', event => {
         if (event.source !== window || event.origin !== location.origin || event.data?.source !== 'wnq-facebook-extension') return;
         const pending = requests.get(event.data.id);
@@ -36,6 +41,13 @@
         const data = await api('progress', {mode});
         const c = data.counts;
         document.getElementById('fb-progress').textContent = `${c.submitted + c.pending + c.skipped + c.review} of ${c.total} processed · ${c.submitted} submitted · ${c.pending} awaiting approval · ${c.skipped} skipped · ${c.review} need review`;
+        const labels = {submitted: 'Submitted — Facebook confirmed', pending: 'Awaiting group approval', skipped: 'Not posted — skipped', review: 'Unconfirmed — review needed', reserved: 'In progress', waiting: 'Not posted yet'};
+        for (const node of document.querySelectorAll('[data-fb-group]')) {
+            const row = data.rows.find(item => item.url === node.dataset.fbGroup);
+            if (row) node.textContent = (labels[row.status] || row.status) + (row.message ? ' · ' + row.message : '');
+        }
+        if (running && mode === 'scheduled' && !data.enabled) { running = false; show('Weekly schedule stopped. Select Resume to continue.'); }
+        if (!running && !busy && data.enabled) show('Schedule is enabled but this page is idle. Select Resume to continue.');
         const panel = document.getElementById('fb-review');
         panel.replaceChildren();
         for (const item of data.review) {
@@ -49,7 +61,7 @@
                     if (!confirm('Have you checked this group in Facebook? This marks it “' + label + '” and does not publish another post.')) return;
                     button.disabled = true;
                     try { await api('resolve', {key: item.key, resolution}); await progress(); show('Review saved. No post was sent.'); }
-                    catch (error) { show(error.message); button.disabled = false; }
+                    catch (e) { error(e.message); button.disabled = false; }
                 }; row.append(' ', button);
             }
             panel.append(row);
@@ -58,13 +70,15 @@
     async function tick() {
         if (!running || busy) return;
         busy = true;
+        controls();
         try {
             const connection = await companion('ping');
-            if (!connection.version || connection.version.localeCompare('1.0.5', undefined, {numeric: true}) < 0) throw new Error('Update and reload Facebook companion 1.0.5 or newer before publishing.');
+            if (!connection.version || connection.version.localeCompare('1.0.7', undefined, {numeric: true}) < 0) throw new Error('Update and reload Facebook companion 1.0.7 or newer before publishing.');
             const next = await api('next', {mode});
-            if (next.waiting || next.finished) {
-                show(next.message || 'Waiting for the saved daily start time.');
-                if (mode !== 'scheduled') running = false;
+            if (next.waiting || next.finished || next.stopped) {
+                show((next.message || 'Waiting for the saved daily start time.') + (next.next_at ? ' Next attempt after ' + new Date(next.next_at * 1000).toLocaleTimeString() : ''));
+                if (next.stopped || (mode === 'test' && next.finished)) running = false;
+                if (mode === 'test' && next.finished) error(next.message);
             } else if (next.job) {
                 const job = next.job;
                 show('Publishing: ' + job.url);
@@ -74,31 +88,41 @@
                 }
                 const result = await companion('publish', job);
                 await api('result', {key: job.key, token: job.token, status: result.status, scope: result.scope || 'account', message: result.message || ''});
-                show(result.message);
+                show(mode === 'test' ? (result.status === 'submitted' ? 'Test passed: Facebook confirmed submission.' : result.status === 'pending' ? 'Test submitted for approval — not publicly posted yet.' : 'Test did not confirm a post.') : result.message);
+                if (!['submitted', 'pending'].includes(result.status)) error(result.message);
                 if ((!['submitted', 'pending'].includes(result.status) && result.scope !== 'group') || mode === 'test') running = false;
             }
             await progress();
-        } catch (error) { running = false; show('Paused: ' + error.message); }
-        finally { busy = false; if (running) timer = setTimeout(tick, 60000); }
+        } catch (e) { running = false; error(e.message); show('Stopped due to an error. Check details below, then Resume.'); await api('stop').catch(() => {}); }
+        finally { busy = false; controls(); if (running) timer = setTimeout(tick, 10000); }
     }
-    async function start(nextMode) {
+    async function start(nextMode, action = 'start') {
         if (busy || running) return;
-        if (!confirm('Publish your SAVED message to ' + (nextMode === 'test' ? 'the FIRST saved Facebook group now' : nextMode === 'today' ? 'today’s saved groups now' : 'each daily batch at the saved time while this page stays open') + '? Only continue if these groups allow your post.')) return;
-        mode = nextMode; running = true; clearTimeout(timer); await tick();
+        if (!confirm(nextMode === 'test' ? 'Test sends a REAL post to the first saved group, subject to the cutoff, six-minute interval and duplicate protection. Continue?' : 'Start/resume the saved weekly schedule at one post every six minutes? Only continue if these groups allow your message.')) return;
+        busy = true; controls(); error('');
+        try { await api(nextMode === 'test' ? 'stop' : action); mode = nextMode; running = true; }
+        catch (e) { error(e.message); }
+        finally { busy = false; controls(); }
+        clearTimeout(timer); await tick();
     }
     document.getElementById('fb-start').onclick = () => start('scheduled');
-    document.getElementById('fb-now').onclick = () => start('today');
+    document.getElementById('fb-resume').onclick = () => start('scheduled', 'resume');
     document.getElementById('fb-test').onclick = () => start('test');
-    document.getElementById('fb-stop').onclick = () => { running = false; clearTimeout(timer); show(busy ? 'Pausing after the current request. A post already being submitted cannot be recalled.' : 'Paused.'); };
+    document.getElementById('fb-stop').onclick = async () => {
+        running = false; clearTimeout(timer); controls();
+        show('Stopping the weekly schedule. A post already submitted cannot be recalled.');
+        try { await Promise.all([api('stop'), companion('cancel')]); show('Weekly schedule stopped. Select Resume to continue.'); }
+        catch (e) { error('Stop could not be fully confirmed: ' + e.message); }
+    };
     document.getElementById('fb-login').onclick = async () => {
         if (running || busy) return show('Pause publishing before opening the login page.');
-        try { await companion('login'); show('Sign in directly on Facebook, then return here.'); } catch (e) { show(e.message); }
+        try { await companion('login'); show('Sign in directly on Facebook, then return here.'); } catch (e) { error(e.message); }
     };
     const connect = async () => {
-        try { await companion('ping'); show('Facebook companion connected. Save your plan, sign in, then publish.'); } catch (e) { show(e.message); }
+        try { const info = await companion('ping'); document.getElementById('fb-connection').textContent = 'Companion connected · ' + info.version; } catch (e) { document.getElementById('fb-connection').textContent = 'Companion disconnected'; error(e.message); }
     };
     document.getElementById('fb-connect').onclick = connect;
     window.addEventListener('beforeunload', event => { if (running || busy) { event.preventDefault(); event.returnValue = ''; } });
     connect();
-    progress().catch(() => {});
+    progress().catch(e => error(e.message));
 })();
