@@ -19,10 +19,15 @@
       const response = await fetch(ajaxurl, {method:'POST',body,credentials:'same-origin',signal:controller.signal});
       if ([401,403].includes(response.status) || /\/wp-login\.php(?:\?|$)/.test(response.url || '')) throw new Error('WordPress access/session needs attention. Sign in or check security restrictions, then refresh and resume.');
       if (response.status === 429 || response.status >= 500) throw retryError(`WordPress temporarily unavailable (HTTP ${response.status}). Saved state retained.`);
-      if (!response.ok) throw new Error(`WordPress rejected the request (HTTP ${response.status}). Resume after resolving the server error.`);
       const raw = await response.text();
       if (raw.trim() === '-1' || /id=["']loginform["']|name=["']log["']/.test(raw)) throw new Error('WordPress session expired. Sign in, refresh and resume.');
       if (raw.trim() === '0') throw new Error('WordPress AJAX action unavailable. Check the plugin/session, then resume.');
+      if (!response.ok) {
+        let errorResponse;
+        try { errorResponse = JSON.parse(raw); } catch (_) {}
+        const message = errorResponse?.success === false && typeof errorResponse.data?.message === 'string' ? errorResponse.data.message.trim().slice(0, 600) : '';
+        throw new Error(message || `WordPress rejected the request (HTTP ${response.status}) without a usable error message. Check the plugin or server security logs.`);
+      }
       let result;
       try { result = JSON.parse(raw); } catch (_) { throw retryError('WordPress returned a non-JSON page. Retrying safely; no listing acknowledged.'); }
       if (!result || typeof result.success !== 'boolean') throw retryError('WordPress returned incomplete data. Retrying safely.');
@@ -189,6 +194,9 @@
   byId('lf-search-form').addEventListener('submit',async event => {
     event.preventDefault(); if (looping || preparing) return;
     preparing = true; controls();
+    review=null;byId('lf-zip-review').hidden=true;
+    byId('lf-progress').textContent='Checking the new ZIP list. No new search has started.';
+    byId('lf-bulk-progress').textContent=bulk ? 'Previous bulk search retained. This ZIP check does not restart or replace it.' : '';
     try {
       review = await history('check',{keyword:byId('lf-niche').value.trim(),zips:byId('lf-postcode').value.trim()});
       const items = byId('lf-zip-items');items.replaceChildren();
@@ -201,7 +209,7 @@
       }
       byId('lf-zip-review').hidden=false;
       byId('lf-progress').textContent='Review ZIP history, then start the selected ZIPs. Nothing has started yet.';
-    } catch (error) {review=null;byId('lf-zip-review').hidden=true;byId('lf-progress').textContent=error.message;}
+    } catch (error) {review=null;byId('lf-zip-review').hidden=true;byId('lf-progress').textContent='ZIP check failed: '+error.message+' No new search started. Correct the issue, then click Check ZIPs again.';}
     finally {preparing=false;controls();}
   });
   byId('lf-bulk-start').addEventListener('click',async()=>{
