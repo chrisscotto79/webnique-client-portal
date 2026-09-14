@@ -20,6 +20,7 @@ function ok($v) { global $checks; $checks++; if (!$v) { throw new RuntimeExcepti
 function rejects($fn) { try { $fn(); } catch (RuntimeException $e) { ok(true); return; } ok(false); }
 ok(H::keyword('  PLUMBERS   Near Me ') === 'plumbers near me');
 ok(H::zips("01234,32825\n32825;32826") === ['01234','32825','32826']);
+ok(H::zips("32825\u{00A0}32826\u{202F}32827") === ['32825','32826','32827']);
 ok(count(H::zips(implode(',', range(10000,10249)))) === 250);
 foreach (['', '1234', '32825bad', implode(',', range(10000,10250))] as $bad) { rejects(fn() => H::zips($bad)); }
 $run = '12345678-1234-1234-1234-123456789012';

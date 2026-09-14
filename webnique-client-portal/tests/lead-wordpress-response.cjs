@@ -13,5 +13,10 @@ const request=vm.runInNewContext(`function retryError(message){return Object.ass
   response=new TypeError('network');await assert.rejects(()=>request({}),e=>e.retryable);checks++;
   response=reply(200,'{"success":true,"data":{"outcome":"saved"}}');assert.equal((await request({})).data.outcome,'saved');checks++;
   response=reply(200,'{"success":false,"data":{"message":"invalid listing"}}');assert.equal((await request({})).success,false);checks++;
+  response=reply(400,JSON.stringify({success:false,data:{message:'You entered 251 unique ZIP codes. Use up to 250 per batch.'}}));
+  await assert.rejects(()=>request({}),e=>e.message.includes('251 unique') && !e.retryable);checks++;
+  response=reply(400,JSON.stringify({success:false,data:{message:'Search history could not be read. No search started; retry after checking the database.'}}));
+  await assert.rejects(()=>request({}),e=>e.message.includes('history could not be read') && !e.retryable);checks++;
+  response=reply(400,'0');await assert.rejects(()=>request({}),e=>e.message.includes('AJAX action unavailable'));checks++;
   console.log(`PASS: ${checks} WordPress response classification checks; no live requests.`);
 })().catch(e=>{console.error(e);process.exitCode=1;});
