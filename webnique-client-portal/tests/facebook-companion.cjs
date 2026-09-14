@@ -40,7 +40,7 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../facebook
         await page.setRequestInterception(true);
         page.on('request', req => req.respond({status: 200, contentType: 'text/html', body: '<html><body></body></html>'}));
         await page.goto(job.url);
-        await page.setContent(`<button role="button" onclick="document.querySelector('[role=dialog]').style.display='block'">Write something...</button>
+        await page.setContent(`<button aria-label="Create post" onclick="document.querySelector('[role=dialog]').style.display='block'">Open composer</button>
           <div role="dialog" style="display:none"><div contenteditable="true" role="textbox"></div>
           <button role="button" onclick="this.parentElement.style.display='none';document.querySelector('[role=status]').textContent='Your post was published'">Post</button></div><div role="status"></div>`);
         assert.equal((await page.evaluate(submit, job)).status, 'submitted', 'Only confirmed submission succeeds');

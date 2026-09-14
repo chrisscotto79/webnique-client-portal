@@ -38,10 +38,10 @@ async function submit(job) {
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     const visible = element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden';
     const text = element => (element.innerText || element.textContent || '').trim();
-    const wait = async finder => {
+    const wait = async (finder, step) => {
         const deadline = Date.now() + 15000;
         while (Date.now() < deadline) { const result = finder(); if (result) return result; await sleep(250); }
-        throw new Error('Facebook controls were not found. Check login, group access, language, or page changes.');
+        throw new Error(step || 'Facebook controls were not found.');
     };
     try {
         const current = new URL(location.href);
@@ -94,9 +94,15 @@ async function submit(job) {
         if (/you (?:can't|cannot|are not allowed to) post in this group|this group (?:is no longer available|has been removed)|this content isn't available right now/i.test(groupNotice)) {
             return {status: 'not_started', scope: 'group', message: 'Group unavailable or posting restricted. Skipped without posting.'};
         }
-        const trigger = await wait(() => [...document.querySelectorAll('[role="button"]')].find(el => visible(el) && /^Write something(?:\.\.\.|…)?$/i.test(text(el))));
+        const trigger = await wait(() => {
+            const matches = [...document.querySelectorAll('button,[role="button"]')].filter(el => visible(el) &&
+                !el.closest('[role="article"],[role="dialog"],aside,[role="complementary"]') &&
+                /^(?:Write something(?:\.\.\.|…)?|Create (?:a )?post)$/i.test((el.getAttribute('aria-label') || text(el)).trim()));
+            const controls = matches.filter(el => !matches.some(other => other !== el && other.contains(el)));
+            return controls.length === 1 ? controls[0] : null;
+        }, 'Could not locate one group posting-box button (Write something / Create post). No post clicked. Open the stopped group to check its posting controls, membership, or restrictions; signing in alone may not resolve this.');
         trigger.click();
-        const dialog = await wait(() => [...document.querySelectorAll('[role="dialog"]')].find(el => visible(el) && el.querySelector('[contenteditable="true"][role="textbox"]')));
+        const dialog = await wait(() => [...document.querySelectorAll('[role="dialog"]')].find(el => visible(el) && el.querySelector('[contenteditable="true"][role="textbox"]')), 'The posting-box button opened, but the editable Create post dialog was not found. No post clicked. Check the Facebook tab for a prompt or changed composer.');
         const editors = [...dialog.querySelectorAll('[contenteditable="true"][role="textbox"]')].filter(visible);
         if (editors.length !== 1) throw new Error('The Facebook composer is ambiguous. No post sent.');
         const editor = editors[0];
@@ -152,7 +158,7 @@ async function submit(job) {
     }
 }
 async function handle(message) {
-    if (message.op === 'ping') return {version: '1.0.7'};
+    if (message.op === 'ping') return {version: '1.0.8'};
     if (message.op === 'cancel') {
         cancelled = true;
         const tabId = (await chrome.storage.local.get('tabId')).tabId;

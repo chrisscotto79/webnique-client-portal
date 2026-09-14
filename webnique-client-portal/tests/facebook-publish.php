@@ -74,6 +74,8 @@ check(WNQ\Services\FacebookDailyGuard::groupId('https://www.facebook.com/groups/
 check(!callApi(['op' => 'resolve', 'key' => $job['key'], 'resolution' => 'skipped'])['success']);
 $options[$job['key']]['status'] = 'unknown';
 check(callApi(['op' => 'resolve', 'key' => $job['key'], 'resolution' => 'skipped'])['success']);
+check($options[$job['key']]['confirmation'] === 'manual');
+check(str_contains($options[$job['key']]['message'], 'manual review'));
 check(!WNQ\Services\FacebookDailyGuard::reserve('123', 'new-token'));
 check(callApi(['op' => 'progress', 'mode' => 'test'])['data']['counts']['skipped'] === 1);
 $options['wnq_facebook_group_plan']['cutoff'] = '00:00';

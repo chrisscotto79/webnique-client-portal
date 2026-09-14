@@ -55,7 +55,7 @@ final class FacebookGroupsAdmin
                 $state = get_option($key, []);
                 $status = $state['status'] ?? '';
                 $held = $status === 'unknown' || ($status === 'reserved' && ($state['expires_at'] ?? PHP_INT_MAX) < time());
-                $rows[] = ['url' => $url, 'status' => $held ? 'review' : ($status ?: 'waiting'), 'message' => $state['message'] ?? ''];
+                $rows[] = ['url' => $url, 'status' => $held ? 'review' : ($status ?: 'waiting'), 'message' => $state['message'] ?? '', 'confirmation' => $state['confirmation'] ?? 'legacy'];
                 if (in_array($url, $groups, true)) {
                     if (isset($counts[$status]) && $status !== 'total') $counts[$status]++;
                     elseif ($held) $counts['review']++;
@@ -76,7 +76,7 @@ final class FacebookGroupsAdmin
             $resolution = sanitize_key($_POST['resolution'] ?? '');
             if (!in_array($resolution, ['submitted', 'skipped'], true)) wp_send_json_error(['message' => 'Invalid resolution.']);
             // Keep both daily exclusion and weekly record even when the user says not posted.
-            update_option($key, array_merge($state, ['status' => $resolution]), false);
+            update_option($key, array_merge($state, ['status' => $resolution, 'confirmation' => 'manual', 'message' => $resolution === 'submitted' ? 'Marked as posted after manual review. Not automatically verified by Facebook.' : 'Marked not posted after manual review; skipped without retrying.']), false);
             wp_send_json_success([]);
         }
         if ($op === 'next') {
@@ -142,7 +142,7 @@ final class FacebookGroupsAdmin
                 if (!empty($state['group_id'])) FacebookDailyGuard::release($state['group_id'], $token);
                 if (($_POST['scope'] ?? '') === 'group') update_option($key, array_merge($state, ['status' => 'skipped', 'message' => substr(sanitize_text_field(wp_unslash($_POST['message'] ?? '')), 0, 500)]), false);
                 else delete_option($key);
-            } else update_option($key, array_merge($state, ['status' => $status === 'not_started' ? 'unknown' : $status, 'message' => substr(sanitize_text_field(wp_unslash($_POST['message'] ?? '')), 0, 500)]), false);
+            } else update_option($key, array_merge($state, ['status' => $status === 'not_started' ? 'unknown' : $status, 'confirmation' => in_array($status, ['submitted', 'pending'], true) ? 'browser' : 'none', 'message' => substr(sanitize_text_field(wp_unslash($_POST['message'] ?? '')), 0, 500)]), false);
             wp_send_json_success([]);
         }
         wp_send_json_error(['message' => 'Unknown action.']);

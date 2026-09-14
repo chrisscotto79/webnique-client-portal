@@ -44,7 +44,15 @@
         const labels = {submitted: 'Submitted — Facebook confirmed', pending: 'Awaiting group approval', skipped: 'Not posted — skipped', review: 'Unconfirmed — review needed', reserved: 'In progress', waiting: 'Not posted yet'};
         for (const node of document.querySelectorAll('[data-fb-group]')) {
             const row = data.rows.find(item => item.url === node.dataset.fbGroup);
-            if (row) node.textContent = (labels[row.status] || row.status) + (row.message ? ' · ' + row.message : '');
+            if (row) {
+                let label = labels[row.status] || row.status;
+                let detail = row.message;
+                if (row.status === 'submitted' && row.confirmation !== 'browser') {
+                    label = row.confirmation === 'manual' ? 'Posted — manually confirmed' : 'Marked submitted — confirmation source not recorded';
+                    if (row.confirmation !== 'manual') detail = 'Older record; check Facebook to verify. Duplicate protection remains active.';
+                }
+                node.textContent = label + (detail ? ' · ' + detail : '');
+            }
         }
         if (running && mode === 'scheduled' && !data.enabled) { running = false; show('Weekly schedule stopped. Select Resume to continue.'); }
         if (!running && !busy && data.enabled) show('Schedule is enabled but this page is idle. Select Resume to continue.');
@@ -89,7 +97,7 @@
                 const result = await companion('publish', job);
                 await api('result', {key: job.key, token: job.token, status: result.status, scope: result.scope || 'account', message: result.message || ''});
                 show(mode === 'test' ? (result.status === 'submitted' ? 'Test passed: Facebook confirmed submission.' : result.status === 'pending' ? 'Test submitted for approval — not publicly posted yet.' : 'Test did not confirm a post.') : result.message);
-                if (!['submitted', 'pending'].includes(result.status)) error(result.message);
+                if (!['submitted', 'pending'].includes(result.status)) error(job.url + ' — ' + result.message);
                 if ((!['submitted', 'pending'].includes(result.status) && result.scope !== 'group') || mode === 'test') running = false;
             }
             await progress();
