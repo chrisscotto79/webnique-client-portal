@@ -1,4 +1,14 @@
-# Facebook Publisher companion 1.0.7
+# Facebook Publisher companion 1.0.8
+
+Version 1.0.8 / WordPress 3.8.27 recognizes unambiguous native or role-based group
+composer buttons labelled Write something, Create post, or Create a post, including
+aria labels. Feed posts, sidebars and dialogs are excluded. Errors identify whether
+the initial posting button or editable dialog failed. This does not guarantee support
+for the specific live layout until it has been inspected.
+
+Manual review confirmations are now labelled separately from browser confirmations
+and replace stale error text. Older submitted records with no confirmation provenance
+are labelled as such; their duplicate guards are not reset and no posts are retried.
 
 Version 1.0.7 / WordPress 3.8.25 provides Start, Test, Stop, Resume and Check
 connection. Sign-in lives in Setup. Start starts/rearms this week's schedule without
