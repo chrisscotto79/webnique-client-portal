@@ -10,12 +10,12 @@ final class FacebookDailyGuard
         return $match[1];
     }
 
-    public static function reserve(string $id, string $token): bool
+    public static function reserve(string $id, string $token, int $seconds = 86580): bool
     {
         global $wpdb;
         $key = 'wnq_fb_daily_' . $id;
         // Dispatch expires in 120 seconds; padding keeps 24 hours after its latest click.
-        $next = ['token' => $token, 'until' => time() + 86400 + 180];
+        $next = ['token' => $token, 'until' => time() + $seconds];
         if (add_option($key, $next, '', false)) return true;
         $old = get_option($key, []);
         if (empty($old['until']) || $old['until'] > time()) return false;
@@ -26,6 +26,17 @@ final class FacebookDailyGuard
         ));
         wp_cache_delete($key, 'options');
         return $changed === 1;
+    }
+
+    public static function renew(string $id, string $token, int $seconds): void
+    {
+        global $wpdb;
+        $key = 'wnq_fb_daily_' . $id;
+        $old = get_option($key, []);
+        if (!$old || !hash_equals($old['token'], $token)) return;
+        $next = ['token' => $token, 'until' => time() + $seconds];
+        $wpdb->query($wpdb->prepare("UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value = %s", maybe_serialize($next), $key, maybe_serialize($old)));
+        wp_cache_delete($key, 'options');
     }
 
     public static function release(string $id, string $token): void

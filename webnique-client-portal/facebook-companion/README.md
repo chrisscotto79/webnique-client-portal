@@ -1,4 +1,21 @@
-# Facebook Publisher companion 1.0.6
+# Facebook Publisher companion 1.0.7
+
+Version 1.0.7 / WordPress 3.8.25 provides Start, Test, Stop, Resume and Check
+connection. Sign-in lives in Setup. Start starts/rearms this week's schedule without
+clearing per-group records. Resume continues the saved schedule. Stop is persisted
+in WordPress and requests cancellation before the browser's next Join/Post click;
+it cannot recall a click already sent. Closing the page still stops its runner.
+
+One dispatch is allowed globally; after each result WordPress enforces a six-minute
+cooldown, including across refreshes, other tabs and Tests. Lost results conservatively
+wait up to eight minutes from authorization. All modes still respect the daily
+cutoff and duplicate guards. Generic transport/login/security failures stop the run.
+An unconfirmed click on an otherwise accessible group is held for review while
+subsequent groups continue. Never treat an uncertain click as a successful Test.
+
+Weekly dropdowns show current-week status per group. Test uses the first saved group
+and reports confirmed submission, pending approval, or failure/held; it does not
+bypass duplicate limits. Errors are shown separately from the progress counts.
 
 Version 1.0.6 handles synchronous extension-context invalidation as well as rejected
 runtime promises. After an extension reload/update, refresh the WordPress tab to

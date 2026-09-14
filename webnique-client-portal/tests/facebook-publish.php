@@ -34,11 +34,17 @@ function add_option($key, $value, ...$args) { global $options; if (isset($option
 function update_option($key, $value, ...$args) { global $options; $options[$key] = $value; }
 function delete_option($key) { global $options; unset($options[$key]); }
 function wp_generate_uuid4() { return 'test-token'; }
-function callApi($input) { $_POST = $input; try { WNQ\Admin\FacebookGroupsAdmin::publish(); } catch (Response $r) { return $r->payload; } throw new Exception('No response'); }
+function callApi($input, $advanceInterval = true) {
+    global $options;
+    // Existing queue cases simulate the next polling opportunity after cooldown.
+    if ($advanceInterval && ($input['op'] ?? '') === 'next' && isset($options['wnq_fb_daily_dispatch'])) $options['wnq_fb_daily_dispatch']['until'] = time() - 1;
+    $_POST = $input; try { WNQ\Admin\FacebookGroupsAdmin::publish(); } catch (Response $r) { return $r->payload; } throw new Exception('No response');
+}
 $checks = 0;
 function check($value) { global $checks; if (!$value) throw new Exception('Check failed at ' . ($checks + 1)); $checks++; }
 check(!callApi(['op' => 'next'])['success']);
 $options['wnq_facebook_group_plan'] = ['groups' => ['https://www.facebook.com/groups/123/'], 'message' => 'Hello', 'timezone' => gmdate('H') === '23' ? 'Pacific/Honolulu' : 'UTC', 'start_time' => '09:00', 'cutoff' => '23:59', 'repeat' => true];
+$options['wnq_fb_schedule_enabled'] = true;
 $allowed = false; check(!callApi(['op' => 'next'])['success']); $allowed = true;
 $job = callApi(['op' => 'next', 'mode' => 'test'])['data']['job'];
 check($job['message'] === 'Hello');
@@ -102,4 +108,37 @@ unset($options['wnq_fb_first_week']);
 $options['wnq_facebook_group_plan']['groups'] = ['https://www.facebook.com/groups/999998/'];
 check(isset(callApi(['op' => 'next', 'mode' => 'test'])['data']['job']));
 check(!isset($options['wnq_fb_first_week']));
-echo "$checks publishing queue checks passed. No external requests.\n";
+// Same server cooldown applies to a second group, even from another tab/test.
+$options['wnq_facebook_group_plan']['groups'] = ['https://www.facebook.com/groups/888888/'];
+$first = callApi(['op' => 'next', 'mode' => 'test'])['data']['job'];
+callApi(['op' => 'result', 'key' => $first['key'], 'token' => $first['token'], 'status' => 'submitted']);
+$options['wnq_facebook_group_plan']['groups'] = ['https://www.facebook.com/groups/888889/'];
+check(callApi(['op' => 'next', 'mode' => 'test'], false)['data']['waiting']);
+check($options['wnq_fb_daily_dispatch']['until'] >= time() + 359);
+check(!isset($options['wnq_fb_daily_888889']), 'Cooldown must not consume the second group');
+check(isset(callApi(['op' => 'next', 'mode' => 'test'])['data']['job']));
+callApi(['op' => 'stop']);
+check(callApi(['op' => 'next', 'mode' => 'scheduled'])['data']['stopped']);
+callApi(['op' => 'resume']);
+check($options['wnq_fb_schedule_enabled']);
+$oldWeek = $options['wnq_fb_first_week'] ?? '';
+callApi(['op' => 'start']);
+check($options['wnq_fb_first_week'] === $now->format('o-W'));
+$snapshot = callApi(['op' => 'progress', 'mode' => 'test'])['data'];
+check(count($snapshot['rows']) === 1);
+check($snapshot['rows'][0]['status'] === 'reserved');
+if (in_array('--render', $argv, true)) {
+    function get_transient(...$args) { return false; }
+    function delete_transient(...$args) {}
+    function get_current_user_id() { return 1; }
+    function esc_html($value) { return htmlspecialchars((string)$value, ENT_QUOTES); }
+    function esc_attr($value) { return esc_html($value); }
+    function esc_url($value) { return esc_html($value); }
+    function esc_textarea($value) { return esc_html($value); }
+    function admin_url($value) { return 'https://goldenwebmarketing.com/wp-admin/' . $value; }
+    function wp_nonce_field(...$args) {}
+    function selected($a, $b) { if ($a === $b) echo 'selected'; }
+    function checked($a) { if ($a) echo 'checked'; }
+    function submit_button($label) { echo '<button>' . esc_html($label) . '</button>'; }
+    WNQ\Admin\FacebookGroupsAdmin::render();
+} else echo "$checks publishing queue checks passed. No external requests.\n";

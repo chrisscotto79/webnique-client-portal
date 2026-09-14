@@ -34,21 +34,28 @@ final class FacebookGroupsAdmin
         check_ajax_referer('wnq_facebook_publish', 'nonce');
         $plan = get_option('wnq_facebook_group_plan', []);
         $op = sanitize_key($_POST['op'] ?? '');
+        if ($op === 'stop') { update_option('wnq_fb_schedule_enabled', false, false); wp_send_json_success([]); }
         if (empty($plan['groups']) || trim($plan['message'] ?? '') === '') {
             wp_send_json_error(['message' => 'Save your group links and message first.']);
         }
         $now = new \DateTimeImmutable('now', new \DateTimeZone($plan['timezone']));
         $week = $now->format('o-W');
+        if (in_array($op, ['start', 'resume'], true)) {
+            if ($op === 'start') update_option('wnq_fb_first_week', $week, false);
+            update_option('wnq_fb_schedule_enabled', true, false);
+            wp_send_json_success([]);
+        }
         $mode = sanitize_key($_POST['mode'] ?? 'today');
         $groups = $mode === 'test' ? array_slice($plan['groups'], 0, 1) : FacebookGroupPlan::batches($plan['groups'])[$now->format('l')];
         if ($op === 'progress') {
             $counts = ['total' => count($groups), 'submitted' => 0, 'pending' => 0, 'skipped' => 0, 'review' => 0];
-            $review = [];
+            $review = []; $rows = [];
             foreach ($plan['groups'] as $url) {
                 $key = 'wnq_fb_job_' . hash('sha256', $week . '|' . strtolower($url));
                 $state = get_option($key, []);
                 $status = $state['status'] ?? '';
                 $held = $status === 'unknown' || ($status === 'reserved' && ($state['expires_at'] ?? PHP_INT_MAX) < time());
+                $rows[] = ['url' => $url, 'status' => $held ? 'review' : ($status ?: 'waiting'), 'message' => $state['message'] ?? ''];
                 if (in_array($url, $groups, true)) {
                     if (isset($counts[$status]) && $status !== 'total') $counts[$status]++;
                     elseif ($held) $counts['review']++;
@@ -56,7 +63,7 @@ final class FacebookGroupsAdmin
                 if ($held) $review[] = ['key' => $key, 'url' => $url];
                 elseif ($status === 'skipped' && !empty($state['message'])) $review[] = ['key' => $key, 'url' => $url, 'skipped' => true, 'message' => $state['message']];
             }
-            wp_send_json_success(['counts' => $counts, 'review' => $review]);
+            wp_send_json_success(['counts' => $counts, 'review' => $review, 'rows' => $rows, 'enabled' => (bool)get_option('wnq_fb_schedule_enabled', false), 'next_at' => get_option('wnq_fb_daily_dispatch', [])['until'] ?? 0]);
         }
         if ($op === 'resolve') {
             $key = sanitize_key($_POST['key'] ?? '');
@@ -73,6 +80,7 @@ final class FacebookGroupsAdmin
             wp_send_json_success([]);
         }
         if ($op === 'next') {
+            if ($mode !== 'test' && !get_option('wnq_fb_schedule_enabled', false)) wp_send_json_success(['stopped' => true, 'message' => 'Weekly schedule stopped. Select Resume to continue.']);
             $cutoff = $plan['cutoff'] ?? '18:00';
             if ($now->format('H:i') >= $cutoff) wp_send_json_success(['finished' => true, 'message' => 'Daily cutoff reached. No more posts will start today.']);
             $mode = sanitize_key($_POST['mode'] ?? 'today');
@@ -99,10 +107,18 @@ final class FacebookGroupsAdmin
                 if (!FacebookDailyGuard::reserve($groupId, $token)) {
                     add_option($key, ['status' => 'skipped'], '', false); continue;
                 }
+                // One global dispatch lease covers all WordPress tabs and tests.
+                // Up to 120 seconds to dispatch + six minutes after a potential click.
+                if (!FacebookDailyGuard::reserve('dispatch', $token, 480)) {
+                    FacebookDailyGuard::release($groupId, $token);
+                    $until = get_option('wnq_fb_daily_dispatch', [])['until'] ?? time() + 360;
+                    wp_send_json_success(['waiting' => true, 'next_at' => $until, 'message' => 'Waiting for the six-minute posting interval.']);
+                }
                 // Atomic unique option reserves this group before any browser-side click.
                 $expires = min(time() + 120, $now->setTime((int)substr($cutoff, 0, 2), (int)substr($cutoff, 3, 2))->getTimestamp());
                 if (!add_option($key, ['status' => 'reserved', 'token' => $token, 'group_id' => $groupId, 'expires_at' => $expires], '', false)) {
                     FacebookDailyGuard::release($groupId, $token);
+                    FacebookDailyGuard::release('dispatch', $token);
                     continue;
                 }
                 if ($mode === 'scheduled') add_option('wnq_fb_first_week', $week, '', false);
@@ -110,7 +126,7 @@ final class FacebookGroupsAdmin
                     'expires_at' => $expires,
                     'url' => $url, 'message' => $plan['message']]]);
             }
-            wp_send_json_success(['finished' => true, 'message' => 'Today’s batch is complete or has no groups.']);
+            wp_send_json_success(['finished' => true, 'message' => $mode === 'test' ? 'Test not sent: this group was already handled, held for review, or blocked by duplicate protection. See its weekly status.' : 'Today’s batch has no remaining eligible groups. See weekly statuses for posted or skipped groups.']);
         }
         if ($op === 'result') {
             $key = sanitize_key($_POST['key'] ?? '');
@@ -121,11 +137,12 @@ final class FacebookGroupsAdmin
             $status = sanitize_key($_POST['status'] ?? 'unknown');
             if (!in_array($status, ['submitted', 'pending', 'unknown', 'not_started'], true)) $status = 'unknown';
             if (in_array($state['status'], ['submitted', 'pending'], true)) wp_send_json_success([]);
+            FacebookDailyGuard::renew('dispatch', $token, 360);
             if ($status === 'not_started' && $state['status'] === 'reserved') {
                 if (!empty($state['group_id'])) FacebookDailyGuard::release($state['group_id'], $token);
                 if (($_POST['scope'] ?? '') === 'group') update_option($key, array_merge($state, ['status' => 'skipped', 'message' => substr(sanitize_text_field(wp_unslash($_POST['message'] ?? '')), 0, 500)]), false);
                 else delete_option($key);
-            } else update_option($key, array_merge($state, ['status' => $status === 'not_started' ? 'unknown' : $status]), false);
+            } else update_option($key, array_merge($state, ['status' => $status === 'not_started' ? 'unknown' : $status, 'message' => substr(sanitize_text_field(wp_unslash($_POST['message'] ?? '')), 0, 500)]), false);
             wp_send_json_success([]);
         }
         wp_send_json_error(['message' => 'Unknown action.']);
@@ -173,6 +190,7 @@ final class FacebookGroupsAdmin
                 'cutoff' => $cutoff,
                 'repeat' => isset($_POST['repeat']), 'enabled' => false,
             ], false);
+            update_option('wnq_fb_schedule_enabled', false, false);
             $notice = 'Draft saved. ' . count($parsed['groups']) . ' groups; ' . $parsed['duplicates'] . ' duplicate links removed. No posts sent.';
         } catch (\InvalidArgumentException $e) {
             $notice = $e->getMessage() . ' Previous draft was not changed.';
@@ -199,22 +217,23 @@ final class FacebookGroupsAdmin
                 Saving alone does not publish. Only include groups that permit your message.
                 Group approval and Facebook restrictions still apply; 50 per day is a planning limit, not a guaranteed safe posting rate.</p></div>
             <div style="background:white;padding:20px;margin:16px 0">
-                <h2>Connect & publish</h2>
-                <p>Install the separate <strong>facebook-companion</strong> folder with Chrome → Extensions → Developer mode → Load unpacked, then refresh this page.</p>
-                <p>Keep Chrome, this WordPress tab, and your computer awake. Facebook login stays in Chrome; WordPress never receives your password or cookies.</p>
+                <h2>Schedule controls</h2>
+                <p>One background tab · One post every 6 minutes after the previous result · Keep Chrome and this page open.</p>
+                <button type="button" class="button button-primary" id="fb-start">Start</button>
+                <button type="button" class="button" id="fb-test">Test</button>
+                <button type="button" class="button" id="fb-stop">Stop</button>
+                <button type="button" class="button" id="fb-resume">Resume</button>
                 <button type="button" class="button" id="fb-connect">Check connection</button>
-                <button type="button" class="button" id="fb-login">Open Facebook / sign in</button>
-                <button type="button" class="button" id="fb-test">Publish to first saved group</button>
-                <button type="button" class="button button-primary" id="fb-start">Start daily schedule</button>
-                <button type="button" class="button" id="fb-now">Publish today’s batch now</button>
-                <button type="button" class="button" id="fb-stop">Pause</button>
-                <p id="fb-status" role="status" aria-live="polite">Checking companion…</p>
+                <p id="fb-connection" role="status">Checking companion…</p>
+                <p id="fb-status" role="status" aria-live="polite">Stopped. Save your plan, then Test or Start.</p>
                 <p id="fb-progress" role="status">Progress will appear after saving a plan.</p>
+                <div id="fb-errors" role="alert" hidden style="border-left:4px solid #d63638;padding:12px;background:#fff3f3"></div>
+                <details><summary>Setup / Facebook sign-in</summary><p>Load the facebook-companion folder in Chrome Extensions using Load unpacked. Refresh this page after reloading the extension.</p><button type="button" class="button" id="fb-login">Open Facebook / sign in</button></details>
                 <details><summary>Submissions needing review</summary><p>Check the group first. Marking “not posted” skips it for this week and does not retry or remove the daily guard.</p><div id="fb-review"></div></details>
-                <p>Uses one reusable Facebook tab. Test publishes the saved message to the first group, even if today is not Monday.
+                <details><summary>Posting rules & safety</summary><p>Test publishes the saved message to the first group, even if today is not Monday.
                     Daily safety: maximum one submission per numeric group ID per rolling 24 hours, in addition to the weekly limit. Named group links must be replaced with numeric group-ID links before publishing.
-                    A group is reserved before publishing to prevent automatic duplicate retries. Login prompts or uncertain submissions pause the run.
-                    Submitted does not necessarily mean publicly visible; group moderators may need to approve it.</p>
+                    A group is reserved before publishing to prevent automatic duplicate retries. Login prompts stop the run; uncertain submissions are held while other groups continue.
+                    Submitted does not necessarily mean publicly visible; group moderators may need to approve it. Stop prevents new jobs and requests cancellation before Post; a post already clicked cannot be recalled.</p></details>
             </div>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="wnq_facebook_plan">
@@ -234,13 +253,13 @@ final class FacebookGroupsAdmin
                         <option value="<?php echo esc_attr($zone); ?>" <?php selected($plan['timezone'], $zone); ?>><?php echo esc_html($zone); ?></option>
                     <?php endforeach; ?></select></p>
                 <p><label><input type="checkbox" name="repeat" value="1" <?php checked($plan['repeat']); ?>> Repeat the same group batches each week</label></p>
-                <?php submit_button('Save draft & preview week'); ?>
+                <?php submit_button('Save plan'); ?>
             </form>
             <h2>Weekly preview · <?php echo count($plan['groups']); ?> groups</h2>
             <?php foreach (FacebookGroupPlan::batches($plan['groups']) as $day => $groups): ?>
                 <details style="background:white;padding:12px;margin-bottom:8px;border:1px solid #ddd">
                     <summary><?php echo esc_html($day); ?> · <?php echo count($groups); ?> groups</summary>
-                    <ul><?php foreach ($groups as $url): ?><li><a target="_blank" rel="noopener noreferrer" href="<?php echo esc_url($url); ?>"><?php echo esc_html($url); ?></a></li><?php endforeach; ?></ul>
+                    <ul><?php foreach ($groups as $url): ?><li><a target="_blank" rel="noopener noreferrer" href="<?php echo esc_url($url); ?>"><?php echo esc_html($url); ?></a> — <span data-fb-group="<?php echo esc_attr($url); ?>">Loading status…</span></li><?php endforeach; ?></ul>
                 </details>
             <?php endforeach; ?>
         </div>
