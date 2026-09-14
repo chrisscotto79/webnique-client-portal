@@ -95,7 +95,7 @@
         try { await companion('login'); show('Sign in directly on Facebook, then return here.'); } catch (e) { show(e.message); }
     };
     const connect = async () => {
-        try { await companion('ping'); show('Facebook companion connected. Save your plan, sign in, then publish.'); } catch (e) { show('Install or reload facebook-companion, then refresh this WordPress tab.'); }
+        try { await companion('ping'); show('Facebook companion connected. Save your plan, sign in, then publish.'); } catch (e) { show(e.message); }
     };
     document.getElementById('fb-connect').onclick = connect;
     window.addEventListener('beforeunload', event => { if (running || busy) { event.preventDefault(); event.returnValue = ''; } });

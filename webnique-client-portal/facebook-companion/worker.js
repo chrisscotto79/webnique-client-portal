@@ -148,7 +148,7 @@ async function submit(job) {
     }
 }
 async function handle(message) {
-    if (message.op === 'ping') return {version: '1.0.5'};
+    if (message.op === 'ping') return {version: '1.0.6'};
     if (busy) throw new Error('A Facebook request is already running.');
     busy = true;
     try {

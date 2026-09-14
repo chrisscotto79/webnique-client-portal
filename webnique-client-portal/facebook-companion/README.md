@@ -1,4 +1,10 @@
-# Facebook Publisher companion 1.0.5
+# Facebook Publisher companion 1.0.6
+
+Version 1.0.6 handles synchronous extension-context invalidation as well as rejected
+runtime promises. After an extension reload/update, refresh the WordPress tab to
+load a fresh bridge. Invalidated scripts cannot reconnect themselves. The patch
+reports that condition promptly instead of leaving a request to time out. It does
+not replay jobs, clear reservations, or change daily duplicate protection.
 
 Version 1.0.5 (WordPress 3.8.22) checks the current group's heading area for Join
 group before publishing. A join attempt is saved locally before clicking, so a
