@@ -38,10 +38,11 @@ async function submit(job) {
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     const visible = element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden';
     const text = element => (element.innerText || element.textContent || '').trim();
+    const groupFailure = message => Object.assign(new Error(message), {scope: 'group'});
     const wait = async (finder, step) => {
         const deadline = Date.now() + 15000;
         while (Date.now() < deadline) { const result = finder(); if (result) return result; await sleep(250); }
-        throw new Error(step || 'Facebook controls were not found.');
+        throw groupFailure(step || 'Facebook posting controls were not found.');
     };
     try {
         const current = new URL(location.href);
@@ -100,15 +101,15 @@ async function submit(job) {
                 /^(?:Write something(?:\.\.\.|…)?|Create (?:a )?post)$/i.test((el.getAttribute('aria-label') || text(el)).trim()));
             const controls = matches.filter(el => !matches.some(other => other !== el && other.contains(el)));
             return controls.length === 1 ? controls[0] : null;
-        }, 'Could not locate one group posting-box button (Write something / Create post). No post clicked. Open the stopped group to check its posting controls, membership, or restrictions; signing in alone may not resolve this.');
+        }, 'Posting-box button not found or ambiguous (Write something / Create post). No post clicked.');
         trigger.click();
         const dialog = await wait(() => [...document.querySelectorAll('[role="dialog"]')].find(el => visible(el) && el.querySelector('[contenteditable="true"][role="textbox"]')), 'The posting-box button opened, but the editable Create post dialog was not found. No post clicked. Check the Facebook tab for a prompt or changed composer.');
         const editors = [...dialog.querySelectorAll('[contenteditable="true"][role="textbox"]')].filter(visible);
-        if (editors.length !== 1) throw new Error('The Facebook composer is ambiguous. No post sent.');
+        if (editors.length !== 1) throw groupFailure('The Facebook composer is ambiguous. No post sent.');
         const editor = editors[0];
-        if (text(editor)) throw new Error('Facebook already has a draft in this composer. Review it manually first.');
+        if (text(editor)) throw groupFailure('Facebook already has a draft in this composer. Review it manually first.');
         editor.focus();
-        if (!document.execCommand('insertText', false, job.message)) throw new Error('Could not fill the Facebook composer.');
+        if (!document.execCommand('insertText', false, job.message)) throw groupFailure('Could not fill the Facebook composer.');
         await sleep(1000);
         // Facebook's rich-text editor rewrites paragraph breaks, NBSP and zero-width
         // formatting characters. Verify all non-whitespace content, not its DOM layout.
@@ -134,7 +135,7 @@ async function submit(job) {
             reason = 'Post button did not become ready; the link preview may still be loading.';
             await sleep(250);
         }
-        if (!postButton) throw new Error(reason + ' No post sent.');
+        if (!postButton) throw groupFailure(reason + ' No post sent.');
         postButton.scrollIntoView({block: 'center'});
         if (window.__wnqFbCancelled === job.token) throw new Error('Stopped before clicking Post.');
         if (!Number.isFinite(job.expires_at) || Date.now() >= job.expires_at * 1000) throw new Error('Publishing authorization expired. No post sent; return to WordPress and retry.');
@@ -154,11 +155,14 @@ async function submit(job) {
         const accountBlocked = document.querySelector('input[type="password"]') || /checkpoint|challenge/.test(location.pathname);
         return {status: 'unknown', scope: accountBlocked ? 'account' : 'group', message: 'Post was clicked, but Facebook did not clearly confirm the result. Held for review; this group will not be automatically repeated.'};
     } catch (error) {
-        return {status: clicked ? 'unknown' : 'not_started', scope: 'account', message: error.message};
+        const securityNotice = [...document.querySelectorAll('[role="alert"],[role="dialog"]')].filter(visible).map(text).join('\n');
+        const accountBlocked = document.querySelector('input[type="password"]') || /checkpoint|challenge|\/login/.test(location.pathname) || /temporarily blocked|account (?:is )?(?:restricted|suspended|disabled)|confirm your identity|security check/i.test(securityNotice);
+        const scope = !accountBlocked && error.scope === 'group' ? 'group' : 'account';
+        return {status: clicked ? 'unknown' : 'not_started', scope, message: (!clicked && scope === 'group' ? 'Skipped: ' : '') + error.message};
     }
 }
 async function handle(message) {
-    if (message.op === 'ping') return {version: '1.0.8'};
+    if (message.op === 'ping') return {version: '1.0.9'};
     if (message.op === 'cancel') {
         cancelled = true;
         const tabId = (await chrome.storage.local.get('tabId')).tabId;

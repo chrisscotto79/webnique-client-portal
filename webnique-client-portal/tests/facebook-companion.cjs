@@ -70,6 +70,16 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../facebook
         assert.equal((await page.evaluate(submit, {...job, joinAuthorized: true})).scope, 'group');
         assert.equal(await page.$eval('input[type=checkbox]', el => el.checked), false, 'Does not accept rules');
         assert.equal(await page.$eval('input', el => el.value), '', 'Does not answer questions');
+        const quickSubmit = vm.runInNewContext(source.replace('const deadline = Date.now() + 15000;', 'const deadline = Date.now() + 200;') + '\nsubmit', {chrome, URL, setTimeout});
+        await page.setContent('<h1>Group without a posting button</h1>');
+        const missing = await page.evaluate(quickSubmit, job);
+        assert.equal(missing.status, 'not_started');
+        assert.equal(missing.scope, 'group', 'Missing posting controls skip instead of stopping');
+        assert(missing.message.startsWith('Skipped:'));
+        await page.setContent('<button role="button">Write something...</button>');
+        assert.equal((await page.evaluate(quickSubmit, job)).scope, 'group', 'Missing dialog skips');
+        await page.setContent('<div role="alert">Your account is restricted</div>');
+        assert.equal((await page.evaluate(quickSubmit, job)).scope, 'account', 'Account restriction overrides missing-controls skip');
         await page.goto('https://www.facebook.com/login');
         const login = await page.evaluate(submit, job);
         assert.equal(login.status, 'not_started', 'Redirect/login guard');
