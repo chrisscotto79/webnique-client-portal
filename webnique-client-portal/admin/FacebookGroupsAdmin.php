@@ -80,7 +80,9 @@ final class FacebookGroupsAdmin
                 wp_send_json_success(['waiting' => true]);
             }
             $first = get_option('wnq_fb_first_week', '');
-            if (!$plan['repeat'] && $first && $first !== $week) {
+            // A direct Publish click authorizes a manual attempt independently of
+            // the recurring schedule. Per-group weekly/daily guards still apply.
+            if ($mode === 'scheduled' && !$plan['repeat'] && $first && $first !== $week) {
                 wp_send_json_success(['finished' => true, 'message' => 'One-time week finished. Enable repeat and save to run another week.']);
             }
             $groups = FacebookGroupPlan::batches($plan['groups'])[$now->format('l')];
@@ -103,7 +105,7 @@ final class FacebookGroupsAdmin
                     FacebookDailyGuard::release($groupId, $token);
                     continue;
                 }
-                add_option('wnq_fb_first_week', $week, '', false);
+                if ($mode === 'scheduled') add_option('wnq_fb_first_week', $week, '', false);
                 wp_send_json_success(['job' => ['key' => $key, 'token' => $token,
                     'expires_at' => $expires,
                     'url' => $url, 'message' => $plan['message']]]);
