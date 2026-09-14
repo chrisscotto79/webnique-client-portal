@@ -1,4 +1,12 @@
-# Facebook Publisher companion 1.0.8
+# Facebook Publisher companion 1.0.9
+
+Version 1.0.9 treats missing/ambiguous posting-box controls, missing editable dialogs,
+existing drafts, text-insertion failures and unavailable Post buttons as group-local
+pre-click skips. WordPress records the reason beside the URL and continues after
+the existing six-minute interval. Actual login/security/account restrictions still
+pause the run. Cancellation and expired authorization are not group failures.
+No WordPress update is required when already on 3.8.27. Reload this extension,
+refresh WordPress, and Resume. No uncertain post is retried or marked not posted.
 
 Version 1.0.8 / WordPress 3.8.27 recognizes unambiguous native or role-based group
 composer buttons labelled Write something, Create post, or Create a post, including
