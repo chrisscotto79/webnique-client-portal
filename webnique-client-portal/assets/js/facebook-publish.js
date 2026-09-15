@@ -3,12 +3,15 @@
     'use strict';
     const status = document.getElementById('fb-status');
     if (!status || !window.WNQFacebook) return;
+    const clientId = WNQFacebook.client || 'agency';
+    const clientName = WNQFacebook.clientName || 'Golden Web Marketing';
     const requests = new Map();
-    let running = false, busy = false, mode = 'scheduled', timer;
-    const show = text => { status.textContent = text; };
+    let running = false, busy = false, mode = 'scheduled', timer, generation = 0, historyWeek = null, dirty = false;
+    const show = text => { status.textContent = clientName + ' — ' + text; };
     const errorBox = document.getElementById('fb-errors');
     const error = text => { errorBox.textContent = text; errorBox.hidden = !text; };
     function controls() {
+        for (const id of ['fb-client', 'fb-switch']) { const node = document.getElementById(id); if (node) node.disabled = busy || running; }
         for (const id of ['fb-start', 'fb-test', 'fb-resume', 'fb-login']) document.getElementById(id).disabled = busy || running;
     }
     window.addEventListener('message', event => {
@@ -23,7 +26,7 @@
             const id = crypto.randomUUID();
             const timer = setTimeout(() => { requests.delete(id); reject(new Error('Companion response timed out. Check Facebook before retrying; a reserved submission is not automatically repeated.')); }, op === 'publish' ? 120000 : 10000);
             requests.set(id, {resolve, reject, timer});
-            window.postMessage({source: 'wnq-facebook-page', id, op, job}, location.origin);
+            window.postMessage({source: 'wnq-facebook-page', id, op, job, client: clientId, clientName}, location.origin);
         });
     }
     async function api(op, fields = {}) {
@@ -31,17 +34,31 @@
         const timeout = setTimeout(() => controller.abort(), 20000);
         try {
             const response = await fetch(WNQFacebook.ajax, {method: 'POST', credentials: 'same-origin', signal: controller.signal,
-                body: new URLSearchParams({action: 'wnq_facebook_publish', nonce: WNQFacebook.nonce, op, ...fields})});
+                body: new URLSearchParams({action: 'wnq_facebook_publish', nonce: WNQFacebook.nonce, op, ...fields, client: clientId})});
             const result = await response.json();
             if (!response.ok || !result.success) throw new Error(result.data?.message || 'WordPress session expired or request failed.');
             return result.data;
         } finally { clearTimeout(timeout); }
     }
     async function progress() {
-        const data = await api('progress', {mode});
+        const week = historyWeek;
+        const data = await api('progress', {mode, ...(week ? {week} : {})});
+        if (!week && data.week && document.getElementById('fb-history-week')) document.getElementById('fb-history-week').value = data.week.replace('-', '-W');
+        if (data.client && data.client !== clientId) throw new Error('Client response mismatch. Nothing else will be posted.');
         const c = data.counts;
         document.getElementById('fb-progress').textContent = `${c.submitted + c.pending + c.skipped + c.review} of ${c.total} processed · ${c.submitted} submitted · ${c.pending} awaiting approval · ${c.skipped} skipped · ${c.review} need review`;
         const labels = {submitted: 'Submitted — Facebook confirmed', pending: 'Awaiting group approval', skipped: 'Not posted — skipped', review: 'Unconfirmed — review needed', reserved: 'In progress', waiting: 'Not posted yet'};
+        const history = document.getElementById('fb-history-results');
+        if (history) {
+            history.replaceChildren();
+            for (const item of data.rows) {
+                const line = document.createElement('p'), link = document.createElement('a');
+                link.href = item.url; link.textContent = item.url; link.target = '_blank'; link.rel = 'noopener noreferrer';
+                const label = item.status === 'submitted' && item.confirmation !== 'browser' ? 'Posted — manual or legacy confirmation' : (labels[item.status] || item.status);
+                line.append(link, ' — ' + label + (item.message ? ' · ' + item.message : '') + (item.updated_at ? ' · ' + new Date(item.updated_at * 1000).toLocaleString() : ''));
+                history.append(line);
+            }
+        }
         for (const node of document.querySelectorAll('[data-fb-group]')) {
             const row = data.rows.find(item => item.url === node.dataset.fbGroup);
             if (row) {
@@ -68,7 +85,7 @@
                     if (busy || running) return show('Pause the run before resolving a submission.');
                     if (!confirm('Have you checked this group in Facebook? This marks it “' + label + '” and does not publish another post.')) return;
                     button.disabled = true;
-                    try { await api('resolve', {key: item.key, resolution}); await progress(); show('Review saved. No post was sent.'); }
+                    try { await api('resolve', {key: item.key, resolution, ...(week ? {week} : {})}); await progress(); show('Review saved. No post was sent.'); }
                     catch (e) { error(e.message); button.disabled = false; }
                 }; row.append(' ', button);
             }
@@ -81,7 +98,7 @@
         controls();
         try {
             const connection = await companion('ping');
-            if (!connection.version || connection.version.localeCompare('1.0.7', undefined, {numeric: true}) < 0) throw new Error('Update and reload Facebook companion 1.0.7 or newer before publishing.');
+            if (!connection.version || connection.version.localeCompare('1.1.0', undefined, {numeric: true}) < 0) throw new Error('Update and reload Facebook companion 1.1.0 or newer before publishing.');
             const next = await api('next', {mode});
             if (next.waiting || next.finished || next.stopped) {
                 show((next.message || 'Waiting for the saved daily start time.') + (next.next_at ? ' Next attempt after ' + new Date(next.next_at * 1000).toLocaleTimeString() : ''));
@@ -89,6 +106,7 @@
                 if (mode === 'test' && next.finished) error(next.message);
             } else if (next.job) {
                 const job = next.job;
+                if (job.client_id !== clientId || job.client_name !== clientName) throw new Error('Client changed or job identity mismatch. Reload this client before posting.');
                 show('Publishing: ' + job.url);
                 if (!running) {
                     await api('result', {...job, status: 'not_started'});
@@ -106,9 +124,12 @@
     }
     async function start(nextMode, action = 'start') {
         if (busy || running) return;
-        if (!confirm(nextMode === 'test' ? 'Test sends a REAL post to the first saved group, subject to the cutoff, six-minute interval and duplicate protection. Continue?' : 'Start/resume the saved weekly schedule at one post every six minutes? Only continue if these groups allow your message.')) return;
+        if (dirty) return error('Save this client’s changed settings before starting or testing.');
+        historyWeek = null;
+        if (!confirm(clientName + ': ' + (nextMode === 'test' ? 'Test sends a REAL post to the first saved group, subject to the cutoff, six-minute interval and duplicate protection. Continue?' : 'Start/resume the saved weekly schedule at one post every six minutes? Only continue if these groups allow your message.'))) return;
         busy = true; controls(); error('');
-        try { await api(nextMode === 'test' ? 'stop' : action); mode = nextMode; running = true; }
+        const started = ++generation;
+        try { await api(nextMode === 'test' ? 'stop' : action); if (started === generation) { mode = nextMode; running = true; } }
         catch (e) { error(e.message); }
         finally { busy = false; controls(); }
         clearTimeout(timer); await tick();
@@ -117,7 +138,7 @@
     document.getElementById('fb-resume').onclick = () => start('scheduled', 'resume');
     document.getElementById('fb-test').onclick = () => start('test');
     document.getElementById('fb-stop').onclick = async () => {
-        running = false; clearTimeout(timer); controls();
+        generation++; running = false; clearTimeout(timer); controls();
         show('Stopping the weekly schedule. A post already submitted cannot be recalled.');
         try { await Promise.all([api('stop'), companion('cancel')]); show('Weekly schedule stopped. Select Resume to continue.'); }
         catch (e) { error('Stop could not be fully confirmed: ' + e.message); }
@@ -131,6 +152,32 @@
     };
     document.getElementById('fb-connect').onclick = connect;
     window.addEventListener('beforeunload', event => { if (running || busy) { event.preventDefault(); event.returnValue = ''; } });
+    document.getElementById('fb-client-form')?.addEventListener('submit', event => {
+        if (running || busy) { event.preventDefault(); error('Stop the current campaign before switching clients.'); return; }
+        if (dirty && !confirm('Switch clients without saving these changes?')) { event.preventDefault(); document.getElementById('fb-client').value = clientId; }
+    });
+    document.querySelector('form[method="post"]')?.addEventListener('input', () => { dirty = true; });
+    const clientSelect = document.getElementById('fb-client');
+    if (clientSelect) clientSelect.onchange = () => {
+        if (running || busy) { clientSelect.value = clientId; return; }
+        document.getElementById('fb-client-form').requestSubmit();
+    };
+    const historyButton = document.getElementById('fb-history-load');
+    if (historyButton) historyButton.onclick = () => { historyWeek = document.getElementById('fb-history-week').value.replace('-W', '-'); progress().catch(e => error(e.message)); };
+    const imageButton = document.getElementById('fb-image');
+    if (imageButton) imageButton.onclick = () => {
+        const picker = wp.media({title: clientName + ' — posting image', library: {type: 'image'}, multiple: true});
+        picker.on('select', () => {
+            const images = picker.state().get('selection').toJSON();
+            if (images.length > 4) { error('Choose up to four images.'); return; }
+            document.getElementById('fb-image-id').value = images.map(image => image.id).join(',');
+            document.getElementById('fb-image-label').textContent = images.map(image => image.filename || image.title).join(', ');
+            dirty = true;
+        });
+        picker.open();
+    };
+    const clearImage = document.getElementById('fb-image-clear');
+    if (clearImage) clearImage.onclick = () => { dirty = true; document.getElementById('fb-image-id').value = '0'; document.getElementById('fb-image-label').textContent = 'No images'; };
     connect();
     progress().catch(e => error(e.message));
 })();

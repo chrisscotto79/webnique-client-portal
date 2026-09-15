@@ -3,6 +3,9 @@ namespace WNQ\Admin;
 
 use WNQ\Services\FacebookGroupPlan;
 use WNQ\Services\FacebookDailyGuard;
+use WNQ\Services\FacebookCampaign;
+
+require_once __DIR__ . '/../includes/Services/FacebookCampaign.php';
 
 require_once __DIR__ . '/../includes/Services/FacebookDailyGuard.php';
 
@@ -22,8 +25,11 @@ final class FacebookGroupsAdmin
     public static function assets(): void
     {
         if (($_GET['page'] ?? '') !== 'wnq-facebook-groups' || !self::allowed()) return;
+        wp_enqueue_media();
+        $client = self::pageClient($_GET['client'] ?? 'agency');
         wp_enqueue_script('wnq-facebook-publish', WNQ_PORTAL_URL . 'assets/js/facebook-publish.js', [], WNQ_PORTAL_VERSION, true);
         wp_localize_script('wnq-facebook-publish', 'WNQFacebook', [
+            'client' => $client['id'], 'clientName' => $client['name'],
             'ajax' => admin_url('admin-ajax.php'), 'nonce' => wp_create_nonce('wnq_facebook_publish'),
         ]);
     }
@@ -32,30 +38,54 @@ final class FacebookGroupsAdmin
     {
         if (!self::allowed()) wp_send_json_error(['message' => 'Not authorized.'], 403);
         check_ajax_referer('wnq_facebook_publish', 'nonce');
-        $plan = get_option('wnq_facebook_group_plan', []);
+        $token = wp_generate_uuid4();
+        if (!FacebookDailyGuard::reserve('campaign_mutex', $token, 60)) wp_send_json_error(['message' => 'Another campaign request is saving. Try again shortly.'], 409);
+        // wp_send_json exits in WordPress; shutdown releases the mutex in that path.
+        register_shutdown_function(static function () use ($token) { FacebookDailyGuard::release('campaign_mutex', $token); });
+        try {
+            self::publishRequest();
+        } catch (\InvalidArgumentException $e) {
+            wp_send_json_error(['message' => $e->getMessage()], 409);
+        } finally {
+            FacebookDailyGuard::release('campaign_mutex', $token);
+        }
+    }
+
+    private static function publishRequest(): void
+    {
+        if (!self::allowed()) wp_send_json_error(['message' => 'Not authorized.'], 403);
+        check_ajax_referer('wnq_facebook_publish', 'nonce');
+        $client = FacebookCampaign::context($_POST['client'] ?? $_GET['client'] ?? 'agency');
+        $clientId = $client['id'];
+        $plan = get_option(FacebookCampaign::key('wnq_facebook_group_plan', $clientId), []);
+        $plan = array_merge(['groups' => [], 'message' => '', 'timezone' => 'America/New_York', 'start_time' => '09:00', 'repeat' => false], is_array($plan) ? $plan : []);
         $op = sanitize_key($_POST['op'] ?? '');
-        if ($op === 'stop') { update_option('wnq_fb_schedule_enabled', false, false); wp_send_json_success([]); }
-        if (empty($plan['groups']) || trim($plan['message'] ?? '') === '') {
+        if ($op === 'stop') { update_option(FacebookCampaign::key('wnq_fb_schedule_enabled', $clientId), false, false); wp_send_json_success([]); }
+        if (!in_array($op, ['progress', 'resolve', 'result'], true) && (empty($plan['groups']) || trim($plan['message'] ?? '') === '')) {
             wp_send_json_error(['message' => 'Save your group links and message first.']);
         }
         $now = new \DateTimeImmutable('now', new \DateTimeZone($plan['timezone']));
         $week = $now->format('o-W');
+        if (in_array($op, ['progress', 'resolve'], true) && isset($_POST['week']) && preg_match('/^[0-9]{4}-(?:0[1-9]|[1-4][0-9]|5[0-3])$/D', (string)$_POST['week'])) $week = $_POST['week'];
         if (in_array($op, ['start', 'resume'], true)) {
-            if ($op === 'start') update_option('wnq_fb_first_week', $week, false);
-            update_option('wnq_fb_schedule_enabled', true, false);
+            FacebookCampaign::claim($client);
+            if ($op === 'start') update_option(FacebookCampaign::key('wnq_fb_first_week', $clientId), $week, false);
+            update_option(FacebookCampaign::key('wnq_fb_schedule_enabled', $clientId), true, false);
             wp_send_json_success([]);
         }
         $mode = sanitize_key($_POST['mode'] ?? 'today');
-        $groups = $mode === 'test' ? array_slice($plan['groups'], 0, 1) : FacebookGroupPlan::batches($plan['groups'])[$now->format('l')];
+        $groups = $mode === 'test' ? array_slice($plan['groups'], 0, 1) : FacebookGroupPlan::batches($plan['groups'], (int)($plan['daily_limit'] ?? 50))[$now->format('l')];
         if ($op === 'progress') {
+            $historyGroups = get_option(FacebookCampaign::key('wnq_fb_history_' . $week, $clientId), $plan['groups']);
+            if ($week === $now->format('o-W')) $historyGroups = array_values(array_unique(array_merge($historyGroups, $plan['groups'])));
             $counts = ['total' => count($groups), 'submitted' => 0, 'pending' => 0, 'skipped' => 0, 'review' => 0];
             $review = []; $rows = [];
-            foreach ($plan['groups'] as $url) {
-                $key = 'wnq_fb_job_' . hash('sha256', $week . '|' . strtolower($url));
+            foreach ($historyGroups as $url) {
+                $key = FacebookCampaign::job($clientId, $week, $url);
                 $state = get_option($key, []);
                 $status = $state['status'] ?? '';
                 $held = $status === 'unknown' || ($status === 'reserved' && ($state['expires_at'] ?? PHP_INT_MAX) < time());
-                $rows[] = ['url' => $url, 'status' => $held ? 'review' : ($status ?: 'waiting'), 'message' => $state['message'] ?? '', 'confirmation' => $state['confirmation'] ?? 'legacy'];
+                $rows[] = ['url' => $url, 'status' => $held ? 'review' : ($status ?: 'waiting'), 'message' => $state['message'] ?? '', 'confirmation' => $state['confirmation'] ?? 'legacy', 'updated_at' => $state['updated_at'] ?? $state['created_at'] ?? null];
                 if (in_array($url, $groups, true)) {
                     if (isset($counts[$status]) && $status !== 'total') $counts[$status]++;
                     elseif ($held) $counts['review']++;
@@ -63,12 +93,12 @@ final class FacebookGroupsAdmin
                 if ($held) $review[] = ['key' => $key, 'url' => $url];
                 elseif ($status === 'skipped' && !empty($state['message'])) $review[] = ['key' => $key, 'url' => $url, 'skipped' => true, 'message' => $state['message']];
             }
-            wp_send_json_success(['counts' => $counts, 'review' => $review, 'rows' => $rows, 'enabled' => (bool)get_option('wnq_fb_schedule_enabled', false), 'next_at' => get_option('wnq_fb_daily_dispatch', [])['until'] ?? 0]);
+            wp_send_json_success(['counts' => $counts, 'review' => $review, 'rows' => $rows, 'enabled' => (bool)get_option(FacebookCampaign::key('wnq_fb_schedule_enabled', $clientId), false), 'client' => $clientId, 'owner' => get_option('wnq_fb_campaign_owner', []), 'week' => $week, 'next_at' => get_option('wnq_fb_daily_dispatch', [])['until'] ?? 0]);
         }
         if ($op === 'resolve') {
             $key = sanitize_key($_POST['key'] ?? '');
             $valid = false;
-            foreach ($plan['groups'] as $url) if ($key === 'wnq_fb_job_' . hash('sha256', $week . '|' . strtolower($url))) $valid = true;
+            foreach (get_option(FacebookCampaign::key('wnq_fb_history_' . $week, $clientId), $plan['groups']) as $url) if ($key === FacebookCampaign::job($clientId, $week, $url)) $valid = true;
             $state = $valid ? get_option($key, []) : [];
             if (!$state || !($state['status'] === 'unknown' || ($state['status'] === 'reserved' && ($state['expires_at'] ?? PHP_INT_MAX) < time()))) {
                 wp_send_json_error(['message' => 'This job is not ready for manual review.']);
@@ -76,33 +106,43 @@ final class FacebookGroupsAdmin
             $resolution = sanitize_key($_POST['resolution'] ?? '');
             if (!in_array($resolution, ['submitted', 'skipped'], true)) wp_send_json_error(['message' => 'Invalid resolution.']);
             // Keep both daily exclusion and weekly record even when the user says not posted.
-            update_option($key, array_merge($state, ['status' => $resolution, 'confirmation' => 'manual', 'message' => $resolution === 'submitted' ? 'Marked as posted after manual review. Not automatically verified by Facebook.' : 'Marked not posted after manual review; skipped without retrying.']), false);
+            update_option($key, array_merge($state, ['updated_at' => time(), 'status' => $resolution, 'confirmation' => 'manual', 'message' => $resolution === 'submitted' ? 'Marked as posted after manual review. Not automatically verified by Facebook.' : 'Marked not posted after manual review; skipped without retrying.']), false);
             wp_send_json_success([]);
         }
         if ($op === 'next') {
-            if ($mode !== 'test' && !get_option('wnq_fb_schedule_enabled', false)) wp_send_json_success(['stopped' => true, 'message' => 'Weekly schedule stopped. Select Resume to continue.']);
+            FacebookCampaign::claim($client);
+            if ($mode !== 'test' && !get_option(FacebookCampaign::key('wnq_fb_schedule_enabled', $clientId), false)) wp_send_json_success(['stopped' => true, 'message' => 'Weekly schedule stopped. Select Resume to continue.']);
             $cutoff = $plan['cutoff'] ?? '18:00';
             if ($now->format('H:i') >= $cutoff) wp_send_json_success(['finished' => true, 'message' => 'Daily cutoff reached. No more posts will start today.']);
             $mode = sanitize_key($_POST['mode'] ?? 'today');
             if ($mode === 'scheduled' && $now->format('H:i') < $plan['start_time']) {
                 wp_send_json_success(['waiting' => true]);
             }
-            $first = get_option('wnq_fb_first_week', '');
+            $first = get_option(FacebookCampaign::key('wnq_fb_first_week', $clientId), '');
             // A direct Publish click authorizes a manual attempt independently of
             // the recurring schedule. Per-group weekly/daily guards still apply.
             if ($mode === 'scheduled' && !$plan['repeat'] && $first && $first !== $week) {
                 wp_send_json_success(['finished' => true, 'message' => 'One-time week finished. Enable repeat and save to run another week.']);
             }
-            $groups = FacebookGroupPlan::batches($plan['groups'])[$now->format('l')];
+            $groups = FacebookGroupPlan::batches($plan['groups'], (int)($plan['daily_limit'] ?? 50))[$now->format('l')];
             // A single saved group can be tested immediately, regardless of weekday.
             if ($mode === 'test') $groups = array_slice($plan['groups'], 0, 1);
+            $historyKey = FacebookCampaign::key('wnq_fb_history_' . $week, $clientId);
+            update_option($historyKey, array_values(array_unique(array_merge(get_option($historyKey, []), $plan['groups']))), false);
+            $dailyKey = FacebookCampaign::key('wnq_fb_attempts_' . $now->format('Y-m-d'), $clientId);
+            if ((int)get_option($dailyKey, 0) >= (int)($plan['daily_limit'] ?? 50)) wp_send_json_success(['finished' => true, 'message' => 'This client’s daily attempt limit has been reached. Resume on the next scheduled day.']);
             foreach ($groups as $url) {
                 $groupId = FacebookDailyGuard::groupId($url);
-                $key = 'wnq_fb_job_' . hash('sha256', $week . '|' . strtolower($url));
+                $key = FacebookCampaign::job($clientId, $week, $url);
                 if (!$groupId) { add_option($key, ['status' => 'skipped'], '', false); continue; }
                 $state = get_option($key, []);
                 if (in_array($state['status'] ?? '', ['submitted', 'pending'], true)) continue;
                 if ($state) continue;
+                $messages = array_merge([$plan['message']], $plan['messages'] ?? []);
+                $index = array_search($url, $plan['groups'], true);
+                $message = $messages[$index % count($messages)];
+                if (!empty($plan['link'])) $message .= "\n" . $plan['link'];
+                $images = FacebookCampaign::images($plan['image_ids'] ?? [(int)($plan['image_id'] ?? 0)]);
                 $token = wp_generate_uuid4();
                 if (!FacebookDailyGuard::reserve($groupId, $token)) {
                     add_option($key, ['status' => 'skipped'], '', false); continue;
@@ -116,33 +156,35 @@ final class FacebookGroupsAdmin
                 }
                 // Atomic unique option reserves this group before any browser-side click.
                 $expires = min(time() + 120, $now->setTime((int)substr($cutoff, 0, 2), (int)substr($cutoff, 3, 2))->getTimestamp());
-                if (!add_option($key, ['status' => 'reserved', 'token' => $token, 'group_id' => $groupId, 'expires_at' => $expires], '', false)) {
+                if (!add_option($key, ['status' => 'reserved', 'token' => $token, 'group_id' => $groupId, 'expires_at' => $expires, 'client_id' => $clientId, 'client_name' => $client['name'], 'url' => $url, 'week' => $week, 'created_at' => time(), 'post_text' => $message, 'image_ids' => $plan['image_ids'] ?? []], '', false)) {
                     FacebookDailyGuard::release($groupId, $token);
                     FacebookDailyGuard::release('dispatch', $token);
                     continue;
                 }
-                if ($mode === 'scheduled') add_option('wnq_fb_first_week', $week, '', false);
+                update_option($dailyKey, (int)get_option($dailyKey, 0) + 1, false);
+                if ($mode === 'scheduled') add_option(FacebookCampaign::key('wnq_fb_first_week', $clientId), $week, '', false);
                 wp_send_json_success(['job' => ['key' => $key, 'token' => $token,
                     'expires_at' => $expires,
-                    'url' => $url, 'message' => $plan['message']]]);
+                    'client_id' => $clientId, 'client_name' => $client['name'],
+                    'images' => $images, 'url' => $url, 'message' => $message]]);
             }
             wp_send_json_success(['finished' => true, 'message' => $mode === 'test' ? 'Test not sent: this group was already handled, held for review, or blocked by duplicate protection. See its weekly status.' : 'Today’s batch has no remaining eligible groups. See weekly statuses for posted or skipped groups.']);
         }
         if ($op === 'result') {
             $key = sanitize_key($_POST['key'] ?? '');
             $token = sanitize_text_field($_POST['token'] ?? '');
-            if (!preg_match('/^wnq_fb_job_[a-f0-9]{64}$/D', $key)) wp_send_json_error(['message' => 'Invalid job.']);
+            if (!FacebookCampaign::ownsJob($clientId, $key)) wp_send_json_error(['message' => 'Invalid job.']);
             $state = get_option($key, []);
-            if (!$state || !hash_equals($state['token'], $token)) wp_send_json_error(['message' => 'Job ownership mismatch.']);
+            if (!$state || !is_string($state['token'] ?? null) || !hash_equals($state['token'], $token)) wp_send_json_error(['message' => 'Job ownership mismatch.']);
             $status = sanitize_key($_POST['status'] ?? 'unknown');
             if (!in_array($status, ['submitted', 'pending', 'unknown', 'not_started'], true)) $status = 'unknown';
             if (in_array($state['status'], ['submitted', 'pending'], true)) wp_send_json_success([]);
             FacebookDailyGuard::renew('dispatch', $token, 360);
             if ($status === 'not_started' && $state['status'] === 'reserved') {
                 if (!empty($state['group_id'])) FacebookDailyGuard::release($state['group_id'], $token);
-                if (($_POST['scope'] ?? '') === 'group') update_option($key, array_merge($state, ['status' => 'skipped', 'message' => substr(sanitize_text_field(wp_unslash($_POST['message'] ?? '')), 0, 500)]), false);
+                if (($_POST['scope'] ?? '') === 'group') update_option($key, array_merge($state, ['updated_at' => time(), 'status' => 'skipped', 'message' => substr(sanitize_text_field(wp_unslash($_POST['message'] ?? '')), 0, 500)]), false);
                 else delete_option($key);
-            } else update_option($key, array_merge($state, ['status' => $status === 'not_started' ? 'unknown' : $status, 'confirmation' => in_array($status, ['submitted', 'pending'], true) ? 'browser' : 'none', 'message' => substr(sanitize_text_field(wp_unslash($_POST['message'] ?? '')), 0, 500)]), false);
+            } else update_option($key, array_merge($state, ['updated_at' => time(), 'status' => $status === 'not_started' ? 'unknown' : $status, 'confirmation' => in_array($status, ['submitted', 'pending'], true) ? 'browser' : 'none', 'message' => substr(sanitize_text_field(wp_unslash($_POST['message'] ?? '')), 0, 500)]), false);
             wp_send_json_success([]);
         }
         wp_send_json_error(['message' => 'Unknown action.']);
@@ -151,6 +193,12 @@ final class FacebookGroupsAdmin
     private static function allowed(): bool
     {
         return current_user_can('manage_options') || current_user_can('wnq_manage_portal');
+    }
+
+    private static function pageClient($value): array
+    {
+        try { return FacebookCampaign::context($value); }
+        catch (\InvalidArgumentException $e) { wp_die(esc_html($e->getMessage())); }
     }
 
     public static function menu(): void
@@ -164,7 +212,13 @@ final class FacebookGroupsAdmin
     {
         if (!self::allowed()) wp_die('Not authorized.', '', ['response' => 403]);
         check_admin_referer('wnq_facebook_plan');
+        $client = self::pageClient($_POST['client'] ?? 'agency');
+        $clientId = $client['id'];
+        $lock = wp_generate_uuid4();
+        if (!FacebookDailyGuard::reserve('campaign_mutex', $lock, 60)) wp_die('Another campaign request is saving. Please try again.');
+        register_shutdown_function(static function () use ($lock) { FacebookDailyGuard::release('campaign_mutex', $lock); });
         try {
+            FacebookCampaign::assertEditable($clientId);
             foreach (['groups', 'message', 'start_time', 'timezone'] as $key) {
                 if (!isset($_POST[$key]) || !is_string($_POST[$key])) {
                     throw new \InvalidArgumentException('Missing or invalid plan fields.');
@@ -183,27 +237,52 @@ final class FacebookGroupsAdmin
             $cutoff = isset($_POST['cutoff']) && is_string($_POST['cutoff']) ? wp_unslash($_POST['cutoff']) : '18:00';
             if (!preg_match('/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/D', $cutoff) || $cutoff <= $time) throw new \InvalidArgumentException('Cutoff must be later than the start time on the same day.');
             if (strlen($message) > 20000) throw new \InvalidArgumentException('Keep the message under 20,000 bytes.');
+            $limit = filter_var($_POST['daily_limit'] ?? 50, FILTER_VALIDATE_INT);
+            if (!$limit || $limit < 1 || $limit > 50) throw new \InvalidArgumentException('Daily limit must be between 1 and 50.');
+            if (count($parsed['groups']) > $limit * 7) throw new \InvalidArgumentException('This daily limit fits ' . ($limit * 7) . ' groups per week. Reduce the list or increase the limit.');
+            $variants = sanitize_textarea_field(wp_unslash((string)($_POST['messages'] ?? '')));
+            $messages = array_values(array_filter(array_map('trim', preg_split('/\\R---\\R/u', $variants))));
+            if (strlen($variants) > 100000 || count($messages) > 20) throw new \InvalidArgumentException('Use up to 20 additional messages, under 100,000 bytes total.');
+            foreach ($messages as $variant) if (strlen($variant) > 19000) throw new \InvalidArgumentException('Each message must be under 19,000 bytes.');
+            $link = trim(wp_unslash((string)($_POST['link'] ?? '')));
+            if ($link !== '' && (!filter_var($link, FILTER_VALIDATE_URL) || !in_array(parse_url($link, PHP_URL_SCHEME), ['https', 'http'], true) || strlen($link) > 1000)) throw new \InvalidArgumentException('Enter a valid HTTP or HTTPS link.');
+            if (strlen($message) + strlen($link) + 1 > 20000) throw new \InvalidArgumentException('Message and link together must be under 20,000 bytes.');
+            foreach ($messages as $variant) if (strlen($variant) + strlen($link) + 1 > 20000) throw new \InvalidArgumentException('Each message plus link must be under 20,000 bytes.');
+            $imageIds = array_values(array_unique(array_filter(array_map('intval', explode(',', (string)($_POST['image_ids'] ?? $_POST['image_id'] ?? '0'))))));
+            if (array_filter($imageIds, fn($id) => $id < 1)) throw new \InvalidArgumentException('Invalid image selection.');
+            FacebookCampaign::images($imageIds);
+            // Preserve a snapshot of the old group's current-week history before editing links.
+            $oldPlan = get_option(FacebookCampaign::key('wnq_facebook_group_plan', $clientId), []);
+            if (!empty($oldPlan['groups'])) {
+                $oldWeek = (new \DateTimeImmutable('now', new \DateTimeZone($oldPlan['timezone'])))->format('o-W');
+                $historyKey = FacebookCampaign::key('wnq_fb_history_' . $oldWeek, $clientId);
+                update_option($historyKey, array_values(array_unique(array_merge(get_option($historyKey, []), $oldPlan['groups']))), false);
+            }
             // Saving a draft cannot activate posting or change any Facebook account.
-            update_option('wnq_facebook_group_plan', [
+            update_option(FacebookCampaign::key('wnq_facebook_group_plan', $clientId), array_merge($oldPlan, [
+                'messages' => $messages, 'link' => $link, 'image_ids' => $imageIds, 'daily_limit' => $limit,
                 'groups' => $parsed['groups'], 'message' => $message,
                 'start_time' => $time, 'timezone' => $timezone,
                 'cutoff' => $cutoff,
                 'repeat' => isset($_POST['repeat']), 'enabled' => false,
-            ], false);
-            update_option('wnq_fb_schedule_enabled', false, false);
+            ]), false);
+            update_option(FacebookCampaign::key('wnq_fb_schedule_enabled', $clientId), false, false);
             $notice = 'Draft saved. ' . count($parsed['groups']) . ' groups; ' . $parsed['duplicates'] . ' duplicate links removed. No posts sent.';
         } catch (\InvalidArgumentException $e) {
             $notice = $e->getMessage() . ' Previous draft was not changed.';
         }
-        set_transient('wnq_fb_notice_' . get_current_user_id(), $notice, 60);
-        wp_safe_redirect(admin_url('admin.php?page=wnq-facebook-groups'));
+        FacebookDailyGuard::release('campaign_mutex', $lock);
+        set_transient('wnq_fb_notice_' . $clientId . '_' . get_current_user_id(), $notice, 60);
+        wp_safe_redirect(admin_url('admin.php?page=wnq-facebook-groups&client=' . rawurlencode($clientId)));
         exit;
     }
 
     public static function render(): void
     {
         if (!self::allowed()) wp_die('Not authorized.');
-        $plan = get_option('wnq_facebook_group_plan', []);
+        $client = self::pageClient($_GET['client'] ?? 'agency');
+        $clientId = $client['id'];
+        $plan = get_option(FacebookCampaign::key('wnq_facebook_group_plan', $clientId), []);
         $plan = array_merge(['groups' => [], 'message' => '', 'start_time' => '09:00',
             'timezone' => 'America/New_York', 'repeat' => false], is_array($plan) ? $plan : []);
         $notice = get_transient('wnq_fb_notice_' . get_current_user_id());
@@ -211,6 +290,18 @@ final class FacebookGroupsAdmin
         ?>
         <div class="wrap" style="max-width:1100px">
             <h1>Facebook Groups</h1>
+            <form method="get" id="fb-client-form">
+                <input type="hidden" name="page" value="wnq-facebook-groups">
+                <label for="fb-client"><strong>Company</strong></label>
+                <select name="client" id="fb-client">
+                    <option value="agency" <?php selected($clientId, 'agency'); ?>>Golden Web Marketing</option>
+                    <?php foreach (\WNQ\Models\Client::getAll() as $record): ?>
+                        <option value="<?php echo esc_attr($record['id']); ?>" <?php selected($clientId, (string)$record['id']); ?>><?php echo esc_html($record['company'] ?: $record['name']); ?></option>
+                    <?php endforeach; ?>
+                </select>
+                <button class="button" id="fb-switch">Load client</button>
+            </form>
+            <p><strong>Campaign: <?php echo esc_html($client['name']); ?></strong>. Client selection does not switch your Facebook identity. Verify the signed-in Facebook profile/Page before starting.</p>
             <p>One group list. Seven daily batches. Up to 50 groups per day.</p>
             <?php if ($notice): ?><div class="notice notice-info"><p><?php echo esc_html($notice); ?></p></div><?php endif; ?>
             <div class="notice notice-warning inline"><p><strong>Facebook browser publishing.</strong>
@@ -237,13 +328,21 @@ final class FacebookGroupsAdmin
             </div>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
                 <input type="hidden" name="action" value="wnq_facebook_plan">
+                <input type="hidden" name="client" value="<?php echo esc_attr($clientId); ?>">
                 <?php wp_nonce_field('wnq_facebook_plan'); ?>
                 <h2><label for="fb-groups">Group links</label></h2>
-                <p>Paste one direct group link per line. First 50 → Monday, next 50 → Tuesday, through Sunday.
+                <p>Paste one direct group link per line. Your daily limit determines the Monday batch size, then Tuesday, through Sunday.
                     Exact duplicate links are removed. A group's numeric ID and named link may still refer to the same group; use one format per group.</p>
                 <textarea id="fb-groups" name="groups" rows="12" class="large-text" maxlength="150000" placeholder="https://www.facebook.com/groups/example/"><?php echo esc_textarea(implode("\n", $plan['groups'])); ?></textarea>
                 <h2><label for="fb-message">Message</label></h2>
                 <textarea id="fb-message" name="message" rows="7" class="large-text" maxlength="20000"><?php echo esc_textarea($plan['message']); ?></textarea>
+                <p><label for="fb-messages">Additional saved messages (optional; separate with a line containing ---). Messages rotate in group-list order.</label>
+                <textarea id="fb-messages" name="messages" rows="5" class="large-text"><?php echo esc_textarea(implode("\n---\n", $plan['messages'] ?? [])); ?></textarea></p>
+                <p><label>Link appended to every message <input type="url" name="link" class="large-text" value="<?php echo esc_attr($plan['link'] ?? ''); ?>"></label></p>
+                <p><input type="hidden" id="fb-image-id" name="image_ids" value="<?php echo esc_attr(implode(',', $plan['image_ids'] ?? [(int)($plan['image_id'] ?? 0)])); ?>">
+                <button type="button" class="button" id="fb-image">Choose images</button> <button type="button" class="button" id="fb-image-clear">Remove images</button>
+                <span id="fb-image-label"><?php echo esc_html(!empty($plan['image_ids']) ? implode(', ', array_map('get_the_title', $plan['image_ids'])) : (!empty($plan['image_id']) ? get_the_title($plan['image_id']) : 'No images')); ?></span> · Up to four JPEG, PNG or WebP images, 4 MB combined.</p>
+                <p><label>Daily posting limit <input type="number" name="daily_limit" min="1" max="50" required value="<?php echo esc_attr($plan['daily_limit'] ?? 50); ?>"></label></p>
                 <p><label for="fb-time">Daily start time</label>
                     <input id="fb-time" name="start_time" type="time" required value="<?php echo esc_attr($plan['start_time']); ?>">
                     <label for="fb-cutoff">Daily cutoff</label><input id="fb-cutoff" name="cutoff" type="time" required value="<?php echo esc_attr($plan['cutoff'] ?? '18:00'); ?>">
@@ -255,8 +354,11 @@ final class FacebookGroupsAdmin
                 <p><label><input type="checkbox" name="repeat" value="1" <?php checked($plan['repeat']); ?>> Repeat the same group batches each week</label></p>
                 <?php submit_button('Save plan'); ?>
             </form>
+            <p><label for="fb-history-week">History week</label> <input type="week" id="fb-history-week" value="<?php echo esc_attr((new \DateTimeImmutable('now', new \DateTimeZone($plan['timezone'])))->format('o-\\WW')); ?>"><button type="button" class="button" id="fb-history-load">View results</button></p>
+            <p>History is retained by client and week. Viewing an older week does not change the running schedule.</p>
+            <details><summary>Posting history and results for selected week</summary><div id="fb-history-results"></div></details>
             <h2>Weekly preview · <?php echo count($plan['groups']); ?> groups</h2>
-            <?php foreach (FacebookGroupPlan::batches($plan['groups']) as $day => $groups): ?>
+            <?php foreach (FacebookGroupPlan::batches($plan['groups'], (int)($plan['daily_limit'] ?? 50)) as $day => $groups): ?>
                 <details style="background:white;padding:12px;margin-bottom:8px;border:1px solid #ddd">
                     <summary><?php echo esc_html($day); ?> · <?php echo count($groups); ?> groups</summary>
                     <ul><?php foreach ($groups as $url): ?><li><a target="_blank" rel="noopener noreferrer" href="<?php echo esc_url($url); ?>"><?php echo esc_html($url); ?></a> — <span data-fb-group="<?php echo esc_attr($url); ?>">Loading status…</span></li><?php endforeach; ?></ul>

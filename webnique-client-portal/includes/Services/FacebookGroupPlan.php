@@ -36,11 +36,12 @@ final class FacebookGroupPlan
         return ['groups' => array_values($groups), 'duplicates' => $duplicates];
     }
 
-    public static function batches(array $groups): array
+    public static function batches(array $groups, int $limit = 50): array
     {
         if (count($groups) > 350) throw new \InvalidArgumentException('Maximum 350 groups.');
         $days = [];
-        foreach (self::DAYS as $index => $day) $days[$day] = array_slice($groups, $index * 50, 50);
+        $limit = max(1, min(50, $limit));
+        foreach (self::DAYS as $index => $day) $days[$day] = array_slice($groups, $index * $limit, $limit);
         return $days;
     }
 }

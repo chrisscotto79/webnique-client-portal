@@ -1,5 +1,6 @@
 <?php
 define('ABSPATH', __DIR__);
+require_once __DIR__ . '/facebook-client-fixture.php';
 require_once __DIR__ . '/../includes/Services/FacebookGroupPlan.php';
 require_once __DIR__ . '/../admin/FacebookGroupsAdmin.php';
 class Response extends Exception { public $payload; public function __construct($payload) { $this->payload = $payload; } }
@@ -127,8 +128,8 @@ $oldWeek = $options['wnq_fb_first_week'] ?? '';
 callApi(['op' => 'start']);
 check($options['wnq_fb_first_week'] === $now->format('o-W'));
 $snapshot = callApi(['op' => 'progress', 'mode' => 'test'])['data'];
-check(count($snapshot['rows']) === 1);
-check($snapshot['rows'][0]['status'] === 'reserved');
+check(count($snapshot['rows']) > 1); // Historical links survive changes to the plan.
+check(array_values(array_filter($snapshot['rows'], fn($row) => $row['url'] === 'https://www.facebook.com/groups/888889/'))[0]['status'] === 'reserved');
 if (in_array('--render', $argv, true)) {
     function get_transient(...$args) { return false; }
     function delete_transient(...$args) {}

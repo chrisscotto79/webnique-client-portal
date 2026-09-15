@@ -16,16 +16,20 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../facebook
     const context = vm.createContext({chrome, URL, setTimeout});
     vm.runInContext(source, context);
     const sender = {id: 'test-extension', tab: {id: 7}, url: 'https://goldenwebmarketing.com/wp-admin/admin.php?page=wnq-facebook-groups'};
-    const request = message => new Promise(resolve => listener(message, sender, resolve));
+    const request = message => new Promise(resolve => listener({client: 'agency', clientName: 'Golden Web Marketing', ...message}, sender, resolve));
     assert.equal(listener({op: 'login'}, {...sender, url: 'https://evil.test/'}, () => {}), false);
     await request({op: 'login'});
     assert.equal(tabActions.at(-1).active, true, 'Explicit login opens in foreground');
-    const job = {key: 'wnq_fb_job_' + 'a'.repeat(64), token: 'token', url: 'https://www.facebook.com/groups/123/', message: 'Hello', expires_at: Date.now() / 1000 + 120};
+    const job = {client_id: 'agency', client_name: 'Golden Web Marketing', key: 'wnq_fb_job_' + 'a'.repeat(64), token: 'token', url: 'https://www.facebook.com/groups/123/', message: 'Hello', expires_at: Date.now() / 1000 + 120};
     assert.equal((await request({op: 'publish', job})).result.status, 'submitted');
     assert.equal(tabActions.at(-1).active, false, 'Publishing reuses tab without stealing focus');
     await request({op: 'publish', job});
     assert.equal(executions, 1, 'No duplicate dispatch');
     assert.equal(created, 1, 'Reuses one tab');
+    const executionSnapshot = executions;
+    assert((await request({op: 'publish', client: '22', clientName: 'Beta', job})).error, 'Mismatched selected client is rejected');
+    assert((await request({op: 'publish', job: {...job, client_id: '11', client_name: 'Alpha'}})).error, 'Cross-client job rejected');
+    assert.equal(executions, executionSnapshot, 'Identity mismatch never dispatches a browser action');
     assert((await request({op: 'publish', job: {...job, url: 'https://evil.test/'}})).error);
     vm.runInContext(source, vm.createContext({chrome, URL, setTimeout}));
     await request({op: 'publish', job});
@@ -44,6 +48,15 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../facebook
           <div role="dialog" style="display:none"><div contenteditable="true" role="textbox"></div>
           <button role="button" onclick="this.parentElement.style.display='none';document.querySelector('[role=status]').textContent='Your post was published'">Post</button></div><div role="status"></div>`);
         assert.equal((await page.evaluate(submit, job)).status, 'submitted', 'Only confirmed submission succeeds');
+        assert.match(await page.$eval('#wnq-client-banner', el => el.textContent), /Golden Web Marketing/, 'Extension displays campaign name');
+        await page.setContent(`<button aria-label="Create post" onclick="document.querySelector('[role=dialog]').style.display='block'">Open composer</button>
+          <div role="dialog" style="display:none"><div contenteditable="true" role="textbox"></div>
+          <input type="file" accept="image/*" onchange="window.uploadName=this.files[0].name;document.querySelector('#remove-photo').hidden=false">
+          <button id="remove-photo" aria-label="Remove photo" hidden>Remove photo</button>
+          <button onclick="this.parentElement.style.display='none';document.querySelector('[role=status]').textContent='Your post was published'">Post</button></div><div role="status"></div>`);
+        const withImage = {...job, image: {name: 'client.png', mime: 'image/png', data: 'aGVsbG8='}};
+        assert.equal((await page.evaluate(submit, withImage)).status, 'submitted', 'Image attachment must be confirmed before Post');
+        assert.equal(await page.evaluate(() => window.uploadName), 'client.png');
         await page.evaluate(() => {document.querySelector('[role=dialog]').style.display='block'; document.querySelector('[contenteditable]').innerText='Existing draft';});
         assert.equal((await page.evaluate(submit, job)).status, 'not_started', 'Preserves existing drafts');
         // Rich-text normalization plus a preview-triggered rerender and delayed,
