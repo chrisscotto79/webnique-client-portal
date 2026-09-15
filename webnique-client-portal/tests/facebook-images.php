@@ -18,9 +18,14 @@ try {
     check($job['image_count'] === 1 && count($job['images']) === 1);
     check($job['images'][0]['mime'] === 'image/png');
     check(base64_decode($job['images'][0]['data']) === file_get_contents($path));
-    check(!callApi(['op' => 'save_images', 'client' => '11', 'image_ids' => ''])['success']);
-    $options['wnq_fb_daily_dispatch']['until'] = time() - 1;
+    $options[WNQ\Services\FacebookCampaign::key('wnq_fb_schedule_enabled', '11')] = true;
+    $blocked = callApi(['op' => 'save_images', 'client' => '11', 'image_ids' => '']);
+    check(!$blocked['success'] && strpos($blocked['data']['message'], 'Press Stop') !== false);
+    callApi(['op' => 'stop', 'client' => '11']);
+    $dispatch = $options['wnq_fb_daily_dispatch'];
     check(callApi(['op' => 'save_images', 'client' => '11', 'image_ids' => ''])['success']);
     check($options[$planKey]['image_ids'] === []);
-    echo "12 image persistence, preservation, dispatch payload and running-campaign checks passed.\n";
+    check($options['wnq_fb_daily_dispatch'] === $dispatch);
+    check($job['image_count'] === 1 && count($job['images']) === 1);
+    echo "14 image persistence, stopped-campaign edits, immutable job and cooldown checks passed.\n";
 } finally { unlink($path); }
