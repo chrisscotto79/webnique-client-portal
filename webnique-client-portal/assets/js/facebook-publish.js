@@ -192,7 +192,7 @@
             if (imageSaveStatus) imageSaveStatus.textContent = images.length + ' image(s) saved for ' + clientName + '. They will be attached to new posts.';
             error('');
         } catch (e) {
-            if (imageSaveStatus) imageSaveStatus.textContent = 'Images were not saved. Your previous selection is unchanged.';
+            if (imageSaveStatus) imageSaveStatus.textContent = 'Images were not saved: ' + e.message + ' Your previous selection is unchanged.';
             error(e.message);
         } finally { busy = false; controls(); }
     }

@@ -61,7 +61,11 @@ final class FacebookGroupsAdmin
         $plan = array_merge(['groups' => [], 'message' => '', 'timezone' => 'America/New_York', 'start_time' => '09:00', 'repeat' => false], is_array($plan) ? $plan : []);
         $op = sanitize_key($_POST['op'] ?? '');
         if ($op === 'save_images') {
-            FacebookCampaign::assertEditable($clientId);
+            // Dispatched jobs already contain immutable image bytes. Once stopped,
+            // changing future images need not wait for the anti-duplicate cooldown.
+            if (get_option(FacebookCampaign::key('wnq_fb_schedule_enabled', $clientId), false)) {
+                throw new \InvalidArgumentException('Press Stop in Schedule controls, then choose your images again. This campaign is still running.');
+            }
             $value = $_POST['image_ids'] ?? '';
             if (!is_string($value) || !preg_match('/^(?:[1-9][0-9]*(?:,[1-9][0-9]*)*)?$/D', $value)) throw new \InvalidArgumentException('Invalid image selection.');
             $ids = $value === '' ? [] : array_values(array_unique(array_map('intval', explode(',', $value))));
@@ -352,7 +356,7 @@ final class FacebookGroupsAdmin
                 <p><input type="hidden" id="fb-image-id" name="image_ids" value="<?php echo esc_attr(implode(',', $plan['image_ids'] ?? [(int)($plan['image_id'] ?? 0)])); ?>">
                 <button type="button" class="button" id="fb-image">Choose images</button> <button type="button" class="button" id="fb-image-clear">Remove images</button>
                 <span id="fb-image-label"><?php echo esc_html(!empty($plan['image_ids']) ? implode(', ', array_map('get_the_title', $plan['image_ids'])) : (!empty($plan['image_id']) ? get_the_title($plan['image_id']) : 'No images')); ?></span> · Up to four JPEG, PNG or WebP images, 4 MB combined.</p>
-                <p id="fb-image-save-status" role="status">Image selection saves immediately for this client. Stop the campaign and wait for its current interval before changing images.</p>
+                <p id="fb-image-save-status" role="status">Press Stop before changing images. Your image selection saves immediately for this client; Save plan is not required for images. A post already in progress keeps its original images.</p>
                 <div id="fb-image-previews" style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
                 <?php foreach ($plan['image_ids'] ?? [] as $imageId): ?>
                     <?php echo wp_get_attachment_image($imageId, 'thumbnail', false, ['style' => 'width:96px;height:96px;object-fit:cover']); ?>
