@@ -12,7 +12,7 @@
     const error = text => { errorBox.textContent = text; errorBox.hidden = !text; };
     function controls() {
         for (const id of ['fb-client', 'fb-switch']) { const node = document.getElementById(id); if (node) node.disabled = busy || running; }
-        for (const id of ['fb-start', 'fb-test', 'fb-resume', 'fb-login']) document.getElementById(id).disabled = busy || running;
+        for (const id of ['fb-start', 'fb-test', 'fb-resume', 'fb-login', 'fb-image', 'fb-image-clear']) document.getElementById(id).disabled = busy || running;
     }
     window.addEventListener('message', event => {
         if (event.source !== window || event.origin !== location.origin || event.data?.source !== 'wnq-facebook-extension') return;
@@ -98,7 +98,7 @@
         controls();
         try {
             const connection = await companion('ping');
-            if (!connection.version || connection.version.localeCompare('1.1.0', undefined, {numeric: true}) < 0) throw new Error('Update and reload Facebook companion 1.1.0 or newer before publishing.');
+            if (!connection.version || connection.version.localeCompare('1.1.1', undefined, {numeric: true}) < 0) throw new Error('Update and reload Facebook companion 1.1.1 or newer before publishing.');
             const next = await api('next', {mode});
             if (next.waiting || next.finished || next.stopped) {
                 show((next.message || 'Waiting for the saved daily start time.') + (next.next_at ? ' Next attempt after ' + new Date(next.next_at * 1000).toLocaleTimeString() : ''));
@@ -107,7 +107,8 @@
             } else if (next.job) {
                 const job = next.job;
                 if (job.client_id !== clientId || job.client_name !== clientName) throw new Error('Client changed or job identity mismatch. Reload this client before posting.');
-                show('Publishing: ' + job.url);
+                if (!Array.isArray(job.images) || job.images.length !== job.image_count) throw new Error('Campaign image payload is incomplete. No post dispatched.');
+                show('Publishing ' + job.image_count + ' image(s): ' + job.url);
                 if (!running) {
                     await api('result', {...job, status: 'not_started'});
                     return;
@@ -165,19 +166,54 @@
     const historyButton = document.getElementById('fb-history-load');
     if (historyButton) historyButton.onclick = () => { historyWeek = document.getElementById('fb-history-week').value.replace('-W', '-'); progress().catch(e => error(e.message)); };
     const imageButton = document.getElementById('fb-image');
+    const imageSaveStatus = document.getElementById('fb-image-save-status');
+    async function saveImages(images) {
+        if (running || busy) return error('Stop publishing before changing images.');
+        if (images.length > 4) return error('Choose up to four images.');
+        busy = true; controls();
+        if (imageSaveStatus) imageSaveStatus.textContent = 'Saving images for ' + clientName + '…';
+        try {
+            const ids = images.map(image => String(image.id));
+            const saved = await api('save_images', {image_ids: ids.join(',')});
+            if (saved.client !== clientId || JSON.stringify(saved.image_ids.map(String)) !== JSON.stringify(ids)) throw new Error('Image save response did not match this client. Reload before publishing.');
+            document.getElementById('fb-image-id').value = ids.join(',');
+            document.getElementById('fb-image-label').textContent = images.length ? images.map(image => image.filename || image.title || ('Image ' + image.id)).join(', ') : 'No images';
+            const previews = document.getElementById('fb-image-previews');
+            if (previews) {
+                previews.replaceChildren();
+                for (const image of images) {
+                    const src = image.sizes?.thumbnail?.url || image.url;
+                    if (!src || !/^https?:\/\//i.test(src)) continue;
+                    const img = document.createElement('img'); img.src = src; img.alt = image.title || 'Saved campaign image';
+                    img.style.cssText = 'width:96px;height:96px;object-fit:cover';
+                    previews.append(img);
+                }
+            }
+            if (imageSaveStatus) imageSaveStatus.textContent = images.length + ' image(s) saved for ' + clientName + '. They will be attached to new posts.';
+            error('');
+        } catch (e) {
+            if (imageSaveStatus) imageSaveStatus.textContent = 'Images were not saved. Your previous selection is unchanged.';
+            error(e.message);
+        } finally { busy = false; controls(); }
+    }
     if (imageButton) imageButton.onclick = () => {
-        const picker = wp.media({title: clientName + ' — posting image', library: {type: 'image'}, multiple: true});
-        picker.on('select', () => {
-            const images = picker.state().get('selection').toJSON();
-            if (images.length > 4) { error('Choose up to four images.'); return; }
-            document.getElementById('fb-image-id').value = images.map(image => image.id).join(',');
-            document.getElementById('fb-image-label').textContent = images.map(image => image.filename || image.title).join(', ');
-            dirty = true;
-        });
-        picker.open();
+        if (running || busy) return;
+        try {
+            if (typeof window.wp?.media !== 'function') throw new Error('WordPress Media Library did not load. Refresh this page.');
+            const picker = wp.media({frame: 'select', state: 'library', title: clientName + ' — posting images', button: {text: 'Use these images'}, library: {type: 'image'}, multiple: true});
+            picker.on('open', () => {
+                const selection = picker.state().get('selection');
+                for (const id of document.getElementById('fb-image-id').value.split(',').filter(id => /^[1-9][0-9]*$/.test(id))) selection.add(wp.media.attachment(Number(id)));
+            });
+            picker.on('select', () => { saveImages(picker.state().get('selection').toJSON()); });
+            picker.open();
+        } catch (e) { error('Image picker: ' + e.message); }
     };
     const clearImage = document.getElementById('fb-image-clear');
-    if (clearImage) clearImage.onclick = () => { dirty = true; document.getElementById('fb-image-id').value = '0'; document.getElementById('fb-image-label').textContent = 'No images'; };
+    if (clearImage) clearImage.onclick = () => saveImages([]);
+    document.querySelector('form[method="post"]')?.addEventListener('submit', event => {
+        if (busy || running) { event.preventDefault(); error('Wait for the image save to finish and stop the campaign before saving the plan.'); }
+    });
     connect();
     progress().catch(e => error(e.message));
 })();

@@ -1,4 +1,9 @@
-# Facebook Publisher companion 1.1.0
+# Facebook Publisher companion 1.1.1
+
+Portal 3.9.1 saves selected images immediately with visible confirmation and thumbnails.
+The extension verifies the declared image count before dispatch and refuses missing
+images rather than publishing text only. Upload detection supports composer rerenders
+and newly created file inputs outside the dialog. Update both components together.
 
 Requires WordPress portal 3.9.0 for client-aware publishing. Stop the current run,
 update both components, reload this extension and refresh the WordPress tab.
