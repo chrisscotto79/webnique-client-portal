@@ -20,13 +20,14 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../facebook
     assert.equal(listener({op: 'login'}, {...sender, url: 'https://evil.test/'}, () => {}), false);
     await request({op: 'login'});
     assert.equal(tabActions.at(-1).active, true, 'Explicit login opens in foreground');
-    const job = {client_id: 'agency', client_name: 'Golden Web Marketing', key: 'wnq_fb_job_' + 'a'.repeat(64), token: 'token', url: 'https://www.facebook.com/groups/123/', message: 'Hello', expires_at: Date.now() / 1000 + 120};
+    const job = {image_count: 0, images: [], client_id: 'agency', client_name: 'Golden Web Marketing', key: 'wnq_fb_job_' + 'a'.repeat(64), token: 'token', url: 'https://www.facebook.com/groups/123/', message: 'Hello', expires_at: Date.now() / 1000 + 120};
     assert.equal((await request({op: 'publish', job})).result.status, 'submitted');
     assert.equal(tabActions.at(-1).active, false, 'Publishing reuses tab without stealing focus');
     await request({op: 'publish', job});
     assert.equal(executions, 1, 'No duplicate dispatch');
     assert.equal(created, 1, 'Reuses one tab');
     const executionSnapshot = executions;
+    assert((await request({op: 'publish', job: {...job, image_count: 1, images: []}})).error, 'Missing image payload is rejected before dispatch');
     assert((await request({op: 'publish', client: '22', clientName: 'Beta', job})).error, 'Mismatched selected client is rejected');
     assert((await request({op: 'publish', job: {...job, client_id: '11', client_name: 'Alpha'}})).error, 'Cross-client job rejected');
     assert.equal(executions, executionSnapshot, 'Identity mismatch never dispatches a browser action');
@@ -54,7 +55,7 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../facebook
           <input type="file" accept="image/*" onchange="window.uploadName=this.files[0].name;document.querySelector('#remove-photo').hidden=false">
           <button id="remove-photo" aria-label="Remove photo" hidden>Remove photo</button>
           <button onclick="this.parentElement.style.display='none';document.querySelector('[role=status]').textContent='Your post was published'">Post</button></div><div role="status"></div>`);
-        const withImage = {...job, image: {name: 'client.png', mime: 'image/png', data: 'aGVsbG8='}};
+        const withImage = {...job, image_count: 1, images: [{name: 'client.png', mime: 'image/png', data: 'aGVsbG8='}]};
         assert.equal((await page.evaluate(submit, withImage)).status, 'submitted', 'Image attachment must be confirmed before Post');
         assert.equal(await page.evaluate(() => window.uploadName), 'client.png');
         await page.evaluate(() => {document.querySelector('[role=dialog]').style.display='block'; document.querySelector('[contenteditable]').innerText='Existing draft';});
@@ -84,6 +85,10 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../facebook
         assert.equal(await page.$eval('input[type=checkbox]', el => el.checked), false, 'Does not accept rules');
         assert.equal(await page.$eval('input', el => el.value), '', 'Does not answer questions');
         const quickSubmit = vm.runInNewContext(source.replace('const deadline = Date.now() + 15000;', 'const deadline = Date.now() + 200;') + '\nsubmit', {chrome, URL, setTimeout});
+        await page.setContent('<button aria-label="Create post" onclick="document.querySelector(\'[role=dialog]\').style.display=\'block\'">Open</button><div role="dialog" style="display:none"><div contenteditable="true" role="textbox"></div><button onclick="window.imageFailurePosted=true">Post</button></div>');
+        const missingUpload = await page.evaluate(quickSubmit, withImage);
+        assert.equal(missingUpload.status, 'not_started', 'Missing upload input cannot fall back to a text-only post');
+        assert.equal(await page.evaluate(() => !!window.imageFailurePosted), false);
         await page.setContent('<h1>Group without a posting button</h1>');
         const missing = await page.evaluate(quickSubmit, job);
         assert.equal(missing.status, 'not_started');

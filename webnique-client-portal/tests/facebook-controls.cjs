@@ -24,14 +24,15 @@ const puppeteer = require('puppeteer');
                 if (op === 'result') done = true;
                 const url = document.querySelector('[data-fb-group]').dataset.fbGroup;
                 let data = {};
+                if (op === 'save_images') data = {client: 'agency', image_ids: args.body.get('image_ids').split(',').filter(Boolean).map(Number)};
                 if (op === 'progress') data = {enabled, counts: {total: 1, submitted: 0, pending: 0, skipped: 0, review: done ? 1 : 0}, rows: [{url, status: done ? 'review' : 'waiting', message: ''}], review: []};
-                if (op === 'next') data = done ? {waiting: true, next_at: Date.now()/1000 + 360, message: 'Waiting for the six-minute posting interval.'} : {job: {client_id: window.badClient || 'agency', client_name: 'Golden Web Marketing', key: 'job', token: 'token', url, message: 'hello'}};
+                if (op === 'next') data = done ? {waiting: true, next_at: Date.now()/1000 + 360, message: 'Waiting for the six-minute posting interval.'} : {job: {images: [], image_count: 0, client_id: window.badClient || 'agency', client_name: 'Golden Web Marketing', key: 'job', token: 'token', url, message: 'hello'}};
                 return {ok: true, json: async () => ({success: true, data})};
             };
             window.addEventListener('message', event => {
                 if (event.data.source !== 'wnq-facebook-page') return;
                 if (event.data.op === 'publish') publishCalls++;
-                const result = event.data.op === 'publish' ? {status: 'unknown', scope: 'group', message: 'Check Facebook; submission not confirmed.'} : {version: '1.1.0'};
+                const result = event.data.op === 'publish' ? {status: 'unknown', scope: 'group', message: 'Check Facebook; submission not confirmed.'} : {version: '1.1.1'};
                 window.postMessage({source: 'wnq-facebook-extension', id: event.data.id, result}, location.origin);
             });
         });
@@ -56,6 +57,20 @@ const puppeteer = require('puppeteer');
         await page.waitForFunction(() => document.getElementById('fb-errors').textContent.includes('identity mismatch'));
         assert.equal(await page.evaluate(() => publishCalls), posted, 'Wrong-client job never reaches extension');
         assert(await page.evaluate(() => clientScopes.every(id => id === 'agency')), 'Every request keeps the loaded client scope');
+        await page.waitForFunction(() => !document.getElementById('fb-image').disabled);
+        await page.evaluate(() => {
+            window.wp = {media: () => {
+                const callbacks = {};
+                return {on: (name, fn) => { callbacks[name] = fn; }, state: () => ({get: () => ({toJSON: () => [{id: 71, filename: 'offer.png', url: 'https://example.test/offer.png'}]})}), open: () => callbacks.select()};
+            }};
+        });
+        await page.click('#fb-image');
+        await page.waitForFunction(() => document.getElementById('fb-image-save-status').textContent.includes('1 image(s) saved'));
+        assert.equal(await page.$eval('#fb-image-id', el => el.value), '71');
+        assert.equal(await page.$$eval('#fb-image-previews img', nodes => nodes.length), 1);
+        await page.click('#fb-image-clear');
+        await page.waitForFunction(() => document.getElementById('fb-image-save-status').textContent.includes('0 image(s) saved'));
+        assert.equal(await page.$eval('#fb-image-id', el => el.value), '');
         assert.deepEqual(errors, []);
         console.log('PASS: rendered controls, persistent Stop/Resume requests, unknown outcome continues, separate error/progress, weekly row status. No real network actions.');
     } finally { await browser.close(); }

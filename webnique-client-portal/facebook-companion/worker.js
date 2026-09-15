@@ -120,10 +120,14 @@ async function submit(job) {
         if (!document.execCommand('insertText', false, job.message)) throw groupFailure('Could not fill the Facebook composer.');
         const images = job.images || (job.image ? [job.image] : []);
         if (images.length) {
+            const existingInputs = new Set(document.querySelectorAll('input[type="file"]'));
             const photoButtons = [...dialog.querySelectorAll('[role="button"],button')].filter(node => visible(node) && /^(photo\/video|add photos\/videos)$/i.test(node.getAttribute('aria-label') || text(node)));
             if (photoButtons.length === 1) photoButtons[0].click();
             const input = await wait(() => {
-                const inputs = [...dialog.querySelectorAll('input[type="file"]')].filter(node => /image/.test(node.accept) && !node.disabled);
+                const liveDialogs = [...document.querySelectorAll('[role="dialog"]')].filter(node => visible(node) && node.querySelector('[contenteditable="true"][role="textbox"]'));
+                if (liveDialogs.length !== 1) return null;
+                const local = [...liveDialogs[0].querySelectorAll('input[type="file"]')].filter(node => /image/.test(node.accept) && !node.disabled);
+                const inputs = local.length ? local : [...document.querySelectorAll('input[type="file"]')].filter(node => !existingInputs.has(node) && /image/.test(node.accept) && !node.disabled);
                 return inputs.length === 1 ? inputs[0] : null;
             }, 'Image upload control not found or ambiguous. No post clicked.');
             if (images.length > 1 && !input.multiple) throw groupFailure('Multiple images are not supported by this composer. No post clicked.');
@@ -133,8 +137,12 @@ async function submit(job) {
                 transfer.items.add(new File([bytes], image.name, {type: image.mime}));
             }
             input.files = transfer.files;
+            if (input.files.length !== images.length) throw groupFailure('Browser did not accept all campaign images. No post clicked.');
             input.dispatchEvent(new Event('change', {bubbles: true}));
-            await wait(() => [...dialog.querySelectorAll('[aria-label]')].filter(node => visible(node) && /^(remove photo|remove image)/i.test(node.getAttribute('aria-label'))).length >= images.length, 'Image attachment could not be confirmed. No post clicked.');
+            await wait(() => {
+                const live = [...document.querySelectorAll('[role="dialog"]')].filter(node => visible(node) && node.querySelector('[contenteditable="true"][role="textbox"]'));
+                return live.length === 1 && [...live[0].querySelectorAll('[aria-label]')].filter(node => visible(node) && /^(remove photo|remove image)/i.test(node.getAttribute('aria-label'))).length === images.length;
+            }, 'Image attachment could not be confirmed. No post clicked.');
         }
         await sleep(1000);
         // Facebook's rich-text editor rewrites paragraph breaks, NBSP and zero-width
@@ -189,7 +197,7 @@ async function submit(job) {
     }
 }
 async function handle(message) {
-    if (message.op === 'ping') return {version: '1.1.0', client: activeClient};
+    if (message.op === 'ping') return {version: '1.1.1', client: activeClient};
     if (message.op === 'cancel') {
         if (activeClient && message.client !== activeClient.id) throw new Error('Cannot cancel another client campaign.');
         cancelled = true;
@@ -210,6 +218,7 @@ async function handle(message) {
             !job.key.startsWith(job.client_id === 'agency' ? 'wnq_fb_job_' : 'wnq_fb_job_c' + job.client_id + '_') ||
             (job.client_id === 'agency' && !/^wnq_fb_job_[a-f0-9]{64}$/.test(job.key))) throw new Error('Client identity mismatch. Reload the selected client in WordPress.');
         const images = job.images || (job.image ? [job.image] : []);
+        if (!Number.isInteger(job.image_count) || job.image_count !== images.length) throw new Error('Campaign image count is missing or incomplete. Update WordPress; no post dispatched.');
         if (!Array.isArray(images) || images.length > 4 || images.some(image => !image || !['image/jpeg', 'image/png', 'image/webp'].includes(image.mime) ||
             typeof image.data !== 'string' || typeof image.name !== 'string') || images.reduce((sum, image) => sum + image.data.length, 0) > 5600000) throw new Error('Invalid campaign images.');
         activeClient = {id: job.client_id, name: job.client_name};

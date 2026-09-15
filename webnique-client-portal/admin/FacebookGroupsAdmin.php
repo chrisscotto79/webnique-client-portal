@@ -27,7 +27,7 @@ final class FacebookGroupsAdmin
         if (($_GET['page'] ?? '') !== 'wnq-facebook-groups' || !self::allowed()) return;
         wp_enqueue_media();
         $client = self::pageClient($_GET['client'] ?? 'agency');
-        wp_enqueue_script('wnq-facebook-publish', WNQ_PORTAL_URL . 'assets/js/facebook-publish.js', [], WNQ_PORTAL_VERSION, true);
+        wp_enqueue_script('wnq-facebook-publish', WNQ_PORTAL_URL . 'assets/js/facebook-publish.js', ['media-views'], WNQ_PORTAL_VERSION, true);
         wp_localize_script('wnq-facebook-publish', 'WNQFacebook', [
             'client' => $client['id'], 'clientName' => $client['name'],
             'ajax' => admin_url('admin-ajax.php'), 'nonce' => wp_create_nonce('wnq_facebook_publish'),
@@ -60,6 +60,16 @@ final class FacebookGroupsAdmin
         $plan = get_option(FacebookCampaign::key('wnq_facebook_group_plan', $clientId), []);
         $plan = array_merge(['groups' => [], 'message' => '', 'timezone' => 'America/New_York', 'start_time' => '09:00', 'repeat' => false], is_array($plan) ? $plan : []);
         $op = sanitize_key($_POST['op'] ?? '');
+        if ($op === 'save_images') {
+            FacebookCampaign::assertEditable($clientId);
+            $value = $_POST['image_ids'] ?? '';
+            if (!is_string($value) || !preg_match('/^(?:[1-9][0-9]*(?:,[1-9][0-9]*)*)?$/D', $value)) throw new \InvalidArgumentException('Invalid image selection.');
+            $ids = $value === '' ? [] : array_values(array_unique(array_map('intval', explode(',', $value))));
+            FacebookCampaign::images($ids); // Validate before changing anything.
+            $plan['image_ids'] = $ids;
+            update_option(FacebookCampaign::key('wnq_facebook_group_plan', $clientId), $plan, false);
+            wp_send_json_success(['client' => $clientId, 'image_ids' => $ids]);
+        }
         if ($op === 'stop') { update_option(FacebookCampaign::key('wnq_fb_schedule_enabled', $clientId), false, false); wp_send_json_success([]); }
         if (!in_array($op, ['progress', 'resolve', 'result'], true) && (empty($plan['groups']) || trim($plan['message'] ?? '') === '')) {
             wp_send_json_error(['message' => 'Save your group links and message first.']);
@@ -166,7 +176,7 @@ final class FacebookGroupsAdmin
                 wp_send_json_success(['job' => ['key' => $key, 'token' => $token,
                     'expires_at' => $expires,
                     'client_id' => $clientId, 'client_name' => $client['name'],
-                    'images' => $images, 'url' => $url, 'message' => $message]]);
+                    'image_count' => count($images), 'images' => $images, 'url' => $url, 'message' => $message]]);
             }
             wp_send_json_success(['finished' => true, 'message' => $mode === 'test' ? 'Test not sent: this group was already handled, held for review, or blocked by duplicate protection. See its weekly status.' : 'Today’s batch has no remaining eligible groups. See weekly statuses for posted or skipped groups.']);
         }
@@ -342,6 +352,12 @@ final class FacebookGroupsAdmin
                 <p><input type="hidden" id="fb-image-id" name="image_ids" value="<?php echo esc_attr(implode(',', $plan['image_ids'] ?? [(int)($plan['image_id'] ?? 0)])); ?>">
                 <button type="button" class="button" id="fb-image">Choose images</button> <button type="button" class="button" id="fb-image-clear">Remove images</button>
                 <span id="fb-image-label"><?php echo esc_html(!empty($plan['image_ids']) ? implode(', ', array_map('get_the_title', $plan['image_ids'])) : (!empty($plan['image_id']) ? get_the_title($plan['image_id']) : 'No images')); ?></span> · Up to four JPEG, PNG or WebP images, 4 MB combined.</p>
+                <p id="fb-image-save-status" role="status">Image selection saves immediately for this client. Stop the campaign and wait for its current interval before changing images.</p>
+                <div id="fb-image-previews" style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
+                <?php foreach ($plan['image_ids'] ?? [] as $imageId): ?>
+                    <?php echo wp_get_attachment_image($imageId, 'thumbnail', false, ['style' => 'width:96px;height:96px;object-fit:cover']); ?>
+                <?php endforeach; ?>
+                </div>
                 <p><label>Daily posting limit <input type="number" name="daily_limit" min="1" max="50" required value="<?php echo esc_attr($plan['daily_limit'] ?? 50); ?>"></label></p>
                 <p><label for="fb-time">Daily start time</label>
                     <input id="fb-time" name="start_time" type="time" required value="<?php echo esc_attr($plan['start_time']); ?>">
