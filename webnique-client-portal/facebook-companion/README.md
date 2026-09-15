@@ -1,4 +1,13 @@
-# Facebook Publisher companion 1.0.9
+# Facebook Publisher companion 1.1.0
+
+Requires WordPress portal 3.9.0 for client-aware publishing. Stop the current run,
+update both components, reload this extension and refresh the WordPress tab.
+Jobs validate the selected client ID and name; a campaign banner appears in the
+background Facebook tab. This does not change the signed-in Facebook profile/Page.
+Optional campaign images are attached only when the composer confirms them;
+existing drafts/photos are preserved and ambiguous attachment controls skip safely.
+See `docs/facebook-client-campaigns-3.9.0.md` in the plugin for client isolation,
+daily limits, migration and history details.
 
 Version 1.0.9 treats missing/ambiguous posting-box controls, missing editable dialogs,
 existing drafts, text-insertion failures and unavailable Post buttons as group-local

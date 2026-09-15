@@ -10,7 +10,7 @@
             // Reloading an unpacked extension invalidates scripts in already-open
             // pages. sendMessage can throw BEFORE returning a Promise.
             if (invalidated || !chrome.runtime?.id) throw new Error('Extension context invalidated');
-            const result = await chrome.runtime.sendMessage({op: data.op, job: data.job});
+            const result = await chrome.runtime.sendMessage({op: data.op, job: data.job, client: data.client, clientName: data.clientName});
             if (!result || (!result.result && !result.error)) throw new Error('Companion returned no response');
             reply(result);
         } catch (error) {

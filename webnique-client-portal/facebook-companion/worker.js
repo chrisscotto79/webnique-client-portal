@@ -1,6 +1,6 @@
 'use strict';
 let busy = false;
-let activeToken = null, cancelled = false;
+let activeToken = null, activeClient = null, cancelled = false;
 const allowed = sender => {
     try {
         const url = new URL(sender.url);
@@ -35,6 +35,13 @@ async function loaded(id) {
 // Runs only in our owned Facebook tab. No cookies, passwords, or page source leave it.
 async function submit(job) {
     let clicked = false;
+    const previousBanner = document.getElementById('wnq-client-banner');
+    if (previousBanner) previousBanner.remove();
+    const banner = document.createElement('div');
+    banner.id = 'wnq-client-banner';
+    banner.textContent = 'Posting campaign: ' + job.client_name + ' — verify your Facebook identity';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#15385b;color:white;padding:8px;text-align:center;pointer-events:none;font:14px sans-serif';
+    document.documentElement.append(banner);
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     const visible = element => element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden';
     const text = element => (element.innerText || element.textContent || '').trim();
@@ -109,7 +116,26 @@ async function submit(job) {
         const editor = editors[0];
         if (text(editor)) throw groupFailure('Facebook already has a draft in this composer. Review it manually first.');
         editor.focus();
+        if ([...dialog.querySelectorAll('[aria-label]')].some(node => visible(node) && /^(remove photo|remove image|remove attachment|remove preview)/i.test(node.getAttribute('aria-label')))) throw groupFailure('The composer already contains an attachment. Clear the existing draft manually; no post clicked.');
         if (!document.execCommand('insertText', false, job.message)) throw groupFailure('Could not fill the Facebook composer.');
+        const images = job.images || (job.image ? [job.image] : []);
+        if (images.length) {
+            const photoButtons = [...dialog.querySelectorAll('[role="button"],button')].filter(node => visible(node) && /^(photo\/video|add photos\/videos)$/i.test(node.getAttribute('aria-label') || text(node)));
+            if (photoButtons.length === 1) photoButtons[0].click();
+            const input = await wait(() => {
+                const inputs = [...dialog.querySelectorAll('input[type="file"]')].filter(node => /image/.test(node.accept) && !node.disabled);
+                return inputs.length === 1 ? inputs[0] : null;
+            }, 'Image upload control not found or ambiguous. No post clicked.');
+            if (images.length > 1 && !input.multiple) throw groupFailure('Multiple images are not supported by this composer. No post clicked.');
+            const transfer = new DataTransfer();
+            for (const image of images) {
+                const bytes = Uint8Array.from(atob(image.data), c => c.charCodeAt(0));
+                transfer.items.add(new File([bytes], image.name, {type: image.mime}));
+            }
+            input.files = transfer.files;
+            input.dispatchEvent(new Event('change', {bubbles: true}));
+            await wait(() => [...dialog.querySelectorAll('[aria-label]')].filter(node => visible(node) && /^(remove photo|remove image)/i.test(node.getAttribute('aria-label'))).length >= images.length, 'Image attachment could not be confirmed. No post clicked.');
+        }
         await sleep(1000);
         // Facebook's rich-text editor rewrites paragraph breaks, NBSP and zero-width
         // formatting characters. Verify all non-whitespace content, not its DOM layout.
@@ -136,6 +162,7 @@ async function submit(job) {
             await sleep(250);
         }
         if (!postButton) throw groupFailure(reason + ' No post sent.');
+        if (images.length && [...activeDialog.querySelectorAll('[aria-label]')].filter(node => visible(node) && /^(remove photo|remove image)/i.test(node.getAttribute('aria-label'))).length !== images.length) throw groupFailure('Campaign image count changed before posting. No post clicked.');
         postButton.scrollIntoView({block: 'center'});
         if (window.__wnqFbCancelled === job.token) throw new Error('Stopped before clicking Post.');
         if (!Number.isFinite(job.expires_at) || Date.now() >= job.expires_at * 1000) throw new Error('Publishing authorization expired. No post sent; return to WordPress and retry.');
@@ -162,8 +189,9 @@ async function submit(job) {
     }
 }
 async function handle(message) {
-    if (message.op === 'ping') return {version: '1.0.9'};
+    if (message.op === 'ping') return {version: '1.1.0', client: activeClient};
     if (message.op === 'cancel') {
+        if (activeClient && message.client !== activeClient.id) throw new Error('Cannot cancel another client campaign.');
         cancelled = true;
         const tabId = (await chrome.storage.local.get('tabId')).tabId;
         if (tabId && activeToken) await chrome.scripting.executeScript({target: {tabId}, func: token => { window.__wnqFbCancelled = token; }, args: [activeToken]});
@@ -175,13 +203,21 @@ async function handle(message) {
         if (message.op === 'login') { await facebookTab('https://www.facebook.com/', true); return {opened: true}; }
         const job = message.job;
         if (message.op !== 'publish' || !job || !/^https:\/\/www\.facebook\.com\/groups\/[a-zA-Z0-9._-]+\/$/.test(job.url) ||
-            !/^wnq_fb_job_[a-f0-9]{64}$/.test(job.key) || typeof job.token !== 'string' ||
+            !/^wnq_fb_job_(?:c[1-9][0-9]*_)?[a-f0-9]{64}$/.test(job.key) || typeof job.token !== 'string' ||
             typeof job.message !== 'string' || !job.message.trim() || job.message.length > 20000) throw new Error('Invalid publishing job.');
+        if (!/^(agency|[1-9][0-9]*)$/.test(job.client_id || '') || message.client !== job.client_id ||
+            typeof job.client_name !== 'string' || !job.client_name.trim() || message.clientName !== job.client_name ||
+            !job.key.startsWith(job.client_id === 'agency' ? 'wnq_fb_job_' : 'wnq_fb_job_c' + job.client_id + '_') ||
+            (job.client_id === 'agency' && !/^wnq_fb_job_[a-f0-9]{64}$/.test(job.key))) throw new Error('Client identity mismatch. Reload the selected client in WordPress.');
+        const images = job.images || (job.image ? [job.image] : []);
+        if (!Array.isArray(images) || images.length > 4 || images.some(image => !image || !['image/jpeg', 'image/png', 'image/webp'].includes(image.mime) ||
+            typeof image.data !== 'string' || typeof image.name !== 'string') || images.reduce((sum, image) => sum + image.data.length, 0) > 5600000) throw new Error('Invalid campaign images.');
+        activeClient = {id: job.client_id, name: job.client_name};
         activeToken = job.token; cancelled = false;
         const existing = (await chrome.storage.local.get(job.key))[job.key];
         if (existing) return existing.result || {status: 'unknown', message: 'This group has a previous browser submission. Check Facebook before taking further action.'};
         // Durable before dispatch, so a service-worker restart cannot replay a click.
-        await chrome.storage.local.set({[job.key]: {started: Date.now()}});
+        await chrome.storage.local.set({[job.key]: {started: Date.now(), client: activeClient}});
         let result, dispatched = false;
         try {
             const tab = await facebookTab(job.url);
@@ -206,7 +242,7 @@ async function handle(message) {
         if (result.status === 'not_started') await chrome.storage.local.remove(job.key);
         else await chrome.storage.local.set({[job.key]: {result}});
         return result;
-    } finally { busy = false; activeToken = null; }
+    } finally { busy = false; activeToken = null; activeClient = null; }
 }
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (!allowed(sender)) return false;
