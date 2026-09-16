@@ -68,9 +68,27 @@ final class AnalyticsAdmin
 
         $config = $current_client_id ? AnalyticsConfig::getClientConfig($current_client_id) : null;
         $credentials = AnalyticsConfig::getCredentials();
+        $sharedProfile = false;
+        foreach (\WNQ\Models\Client::getAll() as $portal) {
+            if (AnalyticsConfig::idForPortal($portal, $all_clients) === $current_client_id) { $sharedProfile = true; break; }
+        }
 
         ?>
         <div class="wrap wnq-analytics-wrap">
+            <?php if ($current_client_id): ?>
+            <div class="notice notice-info inline"><p><strong>Setup for <?php echo esc_html($config['client_name'] ?? $current_client_id); ?></strong> —
+                <?php echo empty($config['ga4_property_id']) ? 'GA4 property needed. ' : 'GA4 property saved; access must be verified. '; ?>
+                <?php echo empty($config['search_console_url']) ? 'Search Console property needed. ' : 'Search Console property saved; access must be verified. '; ?>
+                <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-analytics&view=edit-client&action=edit&client_id=' . urlencode($current_client_id))); ?>">Edit Google connections</a></p>
+                <?php if (!$sharedProfile): ?><p>This Analytics record is not in the shared client list yet. <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-clients&action=add&analytics_id=' . urlencode($current_client_id))); ?>">Complete client profile</a> to include it in Money Management and SEO OS.</p><?php endif; ?>
+                <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
+                    <?php wp_nonce_field('wnq_test_analytics_connection', 'wnq_nonce'); ?>
+                    <input type="hidden" name="action" value="wnq_test_analytics_connection"><input type="hidden" name="client_id" value="<?php echo esc_attr($current_client_id); ?>">
+                    <button class="button">Check this client's Google connections</button>
+                </form>
+                <?php $diagnostic = get_transient('wnq_connection_result_' . get_current_user_id()); if ($diagnostic && ($diagnostic['client_id'] ?? '') === $current_client_id): ?><p role="status"><?php echo esc_html($diagnostic['message']); ?></p><?php endif; ?>
+            </div>
+            <?php endif; ?>
             <h1 style="margin-bottom: 15px;">📊 Analytics Dashboard</h1>
 
             <?php if (empty($all_clients)): ?>
@@ -552,7 +570,7 @@ final class AnalyticsAdmin
             <?php echo $message; ?>
 
             <div style="margin-bottom: 20px; display: flex; gap: 8px; align-items: center;">
-                <a href="<?php echo admin_url('admin.php?page=wnq-analytics&view=edit-client&action=add'); ?>" class="button button-primary">+ Add Analytics Client</a>
+                <a href="<?php echo admin_url('admin.php?page=wnq-clients&action=add'); ?>" class="button button-primary">+ Add client once for all sections</a>
                 <a href="<?php echo admin_url('admin.php?page=wnq-analytics'); ?>" class="button">← Back to Dashboard</a>
                 <a href="<?php echo admin_url('admin.php?page=wnq-analytics&view=settings'); ?>" class="button">⚙️ Settings</a>
             </div>
@@ -608,12 +626,12 @@ final class AnalyticsAdmin
                     </tbody>
                 </table>
                 <p style="color:#666; font-size:13px; margin-top:12px;">
-                    <?php echo count($analytics_clients); ?> analytics client<?php echo count($analytics_clients) !== 1 ? 's' : ''; ?> configured.
+                    <?php echo count($analytics_clients); ?> client profiles. Blank property fields mean setup is needed, not zero traffic.
                 </p>
 
                 <?php
                 // Show portal clients that don't have analytics configured yet
-                $unconfigured = array_values(array_filter($portal_clients, fn($c) => !isset($analytics_by_id[$c['client_id']])));
+                $unconfigured = array_values(array_filter($portal_clients, fn($c) => !isset($analytics_by_id[AnalyticsConfig::idForPortal($c, $analytics_clients)])));
                 if (!empty($unconfigured)):
                 ?>
                 <h2 style="font-size:16px; margin:24px 0 12px;">Clients Without Analytics</h2>
@@ -699,6 +717,11 @@ final class AnalyticsAdmin
         // Support pre-filling fields when linking from the clients list
         $prefill_client_id = isset($_GET['prefill_client_id']) ? sanitize_text_field($_GET['prefill_client_id']) : '';
         $prefill_name      = isset($_GET['prefill_name'])      ? sanitize_text_field($_GET['prefill_name'])      : '';
+
+        if ($action === 'add' && !$prefill_client_id) {
+            echo '<div class="wrap"><h1>One shared client list</h1><p>Add the client in Money Management once. Then configure their Google connections here.</p><a class="button button-primary" href="' . esc_url(admin_url('admin.php?page=wnq-clients&action=add')) . '">Add client</a></div>';
+            return;
+        }
 
         $form_action = ($action === 'edit') ? 'wnq_update_analytics_client' : 'wnq_add_analytics_client';
         $page_title  = ($action === 'edit') ? '✏️ Edit Analytics Client' : '➕ Add Analytics Client';
@@ -1046,8 +1069,11 @@ final class AnalyticsAdmin
                     ];
                 } catch (\Throwable $e) {
                     error_log('[WNQ Analytics] GA4 fetch error: ' . $e->getMessage());
+                    $data['ga4']['message'] = self::connectionError($e->getMessage(), 'GA4');
                     delete_transient(self::tokenCacheKey($credentials['credentials']));
                 }
+            } else {
+                $data['ga4']['message'] = !$credentials ? 'Google credentials are not connected. Open Analytics Settings.' : 'GA4 property is not configured. Open Edit Google connections.';
             }
 
             if ($config && $credentials && !empty($config['search_console_url'])) {
@@ -1058,6 +1084,7 @@ final class AnalyticsAdmin
 
                     if ($search_console->hasErrors()) {
                         error_log('[WNQ Analytics] Search Console fetch error: ' . wp_json_encode($search_console->getErrors()));
+                        $data['search_console']['message'] = self::connectionError(implode(' ', $search_console->getErrors()), 'Search Console');
                     } else {
                         $data['search_console'] = [
                             'status' => 'available',
@@ -1080,7 +1107,10 @@ final class AnalyticsAdmin
                     }
                 } catch (\Throwable $e) {
                     error_log('[WNQ Analytics] Search Console fetch error: ' . $e->getMessage());
+                    $data['search_console']['message'] = self::connectionError($e->getMessage(), 'Search Console');
                 }
+            } else {
+                $data['search_console']['message'] = !$credentials ? 'Google credentials are not connected. Open Analytics Settings.' : 'Search Console property is not configured. Open Edit Google connections.';
             }
 
             try {
@@ -1318,6 +1348,10 @@ final class AnalyticsAdmin
         $client_id   = sanitize_text_field($_POST['client_id'] ?? '');
         $client_name = sanitize_text_field($_POST['client_name'] ?? '');
 
+        if (!\WNQ\Models\Client::getByClientId($client_id)) {
+            wp_die('Add this client in Money Management first. Analytics uses that same client ID.');
+        }
+
         if (empty($client_id) || empty($client_name)) {
             $error = urlencode('Client ID and Client Name are required.');
             wp_redirect(admin_url('admin.php?page=wnq-analytics&view=edit-client&action=add&error=' . $error));
@@ -1432,12 +1466,15 @@ final class AnalyticsAdmin
             wp_die('Insufficient permissions.');
         }
 
-        // Use the first configured client for the test
+        // Test the selected client, not an unrelated first client.
         $all_clients = AnalyticsConfig::getAllClients();
-        $client_id   = !empty($all_clients) ? $all_clients[0]['client_id'] : '';
+        $client_id = sanitize_text_field(wp_unslash($_POST['client_id'] ?? ''));
+        if ($client_id === '') $client_id = !empty($all_clients) ? $all_clients[0]['client_id'] : '';
 
         $result = AnalyticsConfig::testConnection($client_id);
         $status = $result['success'] ? 'success' : 'failed';
+        set_transient('wnq_connection_result_' . get_current_user_id(), ['client_id' => $client_id, 'message' => $result['message']], 600);
+        if (!empty($_POST['client_id'])) { wp_safe_redirect(admin_url('admin.php?page=wnq-analytics&client=' . urlencode($client_id))); exit; }
 
         wp_redirect(admin_url('admin.php?page=wnq-analytics&view=settings&tested=' . $status));
         exit;
@@ -1698,8 +1735,38 @@ final class AnalyticsAdmin
         return round(min($rate, 100), 2);
     }
 
+    public static function probeConnections(string $client_id): array
+    {
+        $config = AnalyticsConfig::getClientConfig($client_id);
+        $credentials = AnalyticsConfig::getCredentials();
+        if (!$config || !$credentials) return ['success' => false, 'message' => 'Save this client’s properties and Google service-account credentials first.'];
+        $messages = []; $ok = true;
+        try {
+            $token = self::getGoogleAccessToken($credentials['credentials']);
+            self::makeGARequest($token, (string)($config['ga4_property_id'] ?? ''), ['dateRanges' => [['startDate' => '7daysAgo', 'endDate' => 'yesterday']], 'metrics' => [['name' => 'sessions']]]);
+            $messages[] = 'GA4: access verified.';
+        } catch (\Throwable $e) { $ok = false; $messages[] = self::connectionError($e->getMessage(), 'GA4'); }
+        try {
+            $gsc = new GoogleSearchConsole($client_id, true);
+            $gsc->getOverviewStats();
+            if ($gsc->hasErrors()) throw new \RuntimeException(implode(' ', $gsc->getErrors()));
+            $messages[] = 'Search Console: access verified.';
+        } catch (\Throwable $e) { $ok = false; $messages[] = self::connectionError($e->getMessage(), 'Search Console'); }
+        return ['success' => $ok, 'message' => implode(' ', $messages)];
+    }
+
+    private static function connectionError(string $message, string $provider): string
+    {
+        if (preg_match('/403|permission|forbidden|access denied/i', $message)) return $provider . ': access denied. Grant the saved service-account email access to this exact property and enable the API in its Google Cloud project.';
+        if (preg_match('/401|auth|token|credential|JWT/i', $message)) return $provider . ': Google authentication failed. Check the service-account credentials in Analytics Settings.';
+        if (preg_match('/404|not found|invalid.*property|not configured/i', $message)) return $provider . ': check the saved property identifier. GA4 needs a numeric property ID; Search Console must match the accessible domain or URL-prefix property.';
+        if (preg_match('/429|quota/i', $message)) return $provider . ': Google rate limit reached. Wait and refresh.';
+        return $provider . ': request failed. Verify property access and the Google API connection, then refresh. Other providers remain separate.';
+    }
+
     private static function makeGARequest(string $token, string $property_id, array $body): array
     {
+        if (ctype_digit(trim($property_id))) $property_id = 'properties/' . trim($property_id);
         if (!preg_match('#^properties/[0-9]+$#', $property_id)) throw new \Exception('Invalid GA4 property ID.');
         $url = "https://analyticsdata.googleapis.com/v1beta/{$property_id}:runReport";
 
@@ -1720,7 +1787,7 @@ final class AnalyticsAdmin
         $data = json_decode(wp_remote_retrieve_body($response), true);
 
         if ((int)$code !== 200 || !is_array($data) || isset($data['error']) || (isset($data['rows']) && !is_array($data['rows']))) {
-            throw new \Exception('Google Analytics returned an unavailable or invalid report.');
+            throw new \Exception('Google Analytics HTTP ' . (int)$code . ': unavailable or invalid report.');
         }
 
         return $data;

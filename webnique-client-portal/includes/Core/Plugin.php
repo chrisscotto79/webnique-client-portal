@@ -23,6 +23,7 @@ final class Plugin
     self::includes();
 
     \WNQ\Services\NotificationManager::register();
+    \WNQ\Services\MonthlyBookkeeping::register();
 
     // ✅ Register REST routes (v1: /wnq/v1/ping)
     \WNQ\Core\Router::register();
@@ -68,6 +69,7 @@ final class Plugin
 
   public static function deactivate(): void
   {
+    wp_clear_scheduled_hook('wnq_monthly_bookkeeping');
     if (class_exists(\WNQ\Services\NotificationManager::class)) {
       \WNQ\Services\NotificationManager::unschedule();
     }
@@ -85,6 +87,7 @@ final class Plugin
     require_once WNQ_PORTAL_PATH . 'includes/Models/Client.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/ClientPortal.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/FinanceEntry.php';
+    require_once WNQ_PORTAL_PATH . 'includes/Services/MonthlyBookkeeping.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/KnowledgeBase.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/PpcAccount.php';
     require_once WNQ_PORTAL_PATH . 'includes/Models/PpcProposal.php';

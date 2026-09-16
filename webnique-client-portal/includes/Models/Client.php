@@ -19,7 +19,7 @@ if (!defined('ABSPATH')) {
  */
 final class Client
 {
-    private const SCHEMA_VERSION = '4';
+    private const SCHEMA_VERSION = '5';
 
     /**
      * Table name
@@ -47,7 +47,7 @@ final class Client
         $table_name = $wpdb->prefix . self::$table;
         $charset_collate = $wpdb->get_charset_collate();
 
-        $sql = "CREATE TABLE IF NOT EXISTS $table_name (
+        $sql = "CREATE TABLE $table_name (
             id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
             client_id varchar(100) NOT NULL,
             name varchar(255) NOT NULL,
@@ -63,18 +63,15 @@ final class Client
             body_font varchar(100) DEFAULT NULL,
             heading_font varchar(100) DEFAULT NULL,
             
-            -- Account Status
             status varchar(50) DEFAULT 'active',
             tier varchar(50) DEFAULT 'website',
             
-            -- API Keys & Credentials
             google_analytics_property_id varchar(255) DEFAULT NULL,
             google_search_console_site_url varchar(255) DEFAULT NULL,
             google_api_credentials longtext DEFAULT NULL,
             facebook_access_token text DEFAULT NULL,
             other_api_keys longtext DEFAULT NULL,
             
-            -- Billing
             billing_email varchar(255) DEFAULT NULL,
             billing_cycle varchar(50) DEFAULT 'monthly',
             monthly_rate decimal(10,2) DEFAULT 0.00,
@@ -89,10 +86,8 @@ final class Client
             payment_count int(11) DEFAULT 0,
             total_collected decimal(10,2) DEFAULT 0.00,
             
-            -- Services
             active_services longtext DEFAULT NULL,
             
-            -- Metadata
             notes longtext DEFAULT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -116,10 +111,12 @@ final class Client
         );
         $wpdb->query(
             "UPDATE $table_name
-             SET payment_due_day = DAYOFMONTH(next_payment_due_date)
+             SET payment_due_day = COALESCE(DAYOFMONTH(last_payment_date), DAYOFMONTH(next_payment_due_date))
              WHERE payment_due_day IS NULL AND next_payment_due_date IS NOT NULL"
         );
-        update_option('wnq_clients_schema_version', self::SCHEMA_VERSION, false);
+        $columns = $wpdb->get_col("DESCRIBE $table_name", 0);
+        $required = ['business_address', 'city', 'state', 'primary_color', 'secondary_color', 'body_font', 'heading_font', 'payment_due_day', 'next_payment_due_date'];
+        if (!array_diff($required, $columns ?: [])) update_option('wnq_clients_schema_version', self::SCHEMA_VERSION, false);
     }
 
     /**
