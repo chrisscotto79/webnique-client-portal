@@ -140,12 +140,15 @@ final class AnalyticsConfig
     {
         global $wpdb;
         $table = $wpdb->prefix . self::$table;
+        $property = trim((string)($config['ga4_property_id'] ?? ''));
+        if (ctype_digit($property)) $property = 'properties/' . $property;
+        if ($property !== '' && !preg_match('#^properties/[0-9]+$#', $property)) return false;
 
         // FIXED: Use sanitize_text_field instead of esc_url_raw for search_console_url
         $data = [
             'client_id' => sanitize_text_field($config['client_id']),
             'client_name' => sanitize_text_field($config['client_name']),
-            'ga4_property_id' => sanitize_text_field($config['ga4_property_id'] ?? ''),
+            'ga4_property_id' => $property,
             'search_console_url' => sanitize_text_field($config['search_console_url'] ?? ''),
             'website_url' => esc_url_raw($config['website_url'] ?? ''),
             'timezone' => sanitize_text_field($config['timezone'] ?? 'America/New_York'),
@@ -182,7 +185,10 @@ final class AnalyticsConfig
         );
 
         if (!$row) {
-            return null;
+            $portal = class_exists(Client::class) ? Client::getByClientId($client_id) : null;
+            if (!$portal) return null;
+            $linked = self::idForPortal($portal);
+            return $linked !== $client_id ? self::getClientConfig($linked) : self::portalDefaults($portal);
         }
 
         // Parse JSON fields
@@ -209,8 +215,10 @@ final class AnalyticsConfig
             ARRAY_A
         );
 
-        if (!$results) {
-            return [];
+        $results = $results ?: [];
+        $ids = array_column($results, 'client_id');
+        foreach (class_exists(Client::class) ? Client::getAll() : [] as $portal) {
+            if (!in_array(self::idForPortal($portal, $results), $ids, true)) $results[] = self::portalDefaults($portal);
         }
 
         // Parse JSON fields
@@ -226,67 +234,49 @@ final class AnalyticsConfig
         return $results;
     }
 
+    /** Unsaved setup state uses the shared client identity, never another account. */
+    private static function portalDefaults(array $client): array
+    {
+        return [
+            'client_id' => $client['client_id'], 'client_name' => $client['company'] ?: $client['name'],
+            'website_url' => $client['website'] ?? '', 'ga4_property_id' => $client['google_analytics_property_id'] ?? '',
+            'search_console_url' => $client['google_search_console_site_url'] ?? '',
+            'timezone' => 'America/New_York', 'phone_numbers' => [], 'form_ids' => [], 'is_active' => 1,
+        ];
+    }
+
+    /** Preserve legacy analytics IDs/settings; only reuse an unambiguous exact website match. */
+    public static function idForPortal(array $portal, ?array $configs = null): string
+    {
+        global $wpdb;
+        $configs = $configs ?? ($wpdb->get_results("SELECT * FROM {$wpdb->prefix}wnq_analytics_config WHERE is_active = 1", ARRAY_A) ?: []);
+        foreach ($configs as $config) if ($config['client_id'] === $portal['client_id']) return $portal['client_id'];
+        $normalize = static function ($url): string {
+            $p = parse_url(trim((string)$url));
+            if (!$p || !in_array($p['scheme'] ?? '', ['http', 'https'], true) || empty($p['host']) || isset($p['user']) || isset($p['query'])) return '';
+            return strtolower(preg_replace('/^www\./i', '', $p['host'])) . (isset($p['port']) ? ':' . $p['port'] : '') . rtrim($p['path'] ?? '', '/');
+        };
+        $site = $normalize($portal['website'] ?? ''); $matches = [];
+        if (!$site) return $portal['client_id'];
+        // Do not share one legacy config between two portal companies with the same website.
+        $owners = array_filter(Client::getAll(), static fn($c) => $normalize($c['website'] ?? '') === $site);
+        if (count($owners) !== 1) return $portal['client_id'];
+        foreach ($configs as $config) {
+            if ($normalize($config['website_url'] ?? '') !== $site) continue;
+            if (!empty($portal['google_analytics_property_id']) && !empty($config['ga4_property_id']) && preg_replace('#^properties/#', '', $portal['google_analytics_property_id']) !== preg_replace('#^properties/#', '', $config['ga4_property_id'])) continue;
+            $matches[] = $config['client_id'];
+        }
+        return count($matches) === 1 ? $matches[0] : $portal['client_id'];
+    }
+
     /**
      * Test API connection
      */
     public static function testConnection(string $client_id): array
     {
-        $credentials = self::getCredentials();
-        $config = self::getClientConfig($client_id);
-
-        if (!$credentials || !$config) {
-            return [
-                'success' => false,
-                'message' => 'Missing credentials or configuration',
-            ];
-        }
-
-        // Update test status
-        global $wpdb;
-        $table = $wpdb->prefix . self::$credentials_table;
-        
-        try {
-            // Basic validation
-            $creds = $credentials['credentials'];
-            
-            if (empty($creds['client_email']) || empty($creds['private_key'])) {
-                throw new \Exception('Invalid credentials format');
-            }
-
-            // Update test status
-            $wpdb->update(
-                $table,
-                [
-                    'last_tested' => current_time('mysql'),
-                    'test_status' => 'success',
-                ],
-                ['is_active' => 1]
-            );
-
-            return [
-                'success' => true,
-                'message' => 'Connection successful',
-                'ga4_property' => $config['ga4_property_id'],
-                'search_console' => $config['search_console_url'],
-            ];
-
-        } catch (\Exception $e) {
-            // Update test status
-            $wpdb->update(
-                $table,
-                [
-                    'last_tested' => current_time('mysql'),
-                    'test_status' => 'failed',
-                ],
-                ['is_active' => 1]
-            );
-
-            return [
-                'success' => false,
-                'message' => 'Connection failed: ' . $e->getMessage(),
-            ];
-        }
+        return \WNQ\Admin\AnalyticsAdmin::probeConnections($client_id);
     }
+
 
     /**
      * Delete client configuration

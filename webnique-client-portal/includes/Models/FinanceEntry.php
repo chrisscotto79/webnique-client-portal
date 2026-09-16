@@ -24,7 +24,7 @@ final class FinanceEntry
         $table_name = $wpdb->prefix . self::$table;
         $charset_collate = $wpdb->get_charset_collate();
 
-        $sql = "CREATE TABLE IF NOT EXISTS $table_name (
+        $sql = "CREATE TABLE $table_name (
             id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
             type varchar(20) NOT NULL DEFAULT 'income',
             category varchar(100) NOT NULL DEFAULT '',
@@ -36,13 +36,17 @@ final class FinanceEntry
             client_id bigint(20) UNSIGNED DEFAULT NULL,
             payment_method varchar(100) DEFAULT '',
             description text DEFAULT NULL,
+            bookkeeping_period varchar(7) DEFAULT NULL,
+            bookkeeping_status varchar(20) DEFAULT NULL,
+            bookkeeping_data longtext DEFAULT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             KEY type (type),
             KEY entry_date (entry_date),
             KEY recurrence (recurrence),
-            KEY client_id (client_id)
+            KEY client_id (client_id),
+            UNIQUE KEY client_month (client_id, bookkeeping_period)
         ) $charset_collate;";
 
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -130,6 +134,9 @@ final class FinanceEntry
     {
         global $wpdb;
         $table_name = $wpdb->prefix . self::$table;
+
+        $entry = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_name WHERE id = %d", $id), ARRAY_A);
+        if (!empty($entry['bookkeeping_period'])) return false; // Use Mark unpaid to reverse totals and retain the audit record.
 
         $result = $wpdb->delete($table_name, ['id' => $id], ['%d']);
 

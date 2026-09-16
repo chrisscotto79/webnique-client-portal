@@ -19,6 +19,7 @@ namespace WNQ\Admin;
 use WNQ\Models\Client;
 use WNQ\Models\FinanceEntry;
 use WNQ\Core\ClientPortalUsers;
+use WNQ\Services\MonthlyBookkeeping;
 
 if (!defined('ABSPATH')) {
     exit;
@@ -32,6 +33,7 @@ final class ClientsAdmin
         add_action('admin_post_wnq_save_client', [self::class, 'handleSaveClient']);
         add_action('admin_post_wnq_delete_client_from_clients', [self::class, 'handleDeleteClient']);
         add_action('admin_post_wnq_mark_paid', [self::class, 'handleMarkPaid']);
+        add_action('admin_post_wnq_mark_unpaid', [self::class, 'handleMarkUnpaid']);
         add_action('admin_post_wnq_save_finance_entry', [self::class, 'handleSaveFinanceEntry']);
         add_action('admin_post_wnq_delete_finance_entry', [self::class, 'handleDeleteFinanceEntry']);
         add_action('admin_post_wnq_create_client_portal_user', [self::class, 'handleCreatePortalUser']);
@@ -78,7 +80,7 @@ final class ClientsAdmin
     private static function renderClientsList(): void
     {
         self::ensureFinanceModel();
-
+        MonthlyBookkeeping::run();
         $clients = Client::getAll();
         $total_count = Client::getCount();
         $active_count = Client::getCountByStatus('active');
@@ -111,12 +113,23 @@ final class ClientsAdmin
         }
 
         $total_fees = $monthly_revenue - $after_fees_total;
+        $linkedAnalyticsIds = [];
+        foreach ($clients as $portal) $linkedAnalyticsIds[] = \WNQ\Models\AnalyticsConfig::idForPortal($portal, $analytics_clients);
 
         // Get last 12 months data for graph
         $graph_data = self::getGraphData($clients);
 
         ?>
         <div class="wrap wnq-clients-admin">
+            <p>One client record is shared by Money Management, Analytics and SEO OS. Google reporting still needs property access; no duplicate client setup is required.</p>
+            <p>Monthly bookkeeping automatically marks active, monthly clients <strong>assumed paid</strong> on their due day (or their last payment day). No Stripe connection or payment confirmation. Use <strong>Mark unpaid</strong> for exceptions; that month will not be automatically marked paid again. No previous months are backfilled.</p>
+            <?php if (get_option('wnq_bookkeeping_error')): ?><p class="notice notice-error"><?php echo esc_html(get_option('wnq_bookkeeping_error')); ?></p><?php endif; ?>
+            <?php foreach ($analytics_clients as $analytics_only): ?>
+                <?php if (!in_array($analytics_only['client_id'], $linkedAnalyticsIds, true)): ?>
+                    <p class="notice notice-warning">Analytics record without a billing profile: <strong><?php echo esc_html($analytics_only['client_name']); ?></strong>
+                    <a href="<?php echo esc_url(admin_url('admin.php?page=wnq-clients&action=add&analytics_id=' . urlencode($analytics_only['client_id']))); ?>">Complete shared client profile</a> (existing Analytics settings are preserved).</p>
+                <?php endif; ?>
+            <?php endforeach; ?>
             <div class="wnq-header">
                 <div>
                     <h1>Clients & Billing</h1>
@@ -165,7 +178,8 @@ final class ClientsAdmin
 
             <!-- Revenue Graph -->
             <div class="chart-container">
-                <h2>Revenue Over Time</h2>
+                <h2>Recorded income over time</h2>
+                <p>Includes assumed-paid bookkeeping entries. The monthly revenue cards are forecasts, not bank-confirmed receipts.</p>
                 <canvas id="revenueChart"></canvas>
             </div>
 
@@ -195,7 +209,8 @@ final class ClientsAdmin
                         </thead>
                         <tbody>
                             <?php foreach ($clients as $client): 
-                                $has_analytics = in_array($client['client_id'], $analytics_client_ids);
+                                $analyticsId = \WNQ\Models\AnalyticsConfig::idForPortal($client, $analytics_clients);
+                                $has_analytics = in_array($analyticsId, $analytics_client_ids);
                             ?>
                                 <tr>
                                     <td>
@@ -204,7 +219,7 @@ final class ClientsAdmin
                                             <br><small class="text-muted"><?php echo esc_html($client['company']); ?></small>
                                         <?php endif; ?>
                                         <?php if ($has_analytics): ?>
-                                            <br><span class="analytics-badge">📊 Analytics Active</span>
+                                            <br><span class="analytics-badge">📊 Shared Analytics profile</span>
                                         <?php endif; ?>
                                     </td>
                                     <td>
@@ -229,10 +244,10 @@ final class ClientsAdmin
                                         </span>
                                     </td>
                                     <td class="money-col">
-                                        <strong class="amount-revenue">$<?php echo number_format($client['monthly_rate'] ?? 0, 0); ?></strong>
+                                        <strong class="amount-revenue">$<?php echo number_format($client['monthly_rate'] ?? 0, 2); ?></strong>
                                     </td>
                                     <td class="money-col">
-                                        <strong class="amount-profit">$<?php echo number_format($client['after_fees'] ?? 0, 0); ?></strong>
+                                        <strong class="amount-profit">$<?php echo number_format($client['after_fees'] ?? 0, 2); ?></strong>
                                         <br><small class="text-muted">-$<?php echo number_format(($client['monthly_rate'] ?? 0) - ($client['after_fees'] ?? 0), 2); ?></small>
                                     </td>
                                     <td>
@@ -258,6 +273,15 @@ final class ClientsAdmin
                                         </span>
                                     </td>
                                     <td class="actions-col">
+                                        <?php $booking = MonthlyBookkeeping::current((int)$client['id']); ?>
+                                        <p><?php echo esc_html(current_datetime()->format('M Y') . ': ' . ($booking ? ['assumed' => 'Assumed paid (unverified)', 'manual' => 'Marked paid', 'unpaid' => 'Unpaid — manual exception'][$booking['bookkeeping_status']] : (substr((string)($client['last_payment_date'] ?? ''), 0, 7) === current_datetime()->format('Y-m') ? 'Previously marked paid' : 'Not recorded yet'))); ?></p>
+                                        <?php if (($client['billing_cycle'] ?? 'monthly') === 'monthly'): ?>
+                                        <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" class="inline-form">
+                                            <?php wp_nonce_field('wnq_mark_unpaid'); ?>
+                                            <input type="hidden" name="action" value="wnq_mark_unpaid"><input type="hidden" name="id" value="<?php echo (int)$client['id']; ?>">
+                                            <button class="button button-small" type="submit">Mark unpaid</button>
+                                        </form>
+                                        <?php endif; ?>
                                         <!-- Mark Paid -->
                                         <form method="post" action="<?php echo admin_url('admin-post.php'); ?>" class="inline-form">
                                             <?php wp_nonce_field('wnq_mark_paid'); ?>
@@ -270,7 +294,7 @@ final class ClientsAdmin
 
                                         <!-- Analytics Dashboard -->
                                         <?php if ($has_analytics): ?>
-                                            <a href="<?php echo admin_url('admin.php?page=wnq-analytics&client=' . urlencode($client['client_id'])); ?>" class="button button-small btn-analytics" title="View Analytics">
+                                            <a href="<?php echo admin_url('admin.php?page=wnq-analytics&client=' . urlencode($analyticsId)); ?>" class="button button-small btn-analytics" title="View Analytics">
                                                 📊 Analytics
                                             </a>
                                         <?php endif; ?>
@@ -1031,15 +1055,9 @@ final class ClientsAdmin
         for ($i = 11; $i >= 0; $i--) {
             $labels[] = date('M Y', strtotime("-$i months"));
             
+            // No recorded entries means no recorded income, not twelve copies of today's forecast.
             $monthRevenue = 0;
             $monthAfterFees = 0;
-            
-            foreach ($clients as $client) {
-                if ($client['status'] === 'active') {
-                    $monthRevenue += floatval($client['monthly_rate'] ?? 0);
-                    $monthAfterFees += floatval($client['after_fees'] ?? 0);
-                }
-            }
             
             $income[] = $monthRevenue;
             $expenses[] = max(0, $monthRevenue - $monthAfterFees);
@@ -1067,6 +1085,11 @@ final class ClientsAdmin
 
         if (!$client) {
             wp_die('Client not found - ID: ' . $id);
+        }
+        if (($client['billing_cycle'] ?? 'monthly') === 'monthly') {
+            try { MonthlyBookkeeping::record($id, 'manual'); }
+            catch (\Throwable $e) { wp_die(esc_html($e->getMessage())); }
+            wp_safe_redirect(admin_url('admin.php?page=wnq-clients')); exit;
         }
 
         // Calculate new values
@@ -1110,6 +1133,15 @@ final class ClientsAdmin
 
         wp_redirect(admin_url('admin.php?page=wnq-clients'));
         exit;
+    }
+
+    public static function handleMarkUnpaid(): void
+    {
+        check_admin_referer('wnq_mark_unpaid');
+        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) wp_die('Insufficient permissions');
+        try { MonthlyBookkeeping::record((int)($_POST['id'] ?? 0), 'unpaid'); }
+        catch (\Throwable $e) { wp_die(esc_html($e->getMessage())); }
+        wp_safe_redirect(admin_url('admin.php?page=wnq-clients')); exit;
     }
 
     public static function handleSaveFinanceEntry(): void
@@ -1173,7 +1205,7 @@ final class ClientsAdmin
         $id = isset($_POST['id']) ? intval($_POST['id']) : 0;
 
         if (class_exists('WNQ\\Models\\FinanceEntry') && $id > 0) {
-            FinanceEntry::delete($id);
+            if (!FinanceEntry::delete($id)) wp_die('This is a monthly bookkeeping entry. Use Mark unpaid on the client to reverse this month without losing its history.');
         }
 
         wp_redirect(add_query_arg([
@@ -1231,6 +1263,13 @@ final class ClientsAdmin
     private static function renderClientForm(?array $client): void
     {
         $is_edit = !empty($client);
+        $legacy = null;
+        if (!$is_edit && !empty($_GET['analytics_id'])) {
+            $legacy = \WNQ\Models\AnalyticsConfig::getClientConfig(sanitize_text_field(wp_unslash($_GET['analytics_id'])));
+            if ($legacy && !Client::getByClientId($legacy['client_id'])) {
+                $client = ['client_id' => $legacy['client_id'], 'name' => $legacy['client_name'], 'website' => $legacy['website_url'] ?? ''];
+            } else { $legacy = null; }
+        }
         
         // Check if this client has analytics configured
         $has_analytics = false;
@@ -1247,6 +1286,17 @@ final class ClientsAdmin
         
         ?>
         <form method="post" action="<?php echo admin_url('admin-post.php'); ?>" class="wnq-client-form">
+            <p>Enter the contact, company, website, rate and due day. This one profile appears in all three sections.</p>
+            <button type="button" class="button" id="wnq-client-advanced" aria-expanded="false">Show advanced settings</button>
+            <script>
+            document.addEventListener('DOMContentLoaded', function () {
+                const ids = ['client_id', 'business_address', 'city', 'primary_color', 'body_font', 'stripe_fee_percent', 'stripe_fee_flat', 'next_payment_due_date', 'payment_reminder_days', 'payment_count', 'total_collected'];
+                const rows = ids.map(id => document.getElementById(id)?.closest('tr')).filter(Boolean);
+                rows.forEach(row => { row.hidden = true; });
+                const toggle = document.getElementById('wnq-client-advanced');
+                toggle.onclick = () => { const expanded = toggle.getAttribute('aria-expanded') !== 'true'; toggle.setAttribute('aria-expanded', String(expanded)); toggle.textContent = expanded ? 'Hide advanced settings' : 'Show advanced settings'; rows.forEach(row => { row.hidden = !expanded; }); };
+            });
+            </script>
             <?php wp_nonce_field('wnq_save_client'); ?>
             <input type="hidden" name="action" value="wnq_save_client">
             <?php if ($is_edit): ?>
@@ -1263,8 +1313,8 @@ final class ClientsAdmin
                                 <input type="text" name="client_id" id="client_id" value="<?php echo esc_attr($client['client_id']); ?>" class="regular-text" readonly>
                                 <p class="description">Client ID cannot be changed after creation.</p>
                             <?php else: ?>
-                                <input type="text" name="client_id" id="client_id" value="" class="regular-text" required placeholder="e.g., acme-corp">
-                                <p class="description">Unique identifier for this client (lowercase, no spaces). This will be used for analytics.</p>
+                                <input type="text" name="client_id" id="client_id" value="<?php echo esc_attr($legacy['client_id'] ?? ''); ?>" class="regular-text" <?php echo $legacy ? 'readonly' : ''; ?> placeholder="Created automatically">
+                                <p class="description">Leave blank for an automatic ID shared across all sections. Existing Analytics profiles keep their ID.</p>
                             <?php endif; ?>
                         </td>
                     </tr>
@@ -1343,8 +1393,8 @@ final class ClientsAdmin
                 <h2>📊 Analytics Integration</h2>
                 <div class="notice notice-success inline">
                     <p>
-                        <strong>Analytics Active!</strong> This client has analytics configured.<br>
-                        <a href="<?php echo admin_url('admin.php?page=wnq-analytics&client=' . urlencode($client['client_id'])); ?>" class="button">View Analytics →</a>
+                        <strong>Shared Analytics profile.</strong> Saved settings do not prove Google access; use Check connections in Analytics.<br>
+                        <a href="<?php echo admin_url('admin.php?page=wnq-analytics&client=' . urlencode($analytics_config['client_id'])); ?>" class="button">View Analytics →</a>
                         <a href="<?php echo admin_url('admin.php?page=wnq-analytics&view=clients'); ?>" class="button">Manage Analytics Settings →</a>
                     </p>
                 </div>
@@ -1362,7 +1412,14 @@ final class ClientsAdmin
             <?php endif; ?>
 
             <div class="form-section">
+                <h2>Google reporting setup (optional)</h2>
+                <p>Add once here, or connect later from Analytics. Grant your saved Google service account access to these exact properties.</p>
+                <p><label>GA4 numeric property ID <input name="ga4_property_id" value="<?php echo esc_attr(($analytics_config ?? $legacy)['ga4_property_id'] ?? ''); ?>" placeholder="554543484"></label></p>
+                <p><label>Search Console property <input name="search_console_url" class="regular-text" value="<?php echo esc_attr(($analytics_config ?? $legacy)['search_console_url'] ?? ''); ?>" placeholder="https://example.com/ or sc-domain:example.com"></label></p>
+            </div>
+            <div class="form-section">
                 <h2>Billing & Payments</h2>
+                <p><label><input type="checkbox" name="auto_bookkeeping" value="1" <?php checked(!$is_edit || MonthlyBookkeeping::enabled((int)$client['id'])); ?>> Automatically mark each monthly payment assumed paid on the due day (bookkeeping only; no payment verification).</label></p>
                 <table class="form-table">
                     <tr>
                         <th><label for="billing_email">Billing Email</label></th>
@@ -1445,14 +1502,14 @@ final class ClientsAdmin
                     <tr>
                         <th><label for="payment_count">Number of Payments</label></th>
                         <td>
-                            <input type="number" name="payment_count" id="payment_count" value="<?php echo esc_attr($client['payment_count'] ?? '0'); ?>" min="0" class="small-text">
+                            <input type="number" name="payment_count" id="payment_count" value="<?php echo esc_attr($client['payment_count'] ?? '0'); ?>" min="0" class="small-text" <?php echo $is_edit ? 'readonly' : ''; ?>>
                             <p class="description">Total number of payments received</p>
                         </td>
                     </tr>
                     <tr>
                         <th><label for="total_collected">Total Collected</label></th>
                         <td>
-                            $<input type="number" name="total_collected" id="total_collected" value="<?php echo esc_attr($client['total_collected'] ?? '0.00'); ?>" step="0.01" min="0" class="regular-text">
+                            $<input type="number" name="total_collected" id="total_collected" value="<?php echo esc_attr($client['total_collected'] ?? '0.00'); ?>" step="0.01" min="0" class="regular-text" <?php echo $is_edit ? 'readonly' : ''; ?>>
                             <p class="description">Lifetime revenue from this client</p>
                         </td>
                     </tr>
@@ -1646,6 +1703,13 @@ final class ClientsAdmin
 
         $id = isset($_POST['id']) ? intval($_POST['id']) : 0;
         $existing_client = $id > 0 ? Client::getById($id) : null;
+        if ($id && !$existing_client) wp_die('Client no longer exists. Return to the shared client list.');
+        if (trim((string)($_POST['name'] ?? '')) === '' || !is_email(sanitize_email($_POST['email'] ?? ''))) wp_die('Enter the client contact name and a valid email address. No client was saved.');
+        $submittedId = sanitize_text_field($_POST['client_id'] ?? '');
+        if (!$id && $submittedId !== '' && Client::getByClientId($submittedId)) wp_die('This client already exists. Edit the existing shared profile instead of adding it again.');
+        foreach (Client::getAll() as $otherClient) {
+            if ((int)$otherClient['id'] !== $id && strcasecmp((string)$otherClient['email'], sanitize_email($_POST['email'] ?? '')) === 0) wp_die('That contact email already belongs to another shared client. Edit that client or use the new company’s separate contact email. No duplicate was created.');
+        }
         $billing_cycle = sanitize_key($_POST['billing_cycle'] ?? get_option('wnq_default_billing_cycle', 'monthly'));
         if (!in_array($billing_cycle, ['monthly', 'quarterly', 'annually'], true)) {
             $billing_cycle = 'monthly';
@@ -1653,6 +1717,7 @@ final class ClientsAdmin
         $cycle_months = ['monthly' => 1, 'quarterly' => 3, 'annually' => 12][$billing_cycle];
         $last_payment_date = sanitize_text_field($_POST['last_payment_date'] ?? '');
         $payment_due_day = Client::normalizePaymentDueDay($_POST['payment_due_day'] ?? 0);
+        if (!$existing_client && !$payment_due_day) $payment_due_day = (int)current_datetime()->format('j');
         $next_payment_due_date = sanitize_text_field($_POST['next_payment_due_date'] ?? '');
         if (
             $next_payment_due_date !== ''
@@ -1705,17 +1770,30 @@ final class ClientsAdmin
             'next_payment_due_date' => $next_payment_due_date,
             'payment_reminder_days' => max(0, min(30, intval($_POST['payment_reminder_days'] ?? 3))),
             'payment_notifications_enabled' => !empty($_POST['payment_notifications_enabled']) ? 1 : 0,
-            'payment_count' => intval($_POST['payment_count'] ?? 0),
-            'total_collected' => floatval($_POST['total_collected'] ?? 0),
+            'payment_count' => $existing_client ? (int)$existing_client['payment_count'] : intval($_POST['payment_count'] ?? 0),
+            'total_collected' => $existing_client ? (float)$existing_client['total_collected'] : floatval($_POST['total_collected'] ?? 0),
             'notes' => wp_kses_post($_POST['notes'] ?? ''),
         ];
 
         if ($id) {
+            unset($data['payment_count'], $data['total_collected']); // Do not overwrite concurrent monthly bookkeeping with stale form totals.
             $success = Client::update($id, $data);
         } else {
             $data['client_id'] = sanitize_text_field($_POST['client_id'] ?? '');
+            if ($data['client_id'] === '') $data['client_id'] = 'client-' . wp_generate_uuid4();
             $success = Client::create($data);
         }
+
+        if ($success) {
+            update_option('wnq_auto_books_' . ($id ?: (int)$success), !empty($_POST['auto_bookkeeping']), false);
+            $sharedId = $existing_client ? \WNQ\Models\AnalyticsConfig::idForPortal($existing_client) : $data['client_id'];
+            $config = \WNQ\Models\AnalyticsConfig::getClientConfig($sharedId) ?? [];
+            $property = trim(sanitize_text_field(wp_unslash($_POST['ga4_property_id'] ?? $config['ga4_property_id'] ?? '')));
+            if (ctype_digit($property)) $property = 'properties/' . $property;
+            $config = array_merge($config, ['client_id' => $sharedId, 'client_name' => $data['company'] ?: $data['name'], 'website_url' => $data['website'], 'ga4_property_id' => $property, 'search_console_url' => sanitize_text_field(wp_unslash($_POST['search_console_url'] ?? $config['search_console_url'] ?? ''))]);
+            if (\WNQ\Models\AnalyticsConfig::saveClientConfig($config) === false) wp_die('Client saved, but Google settings could not be saved. Open this client in Analytics to retry; do not create the client again.');
+        }
+        if (!$success) wp_die('Client could not be saved. Check that the plugin database upgrade completed and the client ID/email are unique. No Analytics client was created.');
 
         wp_redirect(add_query_arg([
             'page' => 'wnq-clients',

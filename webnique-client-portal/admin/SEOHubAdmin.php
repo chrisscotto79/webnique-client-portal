@@ -93,12 +93,10 @@ final class SEOHubAdmin
         $seo_clients = [];
         foreach ($clients as $c) {
             $profile = SEOHub::getProfile($c['client_id']);
-            if ($profile) {
-                $stats  = SEOHub::getSiteStats($c['client_id']);
-                $health = AuditEngine::getHealthScore($c['client_id']);
-                $audit  = AuditEngine::getSeveritySummary($c['client_id']);
-                $seo_clients[] = array_merge($c, ['stats' => $stats, 'health' => $health, 'audit' => $audit, 'profile' => $profile]);
-            }
+            $stats  = SEOHub::getSiteStats($c['client_id']);
+            $health = AuditEngine::getHealthScore($c['client_id']);
+            $audit  = AuditEngine::getSeveritySummary($c['client_id']);
+            $seo_clients[] = array_merge($c, ['stats' => $stats, 'health' => $health, 'audit' => $audit, 'profile' => $profile]);
         }
         $total_clients = count($seo_clients);
         $total_pages   = array_sum(array_column(array_column($seo_clients, 'stats'), 'total_pages'));
@@ -209,8 +207,10 @@ final class SEOHubAdmin
         <div class="wnq-hub-client-header">
           <strong><?php echo esc_html($c['company'] ?: $c['name']); ?></strong>
           <div style="display:flex;gap:6px;align-items:center;">
+            <?php if (!$c['profile']): ?><span>Setup needed</span><?php else: ?>
             <span style="font-size:13px;font-weight:800;color:<?php echo $hgrade['color']; ?>;background:<?php echo $hgrade['bg']; ?>;padding:2px 8px;border-radius:99px;"><?php echo $hgrade['letter']; ?></span>
             <span class="wnq-health-badge <?php echo $health_class; ?>"><?php echo $health; ?>%</span>
+            <?php endif; ?>
           </div>
         </div>
         <div class="wnq-hub-client-meta">
