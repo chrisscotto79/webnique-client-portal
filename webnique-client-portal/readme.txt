@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 3.11.0
+Stable tag: 3.12.0
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -701,3 +701,12 @@ Phase Roadmap:
   Phase 1 (Complete) - Core automation: content gaps, meta tags, schema, audits, reports
   Phase 2 (Planned)  - Advanced keyword clustering, GSC auto-sync, forecasting
   Phase 3 (Planned)  - Predictive SEO, white-label client portal, email delivery
+
+
+== Changelog ==
+
+= 3.12.0 =
+* Replace the default SEO checklist overview with monthly operations, client cards and actionable due-date queues.
+* Add ten recurring categories, reusable plans, completion dates, notes, priorities and automatic historical rollover.
+* Track SEMrush/GSC metrics and monthly deliverables with summaries and month-over-month comparisons.
+* Preserve legacy checklist/report history and stop automatic replacement of historical checklist rows.

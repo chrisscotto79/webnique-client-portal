@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Golden Web Marketing Client Portal
  * Description: Complete client management with portal, analytics, billing, tasks, SEO tracking, and messaging
- * Version: 3.11.0
+ * Version: 3.12.0
  * Author: Golden Web Marketing
  * Requires at least: 6.0
  * Requires PHP: 8.0
@@ -19,7 +19,7 @@ if (defined('WNQ_PORTAL_VERSION')) {
     return;
 }
 
-define('WNQ_PORTAL_VERSION', '3.11.0');
+define('WNQ_PORTAL_VERSION', '3.12.0');
 define('WNQ_PORTAL_PATH', plugin_dir_path(__FILE__));
 define('WNQ_PORTAL_URL', plugin_dir_url(__FILE__));
 
@@ -155,6 +155,7 @@ register_activation_hook(__FILE__, function() {
 
 // DEACTIVATION
 register_deactivation_hook(__FILE__, function() {
+    wp_clear_scheduled_hook('wnq_monthly_seo_rollover');
     if (class_exists('WNQ\\Core\\Plugin') && method_exists('WNQ\\Core\\Plugin', 'deactivate')) {
         WNQ\Core\Plugin::deactivate();
     }
@@ -220,30 +221,9 @@ if (wnq_seo_features_enabled()) {
         }
     });
 
-    // Keep every client's managed monthly SEO checklist on the latest version.
-    add_action('admin_init', function() {
-        if (!current_user_can('wnq_manage_portal') && !current_user_can('manage_options')) {
-            return;
-        }
-
-        $seo_model = WNQ_PORTAL_PATH . 'includes/Models/SEO.php';
-        if (file_exists($seo_model)) {
-            require_once $seo_model;
-        }
-        if (!class_exists('WNQ\\Models\\SEO')) {
-            return;
-        }
-
-        $installed = get_option('wnq_monthly_seo_checklist_version', '');
-        if ($installed === \WNQ\Models\SEO::MONTHLY_CHECKLIST_VERSION) {
-            return;
-        }
-
-        $result = \WNQ\Models\SEO::syncMonthlyChecklistForAllClients();
-        if (empty($result['failed'])) {
-            update_option('wnq_monthly_seo_checklist_version', \WNQ\Models\SEO::MONTHLY_CHECKLIST_VERSION, false);
-        }
-    }, 20);
+    // Monthly cycles replace destructive historical checklist resynchronization.
+    require_once WNQ_PORTAL_PATH . 'admin/MonthlySEOAdmin.php';
+    \WNQ\Admin\MonthlySEOAdmin::register();
 
     // SEO OS — Initialize after portal is loaded
     add_action('plugins_loaded', function() {

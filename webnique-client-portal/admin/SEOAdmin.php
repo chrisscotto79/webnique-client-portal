@@ -59,6 +59,13 @@ final class SEOAdmin
             wp_die(__('You do not have sufficient permissions to access this page.'));
         }
 
+        if (empty($_GET['legacy'])) {
+            require_once __DIR__ . '/MonthlySEOAdmin.php';
+            MonthlySEOAdmin::render();
+            return;
+        }
+
+        echo '<p><a href="' . esc_url(admin_url('admin.php?page=wnq-seo')) . '">← Monthly SEO dashboard</a></p>';
         $view = isset($_GET['view']) ? sanitize_text_field($_GET['view']) : 'overview';
         $client_id = isset($_GET['client']) ? sanitize_text_field($_GET['client']) : '';
 
@@ -169,7 +176,7 @@ final class SEOAdmin
                                     </a>
                                 <?php endif; ?>
                             </div>
-                            <a href="<?php echo admin_url('admin.php?page=wnq-seo&view=client&client=' . urlencode($client['client_id'])); ?>" 
+                            <a href="<?php echo admin_url('admin.php?page=wnq-seo&legacy=1&view=client&client=' . urlencode($client['client_id'])); ?>"
                                class="btn-manage">
                                 Manage SEO →
                             </a>
@@ -277,7 +284,7 @@ final class SEOAdmin
         <div class="wrap wnq-seo-premium">
             <div class="seo-header">
                 <div class="header-content">
-                    <a href="<?php echo admin_url('admin.php?page=wnq-seo'); ?>" class="back-link">← Back</a>
+                    <a href="<?php echo admin_url('admin.php?page=wnq-seo&legacy=1'); ?>" class="back-link">← Back</a>
                     <h1>🚀 <?php echo esc_html($client['name']); ?> - SEO Portal</h1>
                     <?php if ($website_url || $admin_url): ?>
                         <div class="client-links-header">
@@ -335,7 +342,7 @@ final class SEOAdmin
                     $completed = $type_data ? intval($type_data['completed']) : 0;
                     $is_active = $selected_service === $type;
                     
-                    $tab_url = admin_url('admin.php?page=wnq-seo&view=client&client=' . urlencode($client_id) . '&service=' . $type);
+                    $tab_url = admin_url('admin.php?page=wnq-seo&legacy=1&view=client&client=' . urlencode($client_id) . '&service=' . $type);
                     if ($type === 'monthly') {
                         $tab_url .= '&month=' . $selected_month;
                     }
@@ -726,7 +733,7 @@ final class SEOAdmin
         <div class="wrap wnq-seo-premium">
             <div class="seo-header">
                 <div class="header-content">
-                    <a href="<?php echo admin_url('admin.php?page=wnq-seo&view=client&client=' . urlencode($client_id)); ?>" class="back-link">← Back</a>
+                    <a href="<?php echo admin_url('admin.php?page=wnq-seo&legacy=1&view=client&client=' . urlencode($client_id)); ?>" class="back-link">← Back</a>
                     <h1>📊 Monthly SEO Report</h1>
                     <p class="subtitle"><?php echo esc_html($client['name']); ?> - <?php echo date('F Y', strtotime($selected_month . '-01')); ?></p>
                 </div>
@@ -799,7 +806,7 @@ final class SEOAdmin
 
                 <p class="submit">
                     <button type="submit" class="button button-primary button-large">💾 Save Report</button>
-                    <a href="<?php echo admin_url('admin.php?page=wnq-seo&view=client&client=' . urlencode($client_id)); ?>" class="button button-large">Cancel</a>
+                    <a href="<?php echo admin_url('admin.php?page=wnq-seo&legacy=1&view=client&client=' . urlencode($client_id)); ?>" class="button button-large">Cancel</a>
                 </p>
             </form>
         </div>
@@ -973,7 +980,7 @@ final class SEOAdmin
         $client_id = sanitize_text_field($_POST['client_id']);
         SEO::initializeClientTasks($client_id);
 
-        wp_redirect(admin_url('admin.php?page=wnq-seo&view=client&client=' . urlencode($client_id)));
+        wp_redirect(admin_url('admin.php?page=wnq-seo&legacy=1&view=client&client=' . urlencode($client_id)));
         exit;
     }
 
@@ -987,7 +994,7 @@ final class SEOAdmin
 
         SEO::initializeMonthlyTasks($client_id, $month_year);
 
-        $redirect_url = isset($_POST['redirect_url']) ? $_POST['redirect_url'] : admin_url('admin.php?page=wnq-seo&view=client&client=' . urlencode($client_id) . '&service=monthly&month=' . $month_year);
+        $redirect_url = isset($_POST['redirect_url']) ? $_POST['redirect_url'] : admin_url('admin.php?page=wnq-seo&legacy=1&view=client&client=' . urlencode($client_id) . '&service=monthly&month=' . $month_year);
         wp_redirect($redirect_url);
         exit;
     }
@@ -1003,7 +1010,7 @@ final class SEOAdmin
 
         SEO::bulkImportTasks($client_id, $service_type, $month_year);
 
-        $redirect_url = isset($_POST['redirect_url']) ? $_POST['redirect_url'] : admin_url('admin.php?page=wnq-seo&view=client&client=' . urlencode($client_id) . '&service=' . $service_type);
+        $redirect_url = isset($_POST['redirect_url']) ? $_POST['redirect_url'] : admin_url('admin.php?page=wnq-seo&legacy=1&view=client&client=' . urlencode($client_id) . '&service=' . $service_type);
         wp_redirect($redirect_url);
         exit;
     }
@@ -1018,7 +1025,7 @@ final class SEOAdmin
             SEO::syncLocalTasks($client_id);
         }
 
-        $redirect_url = isset($_POST['redirect_url']) ? esc_url_raw(wp_unslash($_POST['redirect_url'])) : admin_url('admin.php?page=wnq-seo&view=client&client=' . urlencode($client_id) . '&service=local');
+        $redirect_url = isset($_POST['redirect_url']) ? esc_url_raw(wp_unslash($_POST['redirect_url'])) : admin_url('admin.php?page=wnq-seo&legacy=1&view=client&client=' . urlencode($client_id) . '&service=local');
         wp_safe_redirect($redirect_url);
         exit;
     }
@@ -1031,7 +1038,7 @@ final class SEOAdmin
         $task_id = intval($_POST['task_id']);
         SEO::completeTask($task_id);
 
-        $redirect_url = isset($_POST['redirect_url']) ? $_POST['redirect_url'] : admin_url('admin.php?page=wnq-seo');
+        $redirect_url = isset($_POST['redirect_url']) ? $_POST['redirect_url'] : admin_url('admin.php?page=wnq-seo&legacy=1');
         wp_redirect($redirect_url);
         exit;
     }
@@ -1044,7 +1051,7 @@ final class SEOAdmin
         $task_id = intval($_POST['task_id']);
         SEO::uncompleteTask($task_id);
 
-        $redirect_url = isset($_POST['redirect_url']) ? $_POST['redirect_url'] : admin_url('admin.php?page=wnq-seo');
+        $redirect_url = isset($_POST['redirect_url']) ? $_POST['redirect_url'] : admin_url('admin.php?page=wnq-seo&legacy=1');
         wp_redirect($redirect_url);
         exit;
     }
@@ -1066,7 +1073,7 @@ final class SEOAdmin
 
         SEO::updateTask($task_id, $data);
 
-        $redirect_url = isset($_POST['redirect_url']) ? $_POST['redirect_url'] : admin_url('admin.php?page=wnq-seo');
+        $redirect_url = isset($_POST['redirect_url']) ? $_POST['redirect_url'] : admin_url('admin.php?page=wnq-seo&legacy=1');
         wp_redirect($redirect_url);
         exit;
     }
@@ -1089,7 +1096,7 @@ final class SEOAdmin
 
         SEO::saveReport($data);
 
-        wp_redirect(admin_url('admin.php?page=wnq-seo&view=client&client=' . urlencode($data['client_id'])));
+        wp_redirect(admin_url('admin.php?page=wnq-seo&legacy=1&view=client&client=' . urlencode($data['client_id'])));
         exit;
     }
 
@@ -1130,7 +1137,7 @@ final class SEOAdmin
         $task_id = intval($_POST['task_id']);
         SEO::deleteTask($task_id);
 
-        $redirect_url = isset($_POST['redirect_url']) ? $_POST['redirect_url'] : admin_url('admin.php?page=wnq-seo');
+        $redirect_url = isset($_POST['redirect_url']) ? $_POST['redirect_url'] : admin_url('admin.php?page=wnq-seo&legacy=1');
         wp_redirect($redirect_url);
         exit;
     }
