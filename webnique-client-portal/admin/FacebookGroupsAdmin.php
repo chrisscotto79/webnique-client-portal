@@ -115,7 +115,7 @@ final class FacebookGroupsAdmin
             if ($now->format('H:i') >= $cutoff) wp_send_json_success(['finished' => true, 'message' => 'Daily cutoff reached. No more posts will start today.']);
             $mode = sanitize_key($_POST['mode'] ?? 'today');
             if ($mode === 'scheduled' && $now->format('H:i') < $plan['start_time']) {
-                wp_send_json_success(['waiting' => true]);
+                wp_send_json_success(['waiting' => true, 'message' => 'Waiting for scheduled start at ' . $plan['start_time'] . ' (' . $plan['timezone'] . ').']);
             }
             $first = get_option(FacebookCampaign::key('wnq_fb_first_week', $clientId), '');
             // A direct Publish click authorizes a manual attempt independently of
@@ -126,6 +126,7 @@ final class FacebookGroupsAdmin
             $groups = FacebookGroupPlan::batches($plan['groups'], (int)($plan['daily_limit'] ?? 50))[$now->format('l')];
             // A single saved group can be tested immediately, regardless of weekday.
             if ($mode === 'test') $groups = array_slice($plan['groups'], 0, 1);
+            if (!$groups) wp_send_json_success(['finished' => true, 'message' => 'No groups scheduled today. Check the assigned posting days in this campaign.']);
             $historyKey = FacebookCampaign::key('wnq_fb_history_' . $week, $clientId);
             update_option($historyKey, array_values(array_unique(array_merge(get_option($historyKey, []), $plan['groups']))), false);
             $dailyKey = FacebookCampaign::key('wnq_fb_attempts_' . $now->format('Y-m-d'), $clientId);
@@ -207,7 +208,8 @@ final class FacebookGroupsAdmin
             try { $now = new \DateTimeImmutable('now', new \DateTimeZone($zone)); }
             catch (\Exception $e) { $zone = 'America/New_York'; $now = new \DateTimeImmutable('now', new \DateTimeZone($zone)); }
             $groups = $plan['groups'] ?? [];
-            $today = FacebookGroupPlan::batches($groups, (int)($plan['daily_limit'] ?? 50))[$now->format('l')];
+            $batches = FacebookGroupPlan::batches($groups, (int)($plan['daily_limit'] ?? 50));
+            $today = $batches[$now->format('l')];
             $counts = ['submitted' => 0, 'pending' => 0, 'skipped' => 0, 'reserved' => 0];
             foreach ($today as $url) {
                 $state = get_option(FacebookCampaign::job($id, $now->format('o-W'), $url), []);
@@ -218,6 +220,7 @@ final class FacebookGroupsAdmin
             $rows[] = $client + ['ready' => !empty($groups) && trim($plan['message'] ?? '') !== '',
                 'enabled' => (bool)get_option(FacebookCampaign::key('wnq_fb_schedule_enabled', $id), false),
                 'groups' => count($groups), 'today' => count($today), 'counts' => $counts,
+                'posting_days' => array_keys(array_filter($batches)),
                 'schedule' => ($plan['start_time'] ?? '09:00') . '–' . ($plan['cutoff'] ?? '18:00'),
                 'timezone' => $zone, 'edit' => admin_url('admin.php?page=wnq-facebook-groups&client=' . rawurlencode($id))];
         }

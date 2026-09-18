@@ -43,13 +43,13 @@
         for (const row of rows.filter(row => row.name.toLowerCase().includes(term))) {
             const tr = document.createElement('tr'); tr.dataset.client = row.id;
             const done = row.counts.submitted + row.counts.pending + row.counts.skipped;
-            const values = [row.name, row.groups + ' total · ' + row.today + ' today', row.schedule + '\n' + row.timezone,
-                `${done}/${row.today} processed\n${row.counts.submitted} posted · ${row.counts.pending} submitted to moderation · ${row.counts.skipped} skipped`];
+            const values = [row.name, row.groups + ' total · ' + row.today + ' today', row.schedule + '\n' + row.timezone + (row.posting_days?.length ? '\n' + row.posting_days.join(', ') : ''),
+                `${row.today ? done + '/' + row.today + ' processed' : 'No groups scheduled today'}\n${row.counts.submitted} posted · ${row.counts.pending} submitted to moderation · ${row.counts.skipped} skipped`];
             for (const value of values) { const td = document.createElement('td'); td.textContent = value; tr.append(td); }
             const cell = document.createElement('td'), badge = document.createElement('span');
             const enabled = active.has(row.id);
             badge.className = 'task-status ' + (enabled ? 'is-running' : !row.ready ? 'is-muted' : '');
-            badge.textContent = current?.id === row.id ? '● Publishing' : enabled ? (notes.get(row.id) || (nextAt > Date.now()/1000 ? '● Interval wait' : '● Scheduled')) : !row.ready ? 'Needs setup' : row.enabled ? 'Enabled · resume browser' : 'Paused';
+            badge.textContent = current?.id === row.id ? '● Publishing' : enabled ? (notes.get(row.id) || (!row.today ? '● No groups scheduled today' : nextAt > Date.now()/1000 ? '● Interval wait' : '● Scheduled')) : !row.ready ? 'Needs setup' : row.enabled ? 'Enabled · resume browser' : 'Paused';
             cell.append(badge); tr.append(cell);
             const actions = document.createElement('td'); actions.className = 'task-row-actions';
             const button = document.createElement('button'); button.type = 'button'; button.className = 'button';
@@ -108,7 +108,7 @@
                 const next = await api('next', row.id, {mode: 'scheduled'});
                 if (next.stopped) { active.delete(row.id); row.enabled = false; continue; }
                 if (!next.job) {
-                    notes.set(row.id, next.finished ? '● Today complete / outside window' : '● Waiting for schedule');
+                    notes.set(row.id, '● ' + (next.message || (next.finished ? 'No remaining eligible groups today' : 'Waiting for schedule')));
                     if (next.next_at) { nextAt = next.next_at; break; }
                     continue;
                 }

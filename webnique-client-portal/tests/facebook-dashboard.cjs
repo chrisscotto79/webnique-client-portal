@@ -27,6 +27,7 @@ const puppeteer = require('puppeteer');
                 if(op==='start'||op==='resume'){if(holdStart)await new Promise(resolve=>window.releaseStart=resolve);row.enabled=true;}
                 if(op==='stop')row.enabled=false;
                 if(op==='next')data={job:{key:'job-'+id,token:'token',client_id:id,client_name:row.name,images:[],image_count:0,url:'https://www.facebook.com/groups/'+(id==='agency'?'1':id)+'/',message:row.name}};
+                if(op==='next' && window.emptyDay)data={finished:true,message:'No groups scheduled today. Check the assigned posting days in this campaign.'};
                 if(op==='result'){results.push([id,args.body.get('status')]);row.counts[args.body.get('status')==='submitted'?'submitted':'skipped']++;}
                 return {ok:true,json:async()=>({success:true,data})};
             };
@@ -71,6 +72,14 @@ const puppeteer = require('puppeteer');
         await page.evaluate(()=>releaseStart());
         await page.waitForFunction(()=>!document.getElementById('fb-dash-start').disabled);
         assert(await page.evaluate(()=>campaigns.every(row=>!row.enabled)),'Late start response is stopped after Pause all');
+        await page.evaluate(()=>{holdStart=false;emptyDay=true;campaigns.forEach(row=>{row.today=0;row.posting_days=['Monday'];});});
+        const attemptsBefore=await page.evaluate(()=>sent.length);
+        await page.click('#fb-dash-start');
+        await page.waitForFunction(()=>document.querySelector('.task-status').textContent.includes('Check the assigned posting days'));
+        assert.equal(await page.evaluate(()=>sent.length),attemptsBefore,'Empty day never dispatches a post');
+        assert(await page.$eval('#fb-task-rows',node=>node.textContent.includes('Monday') && !node.textContent.includes('Today complete') && !node.textContent.includes('0/0 processed')),'Empty day explains assigned weekdays without claiming completion');
+        await page.click('#fb-dash-stop');
+        await page.waitForFunction(()=>campaigns.every(row=>!row.enabled));
         assert.deepEqual(errors,[]);
         await page.screenshot({path:'/tmp/wnq-facebook-dashboard.png',fullPage:true});
         await page.setViewport({width:390,height:844});

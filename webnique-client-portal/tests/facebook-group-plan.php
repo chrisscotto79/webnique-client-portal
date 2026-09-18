@@ -28,4 +28,10 @@ foreach (['http://facebook.com/groups/1', 'https://facebook.com.evil.test/groups
     try { Plan::parse($bad); verify(false, 'Must reject invalid input'); }
     catch (InvalidArgumentException $e) { verify(true, 'Rejected'); }
 }
+
+
+$small = Plan::batches(array_slice($links, 0, 5));
+verify(count($small['Monday']) === 5 && count($small['Friday']) === 0, 'Small weekly plans assign Monday, not every day');
+verify(array_keys(array_filter($small)) === ['Monday'], 'Dashboard assigned weekdays reflect nonempty batches');
+
 echo "$checks checks passed; no Facebook requests made.\n";

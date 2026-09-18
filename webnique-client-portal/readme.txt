@@ -6,7 +6,7 @@ Tags: client portal, seo dashboard, analytics, stripe, firebase, agency
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 8.0
-Stable tag: 3.12.1
+Stable tag: 3.12.2
 License: Proprietary
 License URI: https://goldenwebmarketing.com
 
@@ -704,6 +704,9 @@ Phase Roadmap:
 
 
 == Changelog ==
+
+= 3.12.2 =
+* Explain empty Facebook posting days and display assigned weekdays; show the actual queue wait or completion reason.
 
 = 3.12.1 =
 * Limit SEO Portal client cards, queues, summaries and recurring generation to active Website + SEO or Website + SEO + PPC clients. Preserve excluded clients’ historical work.
