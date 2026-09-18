@@ -148,29 +148,40 @@ async function submit(job) {
         // Facebook's rich-text editor rewrites paragraph breaks, NBSP and zero-width
         // formatting characters. Verify all non-whitespace content, not its DOM layout.
         const normalize = value => value.replace(/[\s\u200b\ufeff]+/gu, '');
-        let postButton, activeDialog;
+        let postButton, activeDialog, advanced = false;
         const readyUntil = Date.now() + 15000;
         let reason = 'Post button unavailable or ambiguous.';
         while (Date.now() < readyUntil) {
-            const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(el => visible(el) && el.querySelector('[contenteditable="true"][role="textbox"]'));
+            const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(el => visible(el) && (el.querySelector('[contenteditable="true"][role="textbox"]') || (advanced && /post settings|review (?:your )?post/i.test(el.getAttribute('aria-label') || text(el)))));
             if (dialogs.length !== 1) { reason = 'The Facebook composer is ambiguous.'; await sleep(250); continue; }
             activeDialog = dialogs[0];
             const liveEditors = [...activeDialog.querySelectorAll('[contenteditable="true"][role="textbox"]')].filter(visible);
-            if (liveEditors.length !== 1 || normalize(text(liveEditors[0])) !== normalize(job.message)) {
+            if ((!advanced && liveEditors.length !== 1) || (liveEditors.length && (liveEditors.length !== 1 || normalize(text(liveEditors[0])) !== normalize(job.message)))) {
                 reason = 'Composer content did not match the saved message.'; await sleep(250); continue;
             }
             const matches = [...activeDialog.querySelectorAll('[role="button"],button')].filter(el => visible(el) &&
-                (el.getAttribute('aria-label')?.trim() || text(el)) === 'Post');
+                /^(Post|Publish)$/i.test(el.getAttribute('aria-label')?.trim() || text(el)));
             // A nested role=button wrapper is one control, not two competing posts.
             const buttons = matches.filter(el => !matches.some(other => other !== el && other.contains(el)));
             if (buttons.length === 1 && buttons[0].getAttribute('aria-disabled') !== 'true' && !buttons[0].disabled && buttons[0].getAttribute('aria-busy') !== 'true') {
                 postButton = buttons[0]; break;
             }
+            if (!advanced && !buttons.length) {
+                const nextMatches = [...activeDialog.querySelectorAll('[role="button"],button')].filter(el => visible(el) && /^Next$/i.test(el.getAttribute('aria-label')?.trim() || text(el)));
+                const nextButtons = nextMatches.filter(el => !nextMatches.some(other => other !== el && other.contains(el)));
+                if (nextButtons.length === 1 && !nextButtons[0].disabled && nextButtons[0].getAttribute('aria-disabled') !== 'true') {
+                    if (images.length && (!advanced || activeDialog.querySelector('[contenteditable="true"][role="textbox"]')) && [...activeDialog.querySelectorAll('[aria-label]')].filter(node => visible(node) && /^(remove photo|remove image)/i.test(node.getAttribute('aria-label'))).length !== images.length) throw groupFailure('Campaign attachments changed before Next. No post clicked.');
+                    if (window.__wnqFbCancelled === job.token || Date.now() >= job.expires_at * 1000) throw new Error('Stopped or authorization expired before Next.');
+                    advanced = true;
+                    nextButtons[0].click();
+                }
+            }
             reason = 'Post button did not become ready; the link preview may still be loading.';
             await sleep(250);
         }
         if (!postButton) throw groupFailure(reason + ' No post sent.');
-        if (images.length && [...activeDialog.querySelectorAll('[aria-label]')].filter(node => visible(node) && /^(remove photo|remove image)/i.test(node.getAttribute('aria-label'))).length !== images.length) throw groupFailure('Campaign image count changed before posting. No post clicked.');
+        if (images.length && (!advanced || activeDialog.querySelector('[contenteditable="true"][role="textbox"]')) && [...activeDialog.querySelectorAll('[aria-label]')].filter(node => visible(node) && /^(remove photo|remove image)/i.test(node.getAttribute('aria-label'))).length !== images.length) throw groupFailure('Campaign image count changed before posting. No post clicked.');
+        if (location.pathname.replace(/\/$/, '') !== new URL(job.url).pathname.replace(/\/$/, '')) throw new Error('Facebook left the expected group before publishing.');
         postButton.scrollIntoView({block: 'center'});
         if (window.__wnqFbCancelled === job.token) throw new Error('Stopped before clicking Post.');
         if (!Number.isFinite(job.expires_at) || Date.now() >= job.expires_at * 1000) throw new Error('Publishing authorization expired. No post sent; return to WordPress and retry.');
@@ -188,7 +199,7 @@ async function submit(job) {
             }
         }
         const accountBlocked = document.querySelector('input[type="password"]') || /checkpoint|challenge/.test(location.pathname);
-        return {status: 'unknown', scope: accountBlocked ? 'account' : 'group', message: 'Post was clicked, but Facebook did not clearly confirm the result. Held for review; this group will not be automatically repeated.'};
+        return {status: 'unknown', scope: accountBlocked ? 'account' : 'group', message: 'Post was clicked, but Facebook did not clearly confirm the result. Skipped without retrying; continuing to the next group.'};
     } catch (error) {
         const securityNotice = [...document.querySelectorAll('[role="alert"],[role="dialog"]')].filter(visible).map(text).join('\n');
         const accountBlocked = document.querySelector('input[type="password"]') || /checkpoint|challenge|\/login/.test(location.pathname) || /temporarily blocked|account (?:is )?(?:restricted|suspended|disabled)|confirm your identity|security check/i.test(securityNotice);
@@ -197,7 +208,7 @@ async function submit(job) {
     }
 }
 async function handle(message) {
-    if (message.op === 'ping') return {version: '1.1.1', client: activeClient};
+    if (message.op === 'ping') return {version: '1.2.0', client: activeClient};
     if (message.op === 'cancel') {
         if (activeClient && message.client !== activeClient.id) throw new Error('Cannot cancel another client campaign.');
         cancelled = true;

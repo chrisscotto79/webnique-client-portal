@@ -49,6 +49,15 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../facebook
           <div role="dialog" style="display:none"><div contenteditable="true" role="textbox"></div>
           <button role="button" onclick="this.parentElement.style.display='none';document.querySelector('[role=status]').textContent='Your post was published'">Post</button></div><div role="status"></div>`);
         assert.equal((await page.evaluate(submit, job)).status, 'submitted', 'Only confirmed submission succeeds');
+        await page.setContent(`<button aria-label="Create post" onclick="document.querySelector('[role=dialog]').style.display='block'">Open composer</button>
+          <div role="dialog" style="display:none"><div contenteditable="true" role="textbox"></div>
+          <button aria-label="Publish" onclick="this.parentElement.style.display='none';document.querySelector('[role=status]').textContent='Your post was published'">Publish</button></div><div role="status"></div>`);
+        assert.equal((await page.evaluate(submit, job)).status, 'submitted', 'Publish label is clicked and verified');
+        await page.setContent(`<button aria-label="Create post" onclick="document.querySelector('#composer').style.display='block'">Open composer</button>
+          <div id="composer" role="dialog" style="display:none"><div contenteditable="true" role="textbox"></div>
+          <button onclick="this.parentElement.style.display='none';document.querySelector('#settings').style.display='block'">Next</button></div>
+          <div id="settings" role="dialog" aria-label="Post settings" style="display:none"><h2>Post settings</h2><button onclick="this.parentElement.style.display='none';document.querySelector('[role=status]').textContent='Your post was published'">Publish</button></div><div role="status"></div>`);
+        assert.equal((await page.evaluate(submit, job)).status, 'submitted', 'Verified composer can advance through Next to final Publish');
         assert.match(await page.$eval('#wnq-client-banner', el => el.textContent), /Golden Web Marketing/, 'Extension displays campaign name');
         await page.setContent(`<button aria-label="Create post" onclick="document.querySelector('[role=dialog]').style.display='block'">Open composer</button>
           <div role="dialog" style="display:none"><div contenteditable="true" role="textbox"></div>

@@ -71,7 +71,7 @@ final class ServiceCityPageGenerator
         ServiceCityPage::updateRow($row_id, ['status' => 'generating', 'error_message' => null]);
 
         try {
-            $client = Client::getByClientId($client_id) ?? [];
+            $client = Client::getSEOClient($client_id) ?? [];
             $profile = SEOHub::getProfile($client_id) ?? [];
             $business_name = $client['company'] ?? $client['name'] ?? $client_id;
 

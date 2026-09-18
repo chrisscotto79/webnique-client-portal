@@ -52,11 +52,11 @@ check($job['message'] === 'Hello');
 check(callApi(['op' => 'next', 'mode' => 'test'])['data']['finished']);
 check(!callApi(['op' => 'result', 'key' => $job['key'], 'token' => 'wrong', 'status' => 'submitted'])['success']);
 check(callApi(['op' => 'result', 'key' => $job['key'], 'token' => $job['token'], 'status' => 'not_started'])['success']);
-$job = callApi(['op' => 'next', 'mode' => 'test'])['data']['job'];
-check(isset($job['key']));
+check(callApi(['op' => 'next', 'mode' => 'test'])['data']['finished']);
+check($options[$job['key']]['status'] === 'skipped');
 callApi(['op' => 'result', 'key' => $job['key'], 'token' => $job['token'], 'status' => 'unknown']);
 check(callApi(['op' => 'next', 'mode' => 'test'])['data']['finished']);
-check(callApi(['op' => 'progress', 'mode' => 'test'])['data']['counts']['review'] === 1);
+check(callApi(['op' => 'progress', 'mode' => 'test'])['data']['counts']['skipped'] === 1);
 callApi(['op' => 'result', 'key' => $job['key'], 'token' => $job['token'], 'status' => 'submitted']);
 check(callApi(['op' => 'next', 'mode' => 'test'])['data']['finished']);
 callApi(['op' => 'result', 'key' => $job['key'], 'token' => $job['token'], 'status' => 'not_started']);
@@ -74,9 +74,8 @@ check(WNQ\Services\FacebookDailyGuard::groupId('https://www.facebook.com/groups/
 check(WNQ\Services\FacebookDailyGuard::groupId('https://www.facebook.com/groups/123/') === '123');
 check(!callApi(['op' => 'resolve', 'key' => $job['key'], 'resolution' => 'skipped'])['success']);
 $options[$job['key']]['status'] = 'unknown';
-check(callApi(['op' => 'resolve', 'key' => $job['key'], 'resolution' => 'skipped'])['success']);
-check($options[$job['key']]['confirmation'] === 'manual');
-check(str_contains($options[$job['key']]['message'], 'manual review'));
+check(!callApi(['op' => 'resolve', 'key' => $job['key'], 'resolution' => 'skipped'])['success']);
+check(callApi(['op' => 'progress', 'mode' => 'test'])['data']['counts']['skipped'] === 1);
 check(!WNQ\Services\FacebookDailyGuard::reserve('123', 'new-token'));
 check(callApi(['op' => 'progress', 'mode' => 'test'])['data']['counts']['skipped'] === 1);
 $options['wnq_facebook_group_plan']['cutoff'] = '00:00';
@@ -117,7 +116,7 @@ $first = callApi(['op' => 'next', 'mode' => 'test'])['data']['job'];
 callApi(['op' => 'result', 'key' => $first['key'], 'token' => $first['token'], 'status' => 'submitted']);
 $options['wnq_facebook_group_plan']['groups'] = ['https://www.facebook.com/groups/888889/'];
 check(callApi(['op' => 'next', 'mode' => 'test'], false)['data']['waiting']);
-check($options['wnq_fb_daily_dispatch']['until'] >= time() + 359);
+check($options['wnq_fb_daily_dispatch']['until'] >= time() + 59);
 check(!isset($options['wnq_fb_daily_888889']), 'Cooldown must not consume the second group');
 check(isset(callApi(['op' => 'next', 'mode' => 'test'])['data']['job']));
 callApi(['op' => 'stop']);
@@ -130,7 +129,7 @@ check($options['wnq_fb_first_week'] === $now->format('o-W'));
 $snapshot = callApi(['op' => 'progress', 'mode' => 'test'])['data'];
 check(count($snapshot['rows']) > 1); // Historical links survive changes to the plan.
 check(array_values(array_filter($snapshot['rows'], fn($row) => $row['url'] === 'https://www.facebook.com/groups/888889/'))[0]['status'] === 'reserved');
-if (in_array('--render', $argv, true)) {
+if (in_array('--render', $argv, true) || in_array('--dashboard', $argv, true)) {
     function get_transient(...$args) { return false; }
     function delete_transient(...$args) {}
     function get_current_user_id() { return 1; }
@@ -143,5 +142,6 @@ if (in_array('--render', $argv, true)) {
     function selected($a, $b) { if ($a === $b) echo 'selected'; }
     function checked($a) { if ($a) echo 'checked'; }
     function submit_button($label) { echo '<button>' . esc_html($label) . '</button>'; }
+    if (!in_array('--dashboard', $argv, true)) $_GET['client'] = 'agency';
     WNQ\Admin\FacebookGroupsAdmin::render();
 } else echo "$checks publishing queue checks passed. No external requests.\n";

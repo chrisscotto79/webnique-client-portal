@@ -137,6 +137,61 @@ final class Client
     }
 
     /**
+     * Read-only SEO directory: shared profiles plus active legacy Analytics clients.
+     * Never create billing records or rewrite IDs/agent keys as a side effect of reads.
+     */
+    public static function getSEOClients(?string $status = null): array
+    {
+        $portal = self::getAll();
+        $configs = class_exists(AnalyticsConfig::class) ? AnalyticsConfig::getAllClients() : [];
+        $clients = [];
+        $claimed = [];
+        foreach ($portal as $client) {
+            $id = (string)$client['client_id'];
+            $claimed[$id] = true;
+            if (class_exists(AnalyticsConfig::class)) {
+                $claimed[AnalyticsConfig::idForPortal($client, $configs)] = true;
+            }
+            if (($client['status'] ?? '') === 'deleted') continue;
+            $clients[$id] = $client;
+        }
+        foreach ($configs as $config) {
+            $id = (string)($config['client_id'] ?? '');
+            if ($id === '' || isset($claimed[$id]) || empty($config['is_active'])) continue;
+            $clients[$id] = self::analyticsSEOClient($config);
+        }
+        $clients = array_filter($clients, static fn($client) => $status === null || ($client['status'] ?? '') === $status);
+        uasort($clients, static fn($a, $b) => strcasecmp(($a['company'] ?? '') ?: $a['name'], ($b['company'] ?? '') ?: $b['name']));
+        return array_values($clients);
+    }
+
+    /** Exact identity lookup also keeps existing legacy agent/profile URLs usable. */
+    public static function getSEOClient(string $client_id): ?array
+    {
+        $client = self::getByClientId($client_id);
+        if ($client) return ($client['status'] ?? '') === 'deleted' ? null : $client;
+        if (!class_exists(AnalyticsConfig::class)) return null;
+        $config = AnalyticsConfig::getClientConfig($client_id);
+        if (!$config || ($config['client_id'] ?? '') !== $client_id || empty($config['is_active'])) return null;
+        return self::analyticsSEOClient($config);
+    }
+
+    private static function analyticsSEOClient(array $config): array
+    {
+        return [
+            'client_id' => $config['client_id'],
+            'name' => $config['client_name'],
+            'company' => $config['client_name'],
+            'email' => '',
+            'website' => $config['website_url'] ?? '',
+            'status' => 'active',
+            'google_analytics_property_id' => $config['ga4_property_id'] ?? '',
+            'google_search_console_site_url' => $config['search_console_url'] ?? '',
+            'directory_source' => 'analytics',
+        ];
+    }
+
+    /**
      * Get client by ID
      */
     public static function getById(int $id): ?array

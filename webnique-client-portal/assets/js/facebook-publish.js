@@ -46,8 +46,8 @@
         if (!week && data.week && document.getElementById('fb-history-week')) document.getElementById('fb-history-week').value = data.week.replace('-', '-W');
         if (data.client && data.client !== clientId) throw new Error('Client response mismatch. Nothing else will be posted.');
         const c = data.counts;
-        document.getElementById('fb-progress').textContent = `${c.submitted + c.pending + c.skipped + c.review} of ${c.total} processed · ${c.submitted} submitted · ${c.pending} awaiting approval · ${c.skipped} skipped · ${c.review} need review`;
-        const labels = {submitted: 'Submitted — Facebook confirmed', pending: 'Awaiting group approval', skipped: 'Not posted — skipped', review: 'Unconfirmed — review needed', reserved: 'In progress', waiting: 'Not posted yet'};
+        document.getElementById('fb-progress').textContent = `${c.submitted + c.pending + c.skipped} of ${c.total} processed · ${c.submitted} submitted · ${c.pending} in Facebook moderation · ${c.skipped} skipped`;
+        const labels = {submitted: 'Submitted — Facebook confirmed', pending: 'Submitted to Facebook moderation', skipped: 'Skipped — no confirmed post', review: 'Unconfirmed — skipped', reserved: 'In progress', waiting: 'Not posted yet'};
         const history = document.getElementById('fb-history-results');
         if (history) {
             history.replaceChildren();
@@ -73,24 +73,7 @@
         }
         if (running && mode === 'scheduled' && !data.enabled) { running = false; show('Weekly schedule stopped. Select Resume to continue.'); }
         if (!running && !busy && data.enabled) show('Schedule is enabled but this page is idle. Select Resume to continue.');
-        const panel = document.getElementById('fb-review');
-        panel.replaceChildren();
-        for (const item of data.review) {
-            const row = document.createElement('p'), link = document.createElement('a');
-            link.href = item.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'Check Facebook group'; row.append(link);
-            if (item.skipped) { row.append(' — ' + item.message); panel.append(row); continue; }
-            for (const [resolution, label] of [['submitted', 'Already posted'], ['skipped', 'Definitely not posted — skip']]) {
-                const button = document.createElement('button'); button.type = 'button'; button.className = 'button'; button.textContent = label;
-                button.onclick = async () => {
-                    if (busy || running) return show('Pause the run before resolving a submission.');
-                    if (!confirm('Have you checked this group in Facebook? This marks it “' + label + '” and does not publish another post.')) return;
-                    button.disabled = true;
-                    try { await api('resolve', {key: item.key, resolution, ...(week ? {week} : {})}); await progress(); show('Review saved. No post was sent.'); }
-                    catch (e) { error(e.message); button.disabled = false; }
-                }; row.append(' ', button);
-            }
-            panel.append(row);
-        }
+
     }
     async function tick() {
         if (!running || busy) return;
@@ -98,7 +81,7 @@
         controls();
         try {
             const connection = await companion('ping');
-            if (!connection.version || connection.version.localeCompare('1.1.1', undefined, {numeric: true}) < 0) throw new Error('Update and reload Facebook companion 1.1.1 or newer before publishing.');
+            if (!connection.version || connection.version.localeCompare('1.2.0', undefined, {numeric: true}) < 0) throw new Error('Update and reload Facebook companion 1.2.0 or newer before publishing.');
             const next = await api('next', {mode});
             if (next.waiting || next.finished || next.stopped) {
                 show((next.message || 'Waiting for the saved daily start time.') + (next.next_at ? ' Next attempt after ' + new Date(next.next_at * 1000).toLocaleTimeString() : ''));
@@ -113,7 +96,9 @@
                     await api('result', {...job, status: 'not_started'});
                     return;
                 }
-                const result = await companion('publish', job);
+                let result;
+                try { result = await companion('publish', job); }
+                catch (e) { result = {status: 'unknown', scope: 'group', message: e.message}; }
                 await api('result', {key: job.key, token: job.token, status: result.status, scope: result.scope || 'account', message: result.message || ''});
                 show(mode === 'test' ? (result.status === 'submitted' ? 'Test passed: Facebook confirmed submission.' : result.status === 'pending' ? 'Test submitted for approval — not publicly posted yet.' : 'Test did not confirm a post.') : result.message);
                 if (!['submitted', 'pending'].includes(result.status)) error(job.url + ' — ' + result.message);
@@ -127,7 +112,7 @@
         if (busy || running) return;
         if (dirty) return error('Save this client’s changed settings before starting or testing.');
         historyWeek = null;
-        if (!confirm(clientName + ': ' + (nextMode === 'test' ? 'Test sends a REAL post to the first saved group, subject to the cutoff, six-minute interval and duplicate protection. Continue?' : 'Start/resume the saved weekly schedule at one post every six minutes? Only continue if these groups allow your message.'))) return;
+        if (!confirm(clientName + ': ' + (nextMode === 'test' ? 'Test sends a REAL post to the first saved group, subject to the cutoff, one-minute interval and duplicate protection. Continue?' : 'Start/resume the saved weekly schedule at one post every one minute? Only continue if these groups allow your message.'))) return;
         busy = true; controls(); error('');
         const started = ++generation;
         try { await api(nextMode === 'test' ? 'stop' : action); if (started === generation) { mode = nextMode; running = true; } }

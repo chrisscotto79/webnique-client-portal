@@ -90,6 +90,7 @@ final class LeadFinderAdmin
         $backend_enabled = self::backendEnabled();
         $stats    = Lead::getStats();
         ?>
+        <link rel="stylesheet" href="<?php echo esc_url(WNQ_PORTAL_URL . 'assets/css/task-dashboard.css?v=' . WNQ_PORTAL_VERSION); ?>">
         <div class="wrap wnq-lf">
         <style>
         .wnq-lf{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}

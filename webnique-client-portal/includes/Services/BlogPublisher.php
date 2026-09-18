@@ -149,7 +149,7 @@ final class BlogPublisher
             return self::fail($schedule_id, 'No SEO profile found for client: ' . $client_id);
         }
 
-        $client      = Client::getByClientId($client_id) ?? [];
+        $client      = Client::getSEOClient($client_id) ?? [];
         $biz_name    = $client['company'] ?? $client['name'] ?? $client_id;
         $services    = implode(', ', (array)($profile['primary_services'] ?? []));
         $location    = implode(', ', (array)($profile['service_locations'] ?? []));
@@ -279,7 +279,7 @@ final class BlogPublisher
             return self::fail($schedule_id, 'No SEO profile found for client: ' . $client_id);
         }
 
-        $client      = Client::getByClientId($client_id) ?? [];
+        $client      = Client::getSEOClient($client_id) ?? [];
         $biz_name    = $client['company'] ?? $client['name'] ?? $client_id;
         $services    = implode(', ', (array)($profile['primary_services'] ?? []));
         $location    = implode(', ', (array)($profile['service_locations'] ?? []));

@@ -82,7 +82,7 @@ namespace {
     $allowed=true;$nonceValid=false;try{WNQ\Admin\LeadBrowserAdmin::save();check(false,'Nonce');}catch(\RuntimeException $e){check(str_contains($e->getMessage(),'Session expired'),'Nonce enforced');}
     if (($argv[1]??'')==='--render') {
         $source=file_get_contents(dirname(__DIR__).'/admin/LeadFinderAdmin.php');preg_match('#<style>(.*?)</style>#s',$source,$m);
-        echo '<!doctype html><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{background:#f0f0f1;margin:20px}'.$m[1].'</style><div class="wnq-lf">';
+        echo '<!doctype html><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{background:#f0f0f1;margin:20px}'.$m[1].file_get_contents(dirname(__DIR__).'/assets/css/task-dashboard.css').'</style><div class="wrap wnq-lf">';
         WNQ\Admin\LeadBrowserAdmin::render();echo '</div>';
     } else echo "PASS: $checks browser intake/email/security assertions (mocked HTTP).\n";
 }

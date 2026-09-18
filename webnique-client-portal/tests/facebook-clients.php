@@ -11,27 +11,28 @@ $before = $checks;
 check(!callApi(['op' => 'start', 'client' => '999'])['success']);
 check(!callApi(['op' => 'start', 'client' => ['11']])['success']);
 check(callApi(['op' => 'start', 'client' => '11'])['success']);
-check(!callApi(['op' => 'start', 'client' => '22'])['success']);
-check(!callApi(['op' => 'next', 'mode' => 'test', 'client' => 'agency'])['success']);
+check(callApi(['op' => 'start', 'client' => '22'])['success']);
+check($options[Campaign::key('wnq_fb_schedule_enabled', '11')] && $options[Campaign::key('wnq_fb_schedule_enabled', '22')]);
 $a = callApi(['op' => 'next', 'mode' => 'test', 'client' => '11'])['data']['job'];
 check($a['client_id'] === '11' && $a['client_name'] === 'Alpha Tree');
 check($a['message'] === "Alpha message\nhttps://alpha.example/");
 check(Campaign::ownsJob('11', $a['key']) && !Campaign::ownsJob('22', $a['key']));
 check(!callApi(['op' => 'result', 'client' => '22', 'key' => $a['key'], 'token' => $a['token'], 'status' => 'submitted'])['success']);
 check(!callApi(['op' => 'result', 'client' => 'agency', 'key' => $a['key'], 'token' => $a['token'], 'status' => 'submitted'])['success']);
+check(callApi(['op' => 'next', 'mode' => 'test', 'client' => '22'], false)['data']['waiting']); // Cross-company dispatch is serialized.
 check(callApi(['op' => 'result', 'client' => '11', 'key' => $a['key'], 'token' => $a['token'], 'status' => 'submitted'])['success']);
 check(callApi(['op' => 'progress', 'client' => '11', 'mode' => 'test'])['data']['counts']['submitted'] === 1);
 check(callApi(['op' => 'progress', 'client' => '22', 'mode' => 'test'])['data']['counts']['submitted'] === 0);
 try { Campaign::assertEditable('11'); check(false); } catch (InvalidArgumentException $e) { check(true); }
 callApi(['op' => 'stop', 'client' => '22']);
-check(!callApi(['op' => 'start', 'client' => '22'])['success']); // Stopping Beta cannot stop Alpha.
+check(callApi(['op' => 'start', 'client' => '22'])['success']); // Stopping Beta cannot stop Alpha.
 callApi(['op' => 'stop', 'client' => '11']);
-check(!callApi(['op' => 'start', 'client' => '22'])['success']); // Outstanding cooldown still owns the browser.
+check(callApi(['op' => 'start', 'client' => '22'])['success']); // Both schedules may be enabled during cooldown.
 $options['wnq_fb_daily_dispatch']['until'] = time() - 1;
 check(callApi(['op' => 'start', 'client' => '22'])['success']);
 $b = callApi(['op' => 'next', 'mode' => 'test', 'client' => '22'])['data']['job'];
 check($b['message'] === 'Beta message' && $b['client_id'] === '22');
-check(!callApi(['op' => 'resume', 'client' => '11'])['success']);
+check(callApi(['op' => 'resume', 'client' => '11'])['success']);
 callApi(['op' => 'result', 'client' => '22', 'key' => $b['key'], 'token' => $b['token'], 'status' => 'pending']);
 callApi(['op' => 'stop', 'client' => '22']);
 $options['wnq_fb_daily_dispatch']['until'] = time() - 1;

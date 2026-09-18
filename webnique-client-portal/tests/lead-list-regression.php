@@ -4,7 +4,6 @@ if (PHP_SAPI !== 'cli') { exit; }
 ob_start(); require __DIR__ . '/lead-ghl-regression.php'; ob_end_clean();
 define('WNQ_PORTAL_VERSION', 'fixture');
 function sanitize_key($v) { return preg_replace('/[^a-z_]/', '', $v); }
-function sanitize_text_field($v) { return trim(strip_tags($v)); }
 function sanitize_textarea_field($v) { return sanitize_text_field($v); }
 function wp_unslash($v) { return $v; }
 function absint($v) { return abs((int)$v); }

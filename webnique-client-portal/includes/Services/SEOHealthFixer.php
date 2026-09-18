@@ -63,7 +63,7 @@ final class SEOHealthFixer
             return ['fixed' => 0, 'failed' => 0, 'skipped' => 0, 'remaining' => 0, 'done' => true, 'error' => 'No SEO profile found'];
         }
 
-        $client   = Client::getByClientId($client_id) ?? [];
+        $client   = Client::getSEOClient($client_id) ?? [];
         $biz_name = $client['company'] ?? $client['name'] ?? $client_id;
         $services = implode(', ', (array)($profile['primary_services'] ?? []));
         $location = implode(', ', (array)($profile['service_locations'] ?? []));
@@ -271,7 +271,7 @@ final class SEOHealthFixer
      */
     public static function runForAllClients(): array
     {
-        $clients           = Client::getByStatus('active');
+        $clients           = Client::getSEOClients('active');
         $clients_processed = 0;
         $total_fixed       = 0;
         $total_failed      = 0;

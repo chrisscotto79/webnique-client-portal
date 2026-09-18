@@ -81,17 +81,10 @@ final class LeadBrowserAdmin
     {
         $base = plugins_url('../assets/', __FILE__);
         ?>
-        <div class="wnq-card" id="lf-ghl-auto" data-url="<?php echo esc_url(admin_url('admin-ajax.php')); ?>" data-nonce="<?php echo esc_attr(wp_create_nonce('wnq_ghl_drain')); ?>">
-            <strong>Automatic GHL handoff</strong>
-            <p><?php echo !empty(\WNQ\Services\LeadGhlSync::settings()['automatic']) && \WNQ\Services\LeadGhlSync::configured() ? 'ON — new valid-email leads are queued automatically. No individual approval. Outreach score/review filters do not block this mode. Suppression and identity checks still apply.' : 'OFF or not configured — check GoHighLevel settings before starting.'; ?></p>
-            <p data-progress role="status">Keep this page and Chrome open. Email deduplication is shared across all keywords and ZIP codes.</p>
-            <p id="lf-bulk-totals" role="status">This bulk search: 0 new leads · 0 new leads with email</p>
-            <p data-backlog role="status">Start a search to also queue valid unsent leads already in your list.</p>
-        </div>
-        <script src="<?php echo esc_url($base . 'js/lead-ghl-auto.js?v=' . WNQ_PORTAL_VERSION); ?>"></script>
         <link rel="stylesheet" href="<?php echo esc_url($base . 'css/lead-browser.css?v=' . WNQ_PORTAL_VERSION); ?>">
-        <section class="lf-hero"><span>GOOGLE MAPS → YOUR LEAD LIST</span><h2>Find the right businesses. Build your list.</h2><p>Search a niche and ZIP. Chrome reads listings; WordPress checks their websites for public emails.</p></section>
+        <section class="lf-hero"><span>GOOGLE MAPS → YOUR LEAD LIST</span><h2>Lead collection dashboard</h2><p>Search a niche and ZIP. Chrome reads listings; WordPress checks their websites for public emails.</p></section>
         <div id="lf-browser-app" data-user="<?php echo (int)get_current_user_id(); ?>" data-nonce="<?php echo esc_attr(wp_create_nonce('wnq_browser_leads')); ?>">
+            <section class="wnq-card"><h3>Search tasks <span id="lf-task-count"></span></h3><div class="task-table-scroll"><table class="task-table"><thead><tr><th>Search</th><th>ZIP</th><th>Status</th><th>Saved / with email</th></tr></thead><tbody id="lf-task-rows"><tr><td colspan="4">Create a search to build your queue.</td></tr></tbody></table></div></section>
             <section class="wnq-card lf-search"><form id="lf-search-form">
                 <div class="wnq-field"><label for="lf-niche">Niche keyword</label><input id="lf-niche" name="keyword" maxlength="100" placeholder="Plumbers" required></div>
                 <div class="wnq-field"><label for="lf-postcode">ZIP codes (up to 250)</label><textarea id="lf-postcode" name="zip" maxlength="4000" placeholder="32825, 32826, 32828" required style="min-height:70px"></textarea></div>
@@ -105,7 +98,7 @@ final class LeadBrowserAdmin
                 <li>Open <strong>chrome://extensions</strong>, enable Developer mode, select <strong>Load unpacked</strong>, and choose that folder.</li>
                 <li>Refresh this WordPress page. Keep this page and Chrome open during collection.</li>
             </ol><p>The companion is restricted to this agency’s WordPress admin and Google Maps. It has no GHL token and does not send emails. No Node server or paid Maps API is required.</p></details></section>
-            <section class="wnq-card"><div class="lf-progress-head"><h3>Current search</h3><div><button id="lf-resume" class="wnq-btn wnq-btn-secondary" type="button">Resume / retry</button> <button id="lf-pause" class="wnq-btn wnq-btn-secondary" type="button" disabled>Pause</button></div></div>
+            <section class="wnq-card"><div class="lf-progress-head"><h3>Current search</h3><div class="lf-task-controls"><button id="lf-resume" class="wnq-btn wnq-btn-secondary" type="button">Resume / retry</button> <button id="lf-pause" class="wnq-btn wnq-btn-secondary" type="button" disabled>Pause</button></div></div>
                 <p id="lf-progress" role="status" aria-live="polite">Enter a keyword and ZIP to begin.</p>
                 <p id="lf-bulk-progress" role="status"></p><small>Counts below are for the current ZIP. Search history is saved in WordPress; the remaining bulk queue stays in this Chrome tab.</small>
                 <div class="lf-counts"><div><strong id="lf-count-found">0</strong><span>Listings collected</span></div><div><strong id="lf-count-saved">0</strong><span>New leads saved</span></div><div><strong id="lf-count-email">0</strong><span>New leads with email</span></div><div><strong id="lf-count-duplicate">0</strong><span>Already in your list</span></div></div>
@@ -114,6 +107,14 @@ final class LeadBrowserAdmin
                 <a class="wnq-btn wnq-btn-primary" href="<?php echo esc_url(admin_url('admin.php?page=wnq-lead-finder&tab=leads')); ?>">View combined lead list</a>
             </section>
         </div>
+        <div class="wnq-card" id="lf-ghl-auto" data-url="<?php echo esc_url(admin_url('admin-ajax.php')); ?>" data-nonce="<?php echo esc_attr(wp_create_nonce('wnq_ghl_drain')); ?>">
+            <strong>Automatic GHL handoff</strong>
+            <p><?php echo !empty(\WNQ\Services\LeadGhlSync::settings()['automatic']) && \WNQ\Services\LeadGhlSync::configured() ? 'ON — new valid-email leads are queued automatically. No individual approval. Outreach score/review filters do not block this mode. Suppression and identity checks still apply.' : 'OFF or not configured — check GoHighLevel settings before starting.'; ?></p>
+            <p data-progress role="status">Keep this page and Chrome open. Email deduplication is shared across all keywords and ZIP codes.</p>
+            <p id="lf-bulk-totals" role="status">This bulk search: 0 new leads · 0 new leads with email</p>
+            <p data-backlog role="status">Start a search to also queue valid unsent leads already in your list.</p>
+        </div>
+        <script src="<?php echo esc_url($base . 'js/lead-ghl-auto.js?v=' . WNQ_PORTAL_VERSION); ?>"></script>
         <script src="<?php echo esc_url($base . 'js/lead-browser.js?v=' . WNQ_PORTAL_VERSION); ?>" defer></script>
         <?php
     }

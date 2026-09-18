@@ -6,7 +6,7 @@
   let running = false;
   let looping = false;
   let preparing = false;
-  let job = null;
+  let job = null, taskIssue = '';
   let recoveryTimer = null, recoveryAttempts = 0, recoveryEpoch = 0, recovering = false;
   function stopRecovery() {
     recoveryEpoch++;clearTimeout(recoveryTimer);recoveryTimer=null;recovering=false;
@@ -75,7 +75,29 @@
     if (!data.success) throw new Error(data.data?.message || 'Search history unavailable. No next ZIP started.');
     return data.data;
   }
+  function taskRows() {
+    const body = byId('lf-task-rows');
+    if (!body) return;
+    const zips = bulk?.zips || (job ? [job.zip] : []);
+    byId('lf-task-count').textContent = '(' + zips.length + ')';
+    body.replaceChildren();
+    zips.forEach((zip, index) => {
+      const current = bulk ? index === bulk.index : true;
+      const matched = current && job && (!bulk || job.runId === bulk.run);
+      const done = bulk ? index < bulk.index : job?.phase === 'done';
+      let label = done ? 'Completed' : !current ? 'Queued' : recovering ? 'Reconnecting' : preparing ? 'Preparing' : taskIssue ? 'Needs attention' : !running ? 'Paused / ready' : !matched ? 'Starting' : job.phase === 'collect' ? 'Collecting listings' : job.phase === 'done' ? 'Saving completion' : 'Checking websites';
+      const stats = matched ? job.stats : bulk?.results?.[index];
+      const tr = document.createElement('tr');
+      if (current && taskIssue) tr.title = taskIssue;
+      for (const value of [bulk?.keyword || job?.keyword || '', zip, label, stats ? `${stats.saved || 0} / ${stats.email || 0}` : '—']) {
+        const td = document.createElement('td'); td.textContent = value; tr.append(td);
+      }
+      tr.children[2].className = 'task-status' + (done || (current && running) ? ' is-running' : ''); body.append(tr);
+    });
+    if (!zips.length) { const tr = document.createElement('tr'), td = document.createElement('td'); td.colSpan = 4; td.textContent = 'Create a search to build your queue.'; tr.append(td); body.append(tr); }
+  }
   function bulkLabel() {
+    taskRows();
     const totals = document.getElementById('lf-bulk-totals');
     if (totals && bulk) {
       const current = bulk.started && job?.runId === bulk.run ? job.stats : {};
@@ -139,13 +161,14 @@
   }
   function mapsKey(value) {const u = new URL(value);return decodeURIComponent((u.pathname.match(/!1s([^!\/]+)/) || [])[1] || u.pathname);}
   function controls() {
+    taskRows();
     byId('lf-start').disabled = looping || preparing || recovering; byId('lf-resume').disabled = looping || preparing || recovering; byId('lf-pause').disabled = !running && !recovering;
     byId('lf-bulk-start').disabled = looping || preparing || recovering;
   }
   async function run(isRecovery = false) {
     if (looping) return;
     if(!isRecovery){stopRecovery();recoveryAttempts=0;}
-    running = true; looping = true; controls();
+    taskIssue = ''; running = true; looping = true; controls();
     try {
       await safeCompanion();
       if(!running)return;
@@ -178,6 +201,7 @@
             log(`${job.keyword} in ${job.zip}: search history saved.`);
             bulk.totalSaved = (bulk.totalSaved || 0) + job.stats.saved;
             bulk.totalEmail = (bulk.totalEmail || 0) + job.stats.email;
+            bulk.results ||= {}; bulk.results[bulk.index] = {...job.stats};
             bulk.index++;bulk.run=null;bulk.started=false;keepBulk();bulkLabel();
             if (running && bulk.index < bulk.zips.length) {await nextZip();continue;}
           }
@@ -187,6 +211,7 @@
       }
       if (!running && job?.phase !== 'done') byId('lf-progress').textContent = 'Paused. Saved leads are safe; Resume continues this search.';
     } catch (error) {
+      taskIssue = error.message;
       if(!running || !scheduleRecovery(error)){byId('lf-progress').textContent = 'Needs attention: ' + error.message;log('Needs attention: ' + error.message);}
     }
     finally { running = false; looping = false; controls(); }

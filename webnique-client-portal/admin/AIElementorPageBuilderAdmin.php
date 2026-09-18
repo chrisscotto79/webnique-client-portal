@@ -2488,7 +2488,7 @@ final class AIElementorPageBuilderAdmin
     private static function connectedAgents(): array
     {
         $client_profiles = [];
-        foreach (Client::getAll() as $client) {
+        foreach (Client::getSEOClients() as $client) {
             $client_id = (string)($client['client_id'] ?? '');
             if ($client_id === '') {
                 continue;

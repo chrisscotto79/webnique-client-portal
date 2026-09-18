@@ -163,6 +163,8 @@ async function browserTests() {
     await page.click('#lf-bulk-start');
     await page.waitForFunction(()=>document.getElementById('lf-bulk-progress').textContent.includes('2 ZIPs processed'));
     check(saves===3,'Two new ZIPs processed sequentially; prior ZIP skipped');
+    check(await page.$$eval('#lf-task-rows tr', rows => rows.length === 2 && rows.every(row => row.textContent.includes('Completed') && row.textContent.includes('1 / 1'))),'Task dashboard reflects completed ZIPs and retained counts');
+    if(process.env.WNQ_UI_OUTPUT) await page.screenshot({path:path.join(process.env.WNQ_UI_OUTPUT,'lead-finder-completed.png'),fullPage:true});
     await page.evaluate(()=>window.speedTest=true);
     await page.$eval('#lf-postcode',e=>e.value='32830');await page.click('#lf-start');
     await page.waitForSelector('#lf-zip-review:not([hidden])');await page.click('#lf-bulk-start');

@@ -88,7 +88,7 @@ final class BlogSchedulerAdmin
 
     private static function renderQueueTab(): void
     {
-        $clients    = Client::getByStatus('active');
+        $clients    = Client::getSEOClients('active');
         $client_id  = sanitize_text_field($_GET['client_id'] ?? ($clients[0]['client_id'] ?? ''));
         $total = $client_id ? BlogScheduler::countPosts($client_id) : 0;
         $queue_page = min(max(1, (int)($_GET['queue_page'] ?? 1)), max(1, (int)ceil($total / 50)));
@@ -500,7 +500,7 @@ jQuery(function($) {
 
     private static function renderGbpTab(): void
     {
-        $clients   = Client::getByStatus('active');
+        $clients   = Client::getSEOClients('active');
         $client_id = sanitize_text_field($_GET['client_id'] ?? ($clients[0]['client_id'] ?? ''));
         $posts     = $client_id ? BlogScheduler::getGbpPostsByClient($client_id, 100) : [];
         $connection = GoogleBusinessProfileClient::connectionStatus();
@@ -848,7 +848,7 @@ jQuery(function($) {
 
     private static function renderGenerateTab(): void
     {
-        $clients   = Client::getByStatus('active');
+        $clients   = Client::getSEOClients('active');
         $client_id = sanitize_text_field($_GET['client_id'] ?? ($clients[0]['client_id'] ?? ''));
 
         echo '<div class="wnq-blog-card">';
@@ -1034,7 +1034,7 @@ jQuery(function($) {
 
     private static function renderSettingsTab(): void
     {
-        $clients    = Client::getByStatus('active');
+        $clients    = Client::getSEOClients('active');
         $client_id  = sanitize_text_field($_GET['client_id'] ?? ($clients[0]['client_id'] ?? ''));
         $template_json = get_option('wnq_blog_elementor_template', '');
 
@@ -1180,7 +1180,7 @@ jQuery(function($) {
         }
 
         $profile  = SEOHub::getProfile($client_id);
-        $client   = Client::getByClientId($client_id) ?? [];
+        $client   = Client::getSEOClient($client_id) ?? [];
         $existing = self::getExistingTitles($client_id);
 
         $biz      = $client['company'] ?? $client['name'] ?? $client_id;

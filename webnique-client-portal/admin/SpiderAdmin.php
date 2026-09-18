@@ -66,7 +66,7 @@ final class SpiderAdmin
 
         $tab       = sanitize_key($_GET['tab'] ?? 'spider');
         $client_id = sanitize_text_field($_GET['client_id'] ?? '');
-        $clients   = Client::getAll();
+        $clients   = Client::getSEOClients();
 
         echo '<div class="wrap wnq-hub-wrap">';
         echo '<div class="wnq-hub-masthead">';

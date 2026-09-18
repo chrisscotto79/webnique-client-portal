@@ -89,7 +89,7 @@ final class SEOHubAdmin
     public static function renderDashboard(): void
     {
         self::checkCap();
-        $clients  = Client::getByStatus('active');
+        $clients  = Client::getSEOClients('active');
         $seo_clients = [];
         foreach ($clients as $c) {
             $profile = SEOHub::getProfile($c['client_id']);
@@ -244,13 +244,16 @@ final class SEOHubAdmin
     {
         self::checkCap();
         $client_id = sanitize_text_field(wp_unslash($_GET['client_id'] ?? ''));
-        $clients   = Client::getAll();
+        $clients   = Client::getSEOClients();
 
         self::renderHeader('SEO OS — Clients');
 
         // Single client profile view
         if ($client_id) {
-            $client  = Client::getByClientId($client_id);
+            $client  = Client::getSEOClient($client_id);
+            if (($client['directory_source'] ?? '') === 'analytics') {
+                echo '<div class="wnq-hub-notice"><p>This client is available from Analytics and can connect an SEO agent. <a href="' . esc_url(admin_url('admin.php?page=wnq-clients&action=add&analytics_id=' . urlencode($client_id))) . '">Complete the shared client profile</a> to add billing and portal contact details.</p></div>';
+            }
             $profile = SEOHub::getProfile($client_id) ?? [];
             $stats   = SEOHub::getSiteStats($client_id);
             $health  = AuditEngine::getHealthScore($client_id);
@@ -428,7 +431,7 @@ final class SEOHubAdmin
     {
         self::checkCap();
         $client_id = sanitize_text_field(wp_unslash($_GET['client_id'] ?? ''));
-        $clients   = Client::getAll();
+        $clients   = Client::getSEOClients();
 
         self::renderHeader('SEO OS — Keywords');
 
@@ -525,7 +528,7 @@ final class SEOHubAdmin
     {
         self::checkCap();
         $client_id = sanitize_text_field($_GET['client_id'] ?? '');
-        $clients   = Client::getAll();
+        $clients   = Client::getSEOClients();
 
         self::renderHeader('SEO OS — Service + City Pages');
 
@@ -996,7 +999,7 @@ jQuery(function($) {
     {
         self::checkCap();
         $client_id = sanitize_text_field($_GET['client_id'] ?? '');
-        $clients   = Client::getAll();
+        $clients   = Client::getSEOClients();
 
         self::renderHeader('SEO OS — Technical Audits');
 
@@ -1607,7 +1610,7 @@ jQuery(function($) {
     {
         self::checkCap();
         $client_id = sanitize_text_field($_GET['client_id'] ?? '');
-        $clients   = Client::getAll();
+        $clients   = Client::getSEOClients();
         $all_keys  = SEOHub::getAllAgentKeys();
 
         self::renderHeader('SEO OS — API Management');
@@ -1643,6 +1646,17 @@ jQuery(function($) {
             echo '<div class="wnq-hub-notice" style="background:#fef2f2;color:#991b1b;border:1px solid #fecaca;padding:10px 14px;border-radius:6px;margin-bottom:16px;">The site URL could not be updated. Please try again.</div>';
         }
 
+        $generation_errors = [
+            'missing_fields' => 'Select a client and enter its site URL before generating an API key.',
+            'invalid_client' => 'This client is no longer available. Reload the page and select a current client.',
+            'generation_failed' => 'The API key could not be saved. Check the SEO OS database tables and try again.',
+        ];
+        if (isset($generation_errors[$api_error])) {
+            echo '<div class="wnq-hub-notice error" role="alert">' . esc_html($generation_errors[$api_error]) . '</div>';
+        }
+        echo '<p class="wnq-muted">Clients are loaded from shared client profiles and active Analytics records. Existing client IDs and agent keys are preserved.</p>';
+        echo '<p><a class="wnq-btn" href="' . esc_url(admin_url('admin.php?page=wnq-clients&action=add')) . '">Add New Client</a></p>';
+
         // Generate key form
         echo '<form method="post" action="' . admin_url('admin-post.php') . '" style="background:#f0f9ff;padding:20px;border-radius:8px;margin:16px 0;border:1px solid #bae6fd;">';
         wp_nonce_field('wnq_generate_agent_key');
@@ -1666,7 +1680,7 @@ jQuery(function($) {
             echo '<tr><td colspan="7" style="text-align:center;padding:40px;color:#6b7280;">No API keys generated yet.</td></tr>';
         }
         foreach ($all_keys as $key) {
-            $client = Client::getByClientId($key['client_id']);
+            $client = Client::getSEOClient($key['client_id']);
             $name   = $client ? ($client['company'] ?: $client['name']) : $key['client_id'];
             $version = trim((string)($key['plugin_version'] ?? ''));
             if ($version === '') {

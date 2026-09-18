@@ -9,7 +9,7 @@ final class FacebookCampaign
         if ($value === 'agency') return ['id' => 'agency', 'name' => 'Golden Web Marketing'];
         if (!is_string($value) || !preg_match('/^[1-9][0-9]*$/D', $value)) throw new \InvalidArgumentException('Choose an existing client.');
         $client = \WNQ\Models\Client::getById((int)$value);
-        if (!$client) throw new \InvalidArgumentException('This client no longer exists. No campaign was changed.');
+        if (!$client || ($client['status'] ?? '') === 'deleted') throw new \InvalidArgumentException('This client no longer exists. No campaign was changed.');
         return ['id' => (string)$client['id'], 'name' => $client['company'] ?: $client['name']];
     }
 
@@ -26,19 +26,6 @@ final class FacebookCampaign
     public static function ownsJob(string $client, string $key): bool
     {
         return (bool)preg_match('/^wnq_fb_job_' . ($client === 'agency' ? '' : 'c' . preg_quote($client, '/') . '_') . '[a-f0-9]{64}$/D', $key);
-    }
-
-    /** Called under the request mutex; ownership survives idle scheduled intervals. */
-    public static function claim(array $client): void
-    {
-        $owner = get_option('wnq_fb_campaign_owner', []);
-        if (!$owner && get_option('wnq_fb_schedule_enabled', false)) $owner = ['id' => 'agency', 'name' => 'Golden Web Marketing'];
-        if ($owner && $owner['id'] !== $client['id']) {
-            $enabled = get_option(self::key('wnq_fb_schedule_enabled', $owner['id']), false);
-            $until = get_option('wnq_fb_daily_dispatch', [])['until'] ?? 0;
-            if ($enabled || $until > time()) throw new \InvalidArgumentException('Stop ' . $owner['name'] . ' first and wait for its current posting interval to finish. Only one client campaign can run at a time.');
-        }
-        update_option('wnq_fb_campaign_owner', $client, false);
     }
 
     public static function assertEditable(string $client): void

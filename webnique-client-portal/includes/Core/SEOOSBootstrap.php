@@ -687,12 +687,17 @@ final class SEOOSBootstrap
         check_admin_referer('wnq_generate_agent_key');
         self::requireCap();
 
-        $client_id = sanitize_text_field($_POST['client_id'] ?? '');
-        $site_url  = esc_url_raw($_POST['site_url'] ?? '');
-        $site_name = sanitize_text_field($_POST['site_name'] ?? '');
+        $client_id = sanitize_text_field(wp_unslash($_POST['client_id'] ?? ''));
+        $site_url  = esc_url_raw(wp_unslash($_POST['site_url'] ?? ''));
+        $site_name = sanitize_text_field(wp_unslash($_POST['site_name'] ?? ''));
 
         if (empty($client_id) || empty($site_url)) {
             wp_redirect(admin_url('admin.php?page=wnq-seo-hub-api&error=missing_fields'));
+            exit;
+        }
+
+        if (!\WNQ\Models\Client::getSEOClient($client_id)) {
+            wp_redirect(admin_url('admin.php?page=wnq-seo-hub-api&error=invalid_client'));
             exit;
         }
 
@@ -700,7 +705,7 @@ final class SEOOSBootstrap
 
         // Also create a basic profile for this client if not exists
         $profile = \WNQ\Models\SEOHub::getProfile($client_id);
-        if (!$profile) {
+        if ($key && !$profile) {
             \WNQ\Models\SEOHub::upsertProfile($client_id, [
                 'primary_services'  => [],
                 'service_locations' => [],

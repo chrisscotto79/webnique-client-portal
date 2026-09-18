@@ -1,4 +1,35 @@
-# Facebook Publisher companion 1.1.1
+# Facebook Publisher companion 1.2.0
+
+Use with WordPress portal 3.11.0. This release recognizes final **Post** and **Publish**
+buttons and a verified **Next → Post settings → Publish** flow. It preserves exact
+message, attachment, client identity, cancellation, expiry and duplicate checks.
+
+The Facebook Groups menu now opens a company task dashboard. Start individual
+campaigns or all ready campaigns. Multiple schedules stay enabled and take turns
+through one browser tab. WordPress enforces a 60-second interval after each result;
+a lost result retains the dispatch lease for up to 180 seconds from authorization.
+Keep the dashboard and Chrome open. Browser throttling and page loading can make
+actual intervals longer; this is not a background server service.
+
+There is no internal submission review queue. Failed/unconfirmed attempts are
+skipped without automatic replay. A confirmed Facebook moderation submission is
+recorded separately from a confirmed published post. Facebook's own moderation,
+login and security prompts remain in force. Account/security issues pause the runner.
+
+Update the WordPress plugin, replace this extension's files, reload it in
+chrome://extensions and refresh the WordPress Facebook Groups page. New installations
+use Developer mode → Load unpacked → the folder containing manifest.json.
+Click Check connection; it must report 1.2.0 or newer. Then open Facebook to sign in
+if needed. Updating files does not automatically start campaigns.
+
+The dashboard's Edit action opens each company's existing message/image/group
+settings and history. Start All uses those saved plans. The selected campaign does
+not change the Facebook profile or Page identity. Pause requests cancellation before
+the final click; a click already sent cannot be recalled.
+
+## Historical release notes (describe earlier versions)
+
+### 1.1.1
 
 Portal 3.9.1 saves selected images immediately with visible confirmation and thumbnails.
 The extension verifies the declared image count before dispatch and refuses missing
