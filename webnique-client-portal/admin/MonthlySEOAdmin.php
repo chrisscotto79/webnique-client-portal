@@ -38,7 +38,7 @@ final class MonthlySEOAdmin
         self::access(); check_admin_referer('wnq_monthly_seo_save');
         try {
             $data=wp_unslash($_POST);$id=sanitize_text_field($data['client'] ?? '');$month=M::month($data['month'] ?? '');
-            if (!Client::getSEOClient($id)) throw new \InvalidArgumentException('Client not found.');
+            if (!Client::getSEOPlanClient($id)) throw new \InvalidArgumentException('This client must be active and on a Website + SEO or Website + SEO + PPC plan to use the SEO Portal.');
             M::install();$op=$data['operation'] ?? '';
             if ($op==='task') M::saveTask($id,absint($data['task_id'] ?? 0),$data);
             elseif ($op==='metrics') M::saveMetrics($id,$month,$data);
@@ -58,8 +58,8 @@ final class MonthlySEOAdmin
             M::rollover();delete_option('wnq_monthly_seo_error');
             $month=M::month(isset($_GET['month']) ? sanitize_text_field(wp_unslash($_GET['month'])) : current_time('Y-m'));
             $id=isset($_GET['client'])?sanitize_text_field(wp_unslash($_GET['client'])):'';
-            $client=$id?Client::getSEOClient($id):null;
-            if ($id && !$client) throw new \InvalidArgumentException('Client not found.');
+            $client=$id?Client::getSEOPlanClient($id):null;
+            if ($id && !$client) throw new \InvalidArgumentException('This client must be active and on a Website + SEO or Website + SEO + PPC plan to use the SEO Portal.');
             ?>
             <link rel="stylesheet" href="<?php echo esc_url(WNQ_PORTAL_URL.'assets/css/monthly-seo.css?v='.WNQ_PORTAL_VERSION); ?>">
             <div class="wrap mseo">
@@ -80,7 +80,7 @@ final class MonthlySEOAdmin
     }
     private static function overview(string $month): void
     {
-        $clients=Client::getSEOClients();$today=current_time('Y-m-d');$summary=[];$agenda=[];$monthly=[];$all=[];
+        $clients=Client::getSEOPlanClients();$today=current_time('Y-m-d');$summary=[];$agenda=[];$monthly=[];$all=[];
         foreach ($clients as $client) {
             $id=$client['client_id'];$tasks=M::tasks($id,$month);$through=M::tasks($id,$month,true);$stats=M::stats($tasks,$today);$ops=M::stats($through,$today);$cycles=M::history($id);
             $last=$ops['last_activity'];foreach ($cycles as $cycle) if (!empty($cycle['last_activity']) && (!$last || $cycle['last_activity']>$last)) $last=$cycle['last_activity'];
@@ -107,7 +107,7 @@ final class MonthlySEOAdmin
             <p><strong>Next:</strong> <?php if ($o['next']): ?><a href="<?php echo esc_url(self::url(['view'=>'client','client'=>$client['client_id'],'month'=>$o['next']['month_year']]).'#task-'.$o['next']['id']); ?>"><?php echo esc_html($o['next']['title']); ?></a> · <?php echo esc_html($o['next']['due_date']); ?><?php else: echo $s['total']?'No open tasks.':'No cycle recorded for this month.'; endif; ?></p>
             <p class="mseo-muted">Last SEO activity: <?php echo esc_html($row['last'] ?: 'No work recorded yet'); ?></p><a class="button button-primary" href="<?php echo esc_url($url); ?>">Manage SEO →</a></article>
         <?php endforeach; ?></div>
-        <?php if (!$clients) echo '<p>No clients yet. Add a shared client profile or active Analytics client to begin.</p>'; ?>
+        <?php if (!$clients) echo '<p>No active SEO-plan clients. Set the client’s status to Active and its tier to Website + SEO or Website + SEO + PPC in the shared client profile.</p>'; ?>
         <?php
     }
     private static function client(array $client,string $month): void

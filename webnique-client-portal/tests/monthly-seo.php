@@ -2,8 +2,10 @@
 /** SQLite-backed offline persistence tests. No production WordPress or external requests. */
 namespace WNQ\Models {
     final class Client {
-        public static array $records=[['client_id'=>'erys','name'=>'Estefania Erys Creative','company'=>'Erys Creative','website'=>'https://eryscreative.com/','status'=>'active'],['client_id'=>'beta','name'=>'Beta','company'=>'Beta Services','website'=>'https://example.test','status'=>'inactive']];
+        public static array $records=[['client_id'=>'erys','name'=>'Estefania Erys Creative','company'=>'Erys Creative','website'=>'https://eryscreative.com/','status'=>'active','tier'=>'website-seo'],['client_id'=>'beta','name'=>'Beta','company'=>'Beta Services','website'=>'https://example.test','status'=>'inactive','tier'=>'website-seo']];
         public static function getSEOClients(?string $status=null): array {return array_values(array_filter(self::$records,fn($row)=>$status===null||$row['status']===$status));}
+        public static function getSEOPlanClients(): array {return array_values(array_filter(self::$records,fn($row)=>$row['status']==='active'&&in_array($row['tier']??'', ['website-seo','website-seo-ppc'],true)));}
+        public static function getSEOPlanClient(string $id): ?array {foreach(self::getSEOPlanClients() as $row)if($row['client_id']===$id)return $row;return null;}
         public static function getSEOClient(string $id): ?array {foreach(self::$records as $row)if($row['client_id']===$id)return $row;return null;}
     }
 }
@@ -79,6 +81,11 @@ namespace {
     delete_option('wnq_monthly_seo_schema');$wpdb->query('ALTER TABLE wp_wnq_seo_work RENAME COLUMN revision TO missing_revision');
     rejected(fn()=>M::install(),'Incomplete schema upgrade fails visibly');ok(get_option('wnq_monthly_seo_schema')===false,'Failed schema remains retryable');
     $wpdb->query('ALTER TABLE wp_wnq_seo_work RENAME COLUMN missing_revision TO revision');M::install();ok(get_option('wnq_monthly_seo_schema')===M::SCHEMA,'Schema retry succeeds');
+    $beforeExcluded=M::tasks('erys','2026-09');$clock='2027-01-02 10:00:00';
+    WNQ\Models\Client::$records[0]['tier']='website';M::rollover();ok(M::cycle('erys','2027-01')===null,'Non-SEO plan receives no new cycle');
+    ok(M::tasks('erys','2026-09')===$beforeExcluded,'Removing SEO plan preserves work history');
+    WNQ\Models\Client::$records[0]['tier']='website-seo';WNQ\Models\Client::$records[0]['status']='inactive';M::rollover();ok(M::cycle('erys','2027-01')===null,'Inactive SEO client receives no new cycle');
+    WNQ\Models\Client::$records[0]['status']='active';$clock='2026-09-18 10:00:00';
     $source=file_get_contents(__DIR__.'/../webnique-client-portal.php');ok(!str_contains($source,'SEO::syncMonthlyChecklistForAllClients()'),'Destructive legacy auto-sync disabled');ok(str_contains($source,"wp_clear_scheduled_hook('wnq_monthly_seo_rollover')"),'Cron unscheduled on deactivation');
     if(in_array('--render',$argv,true)||in_array('--overview',$argv,true)){
         $_GET=['month'=>'2026-09'];if(!in_array('--overview',$argv,true))$_GET['client']='erys';

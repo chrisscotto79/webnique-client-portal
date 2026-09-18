@@ -9,12 +9,12 @@ const {execFileSync}=require('node:child_process');const puppeteer=require('pupp
   for(const width of [1440,390]){
    await page.setViewport({width,height:1000});await page.goto('https://fixture.test/wp-admin/admin.php?page=wnq-seo');
    await page.addStyleTag({content:'body{background:#f0f0f1;margin:20px}a{color:#3357dc}.button{display:inline-block;text-decoration:none;border:1px solid #bdc8db;cursor:pointer;background:white;color:#234}.button-primary{color:white}.widefat{width:100%}'});
-   await page.waitForSelector('.mseo-client');assert.equal(await page.$$eval('.mseo-client',nodes=>nodes.length),2);
+   await page.waitForSelector('.mseo-client');assert.equal(await page.$$eval('.mseo-client',nodes=>nodes.length),1);
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Overview mobile overflow');
    const visible=await page.$$eval('[data-mseo-agenda]',nodes=>nodes.filter(n=>!n.hidden).length);assert(visible>0);
    await page.select('#mseo-agenda-filter','all');assert.equal(await page.$$eval('[data-mseo-agenda]',nodes=>nodes.filter(n=>!n.hidden).length),12);
    await page.click('#mseo-agenda-next');assert(await page.$eval('#mseo-agenda-count',node=>node.textContent.startsWith('13')));
-   await page.select('#mseo-agenda-client','beta');assert(await page.$eval('#mseo-agenda-empty',node=>!node.hidden));
+   assert.equal(await page.$$eval('#mseo-agenda-client option',nodes=>nodes.some(n=>n.value==='beta')),false,'Inactive client absent from filters');
    await page.select('#mseo-agenda-client','');await page.select('#mseo-agenda-filter','today');
    await page.type('#mseo-client-search','Erys');assert.equal(await page.$$eval('[data-mseo-client]',nodes=>nodes.filter(n=>!n.hidden).length),1);
    await page.$eval('#mseo-client-search',node=>{node.value='';node.dispatchEvent(new Event('input'));});

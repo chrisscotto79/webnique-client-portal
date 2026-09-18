@@ -88,7 +88,7 @@ final class SEOAdmin
 
     private static function renderOverview(): void
     {
-        $clients = Client::getAll();
+        $clients = Client::getSEOPlanClients();
         $all_stats = [];
         foreach ($clients as $client) {
             // Get progress for ONE-TIME tasks only (month_year IS NULL)
@@ -228,7 +228,7 @@ final class SEOAdmin
 
     private static function renderClientView(string $client_id): void
     {
-        $all_clients = Client::getAll();
+        $all_clients = Client::getSEOPlanClients();
         $client = null;
         foreach ($all_clients as $c) {
             if ($c['client_id'] === $client_id) {
@@ -711,7 +711,7 @@ final class SEOAdmin
 
     private static function renderReportView(string $client_id): void
     {
-        $all_clients = Client::getAll();
+        $all_clients = Client::getSEOPlanClients();
         $client = null;
         foreach ($all_clients as $c) {
             if ($c['client_id'] === $client_id) {

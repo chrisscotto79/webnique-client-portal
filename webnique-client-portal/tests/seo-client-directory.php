@@ -102,4 +102,19 @@ try { submit($erys['client_id']); throw new LogicException('Unauthorized generat
 $allowed=true; $nonce=false;
 try { submit($erys['client_id']); throw new LogicException('Invalid nonce accepted'); } catch (RuntimeException $e) { check($e->getMessage()==='Invalid nonce', 'Nonce enforced'); }
 echo "SEO directory and agent-key tests passed: Erys, new clients, exact IDs, legacy links, ambiguity, deleted/inactive records, read-only lookup, generation, failures, permissions.\n";
+$wpdb->portal=[];
+foreach (['website','website-seo','website-ppc','website-seo-ppc',''] as $tier) {
+    foreach (['active','inactive','deleted',''] as $status) {
+        $row=array_merge($shared,['client_id'=>($tier?:'missing').'-'.($status?:'missing'),'tier'=>$tier,'status'=>$status]);
+        $wpdb->portal[]=$row;
+        $eligible=$status==='active' && in_array($tier,['website-seo','website-seo-ppc'],true);
+        check(Client::isSEOPlanClient($row)===$eligible,'Explicit active SEO plan required');
+        check((Client::getSEOPlanClient($row['client_id'])!==null)===$eligible,'Direct client access uses same eligibility');
+    }
+}
+check(count(Client::getSEOPlanClients())===2,'Only active SEO and SEO/PPC tiers appear');
+check(Client::getSEOPlanClient($erys['client_id'])===null,'Analytics-only identity does not establish SEO plan eligibility');
+check(Client::getSEOClient($erys['client_id'])!==null,'SEO OS agent directory remains independent of paid-plan operations');
+echo "SEO plan eligibility passed: all tier/status combinations, direct access, Analytics-only exclusion and unchanged agent-key directory.\n";
+
 }

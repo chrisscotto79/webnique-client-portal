@@ -147,7 +147,7 @@ final class MonthlySEO
     {
         self::install();global $wpdb;
         $current=self::month(current_time('Y-m'));
-        foreach (Client::getSEOClients('active') as $client) {
+        foreach (Client::getSEOPlanClients() as $client) {
             $id=$client['client_id'];
             // Catch up missed cron months from the first cycle; never rewrite an existing cycle.
             $first=$wpdb->get_var($wpdb->prepare('SELECT MIN(month_year) FROM '.self::table('cycles').' WHERE client_id=%s',$id)) ?: $current;

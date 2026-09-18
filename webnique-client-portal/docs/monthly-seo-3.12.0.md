@@ -28,7 +28,7 @@ Metrics are manually recorded from SEMrush, GSC, GA4 and other reports; this rel
 
 New tables `wnq_seo_cycles` and `wnq_seo_work` preserve monthly snapshots and avoid modifying legacy checklist/report rows. Each cycle snapshots its enabled plan; a unique client/month/template key prevents duplicate tasks. Partial generation is retryable and never overwrites task progress. Generation does not count as SEO work activity.
 
-An hourly WordPress cron event creates current cycles for active shared/Analytics clients and catches up gaps since their first cycle. Opening SEO Portal also performs catch-up, including on the first use after upgrade. As with all WP-Cron work, timing depends on site traffic or a configured system cron. All dates use the displayed WordPress site timezone. Inactive clients retain history but do not receive new automatic cycles.
+An hourly WordPress cron event creates current cycles for active shared clients on Website + SEO or Website + SEO + PPC tiers and catches up gaps since their first cycle. Opening SEO Portal also performs catch-up, including on the first use after upgrade. As with all WP-Cron work, timing depends on site traffic or a configured system cron. All dates use the displayed WordPress site timezone. Inactive clients retain history but do not receive new automatic cycles.
 
 Existing launch, one-time checklists and old monthly tasks/reports remain under Legacy setup & history. They are not automatically copied into the new completion totals or metrics. The prior automatic checklist replacement routine is disabled, so an upgrade no longer replaces historical monthly rows. Legacy navigation and edits stay in the legacy view.
 
@@ -41,3 +41,7 @@ Task and metric/report saves require staff permission, nonce validation, a valid
 Validated with 44 SQLite-backed persistence/rollover/history/permission tests, PHP syntax checks, and offline Chromium desktop/mobile UI tests for filtering, pagination, task links, categories, results and report/history rendering. SEO directory, shared-client and Blog Scheduler regressions also pass. Database creation uses WordPress dbDelta; incomplete schema upgrades remain retryable. SQLite tests exercise model queries via a WordPress database adapter; they do not substitute for a live WordPress/MySQL installation check.
 
 Install the `webnique-client-portal-3.12.0.zip` update in WordPress, then open SEO Portal. No extension update is required. This release does not install itself on the live site or generate production monthly records until it runs in WordPress.
+
+## 3.12.1 eligibility correction
+
+SEO Portal cards, totals, queues, monthly and legacy client views now require an active shared client with tier `website-seo` or `website-seo-ppc`. Website-only, PPC-only, inactive and Analytics-only identities are excluded. Monthly generation uses the same rule. Historical records are retained. SEO OS agent/key connectivity retains its separate directory and is unchanged. Eligibility is checked again when saving monthly work.

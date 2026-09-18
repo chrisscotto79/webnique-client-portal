@@ -165,6 +165,24 @@ final class Client
         return array_values($clients);
     }
 
+    /** Paid SEO operations use the shared plan, not merely an Analytics/agent connection. */
+    public static function isSEOPlanClient(array $client): bool
+    {
+        return ($client['status'] ?? '') === 'active'
+            && in_array($client['tier'] ?? '', ['website-seo', 'website-seo-ppc'], true);
+    }
+
+    public static function getSEOPlanClients(): array
+    {
+        return array_values(array_filter(self::getAll(), [self::class, 'isSEOPlanClient']));
+    }
+
+    public static function getSEOPlanClient(string $client_id): ?array
+    {
+        $client = self::getByClientId($client_id);
+        return $client && self::isSEOPlanClient($client) ? $client : null;
+    }
+
     /** Exact identity lookup also keeps existing legacy agent/profile URLs usable. */
     public static function getSEOClient(string $client_id): ?array
     {
