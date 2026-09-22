@@ -3,7 +3,7 @@ namespace WNQ\Services;
 
 if (!defined('ABSPATH')) { exit; }
 
-/** Direct, staff-controlled contact handoff. Never sends email itself. */
+/** Contact handoff only. GHL manages email/SMS; this never sends messages itself. */
 final class LeadGhlSync
 {
     public const LOCATION = 'NHlmSHw4intOI2FPRcnO';
@@ -319,6 +319,37 @@ final class LeadGhlSync
         return $data['contact'];
     }
 
+    /** Normalize US numbers and explicitly country-coded international numbers. Not SMS validation. */
+    public static function phoneKey(string $value): string
+    {
+        $value = trim($value);
+        // Extensions are not text-message destinations; retain the main business number.
+        $value = preg_replace('/\s*(?:ext\.?|extension|x|#)\s*\d+\s*$/i', '', $value);
+        if (!preg_match('/^\+?[0-9\s().-]+$/D', $value)) return '';
+        $digits = preg_replace('/\D/', '', $value);
+        if (str_starts_with($value, '+')) return preg_match('/^[1-9][0-9]{7,14}$/D', $digits) ? '+' . $digits : '';
+        if (strlen($digits) === 10) return '+1' . $digits;
+        return strlen($digits) === 11 && $digits[0] === '1' ? '+' . $digits : '';
+    }
+
+    private static function fillPhone(array $contact, string $phone, string $email): array
+    {
+        if ($phone === '') return $contact;
+        if (!empty($contact['phone'])) {
+            if (self::phoneKey((string)$contact['phone']) !== $phone) throw new \RuntimeException('Existing GHL phone differs from the lead. No number overwritten or campaign tag applied; review contact matching.');
+            return $contact;
+        }
+        $match = self::lookup('number', $phone);
+        if ($match && ($match['id'] ?? '') !== $contact['id']) throw new \RuntimeException('Phone/email contact conflict. No number changed or campaign tag applied.');
+        $path = '/contacts/' . rawurlencode($contact['id']);
+        self::request('PUT', $path, ['phone' => $phone]);
+        $verified = self::request('GET', $path)['contact'] ?? [];
+        if (($verified['id'] ?? '') !== $contact['id'] || self::contactBlockReason($verified, $email) !== '' || self::phoneKey((string)($verified['phone'] ?? '')) !== $phone) {
+            throw new \RuntimeException('GHL phone update could not be verified. No campaign tag applied; check the contact before retrying.');
+        }
+        return $verified;
+    }
+
     public static function contactSafe(array $contact, string $email): bool
     {
         return self::contactBlockReason($contact, $email) === '';
@@ -367,9 +398,9 @@ final class LeadGhlSync
         if (array_key_exists('dndSettings', $contact) && !is_array($contact['dndSettings'])) { return 'GHL returned invalid channel DND settings'; }
         foreach (($contact['dndSettings'] ?? []) as $channel => $settings) {
             if (!is_array($settings)) { return 'GHL returned invalid channel DND settings'; }
-            if (in_array(strtolower((string)$channel), ['email', 'all'], true)
+            if (in_array(strtolower((string)$channel), ['email', 'sms', 'all'], true)
                 && (!is_string($settings['status'] ?? null) || strtolower($settings['status']) !== 'inactive')) {
-                return 'GHL email DND is active or unrecognized';
+                return 'GHL email/SMS DND is active or unrecognized';
             }
         }
         if (!isset($contact['tags']) || !is_array($contact['tags'])) { return 'GHL did not return the contact tag list'; }
@@ -499,9 +530,7 @@ final class LeadGhlSync
             self::test();
             $email = strtolower(trim($lead['email']));
             $contact = $job['contact_id'] ? ['id' => $job['contact_id']] : self::lookup('email', $email);
-            $phone = preg_replace('/\D/', '', $lead['phone'] ?? '');
-            if (strlen($phone) === 10) { $phone = '1' . $phone; }
-            $phone = strlen($phone) === 11 && $phone[0] === '1' ? '+' . $phone : '';
+            $phone = self::phoneKey((string)($lead['phone'] ?? ''));
             if (!$job['contact_id'] && $phone !== '') {
                 $phoneMatch = self::lookup('number', $phone);
                 if ($phoneMatch && (($phoneMatch['id'] ?? '') !== ($contact['id'] ?? ''))) {
@@ -527,6 +556,7 @@ final class LeadGhlSync
             $contact = $data['contact'] ?? [];
             $reason = self::contactBlockReason($contact, $email);
             if ($reason !== '') { throw new \RuntimeException($reason . '. No campaign tag applied.'); }
+            $contact = self::fillPhone($contact, $phone, $email);
             self::fillNiche($contact, $lead);
             if (self::hasTag($contact['tags'])) {
                 self::save($id, ['status' => 'sent', 'message' => 'Campaign tag already present; not applied again.']); return;
@@ -543,7 +573,7 @@ final class LeadGhlSync
             self::save($id, ['stage' => $job['stage']]);
             $result = self::request('POST', '/contacts/' . rawurlencode($contactId) . '/tags', ['tags' => [self::TAG]]);
             if (!self::hasTag($result['tags'] ?? [])) { throw new \RuntimeException('Tag result could not be confirmed. Retry will check without repeating an uncertain tag.'); }
-            self::save($id, ['status' => 'sent', 'message' => 'Campaign tag confirmed. Email delivery is managed by GHL.']);
+            self::save($id, ['status' => 'sent', 'message' => 'Campaign tag confirmed. ' . ($phone !== '' ? 'Phone confirmed in GHL. ' : 'No usable lead phone; email-only handoff. ') . 'Email/SMS delivery and consent checks are managed by GHL.']);
         } catch (\Throwable $e) {
             if ($job) {
                 $attempts = (int)$job['attempts'] + 1;
